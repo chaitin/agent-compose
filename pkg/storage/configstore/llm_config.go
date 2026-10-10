@@ -44,6 +44,16 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 		return fmt.Errorf("begin llm default config tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// The environment is a bootstrap fallback, not an owner of last resort: a
+	// connection or model another source declared (models.json, an API-managed
+	// connection) keeps its id and its metadata. Without this guard the
+	// projection rewrote the scope of a same-id catalog row and silently
+	// replaced the operator's configuration.
+	if conflict, err := envProjectionConflict(ctx, tx, provider.ID, model.ID); err != nil {
+		return err
+	} else if conflict != nil {
+		return conflict
+	}
 	// The bootstrap presentation can come from the environment (for example an
 	// Anthropic bearer token), so record it with the same intent rule the
 	// migration used: only a presentation that differs from the protocol
@@ -97,6 +107,39 @@ func (s *llmStore) UpsertDeclaredConnection(ctx context.Context, provider llms.P
 		return err
 	}
 	return tx.Commit()
+}
+
+// envProjectionConflict reports the first provider or model id the daemon
+// environment projection would take over from another configuration source. It
+// reads inside the projection transaction, so ownership cannot change between
+// the check and the upsert that follows it.
+func envProjectionConflict(ctx context.Context, tx *sql.Tx, providerID, modelID string) (*llms.DefaultConfigConflict, error) {
+	checks := []struct {
+		kind  string
+		id    string
+		query string
+	}{
+		{kind: "provider", id: providerID, query: `SELECT scope FROM llm_provider WHERE id = ?`},
+		{kind: "model", id: modelID, query: `SELECT scope FROM llm_model WHERE id = ?`},
+	}
+	for _, check := range checks {
+		check.id = strings.TrimSpace(check.id)
+		if check.id == "" {
+			continue
+		}
+		var scope string
+		err := tx.QueryRowContext(ctx, check.query, check.id).Scan(&scope)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read %s %q ownership: %w", check.kind, check.id, err)
+		}
+		if !llms.EnvProjectionOwnsScope(scope) {
+			return &llms.DefaultConfigConflict{Kind: check.kind, ID: check.id, Scope: strings.TrimSpace(scope)}, nil
+		}
+	}
+	return nil, nil
 }
 
 func upsertLLMProvider(ctx context.Context, tx *sql.Tx, provider llms.Provider, auth llms.ProviderAuth, now int64) error {
