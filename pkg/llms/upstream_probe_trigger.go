@@ -36,10 +36,14 @@ func ProbeUpstreamAndLog(ctx context.Context, logger *slog.Logger, prober *Upstr
 // endpoint itself advertises, so the check still reaches a real deployment.
 //
 // The caller bounds the whole sweep through ctx: probes after the deadline fail
-// fast and are reported as inconclusive rather than delaying the trigger.
+// fast, so the sweep stops there and reports how many connections it could not
+// reach rather than logging an undecided verdict for each of them.
 func ProbeConfiguredUpstreams(ctx context.Context, logger *slog.Logger, prober *UpstreamProber, store CatalogStore) error {
 	if prober == nil || store == nil {
 		return nil
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	providers, err := store.ListEnabledLLMProviders(ctx)
 	if err != nil {
@@ -54,7 +58,12 @@ func ProbeConfiguredUpstreams(ctx context.Context, logger *slog.Logger, prober *
 		return fmt.Errorf("read the llm default model for probe: %w", err)
 	}
 	models := probeModelIndex(bindings, defaultProvider, defaultModel, hasDefault)
-	for _, provider := range providers {
+	for index, provider := range providers {
+		if err := ctx.Err(); err != nil {
+			logger.Warn("llm upstream probe stopped before every connection was probed",
+				"probed", index, "skipped", len(providers)-index, "error", err)
+			return nil
+		}
 		ProbeUpstreamAndLog(ctx, logger, prober, provider, models[provider.ID])
 	}
 	return nil

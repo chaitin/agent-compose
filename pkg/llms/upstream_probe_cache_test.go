@@ -75,6 +75,56 @@ func TestUpstreamProberReusesAFreshVerdict(t *testing.T) {
 	}
 }
 
+func TestUpstreamProberDoesNotCacheAVerdictItsBudgetEnded(t *testing.T) {
+	var requests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		switch r.URL.Path {
+		case "/v1/models":
+			writeProbeJSON(w, `{"object":"list","data":[{"id":"served-model"}]}`)
+		case "/v1/responses":
+			writeProbeJSON(w, `{"object":"response","output":[{"type":"message"}]}`)
+		case "/v1/chat/completions":
+			writeProbeJSON(w, `{"object":"chat.completion","choices":[{"index":0}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	provider := probeTestProvider(server.URL + "/v1")
+	prober := NewUpstreamProber(server.Client())
+
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, err := prober.Probe(ended, UpstreamProbeRequest{Provider: provider, Model: "served-model"})
+	if err != nil {
+		t.Fatalf("Probe with an ended budget: %v", err)
+	}
+	if result.Proven() {
+		t.Fatalf("a probe with an ended budget proved support: %#v", result.Protocols)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("a probe with an ended budget issued %d requests", requests.Load())
+	}
+	if _, ok := prober.LookupUpstreamProbe(provider); ok {
+		t.Fatal("a verdict the budget prevented was cached")
+	}
+
+	// The next trigger must reach the endpoint instead of reusing a verdict that
+	// was never observed.
+	fresh, err := prober.Probe(context.Background(), UpstreamProbeRequest{Provider: provider, Model: "served-model"})
+	if err != nil {
+		t.Fatalf("Probe after an ended budget: %v", err)
+	}
+	if fresh.Cached {
+		t.Fatal("the retry reused the verdict of a probe that never ran")
+	}
+	if !fresh.Supports(ProtocolResponses) || !fresh.Supports(ProtocolChatCompletions) {
+		t.Fatalf("the retry did not probe the endpoint: %#v", fresh.Protocols)
+	}
+}
+
 func TestUpstreamProbeKeyFollowsEndpointAndCredential(t *testing.T) {
 	provider := probeTestProvider("https://gateway.example/v1")
 	base := UpstreamProbeKey(provider)

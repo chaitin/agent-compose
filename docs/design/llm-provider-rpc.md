@@ -38,6 +38,14 @@ the stored set, present empty clears it. Get and List return the declared set
 ordered by model ID. Declared models are not an allowlist — a model ID reaching
 resolution is opaque, so a connection still forwards a literal it never listed.
 
+A retained set is revalidated when the connection protocol changes: because a
+model-level protocol outranks the connection protocol, changing protocol family
+while keeping a binding from the old one would resolve requests to an endpoint
+and protocol that disagree. Such an update is rejected as InvalidArgument and
+the stored protocol and bindings are left alone; a same-family change keeps
+every retained binding, and a request that carries models states the new intent
+and is validated against that set instead.
+
 GetDefaultModel, SetDefaultModel and ClearDefaultModel manage the reference the
 daemon uses for runs that declare no model. SetDefaultModel requires an existing
 enabled connection; the model may be a literal the connection does not enumerate,
@@ -48,7 +56,11 @@ reference.
 
 Probe verdicts appear as capabilities on provider responses. They are read from
 the in-memory probe cache, so a connection the daemon has not probed reports
-none; nothing about probing is persisted and the field never changes routing.
+none; nothing about probing is persisted and the field never changes routing. A
+verdict the probe's deadline cut short is not cached, because it says nothing
+about the endpoint: caching it would answer the next trigger with an undecided
+report instead of probing. The startup sweep shares one deadline, stops when it
+ends, and logs how many connections it could not reach.
 
 Protocol selects the default upstream credential presentation: Bearer for the
 OpenAI protocols and x-api-key for Anthropic Messages. A gateway can serve the

@@ -3,6 +3,7 @@ package configstore
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/chaitin/agent-compose/pkg/llms"
@@ -133,6 +134,81 @@ func TestIntegrationProviderDeclaredModelFamilyIsEnforced(t *testing.T) {
 	}
 	if got := bindingsFor(t, ctx, store, "gateway"); len(got) != 0 {
 		t.Fatalf("bindings after a rejected create = %#v, want none", got)
+	}
+}
+
+// A model's explicit protocol outranks the connection protocol, so an update
+// that changes families while keeping such a binding would resolve requests to
+// an endpoint and protocol that disagree. The retained set is revalidated, and
+// the operator restates it to state the new intent.
+func TestIntegrationProtocolChangeRevalidatesRetainedModels(t *testing.T) {
+	clearLLMTestEnvironment(t)
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.InitSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	key := "gateway-key"
+	if _, err := store.CreateLLMProvider(ctx, llms.ProviderReplacement{
+		ID: "gateway", BaseURL: "https://gateway.example/v1", Protocol: llms.APIProtocolResponses, APIKey: &key,
+		Models: declaredModels(
+			llms.ModelSpec{ID: "gpt-4o", Protocol: llms.APIProtocolChatCompletions},
+			llms.ModelSpec{ID: "gpt-4o-mini"},
+		),
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// A same-family move keeps every retained binding valid, including the
+	// model-level override.
+	if _, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Protocol: llms.APIProtocolChatCompletions}); err != nil {
+		t.Fatalf("same-family update: %v", err)
+	}
+	override, err := resolveProviderTarget(ctx, store, "gateway", "gpt-4o")
+	if err != nil {
+		t.Fatalf("resolve a retained override: %v", err)
+	}
+	if override.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("retained override protocol = %q", override.WireAPI)
+	}
+	inherited, err := resolveProviderTarget(ctx, store, "gateway", "gpt-4o-mini")
+	if err != nil {
+		t.Fatalf("resolve a retained inherited model: %v", err)
+	}
+	if inherited.WireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("a retained model did not inherit the new connection protocol: %q", inherited.WireAPI)
+	}
+
+	// Moving to the other family while keeping the chat-completions override is
+	// rejected, and the rejected update leaves the stored state alone.
+	if _, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{ID: "gateway", Protocol: llms.APIProtocolMessages}); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("cross-family update keeping a model error = %v, want invalid argument", err)
+	}
+	stored, err := store.GetManagedLLMProvider(ctx, "gateway")
+	if err != nil {
+		t.Fatalf("read the provider after a rejected update: %v", err)
+	}
+	if stored.DefaultWireAPI != llms.APIProtocolChatCompletions {
+		t.Fatalf("a rejected update changed the protocol to %q", stored.DefaultWireAPI)
+	}
+	if got := bindingsFor(t, ctx, store, "gateway"); len(got) != 2 {
+		t.Fatalf("bindings after a rejected update = %#v, want both retained", got)
+	}
+
+	// Restating the set states the new intent, and the resolved target is
+	// coherent under the new protocol.
+	if _, err := store.UpdateLLMProvider(ctx, llms.ProviderReplacement{
+		ID: "gateway", Protocol: llms.APIProtocolMessages,
+		Models: declaredModels(llms.ModelSpec{ID: "claude-3-5-sonnet"}),
+	}); err != nil {
+		t.Fatalf("cross-family update restating models: %v", err)
+	}
+	restated, err := resolveProviderTarget(ctx, store, "gateway", "claude-3-5-sonnet")
+	if err != nil {
+		t.Fatalf("resolve a restated model: %v", err)
+	}
+	if restated.WireAPI != llms.APIProtocolMessages || !strings.HasSuffix(restated.Endpoint, "/v1/messages") {
+		t.Fatalf("restated target = %#v, want the anthropic protocol and endpoint", restated)
 	}
 }
 

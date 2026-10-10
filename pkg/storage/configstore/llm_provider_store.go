@@ -150,6 +150,9 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 	if err != nil {
 		return llms.Provider{}, fmt.Errorf("update llm provider: %w", err)
 	}
+	if err := ensureRetainedModelProtocols(ctx, tx, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
+		return llms.Provider{}, err
+	}
 	if err := replaceProviderModels(ctx, tx, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
 		return llms.Provider{}, err
 	}
@@ -157,6 +160,39 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 		return llms.Provider{}, fmt.Errorf("commit provider update: %w", err)
 	}
 	return provider, nil
+}
+
+// ensureRetainedModelProtocols checks the bindings an update keeps against the
+// connection's new protocol. A binding's explicit protocol outranks the
+// connection protocol when a target is built, so a protocol-family change that
+// retains a binding from the old family would resolve requests to an endpoint and
+// protocol that disagree — a combination this package rejects when a client
+// states it in a model spec. A request that carries models states the new intent
+// and is validated against that set instead, so only retained bindings are
+// checked here.
+func ensureRetainedModelProtocols(ctx context.Context, tx *sql.Tx, providerID, providerProtocol string, replacement *[]llms.ModelSpec) error {
+	if replacement != nil {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT model_id, wire_api FROM llm_provider_model WHERE provider_id = ? ORDER BY model_id`, providerID)
+	if err != nil {
+		return fmt.Errorf("read retained provider %q models: %w", providerID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var modelID, wireAPI string
+		if err := rows.Scan(&modelID, &wireAPI); err != nil {
+			return fmt.Errorf("scan retained provider %q model: %w", providerID, err)
+		}
+		if err := llms.ValidateModelSpecProtocol(providerProtocol, wireAPI); err != nil {
+			return fmt.Errorf("retained model %q declared as %q does not fit the new connection protocol %q, resend the model set to restate it: %w",
+				modelID, wireAPI, providerProtocol, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate retained provider %q models: %w", providerID, err)
+	}
+	return nil
 }
 
 // replaceProviderModels writes a connection's declared model set. A nil set

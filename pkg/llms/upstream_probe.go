@@ -196,21 +196,39 @@ func (p *UpstreamProber) Probe(ctx context.Context, req UpstreamProbeRequest) (U
 	result.Model = model
 	protocols := UpstreamProbeProtocols(provider)
 	if model == "" {
+		detail := "the connection declares no model and the endpoint listed none"
+		// An exhausted budget also arrives with no model, but the endpoint was
+		// never asked, so blaming its model list would be a false report.
+		if ctx.Err() != nil {
+			detail = "the probe budget ended before the endpoint could list a model"
+		}
 		for _, protocol := range protocols {
 			result.Protocols = append(result.Protocols, ProtocolProbe{
 				Protocol: protocol,
 				Outcome:  ProbeInconclusive,
-				Detail:   "the connection declares no model and the endpoint listed none",
+				Detail:   detail,
 			})
 		}
-		p.cache.Store(cacheKey, result)
+		p.storeProbe(ctx, cacheKey, result)
 		return result, nil
 	}
 	for _, protocol := range protocols {
 		result.Protocols = append(result.Protocols, p.probeProtocol(ctx, provider, headers, model, protocol))
 	}
-	p.cache.Store(cacheKey, result)
+	p.storeProbe(ctx, cacheKey, result)
 	return result, nil
+}
+
+// storeProbe caches a verdict for reuse, unless the probe's context already
+// ended. A cancelled or exhausted budget says nothing about the endpoint, and
+// caching that verdict would let the next trigger reuse an observation that was
+// never made, reporting the endpoint as undecided for the whole TTL instead of
+// probing it.
+func (p *UpstreamProber) storeProbe(ctx context.Context, cacheKey string, result UpstreamProbeResult) {
+	if ctx.Err() != nil {
+		return
+	}
+	p.cache.Store(cacheKey, result)
 }
 
 // listModels performs the inventory request. Its outcome never gates the
