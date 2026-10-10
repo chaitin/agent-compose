@@ -56,15 +56,24 @@ func TestProviderAuthMapping(t *testing.T) {
 // client that writes the object back cannot turn the protocol convention into an
 // override.
 func TestProviderToV2ReportsStoredAuthOverride(t *testing.T) {
-	convention := providerToV2(llms.Provider{ID: "messages", DefaultWireAPI: llms.APIProtocolMessages, AuthHeader: "x-api-key"})
+	convention, err := providerToV2(llms.Provider{ID: "messages", DefaultWireAPI: llms.APIProtocolMessages, AuthHeader: "x-api-key"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if convention.GetAuth() != agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED {
 		t.Fatalf("connection following the convention reported auth = %v", convention.GetAuth())
 	}
-	bearer := providerToV2(llms.Provider{ID: "bearer", DefaultWireAPI: llms.APIProtocolMessages, Auth: llms.ProviderAuthBearer})
+	bearer, err := providerToV2(llms.Provider{ID: "bearer", DefaultWireAPI: llms.APIProtocolMessages, Auth: llms.ProviderAuthBearer}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if bearer.GetAuth() != agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER {
 		t.Fatalf("bearer override reported auth = %v", bearer.GetAuth())
 	}
-	xAPIKey := providerToV2(llms.Provider{ID: "x-api-key", DefaultWireAPI: llms.APIProtocolResponses, Auth: llms.ProviderAuthXAPIKey})
+	xAPIKey, err := providerToV2(llms.Provider{ID: "x-api-key", DefaultWireAPI: llms.APIProtocolResponses, Auth: llms.ProviderAuthXAPIKey}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if xAPIKey.GetAuth() != agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY {
 		t.Fatalf("x-api-key override reported auth = %v", xAPIKey.GetAuth())
 	}

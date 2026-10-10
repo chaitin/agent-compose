@@ -155,6 +155,10 @@ service LLMService {
   rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
   rpc UpdateProvider(UpdateProviderRequest) returns (UpdateProviderResponse);
   rpc DeleteProvider(DeleteProviderRequest) returns (DeleteProviderResponse);
+  // The default model for runs that declare none.
+  rpc GetDefaultModel(GetDefaultModelRequest) returns (GetDefaultModelResponse);
+  rpc SetDefaultModel(SetDefaultModelRequest) returns (SetDefaultModelResponse);
+  rpc ClearDefaultModel(ClearDefaultModelRequest) returns (ClearDefaultModelResponse);
   rpc Generate(GenerateLLMRequest) returns (GenerateLLMResponse);
 }
 
@@ -2335,6 +2339,11 @@ message LLMProvider {
   // stored override rather than the effective header keeps a Get response safe to
   // send back through Update.
   LLMProviderAuth auth = 9;
+  // Models this connection declares, ordered by model ID.
+  repeated LLMModelSpec models = 10;
+  // Most recent protocol probe verdict. Absent when the daemon has not probed
+  // this connection since it started; probes are in-memory only.
+  LLMProviderCapabilities capabilities = 11;
 }
 
 // LLMProviderSpec applies explicit fields on update. ID is immutable.
@@ -2356,6 +2365,9 @@ message LLMProviderSpec {
   // convention again. Named values are preserved across protocol changes, even
   // when they match the current protocol's default.
   optional LLMProviderAuth auth = 7;
+  // Declared model set. Absent on update preserves the stored set; a present
+  // empty set clears it. IDs are literals, not references.
+  optional LLMProviderModels models = 8;
 }
 message CreateProviderRequest { LLMProviderSpec provider = 1; }
 message CreateProviderResponse { LLMProvider provider = 1; }
@@ -2375,3 +2387,64 @@ message UpdateProviderResponse { LLMProvider provider = 1; }
 // Deletes API-owned configuration and invalidates provider-bound facade tokens.
 message DeleteProviderRequest { string id = 1; }
 message DeleteProviderResponse {}
+
+// LLMModelSpec declares one model a connection serves. The upstream model ID is
+// a literal the operator types; the daemon does not need it enumerated to route
+// a request.
+message LLMModelSpec {
+  // Required. The literal upstream model ID a request names.
+  string id = 1;
+  // Display name. Empty falls back to the ID.
+  string name = 2;
+  // responses, chat_completions, or anthropic_messages. Empty inherits the
+  // connection protocol; a set value must stay in the connection's family.
+  string protocol = 3;
+  // Upstream endpoint override for this model. Empty inherits the connection.
+  string base_url = 4;
+  // Static extra headers for this model, merged over the connection's headers.
+  map<string, string> headers = 5;
+  // Positive output cap. Zero or absent inherits the facade default.
+  optional int32 max_output_tokens = 6;
+}
+
+// LLMProviderModels carries a declared model set so presence is observable: an
+// absent field preserves the stored set on update, while a present empty set
+// clears it. A bare repeated field could not tell those two apart.
+message LLMProviderModels { repeated LLMModelSpec models = 1; }
+
+// LLMProtocolProbe reports what one protocol probe observed.
+message LLMProtocolProbe {
+  // responses, chat_completions, or anthropic_messages.
+  string protocol = 1;
+  // supported, unsupported, inconclusive, or auth_failed. Only "unsupported"
+  // means the daemon proved the endpoint does not serve the protocol; a
+  // rejection or a timeout says nothing about support.
+  string outcome = 2;
+  string detail = 3;
+}
+
+// LLMProviderCapabilities is the most recent probe verdict. It is held in
+// memory only, so it is absent until the daemon has probed the connection.
+message LLMProviderCapabilities {
+  repeated LLMProtocolProbe probes = 1;
+  // Model IDs the endpoint advertised through /v1/models.
+  repeated string models = 2;
+  // Model the protocol probes named.
+  string probed_model = 3;
+  google.protobuf.Timestamp probed_at = 4;
+}
+
+// LLMModelReference names one model on one connection.
+message LLMModelReference {
+  string provider_id = 1;
+  string model_id = 2;
+}
+message GetDefaultModelRequest {}
+message GetDefaultModelResponse {
+  // Absent when no default model is configured at all.
+  LLMModelReference model = 1;
+}
+message SetDefaultModelRequest { LLMModelReference model = 1; }
+message SetDefaultModelResponse { LLMModelReference model = 1; }
+message ClearDefaultModelRequest {}
+message ClearDefaultModelResponse {}

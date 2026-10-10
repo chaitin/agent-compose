@@ -277,6 +277,15 @@ const (
 	// LLMServiceDeleteProviderProcedure is the fully-qualified name of the LLMService's DeleteProvider
 	// RPC.
 	LLMServiceDeleteProviderProcedure = "/agentcompose.v2.LLMService/DeleteProvider"
+	// LLMServiceGetDefaultModelProcedure is the fully-qualified name of the LLMService's
+	// GetDefaultModel RPC.
+	LLMServiceGetDefaultModelProcedure = "/agentcompose.v2.LLMService/GetDefaultModel"
+	// LLMServiceSetDefaultModelProcedure is the fully-qualified name of the LLMService's
+	// SetDefaultModel RPC.
+	LLMServiceSetDefaultModelProcedure = "/agentcompose.v2.LLMService/SetDefaultModel"
+	// LLMServiceClearDefaultModelProcedure is the fully-qualified name of the LLMService's
+	// ClearDefaultModel RPC.
+	LLMServiceClearDefaultModelProcedure = "/agentcompose.v2.LLMService/ClearDefaultModel"
 	// LLMServiceGenerateProcedure is the fully-qualified name of the LLMService's Generate RPC.
 	LLMServiceGenerateProcedure = "/agentcompose.v2.LLMService/Generate"
 	// ResourceServiceResolveIDProcedure is the fully-qualified name of the ResourceService's ResolveID
@@ -2707,6 +2716,10 @@ type LLMServiceClient interface {
 	ListProviders(context.Context, *connect.Request[v2.ListProvidersRequest]) (*connect.Response[v2.ListProvidersResponse], error)
 	UpdateProvider(context.Context, *connect.Request[v2.UpdateProviderRequest]) (*connect.Response[v2.UpdateProviderResponse], error)
 	DeleteProvider(context.Context, *connect.Request[v2.DeleteProviderRequest]) (*connect.Response[v2.DeleteProviderResponse], error)
+	// The default model for runs that declare none.
+	GetDefaultModel(context.Context, *connect.Request[v2.GetDefaultModelRequest]) (*connect.Response[v2.GetDefaultModelResponse], error)
+	SetDefaultModel(context.Context, *connect.Request[v2.SetDefaultModelRequest]) (*connect.Response[v2.SetDefaultModelResponse], error)
+	ClearDefaultModel(context.Context, *connect.Request[v2.ClearDefaultModelRequest]) (*connect.Response[v2.ClearDefaultModelResponse], error)
 	Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error)
 }
 
@@ -2751,6 +2764,24 @@ func NewLLMServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(lLMServiceMethods.ByName("DeleteProvider")),
 			connect.WithClientOptions(opts...),
 		),
+		getDefaultModel: connect.NewClient[v2.GetDefaultModelRequest, v2.GetDefaultModelResponse](
+			httpClient,
+			baseURL+LLMServiceGetDefaultModelProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("GetDefaultModel")),
+			connect.WithClientOptions(opts...),
+		),
+		setDefaultModel: connect.NewClient[v2.SetDefaultModelRequest, v2.SetDefaultModelResponse](
+			httpClient,
+			baseURL+LLMServiceSetDefaultModelProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("SetDefaultModel")),
+			connect.WithClientOptions(opts...),
+		),
+		clearDefaultModel: connect.NewClient[v2.ClearDefaultModelRequest, v2.ClearDefaultModelResponse](
+			httpClient,
+			baseURL+LLMServiceClearDefaultModelProcedure,
+			connect.WithSchema(lLMServiceMethods.ByName("ClearDefaultModel")),
+			connect.WithClientOptions(opts...),
+		),
 		generate: connect.NewClient[v2.GenerateLLMRequest, v2.GenerateLLMResponse](
 			httpClient,
 			baseURL+LLMServiceGenerateProcedure,
@@ -2762,12 +2793,15 @@ func NewLLMServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 
 // lLMServiceClient implements LLMServiceClient.
 type lLMServiceClient struct {
-	createProvider *connect.Client[v2.CreateProviderRequest, v2.CreateProviderResponse]
-	getProvider    *connect.Client[v2.GetProviderRequest, v2.GetProviderResponse]
-	listProviders  *connect.Client[v2.ListProvidersRequest, v2.ListProvidersResponse]
-	updateProvider *connect.Client[v2.UpdateProviderRequest, v2.UpdateProviderResponse]
-	deleteProvider *connect.Client[v2.DeleteProviderRequest, v2.DeleteProviderResponse]
-	generate       *connect.Client[v2.GenerateLLMRequest, v2.GenerateLLMResponse]
+	createProvider    *connect.Client[v2.CreateProviderRequest, v2.CreateProviderResponse]
+	getProvider       *connect.Client[v2.GetProviderRequest, v2.GetProviderResponse]
+	listProviders     *connect.Client[v2.ListProvidersRequest, v2.ListProvidersResponse]
+	updateProvider    *connect.Client[v2.UpdateProviderRequest, v2.UpdateProviderResponse]
+	deleteProvider    *connect.Client[v2.DeleteProviderRequest, v2.DeleteProviderResponse]
+	getDefaultModel   *connect.Client[v2.GetDefaultModelRequest, v2.GetDefaultModelResponse]
+	setDefaultModel   *connect.Client[v2.SetDefaultModelRequest, v2.SetDefaultModelResponse]
+	clearDefaultModel *connect.Client[v2.ClearDefaultModelRequest, v2.ClearDefaultModelResponse]
+	generate          *connect.Client[v2.GenerateLLMRequest, v2.GenerateLLMResponse]
 }
 
 // CreateProvider calls agentcompose.v2.LLMService.CreateProvider.
@@ -2795,6 +2829,21 @@ func (c *lLMServiceClient) DeleteProvider(ctx context.Context, req *connect.Requ
 	return c.deleteProvider.CallUnary(ctx, req)
 }
 
+// GetDefaultModel calls agentcompose.v2.LLMService.GetDefaultModel.
+func (c *lLMServiceClient) GetDefaultModel(ctx context.Context, req *connect.Request[v2.GetDefaultModelRequest]) (*connect.Response[v2.GetDefaultModelResponse], error) {
+	return c.getDefaultModel.CallUnary(ctx, req)
+}
+
+// SetDefaultModel calls agentcompose.v2.LLMService.SetDefaultModel.
+func (c *lLMServiceClient) SetDefaultModel(ctx context.Context, req *connect.Request[v2.SetDefaultModelRequest]) (*connect.Response[v2.SetDefaultModelResponse], error) {
+	return c.setDefaultModel.CallUnary(ctx, req)
+}
+
+// ClearDefaultModel calls agentcompose.v2.LLMService.ClearDefaultModel.
+func (c *lLMServiceClient) ClearDefaultModel(ctx context.Context, req *connect.Request[v2.ClearDefaultModelRequest]) (*connect.Response[v2.ClearDefaultModelResponse], error) {
+	return c.clearDefaultModel.CallUnary(ctx, req)
+}
+
 // Generate calls agentcompose.v2.LLMService.Generate.
 func (c *lLMServiceClient) Generate(ctx context.Context, req *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error) {
 	return c.generate.CallUnary(ctx, req)
@@ -2808,6 +2857,10 @@ type LLMServiceHandler interface {
 	ListProviders(context.Context, *connect.Request[v2.ListProvidersRequest]) (*connect.Response[v2.ListProvidersResponse], error)
 	UpdateProvider(context.Context, *connect.Request[v2.UpdateProviderRequest]) (*connect.Response[v2.UpdateProviderResponse], error)
 	DeleteProvider(context.Context, *connect.Request[v2.DeleteProviderRequest]) (*connect.Response[v2.DeleteProviderResponse], error)
+	// The default model for runs that declare none.
+	GetDefaultModel(context.Context, *connect.Request[v2.GetDefaultModelRequest]) (*connect.Response[v2.GetDefaultModelResponse], error)
+	SetDefaultModel(context.Context, *connect.Request[v2.SetDefaultModelRequest]) (*connect.Response[v2.SetDefaultModelResponse], error)
+	ClearDefaultModel(context.Context, *connect.Request[v2.ClearDefaultModelRequest]) (*connect.Response[v2.ClearDefaultModelResponse], error)
 	Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error)
 }
 
@@ -2848,6 +2901,24 @@ func NewLLMServiceHandler(svc LLMServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(lLMServiceMethods.ByName("DeleteProvider")),
 		connect.WithHandlerOptions(opts...),
 	)
+	lLMServiceGetDefaultModelHandler := connect.NewUnaryHandler(
+		LLMServiceGetDefaultModelProcedure,
+		svc.GetDefaultModel,
+		connect.WithSchema(lLMServiceMethods.ByName("GetDefaultModel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	lLMServiceSetDefaultModelHandler := connect.NewUnaryHandler(
+		LLMServiceSetDefaultModelProcedure,
+		svc.SetDefaultModel,
+		connect.WithSchema(lLMServiceMethods.ByName("SetDefaultModel")),
+		connect.WithHandlerOptions(opts...),
+	)
+	lLMServiceClearDefaultModelHandler := connect.NewUnaryHandler(
+		LLMServiceClearDefaultModelProcedure,
+		svc.ClearDefaultModel,
+		connect.WithSchema(lLMServiceMethods.ByName("ClearDefaultModel")),
+		connect.WithHandlerOptions(opts...),
+	)
 	lLMServiceGenerateHandler := connect.NewUnaryHandler(
 		LLMServiceGenerateProcedure,
 		svc.Generate,
@@ -2866,6 +2937,12 @@ func NewLLMServiceHandler(svc LLMServiceHandler, opts ...connect.HandlerOption) 
 			lLMServiceUpdateProviderHandler.ServeHTTP(w, r)
 		case LLMServiceDeleteProviderProcedure:
 			lLMServiceDeleteProviderHandler.ServeHTTP(w, r)
+		case LLMServiceGetDefaultModelProcedure:
+			lLMServiceGetDefaultModelHandler.ServeHTTP(w, r)
+		case LLMServiceSetDefaultModelProcedure:
+			lLMServiceSetDefaultModelHandler.ServeHTTP(w, r)
+		case LLMServiceClearDefaultModelProcedure:
+			lLMServiceClearDefaultModelHandler.ServeHTTP(w, r)
 		case LLMServiceGenerateProcedure:
 			lLMServiceGenerateHandler.ServeHTTP(w, r)
 		default:
@@ -2895,6 +2972,18 @@ func (UnimplementedLLMServiceHandler) UpdateProvider(context.Context, *connect.R
 
 func (UnimplementedLLMServiceHandler) DeleteProvider(context.Context, *connect.Request[v2.DeleteProviderRequest]) (*connect.Response[v2.DeleteProviderResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.DeleteProvider is not implemented"))
+}
+
+func (UnimplementedLLMServiceHandler) GetDefaultModel(context.Context, *connect.Request[v2.GetDefaultModelRequest]) (*connect.Response[v2.GetDefaultModelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.GetDefaultModel is not implemented"))
+}
+
+func (UnimplementedLLMServiceHandler) SetDefaultModel(context.Context, *connect.Request[v2.SetDefaultModelRequest]) (*connect.Response[v2.SetDefaultModelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.SetDefaultModel is not implemented"))
+}
+
+func (UnimplementedLLMServiceHandler) ClearDefaultModel(context.Context, *connect.Request[v2.ClearDefaultModelRequest]) (*connect.Response[v2.ClearDefaultModelResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.LLMService.ClearDefaultModel is not implemented"))
 }
 
 func (UnimplementedLLMServiceHandler) Generate(context.Context, *connect.Request[v2.GenerateLLMRequest]) (*connect.Response[v2.GenerateLLMResponse], error) {

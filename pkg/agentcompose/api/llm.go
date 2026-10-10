@@ -26,6 +26,9 @@ type LLMHandler struct {
 // configuration time, not at the first request. A nil prober disables the check.
 type LLMUpstreamProber interface {
 	ProbeConnection(ctx context.Context, provider llms.Provider, model string)
+	// Capabilities reports the most recent cached verdict for a connection.
+	// Probes are advisory and in-memory, so a missing verdict is normal.
+	Capabilities(provider llms.Provider) (llms.UpstreamProbeResult, bool)
 }
 
 func NewLLMHandler(generator LLMGenerator, providers LLMProviderStore) *LLMHandler {

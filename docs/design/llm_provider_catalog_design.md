@@ -125,7 +125,9 @@ catalog Provider 只有在最终定义包含非空 API Key 时才可用。
 
 ```text
 agent 声明的 model
-> models.json default（优先）/ daemon 环境声明的默认模型（兜底）
+> models.json default（文件声明时优先）
+> 通过 LLMService.SetDefaultModel 设置的默认模型（文件未声明时生效，重启保留）
+> daemon 环境声明的默认模型（兜底）
 > 配置前置条件错误
 ```
 
@@ -134,7 +136,7 @@ agent 声明的 model
 ```text
 agent 声明凭据被吸收成的 declared 连接
 > 声明了该模型的连接（按调用方协议偏好排序）
-> models.json default 命名的连接（当 default 模型正是本次模型）
+> 默认引用（`llm_catalog_default`：models.json default 或 SetDefaultModel）命名的连接（当默认模型正是本次模型）
 > 唯一的已配置连接
 > 其余全部已配置连接（同样按协议偏好排序）
 ```
@@ -144,7 +146,7 @@ agent 声明凭据被吸收成的 declared 连接
 1. run/session 环境里声明的凭据，如果 daemon 能识别**且能代理**，会被吸收成一条 scope 为 `declared` 的连接（ID 为 `session-env:<sandbox-id>:<family>:<declaration-digest>`，digest 是声明内容的摘要，见 §声明的第一方凭据），再用 Catalog 正常解析它的 endpoint、protocol、key 和选定模型；缺失值不能从 catalog 或 daemon 环境借用。识别不了的 `*_API_KEY` 不参与连接解析，原样下发到 sandbox 环境。
 2. 没有声明凭据时，daemon 先在声明了该模型的连接中选择；同一模型被多个连接声明时，按调用方协议偏好优先 passthrough，同协议候选随机择一。
 3. `models.json` 顶层 `default` 用 `provider/model` 指定默认连接与默认模型；agent 的 `model` 不会被再次拆分。没有连接声明该模型时，它优先于其他兜底规则。
-4. agent 未声明模型时使用 catalog default 模型。两者的优先级即代码事实：`models.json.default`（`llm_catalog_default`）优先，daemon 环境声明的默认模型（`llm_model.default_model`）只是启动兜底。
+4. agent 未声明模型时使用 catalog default 模型。优先级即代码事实：`models.json.default`（`llm_catalog_default`）在文件声明时优先；文件未声明 `default` 时，同一个单行表里由 `LLMService.SetDefaultModel` 写入的引用生效并在重启后保留；只有该表为空时才轮到 daemon 环境声明的默认模型（`llm_model.default_model`）兜底。引用指向的连接已不存在时按「无默认」处理，继续走兜底。
 5. 所有来源都无法得到可用连接和模型时，以配置前置条件错误失败。
 
 继续兼容的环境变量包括：
@@ -302,16 +304,16 @@ llm_provider_model.max_output_tokens
 llm_provider_model.display_name
 ```
 
-同时增加单行表 `llm_catalog_default`，保存精确的默认 Provider 和模型。Catalog default 不写入或清除全局 `llm_model.default_model`；该字段继续归已有 system/env 配置所有。
+同时增加单行表 `llm_catalog_default`，保存精确的默认 Provider 和模型。该表保存的是**生效中的默认引用**，有两个写入者：`models.json` 的顶层 `default`（启动投影），以及 `LLMService.SetDefaultModel` / `ClearDefaultModel`。Catalog default 不写入或清除全局 `llm_model.default_model`；该字段继续归已有 system/env 配置所有。
 
 每次 daemon 启动时，文件中的有效 catalog 会被事务化投影：
 
 1. 禁用已失效的 catalog-owned Provider 和模型；
 2. 替换当前 Provider 定义与模型绑定；
-3. 原子更新 catalog default；
+3. 文件声明了顶层 `default` 时原子替换 catalog default；未声明时保留已存储的引用，避免抹掉通过 RPC 设置的默认模型（需要清除时调用 `ClearDefaultModel`）；
 4. 完整的环境 Provider 在 resolver 使用时按兼容规则物化。
 
-所有更新只允许修改 catalog-owned 行。与非 catalog Provider 同 ID 时整个事务失败并回滚。文件不存在或显式为空都会清除 catalog-owned 的有效状态，但不能修改 system/env Provider、模型或默认选择。
+所有更新只允许修改 catalog-owned 行。与非 catalog Provider 同 ID 时整个事务失败并回滚。文件不存在或显式为空都会清除 catalog-owned 的有效状态，但不能修改 system/env Provider 或模型，也不再清除已存储的默认引用：没有 `default` 声明不等于声明了「没有默认」。
 
 ## 失败行为
 

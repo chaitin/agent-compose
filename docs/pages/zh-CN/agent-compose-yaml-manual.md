@@ -580,9 +580,9 @@ daemon 在启动时加载一次 `$DATA_ROOT/models.json`。文件不存在是合
 
 可选的 `models` 数组只补充模型级元数据和行为，包括 `id`、`name`、`baseUrl`、`protocol`、`headers` 和正整数 `maxOutputTokens`。模型级 `protocol` 必须与 Provider 的协议族兼容：OpenAI Provider（`responses` 或 `chat_completions`）只允许 `responses` 和 `chat_completions`，Anthropic Provider（`anthropic_messages`）只允许 `anthropic_messages`。这些属性属于具体的 Provider/Model 部署，共享同一 Model ID 的 Provider 不会相互覆盖；该数组也不是白名单。只要 `gateway` Provider 已配置，`gateway/a-model-not-listed-here` 仍会使用 Provider 默认配置，把右侧 Model ID 原样发送给上游。
 
-所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。在项目 `variables` 或 Agent `env` 中声明的第一方凭据会被作为 daemon 自有的连接导入同一份目录并经 facade 代理，因此 key 留在 daemon，sandbox 只拿到本次 run 的 facade token；这既是完整 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`LLM_API_KEY` 声明的兼容路径，也适用于 `variables` 和 `env` 下列出的各厂商变量名。可选的 daemon 或 Agent `LLM_API_HEADERS` 是该 env Provider 上的静态额外 HTTP Header JSON 对象，它不替代 catalog 的 `headers`，原始值也不会暴露给 guest runtime。该变量由 env-backed OpenAI 和 Anthropic Provider 共用，因此每个 Header 都必须适合发送给所有已配置的上游。daemon 自身的 `LLM_*` 配置只是启动兜底，而不是优先级更高的来源：`models.json.default` 指定的默认模型优先于环境声明的默认模型，因此运行时配置的默认模型（`models.json`，以及后续通过 RPC 配置的）才会生效。环境投影同样不会抢占其他来源已占用的 ID：与 `models.json` 的 Provider 或 Model 同名时保留原有配置，并在 daemon 日志中给出告警。反方向仍是硬错误：`models.json` 的 Provider ID 与已有非 catalog Provider 冲突时，daemon 会在不覆盖原配置的前提下启动失败。如果没有任何默认模型，daemon 会在启动时打出一条告警，未声明模型的 Agent 继续使用自身鉴权。
+所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。在项目 `variables` 或 Agent `env` 中声明的第一方凭据会被作为 daemon 自有的连接导入同一份目录并经 facade 代理，因此 key 留在 daemon，sandbox 只拿到本次 run 的 facade token；这既是完整 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`LLM_API_KEY` 声明的兼容路径，也适用于 `variables` 和 `env` 下列出的各厂商变量名。可选的 daemon 或 Agent `LLM_API_HEADERS` 是该 env Provider 上的静态额外 HTTP Header JSON 对象，它不替代 catalog 的 `headers`，原始值也不会暴露给 guest runtime。该变量由 env-backed OpenAI 和 Anthropic Provider 共用，因此每个 Header 都必须适合发送给所有已配置的上游。daemon 自身的 `LLM_*` 配置只是启动兜底，而不是优先级更高的来源。默认模型按三步解析：`models.json` 声明了 `default` 时它优先；否则通过 `LLMService.SetDefaultModel` 设置的引用生效并在重启后保留；两者都不存在时才轮到环境声明的默认模型。`models.json` 未声明 `default` 时不会清空已存储的引用，因此运行时选择的默认模型不会被下一次启动抹掉；需要移除时调用 `LLMService.ClearDefaultModel`。环境投影同样不会抢占其他来源已占用的 ID：与 `models.json` 的 Provider 或 Model 同名时保留原有配置，并在 daemon 日志中给出告警。反方向仍是硬错误：`models.json` 的 Provider ID 与已有非 catalog Provider 冲突时，daemon 会在不覆盖原配置的前提下启动失败。如果没有任何默认模型，daemon 会在启动时打出一条告警，未声明模型的 Agent 继续使用自身鉴权。
 
-在启动时，以及每次 `LLMService` 写入 Provider 之后，daemon 都会校验每个已启用的连接：先请求该连接的 `/v1/models`，再按该连接所属协议族可服务的每种协议各发送一个最小 `ping` 请求（输出上限为 1 token）。每种协议都独立探测，因此同一端点同时支持 `responses` 和 `chat_completions` 时会同时报告两者，而不会在第一个成功后停止。探测只做诊断：不改变路由或已存储配置，也不用 `/v1/models` 判断协议支持，结果只写入日志、不落库。较新的结论会以「endpoint + 凭据」为键在内存中短暂保留，避免重复触发产生相同流量；进程重启后即失效并在启动时重新探测。日志形如 `endpoint <url> supports model list: <ids>` 和 `endpoint <url> supports <protocol> protocol`，并对被证明确实不支持的协议、不可达端点、超时以及凭据被拒绝分别给出告警；凭据被拒绝时协议支持情况保持未知。写入 Provider 后的探测同步执行，受 `LLM_PROBE_TIMEOUT`（默认 `15s`）约束，启动时的一轮探测共用同一个截止时间。未声明模型的连接会使用端点自身公布的模型进行探测。设置 `LLM_UPSTREAM_PROBE=false` 可完全关闭探测。
+在启动时，以及每次 `LLMService` 写入 Provider 之后，daemon 都会校验每个已启用的连接：先请求该连接的 `/v1/models`，再按该连接所属协议族可服务的每种协议各发送一个最小 `ping` 请求（输出上限为 1 token）。每种协议都独立探测，因此同一端点同时支持 `responses` 和 `chat_completions` 时会同时报告两者，而不会在第一个成功后停止。探测只做诊断：不改变路由或已存储配置，也不用 `/v1/models` 判断协议支持，结果只写入日志、不落库。较新的结论会以「endpoint + 凭据」为键在内存中短暂保留，避免重复触发产生相同流量；进程重启后即失效并在启动时重新探测。日志形如 `endpoint <url> supports model list: <ids>` 和 `endpoint <url> supports <protocol> protocol`，并对被证明确实不支持的协议、不可达端点、超时以及凭据被拒绝分别给出告警；凭据被拒绝时协议支持情况保持未知。写入 Provider 后的探测同步执行，受 `LLM_PROBE_TIMEOUT`（默认 `15s`）约束，启动时的一轮探测共用同一个截止时间。声明了模型的连接会用其中一个模型探测，未声明的才会使用端点自身公布的模型。最新结论也会通过 `GetProvider` 和 `ListProviders` 的 `capabilities` 返回：`probes` 区分「已证实不支持」与「无法判定」，`models` 是端点公布的模型清单，`probedModel` / `probedAt` 给出探测所用模型和时间。daemon 尚未探测该连接时 `capabilities` 为空，且因为探测结果不落库，重启后会消失。设置 `LLM_UPSTREAM_PROBE=false` 可完全关闭探测。
 
 ### 通过 RPC 管理 LLM Provider
 
@@ -625,6 +625,12 @@ daemon 优先选择该 Agent 能原生使用的协议，否则在其中随机选
   默认值相同。响应返回已存储的选择；未指定时跟随协议约定。
 - `apiKey` 是字面量，不解析环境变量引用。创建必须提供非空值；更新省略时保留旧值，
   提供非空值时轮换，空值无效。响应仅返回 `apiKeySet`，不会回显密钥。
+- `models` 可选，用来声明操作者手动填写的模型名，每项包含 `id`、`name`、`protocol`、
+  `baseUrl`、`headers` 和正整数 `maxOutputTokens`。模型级 `protocol` 必须与 Provider 处于
+  同一协议族。声明的模型名是路由元数据，不是白名单：连接未列出的字面量 `model` 仍会原样
+  转发。`GetProvider` 和 `ListProviders` 按模型 ID 顺序返回已声明集合。在
+  `UpdateProvider` 中省略 `models` 会保留已声明集合，传空数组则清空。同名模型按 ID 在多个
+  连接间共享：已被其他来源占用的模型保留其归属与元数据，新连接只增加自己的绑定。
 - 创建时，空 `name` 默认使用 ID，省略 `enabled` 默认为 `true`。
   `anthropic_messages` 会默认发送 `anthropic-version: 2023-06-01`，其他协议不加额外 Header。
 - `UpdateProvider` 使用相同的 `provider` 对象。省略 `name`、`baseUrl`、`protocol`、
@@ -636,6 +642,7 @@ daemon 优先选择该 Agent 能原生使用的协议，否则在其中随机选
   `--base-url`、`--protocol`、`--api-key`。更新只发送显式设置的 flag，因此
   `update --base-url ...` 不会把已禁用的 Provider 重新启用。两个命令都支持
   `--auth x-api-key|bearer` 覆盖协议默认值，`--auth protocol-default` 清除已存储的覆盖。
+  CLI 暂不支持设置 `models` 或默认模型，请使用 RPC 或 UI。
 - `GetProvider` / `DeleteProvider` 请求为 `{"id":"team-gateway"}`。
   `ListProviders` 接受 `offset` / `limit`，按 ID 排序并包含禁用项，返回 `providers` 和 `total`。
 - 这些接口只管理 `api` 归属的 Provider，不覆盖 `models.json` 或环境配置。
@@ -647,8 +654,23 @@ daemon 优先选择该 Agent 能原生使用的协议，否则在其中随机选
 - 删除不会修改项目中的模型引用；新请求中的未知 `provider/` 前缀仍遵循现有的字面量模型
   解释规则。禁用保留配置和 token，重新启用后可恢复使用。
 
-这些接口不修改默认模型，不提供模型级配置或自定义 Header 管理。密钥沿用现有数据库
-存储方式，未增加应用层加密。
+这些接口不会通过 `models` 之外的途径修改模型级配置，也不会改写 `models.json`。密钥沿用
+现有数据库存储方式，未增加应用层加密。
+
+### 通过 RPC 设置默认模型
+
+`GetDefaultModel`、`SetDefaultModel`、`ClearDefaultModel` 管理 daemon 为「未声明模型的
+run」使用的默认模型，与 `models.json` 的 `default` 写入的是同一个引用。
+`SetDefaultModel` 的请求为 `{"model":{"providerId":"team-gateway","modelId":"model-id"}}`，
+要求 Provider 存在且已启用；模型可以是该连接并未声明的字面量，因为模型 ID 是不透明的。
+Provider 不存在返回 `NotFound`，已禁用返回 `FailedPrecondition`，`providerId` 或 `modelId`
+为空返回 `InvalidArgument`，且都不会改变已存储的引用。`GetDefaultModel` 返回 `model`，
+没有默认模型时省略该字段。`ClearDefaultModel` 移除引用，此后若环境声明了默认模型则重新
+由它生效。
+
+这里设置的引用会在重启后保留，只有两种情况下会被替换：`models.json` 自己声明了
+`default`，下次启动会用文件中的引用覆盖它；或调用 `ClearDefaultModel` 主动移除。因此从
+`models.json` 中删掉 `default` 并不会回到之前的状态，daemon 最后存储的引用仍然生效。
 
 ### `image`
 

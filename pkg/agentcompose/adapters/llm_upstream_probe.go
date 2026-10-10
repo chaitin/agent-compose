@@ -71,3 +71,14 @@ func (p *LLMUpstreamProber) ProbeConnection(ctx context.Context, provider llms.P
 	defer cancel()
 	llms.ProbeUpstreamAndLog(probeCtx, p.logger, p.prober, provider, model)
 }
+
+// Capabilities reports the cached verdict for a connection. It is read-only and
+// never probes: a client asking for configuration should not wait on an
+// upstream, and reporting "not probed yet" is honest about what the daemon
+// knows. Probing disabled means no verdict is ever reported.
+func (p *LLMUpstreamProber) Capabilities(provider llms.Provider) (llms.UpstreamProbeResult, bool) {
+	if p == nil || !p.enabled || p.prober == nil {
+		return llms.UpstreamProbeResult{}, false
+	}
+	return p.prober.LookupUpstreamProbe(provider)
+}

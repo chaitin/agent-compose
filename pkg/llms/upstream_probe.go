@@ -71,6 +71,9 @@ type UpstreamProbeResult struct {
 	Protocols    []ProtocolProbe
 	// Cached reports that this verdict was reused instead of re-probed.
 	Cached bool
+	// ProbedAt is when the verdict was produced, so a reader can tell a fresh
+	// verdict from a stale one. A reused verdict keeps its original time.
+	ProbedAt time.Time
 }
 
 // SupportedProtocols returns the protocols the probe proved are served here.
@@ -184,6 +187,7 @@ func (p *UpstreamProber) Probe(ctx context.Context, req UpstreamProbeRequest) (U
 	if err != nil {
 		return result, fmt.Errorf("probe connection %q headers: %w", provider.ID, err)
 	}
+	result.ProbedAt = time.Now().UTC()
 	result.Models, result.ModelsDetail = p.listModels(ctx, provider, headers)
 	model := strings.TrimSpace(req.Model)
 	if model == "" && len(result.Models) > 0 {
