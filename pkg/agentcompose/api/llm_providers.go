@@ -31,6 +31,7 @@ func (h *LLMHandler) CreateProvider(ctx context.Context, req *connect.Request[ag
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
+	h.probeUpstream(ctx, provider)
 	return connect.NewResponse(&agentcomposev2.CreateProviderResponse{Provider: providerToV2(provider)}), nil
 }
 
@@ -70,7 +71,18 @@ func (h *LLMHandler) UpdateProvider(ctx context.Context, req *connect.Request[ag
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
+	h.probeUpstream(ctx, provider)
 	return connect.NewResponse(&agentcomposev2.UpdateProviderResponse{Provider: providerToV2(provider)}), nil
+}
+
+// probeUpstream runs the synchronous post-write protocol check. API-owned
+// connections declare no model today, so the probe names one the endpoint
+// advertises; the call is bounded by the configured probe timeout.
+func (h *LLMHandler) probeUpstream(ctx context.Context, provider llms.Provider) {
+	if h == nil || h.prober == nil {
+		return
+	}
+	h.prober.ProbeConnection(ctx, provider, "")
 }
 
 // DeleteProvider removes API-owned configuration and its facade credentials.

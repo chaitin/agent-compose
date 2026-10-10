@@ -151,6 +151,45 @@ func TestNewConfigRejectsNonPositiveSandboxGracefulStopTimeout(t *testing.T) {
 	}
 }
 
+// Upstream protocol probing is on by default so a wrong protocol declaration is
+// reported at startup, and an operator can turn it off.
+func TestNewConfigDefaultsUpstreamProbeOn(t *testing.T) {
+	t.Setenv("DATA_ROOT", filepath.Join(t.TempDir(), "data"))
+	t.Setenv("LLM_UPSTREAM_PROBE", "")
+
+	di := do.New()
+	do.ProvideValue(di, slog.Default())
+	config, err := NewConfig(di)
+	if err != nil {
+		t.Fatalf("NewConfig returned error: %v", err)
+	}
+	if !config.LLMUpstreamProbe {
+		t.Fatal("LLMUpstreamProbe = false, want the probe enabled by default")
+	}
+	if config.LLMProbeTimeout != 15*time.Second {
+		t.Fatalf("LLMProbeTimeout = %s, want 15s", config.LLMProbeTimeout)
+	}
+}
+
+func TestNewConfigParsesUpstreamProbeSettings(t *testing.T) {
+	t.Setenv("DATA_ROOT", filepath.Join(t.TempDir(), "data"))
+	t.Setenv("LLM_UPSTREAM_PROBE", "false")
+	t.Setenv("LLM_PROBE_TIMEOUT", "3s")
+
+	di := do.New()
+	do.ProvideValue(di, slog.Default())
+	config, err := NewConfig(di)
+	if err != nil {
+		t.Fatalf("NewConfig returned error: %v", err)
+	}
+	if config.LLMUpstreamProbe {
+		t.Fatal("LLMUpstreamProbe = true, want the configured false")
+	}
+	if config.LLMProbeTimeout != 3*time.Second {
+		t.Fatalf("LLMProbeTimeout = %s, want 3s", config.LLMProbeTimeout)
+	}
+}
+
 func testNewConfigParsesEnvironment(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("DATA_ROOT", filepath.Join(root, "data"))
