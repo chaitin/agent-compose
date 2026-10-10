@@ -227,3 +227,104 @@ func TestEnsureSandboxNetworkDeclarationFailureFailsClosed(t *testing.T) {
 		t.Fatalf("runtime EnsureSandbox calls = %d, want 0 before the policy is known", runtime.calls)
 	}
 }
+
+// guestFileNetworkRuntime records the driver-boundary sandbox every guest-file
+// entry point receives and applies the same fail-closed gate the k8s driver
+// applies from inside its own EnsureSandbox.
+type guestFileNetworkRuntime struct {
+	capturingNetworkRuntime
+	sandboxes []*driverpkg.Sandbox
+}
+
+func (r *guestFileNetworkRuntime) gate(sandbox *driverpkg.Sandbox) error {
+	r.sandboxes = append(r.sandboxes, sandbox)
+	return driverpkg.RequireSandboxNetworkEnforcement(driverpkg.RuntimeDriverK8s, sandbox.NetworkPolicy)
+}
+
+func (r *guestFileNetworkRuntime) ReadGuestFile(_ context.Context, sandbox *driverpkg.Sandbox, _ driverpkg.VMState, _ string) ([]byte, error) {
+	return nil, r.gate(sandbox)
+}
+
+func (r *guestFileNetworkRuntime) ReadGuestDir(_ context.Context, sandbox *driverpkg.Sandbox, _ driverpkg.VMState, _, _ string) error {
+	return r.gate(sandbox)
+}
+
+func (r *guestFileNetworkRuntime) WriteGuestFile(_ context.Context, sandbox *driverpkg.Sandbox, _ driverpkg.VMState, _ string, _ []byte) error {
+	return r.gate(sandbox)
+}
+
+func (r *guestFileNetworkRuntime) WriteGuestDir(_ context.Context, sandbox *driverpkg.Sandbox, _ driverpkg.VMState, _, _ string) error {
+	return r.gate(sandbox)
+}
+
+func (r *guestFileNetworkRuntime) PublishGuestDirectory(_ context.Context, sandbox *driverpkg.Sandbox, _ driverpkg.VMState, _ driverpkg.GuestDirectoryPublication) error {
+	return r.gate(sandbox)
+}
+
+func (r *guestFileNetworkRuntime) EnsureGuestSymlink(_ context.Context, sandbox *driverpkg.Sandbox, _ driverpkg.VMState, _ driverpkg.GuestSymlinkProjection) error {
+	return r.gate(sandbox)
+}
+
+// TestGuestFilePathsCarryDeclaredNetworkPolicy is the regression for a
+// fail-closed ordering hole: the guest-file methods reach the driver's own
+// EnsureSandbox and can create a k8s Pod, so a sandbox handed to the driver
+// without the declared policy would create the runtime before the enforcement
+// gate ever saw the declaration.
+func TestGuestFilePathsCarryDeclaredNetworkPolicy(t *testing.T) {
+	declaration := &egress.NetworkDeclaration{
+		Default: egress.Deny,
+		Allow:   []egress.AllowEntry{{Host: "api.github.com", Port: 443, Protocol: egress.ProtocolHTTPS}},
+	}
+	runtime := &guestFileNetworkRuntime{}
+	adapter := guestFileRuntimeAdapter{driverRuntimeAdapter{
+		runtime:    runtime,
+		executions: newSandboxExecutions(),
+		networkPolicies: driverSandboxNetworkPolicy{
+			config:       networkPolicyTestConfig(),
+			declarations: stubNetworkDeclarationResolver{declaration: declaration},
+		},
+	}}
+	session := networkPolicyTestSession()
+	ctx := context.Background()
+	var vmState domain.VMState
+
+	calls := []struct {
+		name string
+		call func() error
+	}{
+		{name: "ReadGuestFile", call: func() error {
+			_, err := adapter.ReadGuestFile(ctx, session, vmState, "/tmp/x")
+			return err
+		}},
+		{name: "ReadGuestDir", call: func() error {
+			return adapter.ReadGuestDir(ctx, session, vmState, "/tmp/x", t.TempDir())
+		}},
+		{name: "WriteGuestFile", call: func() error {
+			return adapter.WriteGuestFile(ctx, session, vmState, "/tmp/x", []byte("x"))
+		}},
+		{name: "WriteGuestDir", call: func() error {
+			return adapter.WriteGuestDir(ctx, session, vmState, t.TempDir(), "/tmp/x")
+		}},
+		{name: "PublishGuestDirectory", call: func() error {
+			return adapter.PublishGuestDirectory(ctx, session, vmState, driverpkg.GuestDirectoryPublication{})
+		}},
+		{name: "EnsureGuestSymlink", call: func() error {
+			return adapter.EnsureGuestSymlink(ctx, session, vmState, driverpkg.GuestSymlinkProjection{})
+		}},
+	}
+	for _, call := range calls {
+		t.Run(call.name, func(t *testing.T) {
+			runtime.sandboxes = nil
+			err := call.call()
+			if err == nil {
+				t.Fatal("guest-file call returned nil, want the fail-closed gate to refuse a declared default-deny")
+			}
+			if !errors.Is(err, driverpkg.ErrSandboxNetworkEnforcementUnavailable) {
+				t.Fatalf("error = %v, want ErrSandboxNetworkEnforcementUnavailable", err)
+			}
+			if len(runtime.sandboxes) != 1 || runtime.sandboxes[0] == nil || runtime.sandboxes[0].NetworkPolicy == nil {
+				t.Fatalf("driver received %+v, want the declared policy attached", runtime.sandboxes)
+			}
+		})
+	}
+}
