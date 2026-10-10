@@ -205,6 +205,39 @@ func TestEvaluateStartPreflightRejectsUnavailableSystemPreconditionForObserved(t
 	}
 }
 
+// TestEvaluateStartPreflightDoesNotBindNoNewPrivilegesToSeccomp pins that an
+// enforced process.no_new_privs claim is not rejected just because the host
+// kernel has no seccomp: no_new_privs does not depend on seccomp, and a real
+// no_new_privs failure is reported by the lower layer as an unsupported
+// process.no_new_privs observation instead.
+func TestEvaluateStartPreflightDoesNotBindNoNewPrivilegesToSeccomp(t *testing.T) {
+	declaration := testDriverCapabilities(t, "boxlite", nil)
+	observations := []ObservedCapability{
+		{
+			Dimension: ObservedProcessNoNewPrivileges,
+			Enforced:  true,
+			State:     StateEnforced,
+			Mechanism: "no_new_privs_applied",
+			Observed:  "the lower layer reported it set no_new_privs",
+			Source:    SourceMeasured,
+		},
+		{
+			Dimension: ObservedSeccomp,
+			State:     StateUnsupported,
+			Mechanism: ReasonUnsupported,
+			Observed:  "prctl(PR_GET_SECCOMP) failed with EINVAL",
+			Missing:   "the kernel cannot enforce seccomp",
+			Source:    SourceMeasured,
+		},
+	}
+	decision := EvaluateStartPreflight("boxlite", []IsolationRequirement{
+		{Dimension: RequirementDimension(ObservedProcessNoNewPrivileges), Strength: RequirementRequired},
+	}, declaration, observations)
+	if !decision.Allowed {
+		t.Fatalf("decision = %+v, want an enforced no_new_privs claim to be accepted without a seccomp host precondition", decision)
+	}
+}
+
 // TestMeasuredLowerLayerSeccompFailureIsReportedNotEnforced is the
 // lower-layer-injection acceptance test: a libcontainer report that seccomp was
 // unavailable becomes an honest "not enforced" assertion, and a required

@@ -297,9 +297,16 @@ func systemPreconditionDimensions(dimension RequirementDimension) []ObservedDime
 	switch dimension {
 	case RequirementDimension(DimensionUserNamespaces):
 		return []ObservedDimension{ObservedUserNamespaces}
-	case RequirementDimension(ObservedProcessSeccomp), RequirementDimension(ObservedProcessNoNewPrivileges):
+	case RequirementDimension(ObservedProcessSeccomp):
 		return []ObservedDimension{ObservedSeccomp}
 	default:
+		// process.no_new_privs is deliberately absent: no_new_privs is a core
+		// kernel feature that does not depend on seccomp, and there is no host
+		// dimension to probe for it. Binding it to system.seccomp would reject
+		// a genuinely enforced claim on a host whose kernel has no seccomp.
+		// When a lower layer cannot set no_new_privs it reports the failure
+		// itself, which arrives as an unsupported process.no_new_privs
+		// observation and fails the requirement there.
 		return nil
 	}
 }
