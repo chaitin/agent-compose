@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/llms"
@@ -111,6 +112,12 @@ func EnsureSessionCommandFacadeConfig(ctx context.Context, req CommandFacadeConf
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {
+			// The command's agent owns its upstream. Warn without failing: an
+			// agent that carries its own endpoint and token is a supported
+			// configuration, just not one the daemon can protect.
+			slog.Warn("command is not managed by the daemon llm facade",
+				"sandbox_id", session.Summary.ID, "agent", agent, "model", model,
+				"reason", llms.UnmanagedAgentLLMReason(err))
 			return CommandFacadeConfig{
 				Env: startupEnv, TokenHashes: startupTokenHashes,
 			}, nil

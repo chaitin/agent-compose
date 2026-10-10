@@ -147,6 +147,26 @@ func TestPrepareAgentLLMReportsNoConnectionWhenCatalogIsEmpty(t *testing.T) {
 	}
 }
 
+func TestUnmanagedAgentLLMReasonNamesTheConfigurationGap(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "no model", err: ErrNoModel, want: "no default model is configured and the agent declared none"},
+		{name: "no connection", err: ErrNoConnection, want: "no llm connection is configured"},
+		{name: "no dialect", err: ErrUnsupportedAgentDialect, want: "the agent kind has no llm facade"},
+		{name: "wrapped", err: errors.Join(errors.New("resolve"), ErrNoConnection), want: "no llm connection is configured"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := UnmanagedAgentLLMReason(tc.err); got != tc.want {
+				t.Fatalf("UnmanagedAgentLLMReason(%v) = %q, want %q", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPrepareAgentLLMReturnsErrNoModel(t *testing.T) {
 	isolateLLMEnv(t)
 	cases := []struct {

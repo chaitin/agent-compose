@@ -2,6 +2,7 @@ package runs
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -31,6 +32,11 @@ func (c *Controller) ensurePromptAttachLLMFacadeEnv(ctx context.Context, sandbox
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {
+			// An attached prompt follows the same unmanaged rule as a run: warn
+			// and let the agent use its own upstream.
+			slog.Warn("attached prompt is not managed by the daemon llm facade",
+				"sandbox_id", sandbox.Summary.ID, "agent", agent.Provider, "model", agent.Model,
+				"reason", llms.UnmanagedAgentLLMReason(err))
 			return nil, nil
 		}
 		return nil, err
