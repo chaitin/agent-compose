@@ -207,3 +207,49 @@ func TestCredentialHandleStoreRejectsUnattributableHandle(t *testing.T) {
 		t.Fatalf("SaveCredentialHandle() unattributable error = %v, want ErrUnattributable", err)
 	}
 }
+
+// TestCredentialHandleStorePrunesDeadHandlesOnSandboxSweep pins the bounded
+// retention: a handle that expired longer ago than the retention window is
+// removed by the sweep, while a live handle of the same sandbox is only
+// revoked, so the table cannot grow for the life of the deployment.
+func TestCredentialHandleStorePrunesDeadHandlesOnSandboxSweep(t *testing.T) {
+	store, ctx := newCredentialStore(t)
+	now := time.Now().UTC()
+	mint := func(envName string, issuedAt time.Time) credentials.Handle {
+		t.Helper()
+		_, handle, err := credentials.NewHandle(credentials.NewHandleRequest{
+			Kind:      credentials.KindGit,
+			EnvName:   envName,
+			SandboxID: "sbx-prune",
+			Scope: credentials.Scope{
+				Endpoint: "git.example.com",
+				Owners:   []credentials.Owner{{Kind: "sandbox", ID: "sbx-prune"}},
+			},
+		}, issuedAt)
+		if err != nil {
+			t.Fatalf("mint handle: %v", err)
+		}
+		if err := store.SaveCredentialHandle(ctx, handle); err != nil {
+			t.Fatalf("save handle: %v", err)
+		}
+		return handle
+	}
+	// Issued two hours ago with the default 15m TTL: dead well beyond retention.
+	expired := mint("GIT_TOKEN_EXPIRED", now.Add(-2*time.Hour))
+	live := mint("GIT_TOKEN_LIVE", now)
+
+	if err := store.RevokeCredentialHandlesForSandbox(ctx, "sbx-prune"); err != nil {
+		t.Fatalf("RevokeCredentialHandlesForSandbox() error = %v", err)
+	}
+
+	if _, err := store.GetCredentialHandleByID(ctx, expired.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("expired handle lookup error = %v, want ErrNotFound after the sweep pruned it", err)
+	}
+	got, err := store.GetCredentialHandleByID(ctx, live.ID)
+	if err != nil {
+		t.Fatalf("live handle lookup error = %v, want the handle to survive the prune", err)
+	}
+	if got.RevokedAt.IsZero() {
+		t.Fatal("the sweep must still revoke a live handle before the retention window passes")
+	}
+}

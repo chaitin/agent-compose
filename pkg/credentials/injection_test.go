@@ -138,3 +138,50 @@ func TestSnapshotIsFixedAfterConstruction(t *testing.T) {
 		t.Fatalf("snapshot length = %d, want 1", snapshot.Len())
 	}
 }
+
+// TestPlanInjectionRefusesTwoHandlesClaimingOneGuestVariable pins the planning
+// boundary: the guest holds one value per environment variable, so a second
+// handle for the same name would silently shadow the first. The plan must fail
+// before it reports success rather than leaving the collision to a driver.
+func TestPlanInjectionRefusesTwoHandlesClaimingOneGuestVariable(t *testing.T) {
+	first := baseHandle()
+	second := baseHandle()
+	second.ID = "cred_other"
+	second.TokenHash = "hash-other"
+	second.TokenFingerprint = "fingerprint-other"
+	snapshot := credentials.NewSnapshot([]credentials.Material{
+		{Handle: first, Value: "first-truth"},
+		{Handle: second, Value: "second-truth"},
+	})
+	request := func(handleID string) credentials.InjectionRequest {
+		return credentials.InjectionRequest{
+			HandleID: handleID,
+			Request:  credentials.Request{Endpoint: "git.example.com", Owners: []credentials.Owner{{Kind: "sandbox", ID: "sbx-1"}}},
+		}
+	}
+	specs, err := credentials.PlanInjection(snapshot, []credentials.InjectionRequest{request(first.ID), request(second.ID)}, testNow)
+	if !errors.Is(err, credentials.ErrInvalidSecretSpec) {
+		t.Fatalf("PlanInjection() duplicate variable error = %v, want ErrInvalidSecretSpec", err)
+	}
+	if specs != nil {
+		t.Fatalf("PlanInjection() specs = %#v, want none", specs)
+	}
+}
+
+// TestPlanInjectionRefusesAHandleWithoutFingerprint pins the placeholder
+// invariant: the placeholder is derived from the fingerprint, so a handle
+// without one would plan the same bare prefix for every such handle.
+func TestPlanInjectionRefusesAHandleWithoutFingerprint(t *testing.T) {
+	handle := baseHandle()
+	handle.TokenFingerprint = ""
+	specs, err := credentials.PlanInjection(testSnapshot(handle, "secret-truth"), []credentials.InjectionRequest{{
+		HandleID: handle.ID,
+		Request:  credentials.Request{Endpoint: "git.example.com", Owners: []credentials.Owner{{Kind: "sandbox", ID: "sbx-1"}}},
+	}}, testNow)
+	if !errors.Is(err, credentials.ErrInvalidHandle) {
+		t.Fatalf("PlanInjection() missing-fingerprint error = %v, want ErrInvalidHandle", err)
+	}
+	if specs != nil {
+		t.Fatalf("PlanInjection() specs = %#v, want none", specs)
+	}
+}

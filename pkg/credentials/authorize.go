@@ -2,6 +2,7 @@ package credentials
 
 import (
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -46,7 +47,7 @@ func (h Handle) Authorize(req Request, now time.Time) (Authorization, error) {
 	if !normalized.Scope.EndpointMatches(req.Endpoint) {
 		return Authorization{}, &ScopeError{
 			HandleID:  normalized.ID,
-			Requested: trimEndpoint(req.Endpoint),
+			Requested: strings.TrimSpace(req.Endpoint),
 			Granted:   normalized.Scope.Endpoint,
 			Err:       ErrEndpointOutOfScope,
 		}
@@ -165,7 +166,3 @@ func (e *ScopeError) Error() string {
 
 // Unwrap exposes the sentinel so errors.Is classifies the denial.
 func (e *ScopeError) Unwrap() error { return e.Err }
-
-func trimEndpoint(endpoint string) string {
-	return NormalizeOwner(Owner{Kind: "endpoint", ID: endpoint}).ID
-}

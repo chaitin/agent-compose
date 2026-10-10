@@ -149,23 +149,43 @@ func (s *credentialStore) revokeCredentialHandleByColumn(ctx context.Context, co
 	return nil
 }
 
+// CredentialHandleRetention is how long a dead handle row is kept before the
+// sandbox sweep physically prunes it. Handles are short-lived by design
+// (credentials.DefaultHandleTTL, at most credentials.MaxHandleTTL) and one run
+// can mint many, so without a bound the table grows for the life of the
+// deployment. The grace window keeps a recently-dead handle answerable for
+// audit while bounding that growth; both states already fail closed at
+// Authorize, so deleting them changes nothing observable.
+const CredentialHandleRetention = time.Hour
+
 // RevokeCredentialHandlesForSandbox releases every handle one sandbox holds. It
 // is the sweep that makes "the sandbox is gone, so its credentials are gone"
 // true even if the sandbox never called revoke itself.
+//
+// It also opportunistically prunes handles that have been dead for longer than
+// CredentialHandleRetention, which is what keeps the table bounded across
+// sandboxes.
 func (s *credentialStore) RevokeCredentialHandlesForSandbox(ctx context.Context, sandboxID string) error {
 	sandboxID = strings.TrimSpace(sandboxID)
 	if sandboxID == "" {
 		return nil
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE credential_handle SET revoked_at = ? WHERE sandbox_id = ? AND revoked_at = 0`, credentials.UnixMillis(time.Now().UTC()), sandboxID); err != nil {
+	now := time.Now().UTC()
+	if _, err := s.db.ExecContext(ctx, `UPDATE credential_handle SET revoked_at = ? WHERE sandbox_id = ? AND revoked_at = 0`, credentials.UnixMillis(now), sandboxID); err != nil {
 		return fmt.Errorf("revoke credential handles for sandbox: %w", err)
+	}
+	cutoff := credentials.UnixMillis(now.Add(-CredentialHandleRetention))
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM credential_handle WHERE (revoked_at != 0 AND revoked_at < ?) OR (expires_at != 0 AND expires_at < ?)`, cutoff, credentials.UnixMillis(now)); err != nil {
+		return fmt.Errorf("prune credential handles: %w", err)
 	}
 	return nil
 }
 
-// ListCredentialHandlesForSandbox returns every handle a sandbox holds,
+// ListCredentialHandlesForSandbox returns every handle a sandbox still holds,
 // including revoked and expired ones, so an audit or capability report can show
-// the full grant history rather than only what is still live.
+// the grant history rather than only what is still live. The history is bounded
+// by CredentialHandleRetention: RevokeCredentialHandlesForSandbox removes a
+// handle once it has been dead for longer than that grace window.
 func (s *credentialStore) ListCredentialHandlesForSandbox(ctx context.Context, sandboxID string) ([]credentials.Handle, error) {
 	sandboxID = strings.TrimSpace(sandboxID)
 	if sandboxID == "" {

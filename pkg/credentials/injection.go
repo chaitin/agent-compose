@@ -69,6 +69,11 @@ func (s SecretSpec) Validate() error {
 //
 // Requests that share a handle are evaluated together with AuthorizeBatch, so
 // their effective owners are the intersection rather than the union.
+//
+// Two different handles may not claim the same guest environment variable. The
+// guest holds one value per name, so the second claim would silently shadow the
+// first; that is refused here, at the planning boundary, rather than being left
+// for a driver to discover after this function has already reported success.
 func PlanInjection(snapshot Snapshot, reqs []InjectionRequest, now time.Time) ([]SecretSpec, error) {
 	if len(reqs) == 0 {
 		return nil, nil
@@ -78,11 +83,17 @@ func PlanInjection(snapshot Snapshot, reqs []InjectionRequest, now time.Time) ([
 	// Phase 1: verify every authorization before emitting anything.
 	authorizations := make([]Authorization, 0, len(order))
 	materials := make([]Material, 0, len(order))
+	claimed := make(map[string]string, len(order))
 	for _, handleID := range order {
 		material, ok := snapshot.Lookup(handleID)
 		if !ok {
 			return nil, fmt.Errorf("%w: %s", ErrHandleNotInSnapshot, handleID)
 		}
+		name := material.Handle.Normalized().EnvName
+		if owner, duplicate := claimed[name]; duplicate {
+			return nil, fmt.Errorf("%w: environment variable %q is claimed by handles %s and %s", ErrInvalidSecretSpec, name, owner, handleID)
+		}
+		claimed[name] = handleID
 		group := grouped[handleID]
 		var (
 			authorization Authorization
@@ -129,6 +140,13 @@ func groupInjectionRequests(reqs []InjectionRequest) ([]string, map[string][]Req
 
 func specFor(material Material, authorization Authorization) (SecretSpec, error) {
 	handle := material.Handle.Normalized()
+	// The placeholder is derived from the fingerprint, so a handle without one
+	// would produce the bare prefix for every such handle and make two secrets
+	// indistinguishable inside the guest. Refuse instead of planning a
+	// substitution the guest cannot disambiguate.
+	if handle.TokenFingerprint == "" {
+		return SecretSpec{}, fmt.Errorf("%w: handle %s has no token fingerprint to derive a placeholder", ErrInvalidHandle, handle.ID)
+	}
 	spec := SecretSpec{
 		Name:        handle.EnvName,
 		Value:       material.Value,
