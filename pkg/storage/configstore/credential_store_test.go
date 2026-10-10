@@ -330,6 +330,71 @@ func TestCredentialHandleStoreRawTokenLifecycle(t *testing.T) {
 	}
 }
 
+// TestCredentialHandleStoreDecisionWorkflow drives the seam between persistence
+// and the credential model: a handle that was saved and read back authorizes,
+// feeds an injection plan, and stops authorizing once it is revoked or expires
+// on the stored timestamps alone. The model's own tests never see a persisted
+// row, so this is the only place the stored representation and the decision path
+// are checked together.
+func TestCredentialHandleStoreDecisionWorkflow(t *testing.T) {
+	store, ctx := newCredentialStore(t)
+	now := time.Now().UTC()
+	token, handle := mintTestHandle(t, now)
+	if err := store.SaveCredentialHandle(ctx, handle); err != nil {
+		t.Fatalf("SaveCredentialHandle() error = %v", err)
+	}
+	stored, err := store.GetCredentialHandle(ctx, token)
+	if err != nil {
+		t.Fatalf("GetCredentialHandle() error = %v", err)
+	}
+	request := credentials.Request{Endpoint: "git.example.com", Owners: handle.Scope.Owners}
+
+	authorization, err := stored.Authorize(request, now)
+	if err != nil {
+		t.Fatalf("a stored handle must still authorize: %v", err)
+	}
+	if authorization.HandleID != handle.ID || authorization.Endpoint != "git.example.com" {
+		t.Fatalf("authorization = %#v, want the persisted handle at its scoped endpoint", authorization)
+	}
+	if _, err := stored.Authorize(credentials.Request{Endpoint: "evil.example.com", Owners: handle.Scope.Owners}, now); !errors.Is(err, credentials.ErrEndpointOutOfScope) {
+		t.Fatalf("stored handle out-of-scope error = %v, want ErrEndpointOutOfScope", err)
+	}
+
+	snapshot := credentials.NewSnapshot([]credentials.Material{{Handle: stored, Value: "secret-truth"}})
+	specs, err := credentials.PlanInjection(snapshot, []credentials.InjectionRequest{{HandleID: stored.ID, Request: request}}, now)
+	if err != nil {
+		t.Fatalf("PlanInjection() over a stored handle error = %v", err)
+	}
+	if len(specs) != 1 || specs[0].Name != "GIT_TOKEN" || specs[0].AllowHosts[0] != "git.example.com" {
+		t.Fatalf("specs = %#v, want one host-scoped spec for the stored handle", specs)
+	}
+
+	if err := store.RevokeCredentialHandleByID(ctx, handle.ID); err != nil {
+		t.Fatalf("RevokeCredentialHandleByID() error = %v", err)
+	}
+	revoked, err := store.GetCredentialHandleByID(ctx, handle.ID)
+	if err != nil {
+		t.Fatalf("GetCredentialHandleByID() error = %v", err)
+	}
+	if _, err := revoked.Authorize(request, now); !errors.Is(err, credentials.ErrRevoked) {
+		t.Fatalf("revoked stored handle error = %v, want ErrRevoked", err)
+	}
+
+	// Expiry is enforced from the persisted timestamp, not from a value the
+	// caller still holds in memory.
+	_, stale := mintTestHandle(t, now.Add(-30*time.Minute))
+	if err := store.SaveCredentialHandle(ctx, stale); err != nil {
+		t.Fatalf("SaveCredentialHandle() error = %v", err)
+	}
+	expired, err := store.GetCredentialHandleByID(ctx, stale.ID)
+	if err != nil {
+		t.Fatalf("GetCredentialHandleByID() error = %v", err)
+	}
+	if _, err := expired.Authorize(request, now); !errors.Is(err, credentials.ErrExpired) {
+		t.Fatalf("expired stored handle error = %v, want ErrExpired", err)
+	}
+}
+
 // The credential store workflow spans the model, the sqlite schema, and the
 // sandbox sweep. The integration and E2E shapes run the same assertions as the
 // unit shape so the store counts toward every coverage shape.
@@ -347,6 +412,7 @@ func testCredentialHandleStoreWorkflows(t *testing.T) {
 	TestCredentialHandleStoreNeverStoresTheRawToken(t)
 	TestCredentialHandleStoreRevocationTakesEffect(t)
 	TestCredentialHandleStoreRawTokenLifecycle(t)
+	TestCredentialHandleStoreDecisionWorkflow(t)
 	TestCredentialHandleStoreSandboxSweepRevokesEveryHandle(t)
 	TestCredentialHandleStoreReportsNotFound(t)
 	TestCredentialHandleStoreRejectsUnattributableHandle(t)
