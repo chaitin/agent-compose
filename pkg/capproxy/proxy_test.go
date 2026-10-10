@@ -292,16 +292,16 @@ func TestCapsetResolutionAndOutgoingMetadataHelpers(t *testing.T) {
 		"x-octobus-capset":   []string{"old"},
 		"x-custom":           []string{"kept"},
 	})
-	capset, err := resolveCallCapset(ctx, []string{"old", "other"})
+	record, err := decideCallCapset(ctx, SandboxBinding{SandboxID: "sandbox-1", CapsetIDs: []string{"old", "other"}})
 	if err != nil {
-		t.Fatalf("resolveCallCapset returned error: %v", err)
+		t.Fatalf("decideCallCapset returned error: %v", err)
 	}
-	if capset != "old" {
-		t.Fatalf("capset = %q, want old", capset)
+	if record.Result.Target != "old" {
+		t.Fatalf("capset = %q, want old", record.Result.Target)
 	}
 
 	ctx = metadata.NewIncomingContext(context.Background(), metadata.MD{})
-	if _, err := resolveCallCapset(ctx, []string{"one", "two"}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := decideCallCapset(ctx, SandboxBinding{SandboxID: "sandbox-1", CapsetIDs: []string{"one", "two"}}); status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("ambiguous capset code = %s, want %s; err=%v", status.Code(err), codes.FailedPrecondition, err)
 	}
 

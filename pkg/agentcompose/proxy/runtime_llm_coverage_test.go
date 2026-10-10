@@ -516,6 +516,19 @@ func TestRuntimeLLMFacadeRejectsInvalidSecurityContext(t *testing.T) {
 			want:     http.StatusForbidden,
 			contains: "llm facade token is not bound to a connection",
 		},
+		{
+			// A blank provider ID must be refused as unbound, exactly like an
+			// empty one: the policy already treats it as naming no connection,
+			// so forwarding it to the connection resolver would act on a
+			// different reading of the same field.
+			name:     "token with a blank connection",
+			path:     "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses",
+			body:     `{"model":"gpt","input":"hi"}`,
+			token:    llms.FacadeToken{SandboxID: "sandbox-1", Model: "gpt", ProviderID: "   ", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)},
+			session:  &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}},
+			want:     http.StatusForbidden,
+			contains: "llm facade token is not bound to a connection",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

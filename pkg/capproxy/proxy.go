@@ -118,11 +118,11 @@ func (s *Server) handleUnknown(_ any, stream grpc.ServerStream) error {
 	// The guest picks which capset this call targets (x-octobus-capset); capproxy
 	// validates it is one the sandbox is allowed to use. Both the reflection and
 	// business paths require a resolved capset.
-	declaration, err := resolveCallCapset(stream.Context(), binding.CapsetIDs)
+	record, err := decideCallCapset(stream.Context(), binding)
 	if err != nil {
 		return err
 	}
-	target, err := s.resolveTarget(stream.Context(), binding, declaration)
+	target, err := s.resolveTarget(stream.Context(), binding, record.Result.Target)
 	if err != nil {
 		return err
 	}
@@ -135,33 +135,6 @@ func (s *Server) handleUnknown(_ any, stream grpc.ServerStream) error {
 		}
 	}
 	return s.proxyStream(stream, method, outgoing, target)
-}
-
-// resolveCallCapset picks the capset for this call: the guest-supplied
-// x-octobus-capset if it is in the allowed set, or the sole allowed capset when
-// the guest omits it. Otherwise it is an error (the guest must disambiguate).
-func resolveCallCapset(ctx context.Context, allowed []string) (string, error) {
-	md, _ := metadata.FromIncomingContext(ctx)
-	requested := firstMetadata(md, "x-octobus-capset")
-	if requested != "" {
-		if containsString(allowed, requested) {
-			return requested, nil
-		}
-		return "", status.Errorf(codes.PermissionDenied, "capset %q is not allowed for this sandbox", requested)
-	}
-	if len(allowed) == 1 {
-		return allowed[0], nil
-	}
-	return "", status.Error(codes.FailedPrecondition, "x-octobus-capset is required: sandbox allows multiple capsets")
-}
-
-func containsString(values []string, target string) bool {
-	for _, v := range values {
-		if v == target {
-			return true
-		}
-	}
-	return false
 }
 
 // buildOutgoingMetadata forwards the guest's incoming metadata to OctoBus,

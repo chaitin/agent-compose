@@ -13,6 +13,7 @@ import (
 	protocolbridge "github.com/chaitin/ai-api-protocol-bridge"
 	"github.com/labstack/echo/v4"
 
+	"github.com/chaitin/agent-compose/pkg/egress"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -133,11 +134,28 @@ func (h runtimeLLMHandler) authorizeAndResolveRuntimeLLMRequest(c echo.Context, 
 	if requestedModel == "" {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusBadRequest, map[string]string{"error": "llm model is required"})
 	}
-	model, authorized := token.ResolveUpstreamModel(requestedModel)
-	if !authorized {
+	// Which upstream model this facade token may reach is decided by the shared
+	// egress entry point, so the LLM facade and the capability gateway cannot
+	// drift apart. The decision records the policy generation it was evaluated
+	// against; re-validate that generation before use, because a decision made
+	// against an older policy must not be honored. The token is request-scoped
+	// today, so the generation cannot move between evaluation and use; this
+	// guard is the landing point for the phase-3 policy store (SEC-5).
+	policy := llms.FacadeEgressPolicy(token)
+	request := llms.FacadeEgressRequest(token, requestedModel)
+	record := egress.NewRecord(request, egress.Decide(policy, request))
+	if record.IsStale(policy) {
+		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade policy changed during evaluation"})
+	}
+	if !record.Allowed() {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token model mismatch"})
 	}
-	if token.ProviderID == "" {
+	model := record.Result.Target
+	// Ask the token, not the raw field: the policy above decided "bound" through
+	// FacadeToken.HasConnection, so the follow-up check must use the same
+	// predicate or a blank provider ID could be bound for one and unbound for
+	// the other.
+	if !token.HasConnection() {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token is not bound to a connection"})
 	}
 	// The model the upstream is asked for is the literal one. The guest's own
