@@ -32,6 +32,7 @@ const reasonModelNotAuthorized = "model is not authorized by the facade token"
 // before changing any branch.
 func FacadeEgressPolicy(token FacadeToken) egress.Policy {
 	pinned := strings.TrimSpace(token.Model)
+	bound := token.HasConnection()
 	rules := make([]egress.Rule, 0, 4)
 	if guestModel := strings.TrimSpace(token.GuestModel); guestModel != "" {
 		action := egress.Deny
@@ -46,7 +47,7 @@ func FacadeEgressPolicy(token FacadeToken) egress.Policy {
 			Reason: reasonModelNotAuthorized,
 		})
 	}
-	if strings.TrimSpace(token.ProviderID) == "" && pinned != "" {
+	if !bound && pinned != "" {
 		// A token with no connection pins one model: the pinned name is
 		// authorized and every other name is refused, still reporting the pin.
 		rules = append(rules,
@@ -55,7 +56,7 @@ func FacadeEgressPolicy(token FacadeToken) egress.Policy {
 		)
 	}
 	switch {
-	case strings.TrimSpace(token.ProviderID) != "":
+	case bound:
 		rules = append(rules, egress.Rule{ID: "llm.connection-bound", Action: egress.Allow})
 	case pinned == "":
 		rules = append(rules, egress.Rule{ID: "llm.unbound-forward", Action: egress.Allow})

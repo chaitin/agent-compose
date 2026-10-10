@@ -53,6 +53,16 @@ func NewFacadeToken(req NewFacadeTokenRequest) (string, FacadeToken, error) {
 	}, nil
 }
 
+// HasConnection reports whether the token names a connection the request must be
+// routed through. It is the single definition of "this token is bound": the
+// egress policy and the runtime proxy both read it, so a blank provider ID
+// cannot be interpreted in two different ways. A provider ID that is empty after
+// trimming is not a connection, because NewFacadeToken and the resolver treat
+// it as absent.
+func (t FacadeToken) HasConnection() bool {
+	return strings.TrimSpace(t.ProviderID) != ""
+}
+
 // ResolveUpstreamModel maps the model a guest asked for to the model the
 // upstream knows, reporting ok=false only when the token names no upstream the
 // request could belong to.

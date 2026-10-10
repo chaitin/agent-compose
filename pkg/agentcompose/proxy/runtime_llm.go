@@ -151,7 +151,11 @@ func (h runtimeLLMHandler) authorizeAndResolveRuntimeLLMRequest(c echo.Context, 
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token model mismatch"})
 	}
 	model := record.Result.Target
-	if token.ProviderID == "" {
+	// Ask the token, not the raw field: the policy above decided "bound" through
+	// FacadeToken.HasConnection, so the follow-up check must use the same
+	// predicate or a blank provider ID could be bound for one and unbound for
+	// the other.
+	if !token.HasConnection() {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token is not bound to a connection"})
 	}
 	// The model the upstream is asked for is the literal one. The guest's own

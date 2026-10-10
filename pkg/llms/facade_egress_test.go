@@ -139,3 +139,38 @@ func TestFacadeEgressPolicyGenerationTracksTokenContent(t *testing.T) {
 		t.Fatal("a connection-bound token's recorded model changed the policy generation")
 	}
 }
+
+// TestFacadeEgressPolicyBlankProviderIDIsUnbound pins the one interpretation of
+// "this token names no connection". NewFacadeToken trims ProviderID, but a blank
+// value read back from storage must still decide exactly like an empty one, and
+// the same predicate the policy uses must answer for the proxy's follow-up
+// check, so the two cannot disagree about whether the token is bound.
+func TestFacadeEgressPolicyBlankProviderIDIsUnbound(t *testing.T) {
+	blank := FacadeToken{SandboxID: "sandbox-1", ProviderID: "   ", Model: "gpt"}
+	empty := FacadeToken{SandboxID: "sandbox-1", Model: "gpt"}
+	if blank.HasConnection() {
+		t.Fatal("a whitespace-only provider ID counted as a connection")
+	}
+
+	for _, requested := range []string{"gpt", "other"} {
+		got := egress.Decide(FacadeEgressPolicy(blank), FacadeEgressRequest(blank, requested))
+		want := egress.Decide(FacadeEgressPolicy(empty), FacadeEgressRequest(empty, requested))
+		if got != want {
+			t.Fatalf("requested %q: blank provider ID decided %+v, empty provider ID decided %+v", requested, got, want)
+		}
+	}
+	if got := egress.Decide(FacadeEgressPolicy(blank), FacadeEgressRequest(blank, "other")); got.Allowed() {
+		t.Fatalf("a blank provider ID authorized an unpinned model: %+v", got)
+	}
+
+	// A blank provider ID with no pinned model still forwards at the policy
+	// layer; the proxy is what refuses it, and it must refuse it through the
+	// same predicate.
+	blankUnpinned := FacadeToken{SandboxID: "sandbox-1", ProviderID: "\t"}
+	if blankUnpinned.HasConnection() {
+		t.Fatal("a tab-only provider ID counted as a connection")
+	}
+	if got := egress.Decide(FacadeEgressPolicy(blankUnpinned), FacadeEgressRequest(blankUnpinned, "anything")); !got.Allowed() {
+		t.Fatalf("unpinned blank-provider token policy = %+v, want the verbatim forward the proxy then refuses", got)
+	}
+}
