@@ -37,10 +37,25 @@ func TestV2FreezeFieldLayout(t *testing.T) {
 		"agentcompose.v2.SandboxSpec":              {"stopped_runtime_policy": 1, "network": 2},
 		"agentcompose.v2.SandboxNetworkSpec":       {"default": 1, "allow": 2},
 		"agentcompose.v2.SandboxNetworkAllowSpec":  {"host": 1, "port": 2, "protocol": 3},
-		"agentcompose.v2.AttachAgentRunRequest":    {"start": 1, "cancel": 7, "client_frame_id": 15},
-		"agentcompose.v2.AttachAgentRunResponse":   {"started": 1, "error": 6, "server_frame_id": 15, "created_at": 16},
-		"agentcompose.v2.AttachExecRequest":        {"start": 1, "human_message": 7, "client_frame_id": 15},
-		"agentcompose.v2.AttachExecResponse":       {"started": 1, "agent_turn_completed": 6, "server_frame_id": 15, "created_at": 16},
+		"agentcompose.v2.GetEngineCapabilitiesResponse": {
+			"drivers": 1, "providers": 2, "compiled_drivers": 3,
+			"compiled_drivers_note": 4, "captured_at": 5, "observations": 6,
+		},
+		"agentcompose.v2.EngineCapability": {
+			"dimension": 1, "enforced": 2, "mechanism": 3, "preconditions": 4,
+			"observed": 5, "default_behavior": 6, "state": 7, "source": 8,
+		},
+		"agentcompose.v2.EngineObservedCapability": {
+			"dimension": 1, "state": 2, "enforced": 3, "mechanism": 4,
+			"preconditions": 5, "observed": 6, "missing": 7, "source": 8,
+		},
+		"agentcompose.v2.EngineDriverCapabilities":   {"driver": 1, "capabilities": 2},
+		"agentcompose.v2.EngineProviderCapabilities": {"provider": 1, "preferred_protocols": 2, "features": 3},
+		"agentcompose.v2.EngineProviderFeature":      {"feature": 1, "supported": 2},
+		"agentcompose.v2.AttachAgentRunRequest":      {"start": 1, "cancel": 7, "client_frame_id": 15},
+		"agentcompose.v2.AttachAgentRunResponse":     {"started": 1, "error": 6, "server_frame_id": 15, "created_at": 16},
+		"agentcompose.v2.AttachExecRequest":          {"start": 1, "human_message": 7, "client_frame_id": 15},
+		"agentcompose.v2.AttachExecResponse":         {"started": 1, "agent_turn_completed": 6, "server_frame_id": 15, "created_at": 16},
 	}
 
 	messages := File_agentcompose_v2_agentcompose_proto.Messages()
