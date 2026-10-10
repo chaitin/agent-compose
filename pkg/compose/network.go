@@ -38,13 +38,27 @@ func NormalizeSandboxNetworkSpec(path string, network *SandboxNetworkSpec) (*Nor
 }
 
 // EgressDeclaration expresses the normalized declaration in the single egress
-// policy model. It is pure: validation already happened during normalization,
-// so this cannot introduce a policy the schema did not accept.
-func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() egress.NetworkDeclaration {
+// policy model. It is pure.
+//
+// The schema and the decision model name the permissive default differently:
+// the schema keeps "allow-all" so a declared policy stays visibly distinct from
+// the engine's own default (D3), while the decision model only knows allow and
+// deny. This method is the one place that translates between the two
+// vocabularies, so no caller has to know either one.
+//
+// The normalized spec a caller decodes from persisted canonical JSON has not
+// been re-validated against the schema, so the default is normalized again with
+// the schema's own rule and a value the schema does not accept is an error
+// instead of a guessed action: guessing could silently widen egress.
+func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() (egress.NetworkDeclaration, error) {
 	if n == nil {
-		return egress.NetworkDeclaration{}
+		return egress.NetworkDeclaration{}, nil
 	}
-	declaration := egress.NetworkDeclaration{Default: egress.Action(n.Default)}
+	defaultAction, err := egressActionForSandboxNetworkDefault(n.Default)
+	if err != nil {
+		return egress.NetworkDeclaration{}, err
+	}
+	declaration := egress.NetworkDeclaration{Default: defaultAction}
 	for _, entry := range n.Allow {
 		declaration.Allow = append(declaration.Allow, egress.AllowEntry{
 			Host:     entry.Host,
@@ -52,7 +66,22 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() egress.NetworkDeclara
 			Protocol: egress.Protocol(entry.Protocol),
 		})
 	}
-	return declaration
+	return declaration, nil
+}
+
+// egressActionForSandboxNetworkDefault translates the schema's default value
+// into the decision model's action. It reuses the schema normalizer, so the
+// omitted default and the accepted spellings are defined in exactly one place;
+// a value the schema does not accept is an error rather than a guessed action.
+func egressActionForSandboxNetworkDefault(value string) (egress.Action, error) {
+	normalized, err := normalizeSandboxNetworkDefault(value)
+	if err != nil {
+		return "", err
+	}
+	if normalized == SandboxNetworkDefaultDeny {
+		return egress.Deny, nil
+	}
+	return egress.Allow, nil
 }
 
 func normalizeSandboxNetworkDefault(value string) (string, error) {

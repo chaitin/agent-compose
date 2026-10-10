@@ -51,6 +51,9 @@ func networkDeclarationFromAgentSpecJSON(raw string) (*egress.NetworkDeclaration
 	if spec.Sandbox == nil || spec.Sandbox.Network == nil {
 		return nil, nil
 	}
-	declaration := spec.Sandbox.Network.EgressDeclaration()
+	declaration, err := spec.Sandbox.Network.EgressDeclaration()
+	if err != nil {
+		return nil, fmt.Errorf("decode agent network declaration: %w", err)
+	}
 	return &declaration, nil
 }

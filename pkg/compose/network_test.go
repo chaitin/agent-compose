@@ -306,29 +306,89 @@ func TestSandboxNetworkRejectsInvalidDeclarations(t *testing.T) {
 }
 
 func TestSandboxNetworkEgressDeclaration(t *testing.T) {
-	spec := mustNormalizeCompose(t, `
-name: network-egress
-agents:
-  worker:
-    provider: codex
-    sandbox:
-      network:
+	tests := []struct {
+		name        string
+		network     string
+		wantDefault egress.Action
+		wantAllow   []egress.AllowEntry
+	}{
+		{
+			name: "declared deny with an allowance",
+			network: `network:
         default: deny
         allow:
           - host: api.github.com
             port: 443
-            protocol: https
-`, nil)
-	declaration := spec.Agents[0].Sandbox.Network.EgressDeclaration()
-	if declaration.Default != egress.Deny {
-		t.Fatalf("default = %q, want %q", declaration.Default, egress.Deny)
+            protocol: https`,
+			wantDefault: egress.Deny,
+			wantAllow:   []egress.AllowEntry{{Host: "api.github.com", Port: 443, Protocol: egress.ProtocolHTTPS}},
+		},
+		{
+			// The schema's "allow-all" is not an egress.Action; the seam has to
+			// translate it. An omitted default normalizes to "allow-all", so a
+			// declaration that only lists allowances lands here too.
+			name: "omitted default translates allow-all to allow",
+			network: `network:
+        allow:
+          - host: api.github.com
+            port: 443`,
+			wantDefault: egress.Allow,
+			wantAllow:   []egress.AllowEntry{{Host: "api.github.com", Port: 443, Protocol: egress.ProtocolAny}},
+		},
+		{
+			name:        "explicit allow-all translates to allow",
+			network:     "network:\n        default: allow-all",
+			wantDefault: egress.Allow,
+		},
+		{
+			name:        "empty declared block is allow-all",
+			network:     "network: {}",
+			wantDefault: egress.Allow,
+		},
 	}
-	if len(declaration.Allow) != 1 {
-		t.Fatalf("allow = %+v, want one entry", declaration.Allow)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			spec := mustNormalizeCompose(t, "name: network-egress\nagents:\n  worker:\n    provider: codex\n    sandbox:\n      "+tt.network+"\n", nil)
+			declaration, err := spec.Agents[0].Sandbox.Network.EgressDeclaration()
+			if err != nil {
+				t.Fatalf("EgressDeclaration returned error: %v", err)
+			}
+			if declaration.Default != tt.wantDefault {
+				t.Fatalf("default = %q, want %q", declaration.Default, tt.wantDefault)
+			}
+			if len(declaration.Allow) != len(tt.wantAllow) {
+				t.Fatalf("allow = %+v, want %+v", declaration.Allow, tt.wantAllow)
+			}
+			for i, want := range tt.wantAllow {
+				if declaration.Allow[i] != want {
+					t.Fatalf("allow[%d] = %+v, want %+v", i, declaration.Allow[i], want)
+				}
+			}
+			// The whole point of the translation is that the decision model
+			// accepts what this seam produces.
+			if err := declaration.Validate(); err != nil {
+				t.Fatalf("declaration did not validate: %v", err)
+			}
+		})
 	}
-	entry := declaration.Allow[0]
-	if entry.Host != "api.github.com" || entry.Port != 443 || entry.Protocol != egress.ProtocolHTTPS {
-		t.Fatalf("allow entry = %+v, want api.github.com:443/https", entry)
+}
+
+// TestSandboxNetworkEgressDeclarationRejectsUnknownDefault pins the fail-closed
+// reading of a normalized spec decoded from persisted JSON: the value was not
+// re-validated against the schema, so an unknown default must be reported
+// rather than guessed into an action.
+func TestSandboxNetworkEgressDeclarationRejectsUnknownDefault(t *testing.T) {
+	spec := &NormalizedSandboxNetworkSpec{Default: "permit"}
+	if _, err := spec.EgressDeclaration(); err == nil {
+		t.Fatal("EgressDeclaration accepted an unknown default")
+	}
+	var nilSpec *NormalizedSandboxNetworkSpec
+	declaration, err := nilSpec.EgressDeclaration()
+	if err != nil {
+		t.Fatalf("EgressDeclaration(nil) returned error: %v", err)
+	}
+	if declaration.Default != "" || len(declaration.Allow) != 0 {
+		t.Fatalf("EgressDeclaration(nil) = %+v, want the zero declaration", declaration)
 	}
 }
 

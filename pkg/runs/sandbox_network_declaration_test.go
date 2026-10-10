@@ -33,6 +33,39 @@ func TestResolveNetworkDeclarationFromManagedAgentSpec(t *testing.T) {
 	}
 }
 
+func TestResolveNetworkDeclarationPermissiveDefaultFromPersistedSpec(t *testing.T) {
+	// The canonical spec stores the schema's "allow-all" default; the resolver
+	// must translate it into the decision model's allow rather than hand the
+	// schema value to a compiler that only knows allow/deny.
+	for name, specJSON := range map[string]string{
+		"omitted default":  `{"name":"worker","sandbox":{"network":{"allow":[{"host":"api.github.com","port":443,"protocol":"https"}]}}}`,
+		"explicit default": `{"name":"worker","sandbox":{"network":{"default":"allow-all"}}}`,
+		"empty block":      `{"name":"worker","sandbox":{"network":{}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			store := &networkDeclarationStoreStub{agents: map[string]domain.ProjectAgentRecord{
+				"agent-1": {ID: "agent-1", ProjectID: "project-1", AgentName: "worker", SpecJSON: specJSON},
+			}}
+			resolver, err := NewSandboxRunTargetResolver(store)
+			if err != nil {
+				t.Fatalf("NewSandboxRunTargetResolver returned error: %v", err)
+			}
+			sandbox := sandboxWithTags("sandbox-1", domain.SandboxTag{Name: domain.AgentSandboxTagID, Value: "agent-1"})
+
+			declaration, err := resolver.ResolveNetworkDeclaration(context.Background(), sandbox)
+			if err != nil {
+				t.Fatalf("ResolveNetworkDeclaration returned error: %v", err)
+			}
+			if declaration == nil || declaration.Default != egress.Allow {
+				t.Fatalf("declaration = %#v, want a declared allow policy", declaration)
+			}
+			if err := declaration.Validate(); err != nil {
+				t.Fatalf("declaration did not validate: %v", err)
+			}
+		})
+	}
+}
+
 func TestResolveNetworkDeclarationUndeclaredCases(t *testing.T) {
 	tests := []struct {
 		name    string
