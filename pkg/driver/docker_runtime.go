@@ -126,6 +126,10 @@ type dockerCommandInteraction struct {
 	closeSendOnce sync.Once
 	result        RuntimeResult
 	err           error
+	// securityFacts accumulates the lower-layer isolation failures observed on
+	// this exec's stderr. It is written and read on the interaction's own
+	// goroutine (copyOutput then run), never concurrently.
+	securityFacts ExecSecurityFacts
 }
 
 type dockerInteractionWriter struct {
@@ -192,6 +196,9 @@ func (w *dockerExecWriter) Write(p []byte) (int, error) {
 }
 
 func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if err := RequireSandboxNetworkEnforcement(RuntimeDriverDocker, sandbox.NetworkPolicy); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	if _, err := workspaceRuntimeMountSpec(r.config, sandbox, RuntimeDriverDocker); err != nil {
 		return SandboxVMInfo{}, err
 	}
@@ -202,6 +209,10 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	defer func() { _ = dockerClient.Close() }()
 
 	topology := r.dockerDaemonTopology(ctx, dockerClient)
+	// The topology's own network mode is used verbatim: a declared
+	// default-deny policy never reaches this point, because
+	// RequireSandboxNetworkEnforcement above refuses it before any container
+	// exists.
 	containerInfo, created, err := r.getOrCreateContainer(ctx, dockerClient, dockerContainerCreateRequest{
 		Sandbox: sandbox, VMState: vmState, ProxyState: proxyState, NetworkMode: topology.networkMode,
 	})
@@ -215,6 +226,8 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		}
 		started = true
 	}
+	// Attach a containerized sandbox to the daemon's own network so it can
+	// reach the engine's LLM facade and telemetry endpoints.
 	if topology.containerized {
 		if err := ensureDockerContainerNetwork(ctx, dockerClient, containerInfo, string(topology.networkMode)); err != nil {
 			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
@@ -595,10 +608,11 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, err, terminationErr)
 	}
 	result := ExecResult{
-		ExitCode: execInfo.ExitCode,
-		Stdout:   collector.stdout.String(),
-		Stderr:   collector.stderr.String(),
-		Output:   collector.output.String(),
+		ExitCode:      execInfo.ExitCode,
+		Stdout:        collector.stdout.String(),
+		Stderr:        collector.stderr.String(),
+		Output:        collector.output.String(),
+		SecurityFacts: collector.filter.SecurityFacts(),
 	}
 	result.Success = result.ExitCode == 0
 	return result, nil
@@ -705,11 +719,12 @@ func (i *dockerCommandInteraction) run() {
 
 	completedAt := time.Now()
 	i.result = RuntimeResult{
-		OperationID: i.operationID,
-		ExitCode:    exitCode,
-		Success:     runErr == nil && exitCode == 0,
-		StartedAt:   i.startedAt,
-		CompletedAt: completedAt,
+		OperationID:   i.operationID,
+		ExitCode:      exitCode,
+		Success:       runErr == nil && exitCode == 0,
+		StartedAt:     i.startedAt,
+		CompletedAt:   completedAt,
+		SecurityFacts: i.securityFacts.Pointer(),
 	}
 	if runErr != nil {
 		i.err = runErr
@@ -739,6 +754,7 @@ func (i *dockerCommandInteraction) copyOutput() error {
 	)
 	stdoutWriter.finish()
 	stderrWriter.finish()
+	i.securityFacts = i.securityFacts.Merge(stderrWriter.filter.SecurityFacts())
 	return err
 }
 

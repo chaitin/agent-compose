@@ -3393,3 +3393,17 @@ func TestPromptAttachProjectorLogsFinalTextTailOnLaterTurn(t *testing.T) {
 		t.Fatalf("transcript = %q, want %q", string(transcript), want)
 	}
 }
+
+// Resolving the declared network policy from a persisted agent spec is the runs
+// domain's half of the egress seam, so it must carry coverage in the broader
+// shapes and not only in the unit shape.
+func TestIntegrationRunsSandboxNetworkDeclarationWorkflows(t *testing.T) {
+	t.Run("resolve from managed agent spec", TestResolveNetworkDeclarationFromManagedAgentSpec)
+	t.Run("resolve permissive default from persisted spec", TestResolveNetworkDeclarationPermissiveDefaultFromPersistedSpec)
+	t.Run("resolve store error", TestResolveNetworkDeclarationStoreError)
+	t.Run("resolve undeclared cases", TestResolveNetworkDeclarationUndeclaredCases)
+}
+
+func TestE2ERunsSandboxNetworkDeclarationWorkflows(t *testing.T) {
+	TestIntegrationRunsSandboxNetworkDeclarationWorkflows(t)
+}

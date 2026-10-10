@@ -218,6 +218,9 @@ func (r *k8sRuntime) client(contextName string) (kubernetes.Interface, *rest.Con
 }
 
 func (r *k8sRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if err := RequireSandboxNetworkEnforcement(RuntimeDriverK8s, sandbox.NetworkPolicy); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	if _, err := sandboxWorkspaceMount(sandbox, RuntimeDriverK8s); err != nil {
 		return SandboxVMInfo{}, err
 	}
@@ -837,10 +840,11 @@ func (r *k8sRuntime) execWithInput(ctx context.Context, request k8sExecRequest, 
 	}
 
 	result := ExecResult{
-		ExitCode: exitCode,
-		Stdout:   collector.stdout.String(),
-		Stderr:   collector.stderr.String(),
-		Output:   collector.output.String(),
+		ExitCode:      exitCode,
+		Stdout:        collector.stdout.String(),
+		Stderr:        collector.stderr.String(),
+		Output:        collector.output.String(),
+		SecurityFacts: collector.filter.SecurityFacts(),
 	}
 	result.Success = result.ExitCode == 0
 	return result, nil

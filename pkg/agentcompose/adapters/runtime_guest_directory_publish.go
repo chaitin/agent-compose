@@ -16,7 +16,11 @@ func (r guestFileRuntimeAdapter) PublishGuestDirectory(ctx context.Context, sand
 	if !ok {
 		return fmt.Errorf("runtime does not support guest directory publication")
 	}
-	return publisher.PublishGuestDirectory(ctx, execution.ToDriverSandbox(sandbox), execution.ToDriverVMState(vmState), publication)
+	driverSandbox, err := r.driverSandbox(ctx, sandbox)
+	if err != nil {
+		return err
+	}
+	return publisher.PublishGuestDirectory(ctx, driverSandbox, execution.ToDriverVMState(vmState), publication)
 }
 
 func (r guestFileRuntimeAdapter) EnsureGuestSymlink(ctx context.Context, sandbox *domain.Sandbox, vmState domain.VMState, projection driverpkg.GuestSymlinkProjection) error {
@@ -26,5 +30,9 @@ func (r guestFileRuntimeAdapter) EnsureGuestSymlink(ctx context.Context, sandbox
 	if !ok {
 		return fmt.Errorf("runtime does not support guest symlink projection")
 	}
-	return linker.EnsureGuestSymlink(ctx, execution.ToDriverSandbox(sandbox), execution.ToDriverVMState(vmState), projection)
+	driverSandbox, err := r.driverSandbox(ctx, sandbox)
+	if err != nil {
+		return err
+	}
+	return linker.EnsureGuestSymlink(ctx, driverSandbox, execution.ToDriverVMState(vmState), projection)
 }

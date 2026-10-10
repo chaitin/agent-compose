@@ -29,7 +29,7 @@ func TestHistoricalUncompiledRuntimeOperationsPreserveState(t *testing.T) {
 		t.Fatalf("GetProxyState before operations returned error: %v", err)
 	}
 
-	sandboxDriver := NewSandboxDriver(config, store, nil, provider)
+	sandboxDriver := newTestSandboxDriver(config, store, nil, provider)
 	operations := []struct {
 		name string
 		call func() error
@@ -156,7 +156,7 @@ func newHistoricalUncompiledRuntimeFixture(t *testing.T) (*appconfig.Config, *sa
 	if err := store.SaveProxyState(session.Summary.ID, domain.ProxyState{Enabled: true, HostPort: 12345, GuestPort: 8888, ProxyPath: "/original"}); err != nil {
 		t.Fatalf("SaveProxyState returned error: %v", err)
 	}
-	provider, err := NewRuntimeProvider(config, store)
+	provider, err := NewRuntimeProvider(config, store, nil)
 	if err != nil {
 		t.Fatalf("NewRuntimeProvider(Docker default) returned error: %v", err)
 	}

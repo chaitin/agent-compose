@@ -216,8 +216,15 @@ type Sandbox struct {
 	// or in session-scoped LLM provider rows.
 	ProviderEnvOverrideNames []string             `json:"provider_env_override_names"`
 	VolumeMounts             []SandboxVolumeMount `json:"volume_mounts,omitempty"`
-	RuntimeEnvItems          []SandboxEnvVar      `json:"-"`
-	ProviderEnvItems         []SandboxEnvVar      `json:"-"`
+	// IsolationRequirements are the isolation dimensions this sandbox's
+	// declaration requires the engine to enforce. Entries are capability
+	// dimension keys ("egress_policy", "process.seccomp", ...) and may carry a
+	// "best_effort:" prefix. The list is empty for every sandbox the current
+	// compose schema can produce, so the SEC-3 start pre-flight is a no-op by
+	// default; a future declaration surface fills it without adding wiring.
+	IsolationRequirements []string        `json:"isolation_requirements,omitempty"`
+	RuntimeEnvItems       []SandboxEnvVar `json:"-"`
+	ProviderEnvItems      []SandboxEnvVar `json:"-"`
 }
 
 func SandboxWorkspaceReclaimed(sandbox *Sandbox) bool {

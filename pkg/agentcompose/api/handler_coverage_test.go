@@ -84,6 +84,12 @@ func TestIntegrationAPIHandlerRuntimeWorkflows(t *testing.T) {
 	t.Run("follow run logs offsets tail and final", TestFollowRunLogsStreamsOffsetsTailAndFinal)
 	t.Run("follow run logs missing terminal file", TestFollowRunLogsMissingLogFileReturnsEmptyFinalForTerminalRun)
 	t.Run("follow run logs project mismatch", TestFollowRunLogsRejectsProjectMismatch)
+	t.Run("engine capabilities report the frozen matrix", TestEngineCapabilitiesHandlerReportsFrozenMatrix)
+	t.Run("engine capabilities report the provider matrix", TestEngineCapabilitiesHandlerReportsProviderMatrix)
+	t.Run("engine capabilities report state and source", TestEngineCapabilitiesHandlerReportsExplicitStateAndSource)
+	t.Run("engine capabilities report the measured system layer", TestEngineCapabilitiesHandlerReportsMeasuredSystemLayer)
+	t.Run("sandbox spec network round trips through proto", TestSandboxSpecNetworkRoundTripsThroughProto)
+	t.Run("sandbox spec without network stays absent", TestSandboxSpecWithoutNetworkStaysAbsentInProto)
 }
 
 func TestE2EAPIHandlerRuntimeWorkflows(t *testing.T) {

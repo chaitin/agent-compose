@@ -35,3 +35,22 @@ func TestIntegrationAdapterRuntimeWorkflows(t *testing.T) {
 func TestE2EAdapterRuntimeWorkflows(t *testing.T) {
 	TestIntegrationAdapterRuntimeWorkflows(t)
 }
+
+// The adapter is where a declared network policy meets the driver boundary, and
+// where the isolation preflight refuses a start, so it must carry coverage in
+// the broader shapes and not only in the unit shape.
+func TestIntegrationAdapterSandboxNetworkWorkflows(t *testing.T) {
+	t.Run("policy reaches the driver boundary", TestEnsureSandboxCarriesDeclaredNetworkPolicyToDriverBoundary)
+	t.Run("declared deny fires the gate", TestEnsureSandboxDeclaredDenyFiresTheEnforcementGate)
+	t.Run("declaration failure fails closed", TestEnsureSandboxNetworkDeclarationFailureFailsClosed)
+	t.Run("undeclared leaves the gate inert", TestEnsureSandboxUndeclaredLeavesGateInert)
+	t.Run("guest file paths carry the policy", TestGuestFilePathsCarryDeclaredNetworkPolicy)
+	t.Run("start allows a best effort requirement", TestStartSandboxVMAllowsABestEffortIsolationRequirement)
+	t.Run("default start path is unchanged", TestStartSandboxVMDefaultPathIsUnchangedByTheIsolationGate)
+	t.Run("start fails closed on default deny egress", TestStartSandboxVMFailsClosedWhenDefaultDenyEgressIsDeclared)
+	t.Run("start rejects an unknown isolation requirement", TestStartSandboxVMRejectsAnUnknownIsolationRequirement)
+}
+
+func TestE2EAdapterSandboxNetworkWorkflows(t *testing.T) {
+	TestIntegrationAdapterSandboxNetworkWorkflows(t)
+}

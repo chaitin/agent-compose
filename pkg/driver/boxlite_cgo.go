@@ -459,6 +459,12 @@ func notifyBoxliteExecExit(exitCode int, handle uintptr) {
 }
 
 func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	// BoxLite binds network_enabled unconditionally and has no verified FFI
+	// binding for an allowance list, so a declared default-deny policy must
+	// fail closed here rather than run a sandbox with unrestricted egress.
+	if err := RequireSandboxNetworkEnforcement(RuntimeDriverBoxlite, sandbox.NetworkPolicy); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	if _, err := sandboxWorkspaceMount(sandbox, RuntimeDriverBoxlite); err != nil {
 		return SandboxVMInfo{}, err
 	}
@@ -1435,10 +1441,11 @@ func (r *cgoSandboxRuntime) executeBox(ctx context.Context, box *cgoBoxHandle, s
 		return ExecResult{}, err
 	}
 	result := ExecResult{
-		ExitCode: exitCode,
-		Stdout:   collector.stdout.String(),
-		Stderr:   collector.stderr.String(),
-		Output:   collector.output.String(),
+		ExitCode:      exitCode,
+		Stdout:        collector.stdout.String(),
+		Stderr:        collector.stderr.String(),
+		Output:        collector.output.String(),
+		SecurityFacts: collector.filter.SecurityFacts(),
 	}
 	result.Success = result.ExitCode == 0
 	return result, nil

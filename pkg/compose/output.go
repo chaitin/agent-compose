@@ -168,7 +168,7 @@ func (s *NormalizedProjectSpec) ordered(redactSecrets bool) orderedProjectSpec {
 			Skills:       outputSkillSpecs(agent.Skills, redactSecrets),
 			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
 			Workspace:    outputWorkspace(agent.Workspace, redactSecrets),
-			Sandbox:      agent.Sandbox,
+			Sandbox:      cloneNormalizedSandboxSpec(agent.Sandbox),
 			Scheduler:    cloneNormalizedSchedulerSpec(agent.Scheduler),
 			Jupyter:      cloneJupyterSpec(agent.Jupyter),
 		})
@@ -215,7 +215,7 @@ func (s *NormalizedProjectSpec) clone(redactSecrets bool) *NormalizedProjectSpec
 			Skills:       cloneNormalizedSkillSpecs(agent.Skills),
 			Volumes:      cloneNormalizedVolumeMountSpecs(agent.Volumes),
 			Workspace:    agent.Workspace,
-			Sandbox:      agent.Sandbox,
+			Sandbox:      cloneNormalizedSandboxSpec(agent.Sandbox),
 			Scheduler:    agent.Scheduler,
 			Jupyter:      agent.Jupyter,
 		})
@@ -537,6 +537,23 @@ func cloneJupyterSpec(value *JupyterSpec) *JupyterSpec {
 		return nil
 	}
 	cloned := *value
+	return &cloned
+}
+
+// cloneNormalizedSandboxSpec deep-clones the nested network declaration. The
+// sandbox spec is otherwise shared by pointer between the ordered output and
+// the normalized spec, which would let a caller that mutates one view change
+// the canonical JSON of the other.
+func cloneNormalizedSandboxSpec(value *NormalizedSandboxSpec) *NormalizedSandboxSpec {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	if value.Network != nil {
+		network := *value.Network
+		network.Allow = append([]NormalizedSandboxNetworkAllowSpec(nil), value.Network.Allow...)
+		cloned.Network = &network
+	}
 	return &cloned
 }
 

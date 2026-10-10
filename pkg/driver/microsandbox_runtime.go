@@ -274,11 +274,12 @@ func receiveMicrosandboxExecEvents(ctx context.Context, recv microsandboxExecEve
 
 func microsandboxExecResult(collector *microsandboxExecCollector, exitCode int, success bool) ExecResult {
 	return ExecResult{
-		ExitCode: exitCode,
-		Success:  success,
-		Stdout:   collector.stdout.String(),
-		Stderr:   collector.stderr.String(),
-		Output:   collector.output.String(),
+		ExitCode:      exitCode,
+		Success:       success,
+		Stdout:        collector.stdout.String(),
+		Stderr:        collector.stderr.String(),
+		Output:        collector.output.String(),
+		SecurityFacts: collector.filter.SecurityFacts(),
 	}
 }
 
@@ -368,6 +369,9 @@ func (c *microsandboxExecCollector) appendChunk(chunk ExecChunk) {
 }
 
 func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if err := RequireSandboxNetworkEnforcement(RuntimeDriverMicrosandbox, session.NetworkPolicy); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	if _, err := sandboxWorkspaceMount(session, RuntimeDriverMicrosandbox); err != nil {
 		return SandboxVMInfo{}, err
 	}
@@ -509,11 +513,12 @@ func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmStat
 				return ExecResult{}, err
 			}
 			return ExecResult{
-				ExitCode: output.ExitCode(),
-				Stdout:   output.Stdout(),
-				Stderr:   output.Stderr(),
-				Output:   output.Stdout() + output.Stderr(),
-				Success:  output.Success(),
+				ExitCode:      output.ExitCode(),
+				Stdout:        output.Stdout(),
+				Stderr:        output.Stderr(),
+				Output:        output.Stdout() + output.Stderr(),
+				Success:       output.Success(),
+				SecurityFacts: countExecSecurityFacts(output.Stderr()),
 			}, nil
 		},
 	)
@@ -574,11 +579,12 @@ func (r *microsandboxRuntime) ensureDirectoryOnlyGuestSandboxBootstrap(ctx conte
 	result := ExecResult{}
 	if output != nil {
 		result = ExecResult{
-			ExitCode: output.ExitCode(),
-			Stdout:   output.Stdout(),
-			Stderr:   output.Stderr(),
-			Output:   output.Stdout() + output.Stderr(),
-			Success:  output.Success(),
+			ExitCode:      output.ExitCode(),
+			Stdout:        output.Stdout(),
+			Stderr:        output.Stderr(),
+			Output:        output.Stdout() + output.Stderr(),
+			Success:       output.Success(),
+			SecurityFacts: countExecSecurityFacts(output.Stderr()),
 		}
 	}
 	sandboxID := ""
@@ -1120,11 +1126,13 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
 	env["JUPYTER_TOKEN"] = proxyState.Token
-	// Disable DNS rebind protection so guests can resolve names that point at
-	// private/internal IPs (e.g. an internal container registry).
-	rebindDisabled := false
-	network := microsandbox.NetworkPolicy.AllowAll()
-	network.DNS = &microsandbox.DNSConfig{RebindProtection: &rebindDisabled}
+	// The declared network policy decides egress; DNS rebind protection stays
+	// enabled because the SDK's default protection is the correct behavior and
+	// disabling it let a guest resolve names pointing at private addresses.
+	network, err := microsandboxSDKNetworkConfig(session.NetworkPolicy)
+	if err != nil {
+		return nil, err
+	}
 	resources := configuredSandboxResources(r.config)
 	options := []microsandbox.SandboxOption{
 		microsandbox.WithImageDisk(rootfsDisk.Path, "ext4"),

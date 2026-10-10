@@ -433,7 +433,14 @@ func (i *boxliteCommandInteraction) emitChunk(chunk ExecChunk) {
 }
 
 func (i *boxliteCommandInteraction) finish(exitCode int, err error) {
-	i.result = RuntimeResult{OperationID: i.operationID, ExitCode: exitCode, Success: err == nil && exitCode == 0, StartedAt: i.startedAt, CompletedAt: time.Now()}
+	i.result = RuntimeResult{
+		OperationID:   i.operationID,
+		ExitCode:      exitCode,
+		Success:       err == nil && exitCode == 0,
+		StartedAt:     i.startedAt,
+		CompletedAt:   time.Now(),
+		SecurityFacts: i.collector.filter.SecurityFacts().Pointer(),
+	}
 	if err != nil {
 		i.err = err
 		i.result.Error = err.Error()

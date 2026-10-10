@@ -56,6 +56,11 @@ type microsandboxCommandInteraction struct {
 	cleanupOnce   sync.Once
 	result        RuntimeResult
 	err           error
+	// securityFacts counts lower-layer isolation failures seen on stderr. The
+	// interaction emits decoded text directly rather than through
+	// execOutputFilter, so it counts each decoded chunk; the streaming exec
+	// path, which does buffer and reassemble split lines, counts exactly.
+	securityFacts ExecSecurityFacts
 }
 
 func (r *microsandboxRuntime) InteractionCapabilities() RuntimeInteractionCapabilities {
@@ -383,11 +388,12 @@ func (i *microsandboxCommandInteraction) projectOutputEvent(event *microsandbox.
 
 func (i *microsandboxCommandInteraction) finish(state microsandboxInteractionRunState) {
 	i.result = RuntimeResult{
-		OperationID: i.operationID,
-		ExitCode:    state.exitCode,
-		Success:     state.err == nil && state.exitCode == 0,
-		StartedAt:   i.startedAt,
-		CompletedAt: time.Now(),
+		OperationID:   i.operationID,
+		ExitCode:      state.exitCode,
+		Success:       state.err == nil && state.exitCode == 0,
+		StartedAt:     i.startedAt,
+		CompletedAt:   time.Now(),
+		SecurityFacts: i.securityFacts.Pointer(),
 	}
 	if state.err != nil {
 		i.err = state.err
@@ -423,6 +429,7 @@ func (i *microsandboxCommandInteraction) emitText(text string, stream StdioStrea
 	frameType := RuntimeOutputStdout
 	if NormalizeStdioStream(stream) == StdioStderr {
 		frameType = RuntimeOutputStderr
+		i.securityFacts = i.securityFacts.Merge(countExecSecurityFacts(text))
 	}
 	i.emit(RuntimeOutputFrame{Type: frameType, Data: []byte(text)})
 }

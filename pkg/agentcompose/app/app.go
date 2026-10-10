@@ -18,6 +18,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/agentcompose/proxy"
 	"github.com/chaitin/agent-compose/pkg/cache"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
+	"github.com/chaitin/agent-compose/pkg/capmatrix"
 	"github.com/chaitin/agent-compose/pkg/capproxy"
 	"github.com/chaitin/agent-compose/pkg/cleanup"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -63,6 +64,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewLLMClient)
 	do.Provide(di, NewProjectOctoBusTargetResolver)
 	do.Provide(di, NewCapabilityProvider)
+	do.Provide(di, NewEngineCapabilitySnapshot)
 	do.Provide(di, NewCapabilitySandboxResolver)
 	do.Provide(di, NewImageBackends)
 	do.Provide(di, NewCacheController)
@@ -159,6 +161,8 @@ func RegisterRoutes(di do.Injector) {
 	path, handler = agentcomposev2connect.NewDashboardServiceHandler(api.NewDashboardV2Handler(do.MustInvoke[*dashboard.Hub](di)))
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewCapabilityServiceHandler(api.NewCapabilityV2Handler(do.MustInvoke[capabilities.Provider](di), capabilityRuntimeConfig{config: do.MustInvoke[*appconfig.Config](di)}))
+	app.Any(path+"*", echo.WrapHandler(handler))
+	path, handler = agentcomposev2connect.NewEngineServiceHandler(api.NewEngineCapabilitiesV2Handler(do.MustInvoke[capmatrix.Snapshot](di)))
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewLLMServiceHandler(api.NewLLMHandler(do.MustInvoke[*adapters.LLMClient](di), do.MustInvoke[*configstore.ConfigStore](di)))
 	app.Any(path+"*", echo.WrapHandler(handler))
@@ -395,7 +399,11 @@ func NewVolumeManager(di do.Injector) (*volumes.Manager, error) {
 }
 
 func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {
-	return adapters.NewRuntimeProvider(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*sandboxstore.Store](di))
+	return adapters.NewRuntimeProvider(
+		do.MustInvoke[*appconfig.Config](di),
+		do.MustInvoke[*sandboxstore.Store](di),
+		do.MustInvoke[*runs.SandboxRunTargetResolver](di),
+	)
 }
 
 func NewLLMClient(di do.Injector) (*adapters.LLMClient, error) {
@@ -408,6 +416,7 @@ func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {
 		do.MustInvoke[*sandboxstore.Store](di),
 		do.MustInvoke[*configstore.ConfigStore](di),
 		do.MustInvoke[adapters.RuntimeProvider](di),
+		do.MustInvoke[capmatrix.Snapshot](di),
 	), nil
 }
 
@@ -534,6 +543,21 @@ func NewCapabilityProvider(di do.Injector) (capabilities.Provider, error) {
 		do.MustInvoke[*adapters.ProjectOctoBusTargetResolver](di),
 		conf.CapGRPCTarget,
 	), nil
+}
+
+// NewEngineCapabilitySnapshot freezes the engine capability matrix once, when
+// the daemon composes its routes. It reads static driver declarations and the
+// provider matrix, so it never probes a runtime.
+func NewEngineCapabilitySnapshot(do.Injector) (capmatrix.Snapshot, error) {
+	facts, err := driver.CompiledRuntimeCapabilities()
+	if err != nil {
+		return capmatrix.Snapshot{}, fmt.Errorf("collect runtime capability declarations: %w", err)
+	}
+	snapshot, err := capmatrix.BuildSnapshot(facts, time.Now())
+	if err != nil {
+		return capmatrix.Snapshot{}, fmt.Errorf("build engine capability snapshot: %w", err)
+	}
+	return snapshot, nil
 }
 
 func NewProjectOctoBusTargetResolver(di do.Injector) (*adapters.ProjectOctoBusTargetResolver, error) {

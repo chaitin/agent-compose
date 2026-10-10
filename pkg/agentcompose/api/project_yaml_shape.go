@@ -153,7 +153,7 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 			raw["workspace"] = workspace
 		}
 		if sandbox := agent.GetSandbox(); sandbox != nil {
-			raw["sandbox"] = map[string]any{"stopped_runtime_policy": sandbox.GetStoppedRuntimePolicy()}
+			raw["sandbox"] = sandboxYAMLShape(sandbox)
 		}
 		if scheduler := SchedulerYAMLShape(agent.GetScheduler()); len(scheduler) > 0 {
 			raw["scheduler"] = scheduler
@@ -172,6 +172,31 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 		values[name] = raw
 	}
 	return values, nil
+}
+
+// sandboxYAMLShape renders the sandbox declaration. The network block is only
+// added when it was declared, so a spec that does not use it renders exactly as
+// it did before the field existed.
+func sandboxYAMLShape(sandbox *agentcomposev2.SandboxSpec) map[string]any {
+	shape := map[string]any{"stopped_runtime_policy": sandbox.GetStoppedRuntimePolicy()}
+	network := sandbox.GetNetwork()
+	if network == nil {
+		return shape
+	}
+	networkShape := map[string]any{"default": network.GetDefault()}
+	if entries := network.GetAllow(); len(entries) > 0 {
+		allow := make([]map[string]any, 0, len(entries))
+		for _, entry := range entries {
+			allow = append(allow, map[string]any{
+				"host":     entry.GetHost(),
+				"port":     entry.GetPort(),
+				"protocol": entry.GetProtocol(),
+			})
+		}
+		networkShape["allow"] = allow
+	}
+	shape["network"] = networkShape
+	return shape
 }
 
 func MCPServerYAMLMap(path string, mcps []*agentcomposev2.MCPServerSpec) (map[string]any, []*agentcomposev2.ProjectValidationIssue) {

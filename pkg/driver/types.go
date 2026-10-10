@@ -30,6 +30,10 @@ type Sandbox struct {
 	EnvItems        []SandboxEnvVar      `json:"env_items,omitempty"`
 	VolumeMounts    []SandboxVolumeMount `json:"volume_mounts,omitempty"`
 	RuntimeEnvItems []SandboxEnvVar      `json:"-"`
+	// NetworkPolicy is the driver-boundary egress policy the caller populated
+	// from the compose declaration. A nil policy means the sandbox declared no
+	// network policy, which keeps today's unrestricted behavior (D3).
+	NetworkPolicy *SandboxNetworkPolicy `json:"network_policy,omitempty"`
 }
 
 // SandboxWorkspace carries the persisted delivery contract into the runtime boundary.
@@ -126,6 +130,10 @@ type ExecResult struct {
 	Stderr   string
 	Output   string
 	Success  bool
+	// SecurityFacts carries the isolation failures the lower layer reported on
+	// this exec's stderr. It is engine-measured evidence, not a driver
+	// declaration, and is zero when the lower layer reported nothing.
+	SecurityFacts ExecSecurityFacts
 }
 
 const (
