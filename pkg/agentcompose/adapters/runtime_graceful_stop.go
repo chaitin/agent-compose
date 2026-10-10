@@ -333,6 +333,12 @@ type trackedRuntimeInteraction struct {
 	finishOnce sync.Once
 	finish     func()
 	done       chan struct{}
+	// sandboxID and driverName identify the sandbox whose lower-layer isolation
+	// facts are reported when Wait returns. reportOnce keeps a second Wait call
+	// from logging the same facts twice.
+	sandboxID  string
+	driverName string
+	reportOnce sync.Once
 }
 
 func (i *trackedRuntimeInteraction) Recv() (driver.RuntimeOutputFrame, error) {
@@ -345,8 +351,22 @@ func (i *trackedRuntimeInteraction) Recv() (driver.RuntimeOutputFrame, error) {
 
 func (i *trackedRuntimeInteraction) Wait() (driver.RuntimeResult, error) {
 	result, err := i.RuntimeInteraction.Wait()
+	i.reportLowerLayerIsolationFacts(result)
 	i.complete()
 	return result, err
+}
+
+// reportLowerLayerIsolationFacts logs the isolation failures the lower layer
+// reported during this operation. The result frame carries the same facts to a
+// caller that only reads frames, but Wait is the shared completion point of an
+// interactive run, so it is where the engine consumes them.
+func (i *trackedRuntimeInteraction) reportLowerLayerIsolationFacts(result driver.RuntimeResult) {
+	if result.SecurityFacts == nil {
+		return
+	}
+	i.reportOnce.Do(func() {
+		reportMeasuredLowerLayerIsolationFacts(i.sandboxID, i.driverName, *result.SecurityFacts)
+	})
 }
 
 func (i *trackedRuntimeInteraction) complete() {

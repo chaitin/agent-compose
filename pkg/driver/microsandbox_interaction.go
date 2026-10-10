@@ -56,6 +56,13 @@ type microsandboxCommandInteraction struct {
 	cleanupOnce   sync.Once
 	result        RuntimeResult
 	err           error
+	// securityFilter reassembles stderr text that the stream split across
+	// decoded chunks before counting lower-layer isolation failures, so a
+	// warning cut in half is still counted exactly once. It reuses the
+	// streaming exec path's execOutputFilter; the interaction emits its own
+	// frames, so the filter's emit is discarded. It is created on first use
+	// because tests build the interaction directly.
+	securityFilter *execOutputFilter
 }
 
 func (r *microsandboxRuntime) InteractionCapabilities() RuntimeInteractionCapabilities {
@@ -383,11 +390,12 @@ func (i *microsandboxCommandInteraction) projectOutputEvent(event *microsandbox.
 
 func (i *microsandboxCommandInteraction) finish(state microsandboxInteractionRunState) {
 	i.result = RuntimeResult{
-		OperationID: i.operationID,
-		ExitCode:    state.exitCode,
-		Success:     state.err == nil && state.exitCode == 0,
-		StartedAt:   i.startedAt,
-		CompletedAt: time.Now(),
+		OperationID:   i.operationID,
+		ExitCode:      state.exitCode,
+		Success:       state.err == nil && state.exitCode == 0,
+		StartedAt:     i.startedAt,
+		CompletedAt:   time.Now(),
+		SecurityFacts: i.securityFilter.SecurityFacts().Pointer(),
 	}
 	if state.err != nil {
 		i.err = state.err
@@ -414,6 +422,27 @@ func (i *microsandboxCommandInteraction) flushOutput() {
 		stream = StdioStdout
 	}
 	i.emitText(i.stderrDecoder.Finish(), stream)
+	i.finishObservingStderr()
+}
+
+// observeStderr counts lower-layer isolation failures in streamed stderr text.
+// The text is fed through an execOutputFilter so a warning the stream split
+// across decoded chunks is reassembled before it is counted, exactly like the
+// streaming exec path. It is called only from the interaction's run goroutine.
+func (i *microsandboxCommandInteraction) observeStderr(text string) {
+	if i.securityFilter == nil {
+		i.securityFilter = newExecOutputFilter()
+	}
+	i.securityFilter.Write(ExecChunk{Text: text, Stream: StdioStderr}, func(ExecChunk) {})
+}
+
+// finishObservingStderr counts a trailing stderr line that never received a
+// newline, so a final split warning is not dropped.
+func (i *microsandboxCommandInteraction) finishObservingStderr() {
+	if i.securityFilter == nil {
+		return
+	}
+	i.securityFilter.Finish(func(ExecChunk) {})
 }
 
 func (i *microsandboxCommandInteraction) emitText(text string, stream StdioStream) {
@@ -423,6 +452,7 @@ func (i *microsandboxCommandInteraction) emitText(text string, stream StdioStrea
 	frameType := RuntimeOutputStdout
 	if NormalizeStdioStream(stream) == StdioStderr {
 		frameType = RuntimeOutputStderr
+		i.observeStderr(text)
 	}
 	i.emit(RuntimeOutputFrame{Type: frameType, Data: []byte(text)})
 }
