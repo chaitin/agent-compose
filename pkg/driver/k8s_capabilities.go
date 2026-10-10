@@ -14,7 +14,7 @@ func k8sRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 			DefaultBehavior: "an undeclared resource limit is not applied to the Pod",
 		},
 	}
-	dimensions = append(dimensions, securityContextFacts(reasonNotConfigured, securityContextObserved{
+	dimensions = append(dimensions, securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{
 		CapabilityDrop: "neither the Pod nor the container declares a SecurityContext",
 		ReadOnlyRootfs: "the container SecurityContext is unset, so its root filesystem stays writable",
 		NonRootUser:    "no PodSecurityContext runAsNonRoot or runAsUser is set, and ServiceAccountName is empty",
@@ -27,12 +27,7 @@ func k8sRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 			Observed:        "createPod creates only a Pod; no NetworkPolicy is created and Pod egress is unrestricted",
 			DefaultBehavior: "outbound access from the Pod is unrestricted",
 		},
-		RuntimeCapabilityDimensionFacts{
-			Dimension:       dimensionCredentialPlaceholder,
-			Mechanism:       reasonUnsupported,
-			Observed:        "the Pod path has no placeholder substitution: guest environment values are written verbatim",
-			DefaultBehavior: "a credential reaches the Pod as the literal value the declaration provided",
-		},
+		credentialPlaceholderFacts("the Pod path has no credential substitution of its own: every other declared environment value is written verbatim"),
 		stoppedRuntimeRetentionFacts(RuntimeDriverK8s, "", "stopping a Pod deletes it and resume creates a new Pod from the image"),
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionCheckpointRestore,

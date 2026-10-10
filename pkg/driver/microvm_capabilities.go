@@ -7,6 +7,11 @@ type microVMObserved struct {
 	SecurityContext       securityContextObserved
 	Egress                string
 	CredentialPlaceholder string
+	// CheckpointReason and CheckpointObserved describe the driver's own
+	// checkpoint/restore surface. One microVM SDK exposes one and the other does
+	// not, so the reason is per driver rather than shared.
+	CheckpointReason   string
+	CheckpointObserved string
 }
 
 // microVMRuntimeCapabilityFacts declares the capabilities shared by the two
@@ -23,7 +28,16 @@ func microVMRuntimeCapabilityFacts(driver string, observed microVMObserved) Runt
 			DefaultBehavior: "the daemon-wide default of 4 CPUs, 4096 MiB memory, and 6 GiB disk applies when no explicit sandbox resource is configured",
 		},
 	}
-	dimensions = append(dimensions, securityContextFacts(reasonUnsupported, observed.SecurityContext)...)
+	// The microVM SDKs expose no per-dimension capability-drop, read-only
+	// rootfs, or user-namespace option. They do expose a per-command user
+	// override, which the drivers leave unset, so non_root_user is
+	// not_configured rather than unsupported.
+	dimensions = append(dimensions, securityContextFacts(securityContextReasons{
+		CapabilityDrop: reasonUnsupported,
+		ReadOnlyRootfs: reasonUnsupported,
+		NonRootUser:    reasonNotConfigured,
+		UserNamespaces: reasonUnsupported,
+	}, observed.SecurityContext)...)
 	dimensions = append(dimensions,
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionEgressPolicy,
@@ -31,18 +45,13 @@ func microVMRuntimeCapabilityFacts(driver string, observed microVMObserved) Runt
 			Observed:        observed.Egress,
 			DefaultBehavior: "outbound access from the guest is unrestricted",
 		},
-		RuntimeCapabilityDimensionFacts{
-			Dimension:       dimensionCredentialPlaceholder,
-			Mechanism:       reasonNotConfigured,
-			Observed:        observed.CredentialPlaceholder,
-			DefaultBehavior: "a credential reaches the guest as the literal value the declaration provided",
-		},
+		credentialPlaceholderFacts(observed.CredentialPlaceholder),
 		stoppedRuntimeRetentionFacts(driver, mechanismStoppedMicroVMRuntime, ""),
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionCheckpointRestore,
-			Mechanism:       reasonUnsupported,
-			Observed:        "no checkpoint or restore path is bound for the microVM SDK",
-			DefaultBehavior: "a sandbox cannot be checkpointed; stopping ends the running guest",
+			Mechanism:       observed.CheckpointReason,
+			Observed:        observed.CheckpointObserved,
+			DefaultBehavior: "the engine has no checkpoint or restore path; stopping a sandbox ends the running guest",
 		},
 		RuntimeCapabilityDimensionFacts{
 			Dimension:       dimensionGPUAndDevices,

@@ -97,6 +97,61 @@ func TestMicroVMCapabilitiesMatchSharedResourceConfig(t *testing.T) {
 			t.Fatalf("driver %q resource_limits = %+v, want enforced via %q", driver, dimension, mechanismSDKSandboxOptions)
 		}
 	}
+
+	configured := configuredSandboxResources(&appconfig.Config{SandboxCPUs: 7, SandboxMemoryMiB: 2048, SandboxDiskSizeGB: 11})
+	if configured.CPUs != 7 || configured.MemoryMiB != 2048 || configured.DiskSizeGB != 11 {
+		t.Fatalf("configuredSandboxResources did not carry the configured limits: %+v", configured)
+	}
+}
+
+// TestCredentialPlaceholderDeclarationCoversEveryDriver pins the dimension to
+// the engine-wide facade mechanism. The mechanism lives in pkg/llms, so every
+// driver must report it as enforced instead of claiming the guest reads the
+// declared credential verbatim.
+func TestCredentialPlaceholderDeclarationCoversEveryDriver(t *testing.T) {
+	for _, driver := range []string{RuntimeDriverDocker, RuntimeDriverK8s, RuntimeDriverBoxlite, RuntimeDriverMicrosandbox} {
+		facts := capabilityFactsForTest(t, driver)
+		dimension := capabilityDimensionForTest(t, facts, dimensionCredentialPlaceholder)
+		if !dimension.Enforced {
+			t.Fatalf("driver %q credential_placeholder_injection = %+v, want enforced via the runtime LLM facade", driver, dimension)
+		}
+		if dimension.Mechanism != mechanismRuntimeLLMFacadeToken {
+			t.Fatalf("driver %q credential_placeholder_injection mechanism = %q, want %q", driver, dimension.Mechanism, mechanismRuntimeLLMFacadeToken)
+		}
+		if len(dimension.Preconditions) == 0 {
+			t.Fatalf("driver %q credential_placeholder_injection declares no precondition; the recognized-name scope must be explicit", driver)
+		}
+	}
+}
+
+// TestReasonClassificationMatchesSDKSurface keeps the closed reason honest: a
+// dimension whose exact configuration surface exists in the runtime or SDK the
+// driver uses is not_configured, while a dimension that surface cannot address
+// is unsupported.
+func TestReasonClassificationMatchesSDKSurface(t *testing.T) {
+	testCases := []struct {
+		driver      string
+		dimension   string
+		wantReason  string
+		wantEnforce bool
+	}{
+		{RuntimeDriverDocker, dimensionCheckpointRestore, reasonNotConfigured, false},
+		{RuntimeDriverK8s, dimensionCheckpointRestore, reasonUnsupported, false},
+		{RuntimeDriverBoxlite, dimensionNonRootUser, reasonNotConfigured, false},
+		{RuntimeDriverMicrosandbox, dimensionNonRootUser, reasonNotConfigured, false},
+		{RuntimeDriverBoxlite, dimensionCheckpointRestore, reasonUnsupported, false},
+		{RuntimeDriverMicrosandbox, dimensionCheckpointRestore, reasonNotConfigured, false},
+	}
+	for _, testCase := range testCases {
+		facts := capabilityFactsForTest(t, testCase.driver)
+		dimension := capabilityDimensionForTest(t, facts, testCase.dimension)
+		if dimension.Enforced != testCase.wantEnforce {
+			t.Fatalf("driver %q %s enforced = %v, want %v", testCase.driver, testCase.dimension, dimension.Enforced, testCase.wantEnforce)
+		}
+		if dimension.Mechanism != testCase.wantReason {
+			t.Fatalf("driver %q %s mechanism = %q, want %q", testCase.driver, testCase.dimension, dimension.Mechanism, testCase.wantReason)
+		}
+	}
 }
 
 // TestStoppedRuntimeRetentionDeclarationMatchesImplementation pins the

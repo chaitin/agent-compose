@@ -1,7 +1,10 @@
 package capmatrix
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/chaitin/agent-compose/pkg/llms"
@@ -43,41 +46,48 @@ func TestDeclaredProviderProtocolOrderMatchesDialect(t *testing.T) {
 	}
 }
 
-// TestDeclaredProviderFeatureMatrix pins the execution feature matrix to the
-// guest runner behavior in runtime/javascript/src/runners.
+// TestDeclaredProviderFeatureMatrix cross-asserts the execution feature matrix
+// against the guest runner sources in runtime/javascript/src/runners, which are
+// the authority for what a provider can actually do. A runner that starts or
+// stops rejecting a schema, resuming a session, injecting skills, or emitting
+// streaming events changes its marker and fails this test until the declaration
+// is updated.
 func TestDeclaredProviderFeatureMatrix(t *testing.T) {
 	providers, err := DeclaredProviders()
 	if err != nil {
 		t.Fatalf("DeclaredProviders() error = %v", err)
 	}
-	want := map[string]map[ExecutionFeature]bool{
-		"codex": {
-			FeatureStructuredOutput: true, FeatureSessionResume: true, FeatureStreaming: true, FeatureSkillInjection: false,
-		},
-		"claude": {
-			FeatureStructuredOutput: true, FeatureSessionResume: true, FeatureStreaming: true, FeatureSkillInjection: true,
-		},
-		"opencode": {
-			FeatureStructuredOutput: false, FeatureSessionResume: true, FeatureStreaming: true, FeatureSkillInjection: true,
-		},
-		"pi": {
-			FeatureStructuredOutput: false, FeatureSessionResume: true, FeatureStreaming: true, FeatureSkillInjection: true,
-		},
-		"dsh": {
-			FeatureStructuredOutput: false, FeatureSessionResume: true, FeatureStreaming: true, FeatureSkillInjection: true,
-		},
+	if len(providers) == 0 {
+		t.Fatal("DeclaredProviders() returned no providers")
 	}
 	for _, provider := range providers {
-		expected, ok := want[provider.Provider]
-		if !ok {
-			t.Fatalf("unexpected provider %q", provider.Provider)
+		source := runnerSource(t, provider.Provider)
+		derived := map[ExecutionFeature]bool{
+			FeatureStructuredOutput: !strings.Contains(source, "structured JSON output is not supported by"),
+			FeatureSessionResume:    strings.Contains(source, "readStoredThread"),
+			FeatureStreaming:        strings.Contains(source, "this.emit("),
+			FeatureSkillInjection:   strings.Contains(source, "options.skills"),
 		}
 		for _, feature := range RequiredExecutionFeatures() {
-			if got := provider.Feature(feature); got != expected[feature] {
-				t.Errorf("provider %q feature %q = %v, want %v", provider.Provider, feature, got, expected[feature])
+			if got := provider.Feature(feature); got != derived[feature] {
+				t.Errorf("provider %q feature %q = %v, but runtime/javascript/src/runners/%s.ts derives %v; update the declaration or the runner",
+					provider.Provider, feature, got, provider.Provider, derived[feature])
 			}
 		}
 	}
+}
+
+// runnerSource reads one guest runner file. Go tests run with the package
+// directory as the working directory, so the repository-relative path is
+// stable.
+func runnerSource(t *testing.T, provider string) string {
+	t.Helper()
+	path := filepath.Join("..", "..", "runtime", "javascript", "src", "runners", provider+".ts")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read guest runner %s: %v", path, err)
+	}
+	return string(data)
 }
 
 func TestDeclaredProvidersRejectsMissingFeature(t *testing.T) {

@@ -84,3 +84,29 @@ func stoppedRuntimeRetentionFacts(driver, enforcedMechanism, unsupportedObserved
 		DefaultBehavior: "stopping the sandbox ends its runtime; resume creates a fresh runtime from the image",
 	}
 }
+
+// credentialPlaceholderFacts declares the credential placeholder dimension for
+// one driver.
+//
+// The enforcement lives in pkg/llms, not in a driver: the managed execution
+// environment strips the declared LLM provider credential and endpoint names
+// and installs a run-scoped facade token and facade URL in their place, so the
+// literal declared credential never reaches the sandbox on any driver. The
+// recognized-name scope is reported as a precondition because a declared secret
+// whose name the daemon does not recognize still reaches the guest unchanged.
+//
+// driverNativeObserved records what the driver's own SDK secret surface does
+// (or that it exposes none), because that surface is a separate, unbound
+// mechanism the engine does not use today.
+func credentialPlaceholderFacts(driverNativeObserved string) RuntimeCapabilityDimensionFacts {
+	return RuntimeCapabilityDimensionFacts{
+		Dimension: dimensionCredentialPlaceholder,
+		Enforced:  true,
+		Mechanism: mechanismRuntimeLLMFacadeToken,
+		Preconditions: []string{
+			"the declared variable name is one the daemon recognizes as an LLM provider credential or endpoint (pkg/driver.LLMProviderCredentialEnvName and its endpoint counterpart); any other secret name reaches the sandbox verbatim",
+		},
+		Observed:        "llms.FilterPersistedRuntimeEnv and llms.MergeManagedExecEnv remove the declared LLM provider credential and endpoint names and install the run-scoped facade token and facade URL instead; the declared value stays in the daemon's provider store; " + driverNativeObserved,
+		DefaultBehavior: "a declared secret whose name the daemon does not recognize as LLM provider credentials reaches the sandbox as the literal declared value",
+	}
+}
