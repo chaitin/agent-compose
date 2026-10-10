@@ -332,6 +332,61 @@ agents:
 	}
 }
 
+// TestSandboxNetworkEgressDeclarationAllowAll pins the default-allow path. The
+// compose vocabulary ("allow-all") and the decision model's ("allow") differ, so
+// passing the compose value through produced a declaration the decision model
+// rejects and made every declared allow-all policy unusable.
+func TestSandboxNetworkEgressDeclarationAllowAll(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "omitted default normalizes to allow-all", body: "network: {}"},
+		{name: "explicit allow-all", body: "network:\n        default: allow-all"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			spec := mustNormalizeCompose(t, `
+name: network-egress-allow
+agents:
+  worker:
+    provider: codex
+    sandbox:
+      `+test.body+`
+`, nil)
+			declaration := spec.Agents[0].Sandbox.Network.EgressDeclaration()
+			if declaration.Default != egress.Allow {
+				t.Fatalf("default = %q, want %q", declaration.Default, egress.Allow)
+			}
+			if err := declaration.Validate(); err != nil {
+				t.Fatalf("Validate() error = %v", err)
+			}
+			policy, err := egress.EffectiveNetworkPolicy(&declaration, nil)
+			if err != nil {
+				t.Fatalf("EffectiveNetworkPolicy() error = %v", err)
+			}
+			result := egress.Decide(policy, egress.Request{Kind: egress.KindNetworkEndpoint, Name: "anywhere.example.com:443/https"})
+			if result.Action != egress.Allow {
+				t.Fatalf("action = %q, want %q", result.Action, egress.Allow)
+			}
+		})
+	}
+}
+
+// TestEgressActionForSandboxNetworkDefaultFailsClosed pins that only the
+// declared allow-all value becomes allow: any unexpected default maps to deny
+// rather than silently widening access.
+func TestEgressActionForSandboxNetworkDefaultFailsClosed(t *testing.T) {
+	if got := egressActionForSandboxNetworkDefault(SandboxNetworkDefaultAllowAll); got != egress.Allow {
+		t.Fatalf("allow-all mapped to %q, want %q", got, egress.Allow)
+	}
+	for _, value := range []string{SandboxNetworkDefaultDeny, "", "sideways"} {
+		if got := egressActionForSandboxNetworkDefault(value); got != egress.Deny {
+			t.Fatalf("%q mapped to %q, want %q", value, got, egress.Deny)
+		}
+	}
+}
+
 // TestSandboxNetworkReturnsDeepClone pins the clone the canonical output relies
 // on: mutating a returned view must not change the spec it came from.
 func TestSandboxNetworkReturnsDeepClone(t *testing.T) {

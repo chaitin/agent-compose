@@ -44,7 +44,7 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() egress.NetworkDeclara
 	if n == nil {
 		return egress.NetworkDeclaration{}
 	}
-	declaration := egress.NetworkDeclaration{Default: egress.Action(n.Default)}
+	declaration := egress.NetworkDeclaration{Default: egressActionForSandboxNetworkDefault(n.Default)}
 	for _, entry := range n.Allow {
 		declaration.Allow = append(declaration.Allow, egress.AllowEntry{
 			Host:     entry.Host,
@@ -53,6 +53,18 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() egress.NetworkDeclara
 		})
 	}
 	return declaration
+}
+
+// egressActionForSandboxNetworkDefault translates the compose default onto the
+// egress decision model. The two vocabularies differ ("allow-all"/"deny" versus
+// "allow"/"deny"), so passing the compose value through would produce a default
+// the decision model rejects. Anything that is not the declared allow-all value
+// maps to deny, so an unexpected value cannot widen access.
+func egressActionForSandboxNetworkDefault(value string) egress.Action {
+	if value == SandboxNetworkDefaultAllowAll {
+		return egress.Allow
+	}
+	return egress.Deny
 }
 
 func normalizeSandboxNetworkDefault(value string) (string, error) {
