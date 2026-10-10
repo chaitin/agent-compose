@@ -161,3 +161,24 @@ func TestFacadeTokenWithoutScopeOrOwnerDoesNotMap(t *testing.T) {
 		t.Fatal("a token with no owner cannot be attributed and must not map")
 	}
 }
+
+// The facade token mapping is the boundary where the LLM specialization becomes
+// a generic credential handle. It depends on no shape-specific runtime, so the
+// integration and E2E shapes run the same workflow as the unit shape rather than
+// leaving the mapping visible only to unit coverage.
+func TestIntegrationFacadeCredentialHandleWorkflows(t *testing.T) {
+	testFacadeCredentialHandleWorkflows(t)
+}
+
+func TestE2EFacadeCredentialHandleWorkflows(t *testing.T) {
+	testFacadeCredentialHandleWorkflows(t)
+}
+
+func testFacadeCredentialHandleWorkflows(t *testing.T) {
+	t.Helper()
+	TestFacadeTokenMapsToGenericCredentialHandle(t)
+	TestFacadeTokenAtMaxHandleLifetimeMaps(t)
+	TestFacadeTokenWithoutExpiryIsRefusedByDesign(t)
+	TestFacadeTokenLifetimeBeyondHandleMaximumIsRefused(t)
+	TestFacadeTokenWithoutScopeOrOwnerDoesNotMap(t)
+}

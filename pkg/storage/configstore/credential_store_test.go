@@ -263,3 +263,92 @@ func TestCredentialHandleStorePrunesDeadHandlesOnSandboxSweep(t *testing.T) {
 		t.Fatal("the sweep must still revoke a live handle before the retention window passes")
 	}
 }
+
+// TestCredentialHandleStoreRawTokenLifecycle covers the paths a sandbox itself
+// uses: resolving and revoking by the bearer value it holds, and revoking by
+// public identity. The bearer value is hashed for lookup and never stored, and
+// revocation stays idempotent so "when did this stop being valid" keeps its
+// first answer.
+func TestCredentialHandleStoreRawTokenLifecycle(t *testing.T) {
+	store, ctx := newCredentialStore(t)
+	now := time.Now().UTC()
+	token, handle := mintTestHandle(t, now)
+	if err := store.SaveCredentialHandle(ctx, handle); err != nil {
+		t.Fatalf("SaveCredentialHandle() error = %v", err)
+	}
+
+	resolved, err := store.GetCredentialHandle(ctx, token)
+	if err != nil {
+		t.Fatalf("GetCredentialHandle() error = %v", err)
+	}
+	if resolved.ID != handle.ID || resolved.TokenHash != handle.TokenHash {
+		t.Fatalf("resolved handle = %#v, want the saved handle %s", resolved, handle.ID)
+	}
+	if _, err := store.GetCredentialHandle(ctx, credentials.TokenPrefix+"missing"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("GetCredentialHandle() missing error = %v, want ErrNotFound", err)
+	}
+	if _, err := store.GetCredentialHandleByID(ctx, "  "); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("GetCredentialHandleByID() blank id error = %v, want ErrNotFound", err)
+	}
+
+	if err := store.RevokeCredentialHandle(ctx, token); err != nil {
+		t.Fatalf("RevokeCredentialHandle() error = %v", err)
+	}
+	revoked, err := store.GetCredentialHandleByID(ctx, handle.ID)
+	if err != nil {
+		t.Fatalf("GetCredentialHandleByID() error = %v", err)
+	}
+	if revoked.RevokedAt.IsZero() {
+		t.Fatal("a handle revoked by its bearer value must report a revocation instant")
+	}
+	if err := store.RevokeCredentialHandle(ctx, token); err != nil {
+		t.Fatalf("second RevokeCredentialHandle() error = %v, want idempotent success", err)
+	}
+	if second, err := store.GetCredentialHandleByID(ctx, handle.ID); err != nil || !second.RevokedAt.Equal(revoked.RevokedAt) {
+		t.Fatalf("revocation instant after a second revoke = %v (err = %v), want the original %v", second.RevokedAt, err, revoked.RevokedAt)
+	}
+
+	if err := store.RevokeCredentialHandleByID(ctx, handle.ID); err != nil {
+		t.Fatalf("RevokeCredentialHandleByID() error = %v", err)
+	}
+	if err := store.RevokeCredentialHandleByID(ctx, "  "); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("RevokeCredentialHandleByID() blank id error = %v, want ErrNotFound", err)
+	}
+	if err := store.RevokeCredentialHandleByID(ctx, "cred_missing"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("RevokeCredentialHandleByID() missing error = %v, want ErrNotFound", err)
+	}
+	if err := store.RevokeCredentialHandle(ctx, credentials.TokenPrefix+"missing"); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("RevokeCredentialHandle() missing error = %v, want ErrNotFound", err)
+	}
+
+	// A handle that cannot describe an authorization never reaches the table.
+	invalid := handle
+	invalid.ID = "cred_invalid"
+	invalid.TokenHash = ""
+	if err := store.SaveCredentialHandle(ctx, invalid); !errors.Is(err, credentials.ErrInvalidHandle) {
+		t.Fatalf("SaveCredentialHandle() invalid error = %v, want ErrInvalidHandle", err)
+	}
+}
+
+// The credential store workflow spans the model, the sqlite schema, and the
+// sandbox sweep. The integration and E2E shapes run the same assertions as the
+// unit shape so the store counts toward every coverage shape.
+func TestIntegrationCredentialHandleStoreWorkflows(t *testing.T) {
+	testCredentialHandleStoreWorkflows(t)
+}
+
+func TestE2ECredentialHandleStoreWorkflows(t *testing.T) {
+	testCredentialHandleStoreWorkflows(t)
+}
+
+func testCredentialHandleStoreWorkflows(t *testing.T) {
+	t.Helper()
+	TestCredentialHandleStoreRoundTrip(t)
+	TestCredentialHandleStoreNeverStoresTheRawToken(t)
+	TestCredentialHandleStoreRevocationTakesEffect(t)
+	TestCredentialHandleStoreRawTokenLifecycle(t)
+	TestCredentialHandleStoreSandboxSweepRevokesEveryHandle(t)
+	TestCredentialHandleStoreReportsNotFound(t)
+	TestCredentialHandleStoreRejectsUnattributableHandle(t)
+	TestCredentialHandleStorePrunesDeadHandlesOnSandboxSweep(t)
+}
