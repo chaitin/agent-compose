@@ -83,8 +83,9 @@ type NormalizedSandboxSpec struct {
 }
 
 // NormalizedSandboxNetworkSpec is the validated declaration. Default is always
-// present ("allow-all" or "deny"); Allow is sorted and deduplicated so the
-// canonical JSON and hash do not depend on declaration order.
+// present ("allow-all" or "deny"); Allow is sorted so the canonical JSON and
+// hash do not depend on declaration order, and a duplicate entry is rejected
+// during normalization rather than silently collapsed.
 type NormalizedSandboxNetworkSpec struct {
 	Default string                              `yaml:"default" json:"default"`
 	Allow   []NormalizedSandboxNetworkAllowSpec `yaml:"allow,omitempty" json:"allow,omitempty"`

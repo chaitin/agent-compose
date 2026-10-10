@@ -1012,6 +1012,35 @@ The effective policy is snapshotted when the sandbox is created. Editing the pro
 
 For `remove`, the daemon first persists `release_pending`, then confirms a driver stop when the lifecycle record contains a start or start attempt newer than the last confirmed stop, even if the coarse VM status is `failed` rather than `running`. Only then does it remove the runtime and mark the record `released`. This ordering prevents a partially started runtime from being skipped or destructively released without a confirmed stop. The on-disk ownership-record layout is internal recovery state and is not a stable operator-facing format.
 
+#### `network`: declared outbound network policy
+
+The optional `network` block declares this agent's sandbox outbound policy. Declaring the block is what makes a policy exist; omitting it leaves outbound access unrestricted, exactly as it was before the field existed.
+
+```yaml
+sandbox:
+  network:
+    default: deny
+    allow:
+      - host: api.github.com
+        port: 443
+        protocol: https
+      - host: "*.example.com"
+        port: 443
+        protocol: any
+```
+
+`default` accepts `allow-all` (the value an omitted default normalizes to) or `deny`. It applies only because the block was declared. Under `deny`, every destination is refused unless an engine-owned endpoint or an `allow` entry matches it.
+
+Each `allow` entry names one destination:
+
+- `host` is an exact name or a label-wise pattern in which `*` matches exactly one label, so `*.example.com` matches `api.example.com` but neither `example.com` nor `a.b.example.com`.
+- `port` is required and must be between 1 and 65535; the declaration cannot express "any port".
+- `protocol` is optional and accepts `any` (the value an omitted protocol normalizes to), `http`, `https`, `tcp`, or `udp`. Only `http` and `https` are L7-inspectable; `any`, `tcp`, and `udp` are opaque allowances. An unknown value is rejected instead of being widened to `any`.
+
+Under `default: deny`, the engine's own LLM facade and telemetry endpoints stay reachable automatically, and no declaration can override or remove them.
+
+Drivers apply the declaration to different degrees, and the engine reports the difference instead of presenting a partial mechanism as a complete one. The Microsandbox driver installs the ordered `allow` list, a deny egress default, and the engine's deny-domain list; its capability report carries `strength=allowlist` plus the remaining limits. The Docker, BoxLite, and Kubernetes drivers apply no part of the declaration, so a sandbox that declares `default: deny` on one of them is refused before its runtime is created rather than started with unrestricted egress, and their capability report carries `strength=none`. A declaration that only allows (`default: allow-all`) needs no enforcement and starts everywhere.
+
 ### `scheduler`
 
 A scheduler uses either declarative `triggers` or JavaScript `script`; the two forms are mutually exclusive.

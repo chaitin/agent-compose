@@ -991,6 +991,35 @@ Kubernetes driver 不接受 `retain`：Kubernetes Pod 没有“已停止但仍�
 
 对于 `remove`，daemon 会先持久化 `release_pending`。如果生命周期记录中存在晚于最近一次确认 stop 的启动或启动尝试，即使粗粒度 VM 状态是 `failed` 而不是 `running`，也会先确认 driver stop；之后才删除 runtime 并把记录标记为 `released`。这个顺序可避免部分启动的 runtime 被跳过 stop，或未经确认便被破坏性释放。磁盘上的 ownership record 格式属于内部恢复状态，不是稳定的运维接口。
 
+#### `network`：声明的出站网络策略
+
+可选的 `network` 块声明该 Agent 的 sandbox 出站策略。只有声明了这个块，策略才存在；省略它时出站访问保持不受限，与该字段出现之前完全一致。
+
+```yaml
+sandbox:
+  network:
+    default: deny
+    allow:
+      - host: api.github.com
+        port: 443
+        protocol: https
+      - host: "*.example.com"
+        port: 443
+        protocol: any
+```
+
+`default` 接受 `allow-all`（省略 default 时归一化得到的值）或 `deny`。它只在声明了该块之后才生效。在 `deny` 下，除了匹配引擎自有的端点或某个 `allow` 条目之外，所有目标都会被拒绝。
+
+每个 `allow` 条目描述一个目标：
+
+- `host` 是精确域名或按标签匹配的模式，其中 `*` 恰好匹配一个标签；因此 `*.example.com` 匹配 `api.example.com`，但不匹配 `example.com` 或 `a.b.example.com`。
+- `port` 是必填项，取值必须在 1 到 65535 之间；该声明无法表达“任意端口”。
+- `protocol` 可以省略，接受 `any`（省略 protocol 时归一化得到的值）、`http`、`https`、`tcp` 或 `udp`。只有 `http` 和 `https` 可被 L7 检查；`any`、`tcp`、`udp` 属于不透明放行。未知取值会被拒绝，而不会被放宽为 `any`。
+
+在 `default: deny` 下，引擎自有的 LLM facade 与 telemetry 端点始终可达，声明无法覆盖或移除它们。
+
+不同 driver 对声明的执行程度不同，引擎会如实报告这种差异，而不会把部分机制呈现为完整机制。Microsandbox driver 会安装有序的 `allow` 列表、拒绝的出站默认值以及引擎的拒绝域名列表，其能力报告中带有 `strength=allowlist` 以及仍然存在的限制。Docker、BoxLite 和 Kubernetes driver 不执行声明的任何部分，因此在这几个 driver 上声明 `default: deny` 的 sandbox 会在创建 runtime 之前被拒绝，而不是以不受限出站的方式启动，它们的能力报告带有 `strength=none`。仅放行的声明（`default: allow-all`）不需要执行，在任何 driver 上都能启动。
+
 ### `scheduler`
 
 Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`；两者互斥。
