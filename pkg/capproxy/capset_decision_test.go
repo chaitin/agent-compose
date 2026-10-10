@@ -12,13 +12,15 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// TestResolveCallCapsetContract locks the reachability decision the capability
+// TestDecideCallCapsetContract locks the reachability decision the capability
 // gateway makes for one call: which capset a sandbox is allowed to reach, which
-// capset the call resolves to, and the exact gRPC code and message every denial
-// carries. It is the pre-refactor contract for the SEC-4 egress entry point, so
-// it asserts outcomes only (not how the decision is computed) and must keep
-// passing unchanged after the decision is routed through pkg/egress.
-func TestResolveCallCapsetContract(t *testing.T) {
+// capset the call resolves to, the sandbox the decision record names, and the
+// exact gRPC code and message every denial carries. It is the pre-refactor
+// contract for the SEC-4 egress entry point, so it asserts outcomes only (not
+// how the decision is computed) and must keep passing unchanged after the
+// decision is routed through pkg/egress.
+func TestDecideCallCapsetContract(t *testing.T) {
+	const sandboxID = "sandbox-1"
 	tests := []struct {
 		name       string
 		metadata   metadata.MD
@@ -75,8 +77,9 @@ func TestResolveCallCapsetContract(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			binding := SandboxBinding{SandboxID: sandboxID, CapsetIDs: tc.allowed}
 			ctx := metadata.NewIncomingContext(context.Background(), tc.metadata)
-			got, err := resolveCallCapset(ctx, tc.allowed)
+			record, err := decideCallCapset(ctx, binding)
 			if tc.wantCode != codes.OK {
 				if status.Code(err) != tc.wantCode {
 					t.Fatalf("code = %s, want %s (err=%v)", status.Code(err), tc.wantCode, err)
@@ -84,16 +87,27 @@ func TestResolveCallCapsetContract(t *testing.T) {
 				if tc.wantIn != "" && !strings.Contains(status.Convert(err).Message(), tc.wantIn) {
 					t.Fatalf("message = %q, want it to contain %q", status.Convert(err).Message(), tc.wantIn)
 				}
-				if got != "" {
-					t.Fatalf("capset = %q, want empty on denial", got)
+				if record.Result.Target != "" {
+					t.Fatalf("capset = %q, want empty on denial", record.Result.Target)
+				}
+				// A refusal that reached the decision still records who asked, so
+				// the sandbox is named in the audit trail.
+				if tc.wantCode == codes.PermissionDenied && record.Request.Consumer != sandboxID {
+					t.Fatalf("consumer = %q, want %q", record.Request.Consumer, sandboxID)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("resolveCallCapset returned error: %v", err)
+				t.Fatalf("decideCallCapset returned error: %v", err)
 			}
-			if got != tc.wantCapset {
-				t.Fatalf("capset = %q, want %q", got, tc.wantCapset)
+			if record.Result.Target != tc.wantCapset {
+				t.Fatalf("capset = %q, want %q", record.Result.Target, tc.wantCapset)
+			}
+			if record.Request.Consumer != sandboxID {
+				t.Fatalf("consumer = %q, want the bound sandbox %q", record.Request.Consumer, sandboxID)
+			}
+			if record.Request.Kind != egress.KindCapabilityCapset {
+				t.Fatalf("kind = %q, want %q", record.Request.Kind, egress.KindCapabilityCapset)
 			}
 		})
 	}

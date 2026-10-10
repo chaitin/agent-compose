@@ -118,11 +118,11 @@ func (s *Server) handleUnknown(_ any, stream grpc.ServerStream) error {
 	// The guest picks which capset this call targets (x-octobus-capset); capproxy
 	// validates it is one the sandbox is allowed to use. Both the reflection and
 	// business paths require a resolved capset.
-	declaration, err := resolveCallCapset(stream.Context(), binding.CapsetIDs)
+	record, err := decideCallCapset(stream.Context(), binding)
 	if err != nil {
 		return err
 	}
-	target, err := s.resolveTarget(stream.Context(), binding, declaration)
+	target, err := s.resolveTarget(stream.Context(), binding, record.Result.Target)
 	if err != nil {
 		return err
 	}

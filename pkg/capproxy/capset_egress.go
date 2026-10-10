@@ -11,26 +11,28 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// resolveCallCapset picks the capset for this call: the guest-supplied
-// x-octobus-capset if it is in the allowed set, or the sole allowed capset when
-// the guest omits it. Otherwise it is an error (the guest must disambiguate).
+// decideCallCapset decides which capset this call resolves to: the
+// guest-supplied x-octobus-capset if it is in the sandbox's granted set, or the
+// sole grant when the guest omits it. Otherwise it is an error (the guest must
+// disambiguate).
 //
 // The reachability decision is evaluated by the shared egress entry point
 // against capsetEgressPolicy, so the capability gateway and the LLM facade
-// answer "may this sandbox reach this upstream" through one model.
-func resolveCallCapset(ctx context.Context, allowed []string) (string, error) {
+// answer "may this sandbox reach this upstream" through one model. It takes the
+// whole binding, not just its capset list, so the decision record names the
+// sandbox that made the request instead of an anonymous consumer.
+func decideCallCapset(ctx context.Context, binding SandboxBinding) (egress.Record, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	requested := firstMetadata(md, "x-octobus-capset")
-	if requested == "" && len(allowed) != 1 {
-		return "", status.Error(codes.FailedPrecondition, "x-octobus-capset is required: sandbox allows multiple capsets")
+	if requested == "" && len(binding.CapsetIDs) != 1 {
+		return egress.Record{}, status.Error(codes.FailedPrecondition, "x-octobus-capset is required: sandbox allows multiple capsets")
 	}
 	// A guest that names no capset selects the sandbox's sole grant. Only the
 	// request name is normalized here; the policy is still what decides.
 	name := requested
 	if name == "" {
-		name = allowed[0]
+		name = binding.CapsetIDs[0]
 	}
-	binding := SandboxBinding{CapsetIDs: allowed}
 	policy := capsetEgressPolicy(binding)
 	request := capsetEgressRequest(binding, name)
 	record := egress.NewRecord(request, egress.Decide(policy, request))
@@ -39,9 +41,9 @@ func resolveCallCapset(ctx context.Context, allowed []string) (string, error) {
 	// the generations match; this guard is the landing point for the phase-3
 	// policy store (SEC-5).
 	if record.IsStale(policy) || !record.Allowed() {
-		return "", status.Errorf(codes.PermissionDenied, "capset %q is not allowed for this sandbox", requested)
+		return record, status.Errorf(codes.PermissionDenied, "capset %q is not allowed for this sandbox", requested)
 	}
-	return record.Result.Target, nil
+	return record, nil
 }
 
 // capsetEgressPolicy returns the policy a sandbox binding grants over the
