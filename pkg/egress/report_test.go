@@ -73,3 +73,38 @@ func TestReportNetworkPolicy(t *testing.T) {
 		t.Fatal("ReportNetworkPolicy accepted an invalid declaration")
 	}
 }
+
+// TestReportNetworkPolicyMatchesCompiledEngineRules pins that the report lists
+// exactly the engine rules the decision model compiles. Two engine endpoints
+// that render to the same pattern collapse to one rule, so the report must list
+// one exemption too rather than describing an exemption that does not exist.
+func TestReportNetworkPolicyMatchesCompiledEngineRules(t *testing.T) {
+	shared, err := EngineEndpoints("http://host.docker.internal:7410", "")
+	if err != nil {
+		t.Fatalf("EngineEndpoints returned error: %v", err)
+	}
+	if len(shared) != 1 {
+		t.Fatalf("EngineEndpoints = %+v, want one endpoint", shared)
+	}
+	duplicate := shared[0]
+	duplicate.Purpose = PurposeTelemetry
+	duplicate.Source = SourceAgentTelemetryOTLPEnd
+	engine := []EngineEndpoint{shared[0], duplicate}
+
+	declaration := NetworkDeclaration{Default: Deny}
+	policy, err := CompileNetworkPolicy(declaration, engine)
+	if err != nil {
+		t.Fatalf("CompileNetworkPolicy returned error: %v", err)
+	}
+	report, err := ReportNetworkPolicy(&declaration, engine)
+	if err != nil {
+		t.Fatalf("ReportNetworkPolicy returned error: %v", err)
+	}
+	if len(report.EngineAutoAllowed) != len(policy.Rules()) {
+		t.Fatalf("report lists %d engine exemptions, but the policy has %d rules: %+v",
+			len(report.EngineAutoAllowed), len(policy.Rules()), report.EngineAutoAllowed)
+	}
+	if len(report.EngineAutoAllowed) != 1 || report.EngineAutoAllowed[0].Purpose != PurposeLLMFacade {
+		t.Fatalf("engine auto-allowed = %+v, want the first endpoint only", report.EngineAutoAllowed)
+	}
+}

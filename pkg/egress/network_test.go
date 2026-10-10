@@ -90,6 +90,24 @@ func TestEndpointNameRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFormatEndpointPatternDoesNotWidenAnInvalidProtocol pins that a malformed
+// protocol renders a pattern that matches nothing instead of silently becoming
+// the any-protocol wildcard, which would widen an allowance.
+func TestFormatEndpointPatternDoesNotWidenAnInvalidProtocol(t *testing.T) {
+	if got := FormatEndpointPattern("api.github.com", 443, ProtocolAny); got != "api.github.com:443/*" {
+		t.Fatalf("FormatEndpointPattern(any) = %q, want api.github.com:443/*", got)
+	}
+	invalid := FormatEndpointPattern("api.github.com", 443, Protocol("htps"))
+	if invalid == "api.github.com:443/*" {
+		t.Fatalf("FormatEndpointPattern(bad protocol) = %q, widened to any", invalid)
+	}
+	policy := NewPolicy(Deny, Rule{ID: "allow", Match: MatchEndpoint, Names: []string{invalid}, Action: Allow})
+	result := Decide(policy, Request{Kind: KindNetworkEndpoint, Name: "api.github.com:443/any"})
+	if result.Allowed() {
+		t.Fatalf("a malformed allow pattern matched: %+v", result)
+	}
+}
+
 func TestProtocolInspectable(t *testing.T) {
 	for protocol, want := range map[Protocol]bool{
 		ProtocolHTTP:  true,
@@ -238,21 +256,40 @@ func TestCompileNetworkPolicyEngineRulesPrecedeDeclaredRules(t *testing.T) {
 	}
 }
 
-// TestRuleMatchModeChangesGeneration guards the content hash against an exact
-// rule and an endpoint rule that could otherwise serialize to the same bytes.
+// TestRuleMatchModeChangesGeneration guards the content hash against two rules
+// that are identical except for Match. Both rules carry the same names, so the
+// generations can only differ because Match is hashed.
 func TestRuleMatchModeChangesGeneration(t *testing.T) {
-	exact := NewPolicy(Deny, Rule{ID: "r", Names: []string{"endpoint"}, Action: Allow})
-	endpoint := NewPolicy(Deny, Rule{ID: "r", Match: MatchEndpoint, Action: Allow})
+	names := []string{"api.github.com:443/https"}
+	exact := NewPolicy(Deny, Rule{ID: "r", Names: names, Action: Allow})
+	endpoint := NewPolicy(Deny, Rule{ID: "r", Match: MatchEndpoint, Names: names, Action: Allow})
 	if exact.Generation() == endpoint.Generation() {
-		t.Fatal("an exact rule and an endpoint rule produced the same generation")
+		t.Fatal("an exact rule and an endpoint rule with the same names produced the same generation")
 	}
 	allowed := Decide(endpoint, Request{Kind: KindNetworkEndpoint, Name: "api.github.com:443/https"})
 	if !allowed.Allowed() {
-		t.Fatalf("endpoint rule with no names did not match: %+v", allowed)
+		t.Fatalf("endpoint rule did not match its declared endpoint: %+v", allowed)
 	}
-	notMatched := Decide(exact, Request{Kind: KindNetworkEndpoint, Name: "api.github.com:443/https"})
+	notMatched := Decide(endpoint, Request{Kind: KindNetworkEndpoint, Name: "other.example.com:443/https"})
 	if notMatched.Allowed() {
-		t.Fatalf("exact rule matched an endpoint name: %+v", notMatched)
+		t.Fatalf("endpoint rule matched a different endpoint: %+v", notMatched)
+	}
+	literal := Decide(exact, Request{Kind: KindNetworkEndpoint, Name: "api.github.com:443/https"})
+	if !literal.Allowed() {
+		t.Fatalf("exact rule did not match the literal name: %+v", literal)
+	}
+	if other := Decide(exact, Request{Kind: KindNetworkEndpoint, Name: "other.example.com:443/https"}); other.Allowed() {
+		t.Fatalf("exact rule matched a different endpoint name: %+v", other)
+	}
+}
+
+// TestEndpointRuleWithoutNamesMatchesAnyEndpoint pins the documented catch-all:
+// a rule with no names matches every request of its match mode.
+func TestEndpointRuleWithoutNamesMatchesAnyEndpoint(t *testing.T) {
+	policy := NewPolicy(Deny, Rule{ID: "r", Match: MatchEndpoint, Action: Allow})
+	allowed := Decide(policy, Request{Kind: KindNetworkEndpoint, Name: "api.github.com:443/https"})
+	if !allowed.Allowed() || allowed.RuleID != "r" {
+		t.Fatalf("endpoint rule with no names did not match: %+v", allowed)
 	}
 }
 

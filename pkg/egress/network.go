@@ -114,10 +114,14 @@ func ParseEndpoint(name string) (Endpoint, error) {
 // canonical "host:port/protocol" form used by endpoint-match rule names. A
 // protocol of "any" is rendered as "*" so a pattern never carries the concrete
 // protocol name it would otherwise be mistaken for.
+//
+// An unparsable protocol is rendered verbatim rather than as "*": the result is
+// then a pattern parseEndpointPattern rejects, so a malformed pattern can never
+// silently widen into an any-protocol allowance.
 func FormatEndpointPattern(host string, port int, protocol Protocol) string {
 	normalizedProtocol, err := ParseProtocol(string(protocol))
 	if err != nil {
-		normalizedProtocol = ProtocolAny
+		return fmt.Sprintf("%s:%d/%s", strings.ToLower(strings.TrimSpace(host)), port, strings.TrimSpace(string(protocol)))
 	}
 	rendered := string(normalizedProtocol)
 	if normalizedProtocol == ProtocolAny {

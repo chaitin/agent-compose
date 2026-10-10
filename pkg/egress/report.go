@@ -72,10 +72,20 @@ func ReportNetworkPolicy(declaration *NetworkDeclaration, engine []EngineEndpoin
 	if declaration.Default != Deny {
 		return report, nil
 	}
+	// EngineAllowRules collapses endpoints that render to the same pattern, so
+	// the report must collapse them the same way: listing two exemptions for
+	// one compiled rule would describe an exemption the decision model does not
+	// have. The first occurrence wins, matching the compiler.
+	seen := make(map[string]struct{}, len(engine))
 	for _, endpoint := range engine {
 		if err := endpoint.Validate(); err != nil {
 			return NetworkPolicyReport{}, err
 		}
+		pattern := FormatEndpointPattern(endpoint.Endpoint.Host, endpoint.Endpoint.Port, endpoint.Endpoint.Protocol)
+		if _, duplicate := seen[pattern]; duplicate {
+			continue
+		}
+		seen[pattern] = struct{}{}
 		report.EngineAutoAllowed = append(report.EngineAutoAllowed, AutoAllowedEndpoint{
 			Purpose:     endpoint.Purpose,
 			Endpoint:    endpoint.Endpoint.Name(),
@@ -87,7 +97,10 @@ func ReportNetworkPolicy(declaration *NetworkDeclaration, engine []EngineEndpoin
 		if a.Purpose != b.Purpose {
 			return strings.Compare(string(a.Purpose), string(b.Purpose))
 		}
-		return strings.Compare(a.Endpoint, b.Endpoint)
+		if a.Endpoint != b.Endpoint {
+			return strings.Compare(a.Endpoint, b.Endpoint)
+		}
+		return strings.Compare(a.Source, b.Source)
 	})
 	return report, nil
 }

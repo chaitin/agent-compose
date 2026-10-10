@@ -132,8 +132,10 @@ func (r Rule) matches(name string) bool {
 }
 
 // matchesEndpoint matches a canonical endpoint name against the rule's
-// patterns. An unparsable request name matches nothing, so a malformed request
-// falls through to the policy default instead of being allowed by accident.
+// patterns. A rule with no names is the same catch-all as in MatchExact. An
+// unparsable request name matches no pattern, so it falls through to the policy
+// default instead of being allowed by accident; an unparsable rule pattern is
+// skipped deliberately, so a pattern the engine cannot interpret never matches.
 func (r Rule) matchesEndpoint(name string) bool {
 	if len(r.Names) == 0 {
 		return true
