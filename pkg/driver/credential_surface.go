@@ -21,10 +21,10 @@ type CredentialSurface struct {
 	// plaintext value with a short-lived, scoped handle on the way into a
 	// sandbox. Only the LLM facade is absorbable today: the daemon holds the
 	// upstream key and gives the guest a run-scoped facade token. Git, MCP, and
-	// registry credentials are recognized and hidden from views, but still
-	// travel as plaintext environment until the credential broker has a
-	// declared endpoint to scope them to, so they are reported as not yet
-	// isolated instead of being described as protected.
+	// registry credentials are recognized, but still travel as plaintext
+	// environment until the credential broker has a declared endpoint to scope
+	// them to; they stay visible in views and are reported as not yet isolated
+	// instead of being described as protected.
 	Absorbable bool
 }
 

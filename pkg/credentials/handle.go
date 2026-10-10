@@ -5,9 +5,13 @@
 // A handle is the daemon-side record of an authorization, not the credential
 // itself. It carries an identity (Handle), the hash of the bearer value that
 // selects it (never the value), the endpoint and owners it is scoped to, and an
-// explicit expiry. An LLM facade token is one specialization of this model; see
-// pkg/llms for the boundary mapping, which does not duplicate the behavior
-// here.
+// explicit expiry. The LLM facade token is the specialization this model
+// generalizes from: pkg/llms owns the boundary mapping and does not duplicate
+// the behavior here. That mapping is not the daemon's live path today — the
+// facade tokens NewFacadeToken mints carry no expiry, and an unbounded
+// credential is deliberately not representable as a handle — so read the
+// specialization as the shape the model was extracted from, not as a claim that
+// facade tokens are stored here.
 //
 // Two invariants are enforced by this package and by its tests:
 //
@@ -189,6 +193,11 @@ func (h Handle) Normalized() Handle {
 // Validate reports whether the handle describes a usable authorization. It
 // refuses a handle with no owner so an unattributable handle can never be
 // persisted in the first place.
+//
+// The lifetime cap is enforced here rather than only at minting, so it holds for
+// every handle that reaches an authorize or persist call, including one
+// reconstructed from the store: "a handle is a bounded lease" is a property of
+// the model, not only of NewHandle.
 func (h Handle) Validate() error {
 	normalized := h.Normalized()
 	switch {
@@ -209,6 +218,8 @@ func (h Handle) Validate() error {
 		return fmt.Errorf("%w: issuance time is required", ErrInvalidHandle)
 	case !normalized.ExpiresAt.After(normalized.IssuedAt):
 		return fmt.Errorf("%w: expiry must be after issuance", ErrInvalidHandle)
+	case normalized.ExpiresAt.Sub(normalized.IssuedAt) > MaxHandleTTL:
+		return fmt.Errorf("%w: lifetime %s exceeds maximum %s", ErrInvalidHandle, normalized.ExpiresAt.Sub(normalized.IssuedAt), MaxHandleTTL)
 	}
 	return nil
 }

@@ -67,6 +67,11 @@ func TestHandleValidateRejectsUnattributableAndIncompleteHandles(t *testing.T) {
 			mutate: func(h *credentials.Handle) { h.ExpiresAt = h.IssuedAt },
 			want:   credentials.ErrInvalidHandle,
 		},
+		{
+			name:   "lifetime beyond the handle maximum",
+			mutate: func(h *credentials.Handle) { h.ExpiresAt = h.IssuedAt.Add(credentials.MaxHandleTTL + time.Second) },
+			want:   credentials.ErrInvalidHandle,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -80,6 +85,12 @@ func TestHandleValidateRejectsUnattributableAndIncompleteHandles(t *testing.T) {
 	}
 	if err := baseHandle().Validate(); err != nil {
 		t.Fatalf("base handle must be valid: %v", err)
+	}
+	// The cap itself is representable; only a lifetime beyond it is refused.
+	atCap := baseHandle()
+	atCap.ExpiresAt = atCap.IssuedAt.Add(credentials.MaxHandleTTL)
+	if err := atCap.Validate(); err != nil {
+		t.Fatalf("a handle at the maximum lifetime must validate: %v", err)
 	}
 }
 

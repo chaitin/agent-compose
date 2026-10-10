@@ -25,14 +25,16 @@ const FacadeCredentialEnvName = "LLM_API_KEY"
 // fields. That is the same denial the handle model applies to every credential:
 // no owner metadata means no grant.
 //
-// Lifetime is the other hard boundary, and the reason the facade token is not
-// routed through this model. A handle is a bounded, non-renewable lease
-// (credentials.MaxHandleTTL, and deliberately no renew operation), whereas
-// NewFacadeToken mints a token with no ExpiresAt at all: the facade token never
-// expires and is ended by explicit revocation, so it keeps its own
-// endpoint-scoped model. A never-expiring token is therefore intentionally not
-// representable as a handle, and a token whose finite lifetime exceeds the cap
-// is refused for the same reason a mint request would be.
+// Lifetime is the other hard boundary. A handle is a bounded, non-renewable
+// lease (credentials.MaxHandleTTL, and deliberately no renew operation), whereas
+// NewFacadeToken mints a token with no ExpiresAt at all: the production facade
+// token never expires and is ended only by explicit revocation, so it keeps its
+// own endpoint-scoped model and is not routed through the handle mechanism. That
+// is a decision about the tokens this daemon mints, not about this method: a
+// facade token that does carry a finite lifetime within the cap still maps to a
+// handle here, and only a never-expiring token (refused with
+// credentials.ErrHandleLifetimeUnsupported) or one whose finite lifetime exceeds
+// the cap is refused, for the same reason a mint request would be.
 func (t FacadeToken) CredentialHandle() (credentials.Handle, error) {
 	providerID := strings.TrimSpace(t.ProviderID)
 	if providerID == "" {

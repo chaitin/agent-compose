@@ -187,10 +187,10 @@ type SandboxRuntime interface {
 //     depending on argument order.
 //
 // Non-LLM credentials (git, MCP, registry) are recognized by CredentialEnvName
-// but are not filtered here. Dropping the plaintext value without a scoped
-// endpoint to replace it would break the tool while providing no isolation, so
-// they are redacted from views instead and the credential broker owns the
-// migration out of plaintext.
+// but are neither filtered here nor redacted from views: dropping the plaintext
+// value without a scoped endpoint to replace it would break the tool while
+// providing no isolation, and hiding it would describe an exposed value as
+// protected. The credential broker owns the migration out of plaintext.
 func sandboxEnvMap(declared, runtime []SandboxEnvVar) map[string]string {
 	env := make(map[string]string)
 	for _, item := range declared {
