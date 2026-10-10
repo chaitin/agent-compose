@@ -22,6 +22,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 	"github.com/chaitin/agent-compose/pkg/volumes"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
@@ -56,6 +57,7 @@ func NewRunController(di do.Injector) (*runs.Controller, error) {
 		LifecycleLocks:  do.MustInvoke[*sandboxes.LifecycleLocks](di),
 		Removal:         do.MustInvoke[*sandboxes.RemovalCoordinator](di),
 		Completion:      do.MustInvoke[*runs.CompletionManager](di),
+		Recorder:        do.MustInvoke[*telemetry.Recorder](di),
 	}), nil
 }
 

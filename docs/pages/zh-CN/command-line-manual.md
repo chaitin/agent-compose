@@ -995,7 +995,8 @@ AGENT_TELEMETRY_OTLP_ENDPOINT=http://collector.example:4318
 会在启动时被拒绝。collector 必须支持 Codex、Claude 和 OpenCode 使用的 OTLP/HTTP JSON；
 DSH 使用其原生 OTLP/HTTP logs exporter。此集成不支持仅接受 gRPC 的 collector。
 地址必须从 **sandbox 内部**可达，不能仅从 daemon 可达；`localhost` 指向 guest 自身。
-系统不会自动部署 collector 或开放端口。
+daemon 也会把自身 span 与 metrics 导出到同一地址，因此在启用（endpoint 非空）时
+collector 还必须从 **daemon 主机**可达。系统不会自动部署 collector 或开放端口。
 
 | 默认 guest 中的 provider | 受管理的原生导出 |
 | --- | --- |
@@ -1005,8 +1006,27 @@ DSH 使用其原生 OTLP/HTTP logs exporter。此集成不支持仅接受 gRPC �
 | DeepSeek Harness | 仅在开启内容采集且实际 backend 导出 `SessionTelemetryMode.FULL` 时导出 FULL 会话 logs |
 | Pi 0.82.1 | 尚无已集成的官方原生 exporter；runtime 提示后继续执行，不向 Pi 传递 collector 凭证 |
 
-此初版同时启用表中 provider 支持的信号，没有单独的信号选择器。它不为 daemon 本身插桩，
-也不把 agent-compose 事件流转换为 spans。Pi 的
+此初版同时启用表中 provider 支持的信号，没有单独的信号选择器。同一地址还使 daemon 导出
+自身的 OTLP/HTTP traces 与 metrics：每个 daemon RPC 一个 server span，每次执行（流式与
+attach）一个 `invoke_agent` span，runtime driver 操作的 `sandbox.ensure`、`sandbox.stop`、
+`sandbox.remove`、`sandbox.exec`、`sandbox.interaction` span，guest 镜像解析的
+`image.pull` span，以及 run volume 解析的 `volume.prepare` span。这些 span 会按可用情况携带
+`agent_compose.run.id`、`agent_compose.project.id`、`agent_compose.agent.name`、
+`agent_compose.sandbox.id`、`agent_compose.driver` 和 `gen_ai.*` 属性。`invoke_agent` 及其
+`gen_ai.*` 属性遵循 OpenTelemetry GenAI 语义约定，该约定仍标记为 Development：名称可能在后续
+版本变化，不构成兼容性承诺。daemon 不记录 `invoke_workflow` 或 `execute_tool` span，因为
+workflow 与工具执行都发生在 guest 内；provider 自行导出的 span 会挂在 daemon 的
+`invoke_agent` span 之下。
+
+daemon 还向同一地址导出以下 metrics：`agent_compose.run.duration` 与
+`agent_compose.run.count`（按终态的 run 时长与成功率）、
+`agent_compose.sandbox.create.duration`，以及 `agent_compose.driver.operation.count`
+（按操作与结果统计的 driver 错误率）。metric 标签保持低基数（driver、operation、outcome、
+run 状态）；run、project、agent 标识只保留在 span 与事件中，因此 metrics 不会成为逐 run 的
+身份存储。
+
+daemon 插桩只记录操作状态：daemon 不把 agent-compose 事件流转换为 spans，也不导出
+prompt、工具或错误文本。Pi 的
 [官方 observability 设计](https://github.com/badlogic/pi-mono/blob/v0.82.1/packages/agent/docs/observability.md)
 描述了外部监听器及可能的未来 OTel 包，并非已发布的 exporter；其 `PI_TELEMETRY` 开关
 控制安装统计，不是 OTLP。
@@ -1030,10 +1050,13 @@ run/project ID；DSH 通过原生记录钩子将这些属性附加到 log record
 provider 定义，关联属性不会自动形成跨 provider 的统一分布式 trace。
 
 若调用方已有分布式 trace，可在启动执行的 daemon RPC 上携带 W3C trace context 的
-`traceparent`（以及可选的 `tracestate`）header。daemon 校验这两个值后，通过 agent telemetry
+`traceparent`（以及可选的 `tracestate`）header。启用 daemon 插桩时，daemon 自身的 server、
+run 与 runtime driver span 会作为调用方上下文的子 span 接入该 trace，使一次请求的 daemon
+操作与 guest provider span 共享同一 trace ID。daemon 校验这两个值后，通过 agent telemetry
 载荷转发给支持入站父上下文的 provider，使其导出的 span 接入调用方的 trace，而不是新起一个
-根。Codex 与 Claude Code 会采纳该 trace context；在当前受支持的版本中，OpenCode 与 DSH 不
-提供入站父上下文机制，因此仍会各自新建 trace 根。该中继复用承载 collector 设置的每次执行
+根；从载荷继承 daemon run span 的 provider 则挂在该 `invoke_agent` span 之下。Codex 与
+Claude Code 会采纳该 trace context；在当前受支持的版本中，OpenCode 与 DSH 不提供入站父
+上下文机制，因此仍会各自新建 trace 根。该中继复用承载 collector 设置的每次执行
 telemetry 载荷，因此需要启用 agent telemetry（`AGENT_TELEMETRY_OTLP_ENDPOINT`）才能到达
 guest；header 本身既不开启导出也不改变导出目标。header 缺失或格式非法时会被忽略：执行与
 引入该字段前完全一致地以自身为根，且不会向 sandbox 或其配置持久化任何内容。

@@ -19,6 +19,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 	"github.com/chaitin/agent-compose/pkg/volumes"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
@@ -124,6 +125,7 @@ type Controller struct {
 	removal             SandboxRemoval
 	completion          *CompletionManager
 	interactiveSessions *InteractiveSessionManager
+	recorder            *telemetry.Recorder
 }
 
 type llmFacadeTokenDeleter interface {
@@ -155,6 +157,8 @@ type ControllerDependencies struct {
 	Removal             SandboxRemoval
 	Completion          *CompletionManager
 	InteractiveSessions *InteractiveSessionManager
+	// Recorder is optional: a nil recorder keeps daemon telemetry disabled.
+	Recorder *telemetry.Recorder
 }
 
 type SandboxRemoval interface {
@@ -187,6 +191,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		removal:             deps.Removal,
 		completion:          deps.Completion,
 		interactiveSessions: interactiveSessions,
+		recorder:            deps.Recorder,
 	}
 }
 
@@ -511,7 +516,10 @@ type startedProjectRunContext struct {
 	Warnings    []string
 }
 
-func (c *Controller) executeStartedProjectRun(ctx context.Context, started startedProjectRunContext, stream *StreamSink) (domain.ProjectRunRecord, error, error) {
+func (c *Controller) executeStartedProjectRun(ctx context.Context, started startedProjectRunContext, stream *StreamSink) (record domain.ProjectRunRecord, execErr error, err error) {
+	runStartedAt := time.Now()
+	ctx, span := c.startRunSpan(ctx, started.Run.RunID, started.Request.ProjectID, started.Request.AgentName)
+	defer func() { c.endRunSpan(ctx, span, runStartedAt, record, errors.Join(err, execErr)) }()
 	coordinator := started.Coordinator
 	run := started.Run
 	req := started.Request
@@ -548,6 +556,9 @@ func (c *Controller) executeStartedProjectRun(ctx context.Context, started start
 		return run, err, nil
 	}
 	warnings = append(warnings, sandboxResult.Warnings...)
+	if sandboxResult.Sandbox != nil {
+		span.SetAttributes(telemetry.AttrSandboxID.String(sandboxResult.Sandbox.Summary.ID))
+	}
 	if err := ctx.Err(); err != nil {
 		stopReason := err.Error()
 		if cause := context.Cause(ctx); cause != nil {

@@ -7,6 +7,7 @@ import (
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 )
 
 const (
@@ -27,7 +28,7 @@ func ApplyAgentTelemetryEnv(ctx context.Context, config *appconfig.Config, sandb
 	if config.AgentTelemetry.Endpoint == "" {
 		return
 	}
-	traceContext := domain.TraceContextFromContext(ctx)
+	traceparent, tracestate := guestTraceContext(ctx)
 	payload := struct {
 		appconfig.AgentTelemetryConfig
 		Traceparent string            `json:"traceparent,omitempty"`
@@ -35,14 +36,31 @@ func ApplyAgentTelemetryEnv(ctx context.Context, config *appconfig.Config, sandb
 		Attributes  map[string]string `json:"attributes"`
 	}{
 		AgentTelemetryConfig: config.AgentTelemetry,
-		Traceparent:          validTraceparent(traceContext.Traceparent),
-		Tracestate:           validTracestate(traceContext.Tracestate),
+		Traceparent:          traceparent,
+		Tracestate:           tracestate,
 		Attributes:           map[string]string{"agent_compose.sandbox.id": sandbox.Summary.ID},
 	}
 	// The payload contains only strings, booleans and maps of strings; JSON
 	// marshaling cannot fail for these types.
 	encoded, _ := json.Marshal(payload) //nolint:errchkjson // Only strings, booleans and string maps; see invariant above.
 	env["AGENT_COMPOSE_TELEMETRY"] = string(encoded)
+}
+
+// guestTraceContext returns the W3C context guest providers should parent
+// under. When the daemon holds an active span for this execution the guest
+// joins that daemon span; otherwise the caller's validated context is relayed
+// unchanged, so the payload is identical when daemon tracing is disabled.
+func guestTraceContext(ctx context.Context) (string, string) {
+	traceContext := domain.TraceContextFromContext(ctx)
+	traceparent := validTraceparent(traceContext.Traceparent)
+	tracestate := validTracestate(traceContext.Tracestate)
+	if spanTraceparent := telemetry.TraceparentFromContext(ctx); spanTraceparent != "" {
+		traceparent = spanTraceparent
+		if spanTracestate := telemetry.TracestateFromContext(ctx); spanTracestate != "" {
+			tracestate = spanTracestate
+		}
+	}
+	return traceparent, tracestate
 }
 
 // validTraceparent returns value when it is a W3C Trace Context version 00

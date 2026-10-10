@@ -12,6 +12,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/fxgo/restful"
 	"github.com/chaitin/agent-compose/pkg/fxgo/utils"
 	"github.com/chaitin/agent-compose/pkg/health"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 	"io"
 	"log"
 	"log/slog"
@@ -53,6 +54,7 @@ type DaemonApp struct {
 	Echo            *echo.Echo
 	Logger          *slog.Logger
 	Config          *config.Config
+	Telemetry       *telemetry.Provider
 	startBackground func(do.Injector) error
 	stopBackground  func(context.Context, do.Injector) error
 	startOnce       sync.Once
@@ -132,7 +134,12 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	app := do.MustInvoke[*echo.Echo](di)
 	logger := do.MustInvoke[*slog.Logger](di)
 	conf := do.MustInvoke[*config.Config](di)
-	installDaemonMiddleware(app, conf)
+	telemetryProvider := do.MustInvoke[*telemetry.Provider](di)
+	telemetryRecorder, err := telemetryProvider.Recorder()
+	if err != nil {
+		return nil, err
+	}
+	installDaemonMiddleware(app, conf, telemetryRecorder)
 
 	startBackground := opts.StartBackground
 	stopBackground := opts.StopBackground
@@ -149,18 +156,19 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 		Echo:            app,
 		Logger:          logger,
 		Config:          conf,
+		Telemetry:       telemetryProvider,
 		startBackground: startBackground,
 		stopBackground:  stopBackground,
 		shutdownTimeout: 10 * time.Second,
 	}, nil
 }
 
-func installDaemonMiddleware(app *echo.Echo, conf *config.Config) {
+func installDaemonMiddleware(app *echo.Echo, conf *config.Config, recorder *telemetry.Recorder) {
 	app.Use(middleware.RequestLogger())
 	app.Use(middleware.Recover())
 	app.Use(newDaemonAuthMiddleware(conf))
 	app.Use(newDaemonTrustedHeadersMiddleware())
-	app.Use(newDaemonTraceContextMiddleware())
+	app.Use(newDaemonTraceContextMiddleware(recorder))
 }
 
 func (a *DaemonApp) StartBackground() error {
@@ -224,6 +232,16 @@ func (a *DaemonApp) shutdown(servers *daemonServers) error {
 		joined = errors.Join(joined, fmt.Errorf("stop background managers: %w", err))
 	}
 	cancelBackground()
+
+	// Flush buffered spans last so spans produced while stopping background
+	// managers are still exported.
+	telemetryCtx, cancelTelemetry := context.WithTimeout(context.Background(), a.effectiveShutdownTimeout())
+	if a.Telemetry != nil {
+		if err := a.Telemetry.Shutdown(telemetryCtx); err != nil {
+			joined = errors.Join(joined, fmt.Errorf("shutdown telemetry: %w", err))
+		}
+	}
+	cancelTelemetry()
 	return joined
 }
 

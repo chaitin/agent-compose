@@ -8,12 +8,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/chaitin/agent-compose/internal/projects"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 )
 
 // startedRunAttachContext bundles the started run's state and the first
@@ -27,7 +29,12 @@ type startedRunAttachContext struct {
 	Mode     RunAttachMode
 }
 
-func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach startedRunAttachContext, receive RunAttachReceiver, send RunAttachSender) (domain.ProjectRunRecord, error, error) {
+func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach startedRunAttachContext, receive RunAttachReceiver, send RunAttachSender) (record domain.ProjectRunRecord, execErr error, err error) {
+	// The attach path runs the same run lifecycle as a streamed run, so it joins
+	// the caller's trace and carries the same invoke_agent span.
+	runStartedAt := time.Now()
+	ctx, span := c.startRunSpan(ctx, attach.Run.RunID, attach.Request.ProjectID, attach.Request.AgentName)
+	defer func() { c.endRunSpan(ctx, span, runStartedAt, record, errors.Join(err, execErr)) }()
 	run := attach.Run
 	req := attach.Request
 	warnings := attach.Warnings
@@ -55,6 +62,7 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 		run, markErr := c.completeProjectRunError(transitionCtx, ctx, transition, err)
 		return withRunWarnings(run, warnings), err, markErr
 	}
+	span.SetAttributes(telemetry.AttrSandboxID.String(sandboxResult.Sandbox.Summary.ID))
 	warnings = append(warnings, sandboxResult.Warnings...)
 	run, err = coordinator.MarkRunning(transitionCtx, run.RunID, sandboxResult.Sandbox.Summary.ID)
 	if err != nil {
@@ -62,7 +70,6 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 	}
 	run = withRunWarnings(run, warnings)
 	var transition TransitionRequest
-	var execErr error
 	runCtx := interactionRunContext{Coordinator: coordinator, Run: run, Sandbox: sandboxResult.Sandbox, Request: req}
 	switch mode {
 	case RunAttachModePrompt:

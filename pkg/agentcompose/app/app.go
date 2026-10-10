@@ -35,6 +35,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
 	storagesqlite "github.com/chaitin/agent-compose/pkg/storage/sqlite"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 	"github.com/chaitin/agent-compose/pkg/volumes"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
 	"github.com/chaitin/agent-compose/proto/agentcompose/v2/agentcomposev2connect"
@@ -59,6 +60,8 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewSandboxStore)
 	do.Provide(di, NewWorkspaceProvisioner)
 	do.MustAs[*workspaces.Provisioner, workspaces.WorkspaceEnsurer](di)
+	do.Provide(di, NewTelemetryProvider)
+	do.Provide(di, NewTelemetryRecorder)
 	do.Provide(di, NewRuntimeProvider)
 	do.Provide(di, NewLLMClient)
 	do.Provide(di, NewProjectOctoBusTargetResolver)
@@ -395,7 +398,11 @@ func NewVolumeManager(di do.Injector) (*volumes.Manager, error) {
 }
 
 func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {
-	return adapters.NewRuntimeProvider(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*sandboxstore.Store](di))
+	return adapters.NewRuntimeProvider(
+		do.MustInvoke[*appconfig.Config](di),
+		do.MustInvoke[*sandboxstore.Store](di),
+		adapters.WithRuntimeRecorder(do.MustInvoke[*telemetry.Recorder](di)),
+	)
 }
 
 func NewLLMClient(di do.Injector) (*adapters.LLMClient, error) {
@@ -408,6 +415,7 @@ func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {
 		do.MustInvoke[*sandboxstore.Store](di),
 		do.MustInvoke[*configstore.ConfigStore](di),
 		do.MustInvoke[adapters.RuntimeProvider](di),
+		adapters.WithSandboxDriverRecorder(do.MustInvoke[*telemetry.Recorder](di)),
 	), nil
 }
 

@@ -6,8 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 )
 
 const (
@@ -96,6 +100,46 @@ func TestAgentTelemetryRelaysTraceContext(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestAgentTelemetryNestsGuestUnderActiveDaemonSpan(t *testing.T) {
+	cfg := &appconfig.Config{AgentTelemetry: appconfig.AgentTelemetryConfig{Endpoint: "http://collector:4318"}}
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1"}}
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	t.Cleanup(func() {
+		if err := provider.Shutdown(context.Background()); err != nil {
+			t.Fatalf("shutdown tracer provider: %v", err)
+		}
+	})
+	telemetryRecorder, err := telemetry.NewRecorder(provider, nil)
+	if err != nil {
+		t.Fatalf("NewRecorder returned error: %v", err)
+	}
+
+	ctx := domain.NewContextWithTraceContext(context.Background(), domain.TraceContext{Traceparent: testTraceparent, Tracestate: testTracestate})
+	ctx, span := telemetryRecorder.Start(ctx, telemetry.SpanInvokeAgent)
+	defer span.End()
+	env := BuildSandboxExecEnv(ctx, cfg, sandbox, "/root")
+
+	var payload struct {
+		Traceparent string `json:"traceparent"`
+		Tracestate  string `json:"tracestate"`
+	}
+	if err := json.Unmarshal([]byte(env["AGENT_COMPOSE_TELEMETRY"]), &payload); err != nil {
+		t.Fatal(err)
+	}
+	spanContext := span.SpanContext()
+	wantTraceparent := "00-" + spanContext.TraceID().String() + "-" + spanContext.SpanID().String() + "-" + spanContext.TraceFlags().String()
+	if payload.Traceparent != wantTraceparent {
+		t.Fatalf("traceparent = %q, want the daemon span %q", payload.Traceparent, wantTraceparent)
+	}
+	if payload.Traceparent == testTraceparent {
+		t.Fatal("guest payload still relays the caller span instead of the daemon span")
+	}
+	if payload.Tracestate != testTracestate {
+		t.Fatalf("tracestate = %q, want the caller tracestate %q", payload.Tracestate, testTracestate)
+	}
 }
 
 func TestValidTraceparent(t *testing.T) {

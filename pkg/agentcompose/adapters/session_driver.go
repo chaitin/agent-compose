@@ -13,6 +13,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
+	"github.com/chaitin/agent-compose/pkg/telemetry"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
 )
 
@@ -21,10 +22,25 @@ type SandboxDriver struct {
 	Store    *sandboxstore.Store
 	ConfigDB *configstore.ConfigStore
 	Runtimes RuntimeProvider
+	recorder *telemetry.Recorder
 }
 
-func NewSandboxDriver(config *appconfig.Config, store *sandboxstore.Store, configDB *configstore.ConfigStore, runtimes RuntimeProvider) *SandboxDriver {
-	return &SandboxDriver{Config: config, Store: store, ConfigDB: configDB, Runtimes: runtimes}
+// SandboxDriverOption customizes the driver's optional collaborators.
+type SandboxDriverOption func(*SandboxDriver)
+
+// WithSandboxDriverRecorder attaches the daemon recorder, so guest-image
+// resolution and pull export as a child span of the run that requested them. A
+// nil recorder leaves the driver untraced.
+func WithSandboxDriverRecorder(recorder *telemetry.Recorder) SandboxDriverOption {
+	return func(driver *SandboxDriver) { driver.recorder = recorder }
+}
+
+func NewSandboxDriver(config *appconfig.Config, store *sandboxstore.Store, configDB *configstore.ConfigStore, runtimes RuntimeProvider, opts ...SandboxDriverOption) *SandboxDriver {
+	driver := &SandboxDriver{Config: config, Store: store, ConfigDB: configDB, Runtimes: runtimes}
+	for _, option := range opts {
+		option(driver)
+	}
+	return driver
 }
 
 func (d *SandboxDriver) runtimeForSession(session *domain.Sandbox) (string, SandboxRuntime, error) {
@@ -298,7 +314,12 @@ func (d *SandboxDriver) revokeReleasedRuntimeTokens(ctx context.Context, sandbox
 	return nil
 }
 
-func (d *SandboxDriver) prepareSandboxStart(ctx context.Context, driver string, session *domain.Sandbox, vmState *domain.VMState) error {
+// prepareSandboxStart resolves the guest image and, for the Docker driver,
+// pulls it when the pull policy requires it. VM drivers only resolve the ref
+// here; their materialization stays under the sandbox.ensure span.
+func (d *SandboxDriver) prepareSandboxStart(ctx context.Context, driver string, session *domain.Sandbox, vmState *domain.VMState) (err error) {
+	ctx, endSpan := startRuntimeSpan(ctx, d.recorder, telemetry.SpanImagePull, session, driver)
+	defer func() { endSpan(err) }()
 	prepared, err := driverpkg.PrepareSandboxStart(ctx, d.Config, driverpkg.SandboxStartTarget{
 		Driver:  driver,
 		Session: execution.ToDriverSandbox(session),
