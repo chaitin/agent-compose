@@ -81,3 +81,21 @@ func TestIntegrationComposeParseNormalizeAndOutputWorkflows(t *testing.T) {
 func TestE2EComposeParseNormalizeAndOutputWorkflows(t *testing.T) {
 	TestIntegrationComposeParseNormalizeAndOutputWorkflows(t)
 }
+
+// The declared sandbox network policy is part of the compose contract, its
+// canonical JSON, and the spec hash, so it must carry coverage in the broader
+// shapes and not only in the unit shape.
+func TestIntegrationComposeSandboxNetworkWorkflows(t *testing.T) {
+	t.Run("normalize sandbox network", TestNormalizeSandboxNetwork)
+	t.Run("egress declaration", TestSandboxNetworkEgressDeclaration)
+	t.Run("egress declaration rejects unknown default", TestSandboxNetworkEgressDeclarationRejectsUnknownDefault)
+	t.Run("rejects invalid declarations", TestSandboxNetworkRejectsInvalidDeclarations)
+	t.Run("returns a deep clone", TestSandboxNetworkReturnsDeepClone)
+	t.Run("hash includes declared network", TestSpecHashIncludesDeclaredSandboxNetwork)
+	t.Run("stopped runtime only keeps the golden hash", TestStoppedRuntimeOnlySandboxKeepsCanonicalHash)
+	t.Run("undeclared network keeps the golden hash", TestUndeclaredSandboxNetworkKeepsCanonicalHash)
+}
+
+func TestE2EComposeSandboxNetworkWorkflows(t *testing.T) {
+	TestIntegrationComposeSandboxNetworkWorkflows(t)
+}
