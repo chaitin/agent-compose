@@ -100,7 +100,7 @@ func redactEnvVarSpecs(values []*agentcomposev2.EnvVarSpec) {
 		if value == nil {
 			continue
 		}
-		if value.GetSecret() || (value.GetValue() != "" && driverpkg.LLMProviderCredentialEnvName(value.GetName())) {
+		if value.GetSecret() || (value.GetValue() != "" && driverpkg.IsHeldCredentialName(value.GetName())) {
 			value.Value = secretRedactedValue
 		}
 	}

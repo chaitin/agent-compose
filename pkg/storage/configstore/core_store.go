@@ -48,6 +48,7 @@ type ConfigStore struct {
 	*eventStore
 	*projectStore
 	*llmStore
+	*credentialStore
 	*capabilityGatewayStore
 	*volumeStore
 }
@@ -60,6 +61,7 @@ func FromDB(db *sql.DB) *ConfigStore {
 		eventStore:             &eventStore{db: db},
 		projectStore:           &projectStore{db: db},
 		llmStore:               &llmStore{db: db},
+		credentialStore:        &credentialStore{db: db},
 		capabilityGatewayStore: &capabilityGatewayStore{db: db},
 		volumeStore:            &volumeStore{db: db},
 	}
