@@ -209,9 +209,11 @@ func TestCredentialHandleStoreRejectsUnattributableHandle(t *testing.T) {
 }
 
 // TestCredentialHandleStorePrunesDeadHandlesOnSandboxSweep pins the bounded
-// retention: a handle that expired longer ago than the retention window is
-// removed by the sweep, while a live handle of the same sandbox is only
-// revoked, so the table cannot grow for the life of the deployment.
+// retention and, specifically, that the grace window applies to every way a
+// handle can die. The common case here is expiry, not revocation, because
+// DefaultHandleTTL is 15 minutes: a handle that ran out 30 minutes ago must
+// still be answerable, and only one that has been dead for longer than
+// CredentialHandleRetention is removed.
 func TestCredentialHandleStorePrunesDeadHandlesOnSandboxSweep(t *testing.T) {
 	store, ctx := newCredentialStore(t)
 	now := time.Now().UTC()
@@ -234,16 +236,24 @@ func TestCredentialHandleStorePrunesDeadHandlesOnSandboxSweep(t *testing.T) {
 		}
 		return handle
 	}
-	// Issued two hours ago with the default 15m TTL: dead well beyond retention.
-	expired := mint("GIT_TOKEN_EXPIRED", now.Add(-2*time.Hour))
+	// Default 15m TTL throughout: dead 1h45m ago, 30m ago, and not at all.
+	expiredBeyondRetention := mint("GIT_TOKEN_OLD", now.Add(-2*time.Hour))
+	expiredWithinRetention := mint("GIT_TOKEN_RECENT", now.Add(-45*time.Minute))
 	live := mint("GIT_TOKEN_LIVE", now)
 
 	if err := store.RevokeCredentialHandlesForSandbox(ctx, "sbx-prune"); err != nil {
 		t.Fatalf("RevokeCredentialHandlesForSandbox() error = %v", err)
 	}
 
-	if _, err := store.GetCredentialHandleByID(ctx, expired.ID); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("expired handle lookup error = %v, want ErrNotFound after the sweep pruned it", err)
+	if _, err := store.GetCredentialHandleByID(ctx, expiredBeyondRetention.ID); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("long-dead handle lookup error = %v, want ErrNotFound after the sweep pruned it", err)
+	}
+	kept, err := store.GetCredentialHandleByID(ctx, expiredWithinRetention.ID)
+	if err != nil {
+		t.Fatalf("recently-expired handle lookup error = %v, want the grace window to keep it", err)
+	}
+	if kept.RevokedAt.IsZero() {
+		t.Fatal("the sweep must mark a recently-expired handle revoked, not only retain it")
 	}
 	got, err := store.GetCredentialHandleByID(ctx, live.ID)
 	if err != nil {

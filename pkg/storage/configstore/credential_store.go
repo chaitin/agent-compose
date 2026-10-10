@@ -165,6 +165,14 @@ const CredentialHandleRetention = time.Hour
 // It also opportunistically prunes handles that have been dead for longer than
 // CredentialHandleRetention, which is what keeps the table bounded across
 // sandboxes.
+//
+// Both ways of dying get the same grace window: a handle that merely ran out
+// (the common case, since DefaultHandleTTL is 15 minutes) is kept until it has
+// been expired for CredentialHandleRetention, exactly like one that was
+// revoked. That is deliberate and differs from llm_facade_token's prune, which
+// drops expired rows immediately; the handle model is what an audit consults for
+// "which credential was usable when", so "expired but still within the window"
+// must remain answerable. Both states fail closed at Authorize either way.
 func (s *credentialStore) RevokeCredentialHandlesForSandbox(ctx context.Context, sandboxID string) error {
 	sandboxID = strings.TrimSpace(sandboxID)
 	if sandboxID == "" {
@@ -175,7 +183,7 @@ func (s *credentialStore) RevokeCredentialHandlesForSandbox(ctx context.Context,
 		return fmt.Errorf("revoke credential handles for sandbox: %w", err)
 	}
 	cutoff := credentials.UnixMillis(now.Add(-CredentialHandleRetention))
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM credential_handle WHERE (revoked_at != 0 AND revoked_at < ?) OR (expires_at != 0 AND expires_at < ?)`, cutoff, credentials.UnixMillis(now)); err != nil {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM credential_handle WHERE (revoked_at != 0 AND revoked_at < ?) OR (expires_at != 0 AND expires_at < ?)`, cutoff, cutoff); err != nil {
 		return fmt.Errorf("prune credential handles: %w", err)
 	}
 	return nil
