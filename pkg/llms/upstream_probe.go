@@ -69,6 +69,8 @@ type UpstreamProbeResult struct {
 	Models       []string
 	ModelsDetail string
 	Protocols    []ProtocolProbe
+	// Cached reports that this verdict was reused instead of re-probed.
+	Cached bool
 }
 
 // SupportedProtocols returns the protocols the probe proved are served here.
@@ -115,9 +117,11 @@ func UpstreamProbeProtocols(provider Provider) []Protocol {
 }
 
 // UpstreamProber probes configured connections over HTTP. It owns the client so
-// a caller controls the transport, the proxy, and the timeout.
+// a caller controls the transport, the proxy, and the timeout, and it owns the
+// verdict cache so repeated triggers do not repeat identical traffic.
 type UpstreamProber struct {
 	client *http.Client
+	cache  *UpstreamProbeCache
 }
 
 // NewUpstreamProber returns a prober that issues requests through client. A nil
@@ -131,7 +135,26 @@ func NewUpstreamProber(client *http.Client) *UpstreamProber {
 		cloned.Timeout = DefaultProbeTimeout
 		client = &cloned
 	}
-	return &UpstreamProber{client: client}
+	return &UpstreamProber{client: client, cache: NewUpstreamProbeCache(ProbeCacheTTL)}
+}
+
+// WithProbeCache replaces the verdict cache, which lets a caller choose the
+// retention window and lets a test control the clock.
+func (p *UpstreamProber) WithProbeCache(cache *UpstreamProbeCache) *UpstreamProber {
+	if p != nil {
+		p.cache = cache
+	}
+	return p
+}
+
+// LookupUpstreamProbe returns the cached verdict for a connection without
+// issuing traffic. It is the read side of the cache: a caller can report the
+// most recent capabilities the daemon observed.
+func (p *UpstreamProber) LookupUpstreamProbe(provider Provider) (UpstreamProbeResult, bool) {
+	if p == nil {
+		return UpstreamProbeResult{}, false
+	}
+	return p.cache.Lookup(UpstreamProbeKey(provider))
 }
 
 // Probe lists the connection's models and then probes every protocol its family
@@ -143,11 +166,19 @@ func NewUpstreamProber(client *http.Client) *UpstreamProber {
 // model when the connection declares none. A gateway that lists no models still
 // gets every protocol probed with the caller's model; only a connection with no
 // model on either side is reported inconclusive.
+//
+// A fresh verdict for the same endpoint and credential is reused instead of
+// re-probed, so repeated triggers do not repeat identical upstream traffic.
 func (p *UpstreamProber) Probe(ctx context.Context, req UpstreamProbeRequest) (UpstreamProbeResult, error) {
 	provider := req.Provider
 	result := UpstreamProbeResult{Endpoint: strings.TrimSpace(provider.BaseURL)}
 	if result.Endpoint == "" {
 		return result, fmt.Errorf("probe connection %q: a base url is required", provider.ID)
+	}
+	cacheKey := UpstreamProbeKey(provider)
+	if cached, ok := p.cache.Lookup(cacheKey); ok {
+		cached.Cached = true
+		return cached, nil
 	}
 	headers, err := ProviderForwardHeaders(provider)
 	if err != nil {
@@ -168,11 +199,13 @@ func (p *UpstreamProber) Probe(ctx context.Context, req UpstreamProbeRequest) (U
 				Detail:   "the connection declares no model and the endpoint listed none",
 			})
 		}
+		p.cache.Store(cacheKey, result)
 		return result, nil
 	}
 	for _, protocol := range protocols {
 		result.Protocols = append(result.Protocols, p.probeProtocol(ctx, provider, headers, model, protocol))
 	}
+	p.cache.Store(cacheKey, result)
 	return result, nil
 }
 

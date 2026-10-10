@@ -22,7 +22,7 @@ func ProbeUpstreamAndLog(ctx context.Context, logger *slog.Logger, prober *Upstr
 		logger.Warn("llm upstream probe could not run", "connection", provider.ID, "error", err)
 		return
 	}
-	logger.Info("llm upstream probe", "connection", provider.ID, "endpoint", result.Endpoint, "model", result.Model)
+	logger.Info("llm upstream probe", "connection", provider.ID, "endpoint", result.Endpoint, "model", result.Model, "cached", result.Cached)
 	LogUpstreamProbe(logger, result)
 	if declared, supported, mismatch := DeclaredProtocolUnsupported(provider, result); mismatch {
 		logger.Warn("llm upstream does not support the declared protocol",
