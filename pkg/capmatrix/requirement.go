@@ -210,7 +210,13 @@ func (d *StartPreflight) record(requirement IsolationRequirement, finding Prefli
 // evaluateRequirement returns a finding when the requirement is not satisfied.
 func evaluateRequirement(requirement IsolationRequirement, declared DriverCapabilities, observed map[ObservedDimension]ObservedCapability) (PreflightFinding, bool) {
 	if observedDimension := ObservedDimension(requirement.Dimension); observedDimension.valid() {
-		return evaluateObservedRequirement(requirement, observedDimension, observed)
+		if finding, blocked := evaluateObservedRequirement(requirement, observedDimension, observed); blocked {
+			return finding, true
+		}
+		// An observed claim is not sufficient on its own either: the host
+		// mechanism it rests on is part of the decision, exactly as for a
+		// declared dimension.
+		return systemPreconditionFinding(requirement.Dimension, observed)
 	}
 	dimension := Dimension(requirement.Dimension)
 	if !dimension.valid() {

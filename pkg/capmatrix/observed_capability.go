@@ -166,6 +166,13 @@ func (o ObservedCapability) Validate() error {
 // The probe never reads an OS version string. Each dimension is answered by
 // asking the kernel to do something (query an action, create a ruleset) or by
 // the kernel's own configured limit.
+//
+// Host locality: the measurement is of the kernel this daemon process runs on,
+// so it is authoritative only when the sandbox runs on the same host (the
+// default local Docker driver). A remote Docker daemon or a Kubernetes node may
+// run a different kernel, so a system.* claim must be read as "the daemon host"
+// and is not by itself a guarantee about the sandbox host. Callers that use a
+// system.* measurement as a precondition therefore inherit that assumption.
 func ProbeSystemCapabilities() ([]ObservedCapability, error) {
 	probed, err := probeSystemCapabilities()
 	if err != nil {

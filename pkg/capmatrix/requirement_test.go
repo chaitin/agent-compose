@@ -173,6 +173,38 @@ func TestEvaluateStartPreflightRejectsUnavailableSystemPrecondition(t *testing.T
 	}
 }
 
+// TestEvaluateStartPreflightRejectsUnavailableSystemPreconditionForObserved
+// proves the host precondition is checked for an engine-measured process claim
+// too. Without it the process-level host mapping is unreachable, because an
+// observed dimension never reaches the declared-dimension path.
+func TestEvaluateStartPreflightRejectsUnavailableSystemPreconditionForObserved(t *testing.T) {
+	declaration := testDriverCapabilities(t, "boxlite", nil)
+	observations := []ObservedCapability{
+		{
+			Dimension: ObservedProcessSeccomp,
+			Enforced:  true,
+			State:     StateEnforced,
+			Mechanism: "seccomp_filter_applied",
+			Observed:  "the lower layer reported it applied a seccomp filter",
+			Source:    SourceMeasured,
+		},
+		{
+			Dimension: ObservedSeccomp,
+			State:     StateUnsupported,
+			Mechanism: ReasonUnsupported,
+			Observed:  "prctl(PR_GET_SECCOMP) failed with EINVAL",
+			Missing:   "the kernel cannot enforce seccomp",
+			Source:    SourceMeasured,
+		},
+	}
+	decision := EvaluateStartPreflight("boxlite", []IsolationRequirement{
+		{Dimension: RequirementDimension(ObservedProcessSeccomp), Strength: RequirementRequired},
+	}, declaration, observations)
+	if decision.Allowed || decision.Violations[0].Reason != PreflightReasonSystemUnavailable {
+		t.Fatalf("decision = %+v, want system_unavailable when the observed process claim rests on an absent host mechanism", decision)
+	}
+}
+
 // TestMeasuredLowerLayerSeccompFailureIsReportedNotEnforced is the
 // lower-layer-injection acceptance test: a libcontainer report that seccomp was
 // unavailable becomes an honest "not enforced" assertion, and a required

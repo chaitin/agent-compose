@@ -69,6 +69,13 @@ func (f ExecSecurityFacts) Pointer() *ExecSecurityFacts {
 // execOutputFilter reduces exec stderr noise while never hiding the security
 // facts it observes. It reassembles lines split across chunks, emits every
 // line, and counts the lower-layer isolation failures.
+//
+// Framing note: the previous filter fast-pathed stderr verbatim after the head
+// line, so it buffered only the start of the stream. This filter reassembles
+// every stderr chunk by newline (bounded by maxInitialExecStderrBuffer for a
+// newline-less run), which is what makes the split-warning count exact but also
+// means a long stderr run without newlines is held up to that bound before it
+// is emitted.
 type execOutputFilter struct {
 	pendingStderr strings.Builder
 	facts         ExecSecurityFacts
@@ -144,6 +151,11 @@ func (f *execOutputFilter) recordSecurityFact(line string) {
 // countExecSecurityFacts counts isolation failure reports in an already
 // complete stderr body. The non-streaming exec paths never build a filter, so
 // they scan their captured stderr with this instead of losing the fact.
+//
+// It matches the message text alone, so a workload that prints the same phrase
+// from inside the sandbox can fabricate a fact. The direction is safe: a
+// fabricated fact can only make a dimension look less enforced (fail-closed),
+// never more, and the engine reports it rather than using it to grant trust.
 func countExecSecurityFacts(text string) ExecSecurityFacts {
 	var facts ExecSecurityFacts
 	if strings.Contains(text, lowerLayerSeccompUnavailableMessage) {

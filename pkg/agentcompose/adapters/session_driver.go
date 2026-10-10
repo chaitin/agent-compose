@@ -320,10 +320,16 @@ func (d *SandboxDriver) prepareSandboxStart(ctx context.Context, driver string, 
 	return nil
 }
 
-// enforceIsolationPreflight is the structural fail-closed gate. StartSandboxVM
-// is the single entry point that creates sandbox runtime state, and this gate
-// runs before any of that state is written, so a caller cannot create a
-// runtime without a declared-requirement check.
+// enforceIsolationPreflight is the fail-closed gate on the sandbox start path.
+// StartSandboxVM is the entry point that starts a sandbox and creates its
+// runtime state, and this gate runs before any of that state is written, so the
+// start path cannot create a runtime without a declared-requirement check.
+//
+// It is not the only caller of RuntimeProvider.EnsureSandbox: post-start paths
+// such as the guest-skills projection re-enter EnsureSandbox on an
+// already-started sandbox, where the idempotent ensure cannot create state that
+// the gate has not already approved. Those revisits deliberately do not
+// re-evaluate the declaration.
 //
 // D3 default: the current declaration surface yields an empty requirement set,
 // so the gate returns immediately and the default path is byte-for-byte

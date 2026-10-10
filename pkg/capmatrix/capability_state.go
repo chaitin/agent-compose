@@ -136,8 +136,5 @@ func (a assertion) normalize() (assertion, error) {
 			return assertion{}, fmt.Errorf("%w: %s is not enforced but declares preconditions", ErrInvalidCapability, a.label)
 		}
 	}
-	if a.state == StateDegraded {
-		a.enforced = false
-	}
 	return a, nil
 }
