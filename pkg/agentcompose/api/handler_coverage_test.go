@@ -84,6 +84,8 @@ func TestIntegrationAPIHandlerRuntimeWorkflows(t *testing.T) {
 	t.Run("follow run logs offsets tail and final", TestFollowRunLogsStreamsOffsetsTailAndFinal)
 	t.Run("follow run logs missing terminal file", TestFollowRunLogsMissingLogFileReturnsEmptyFinalForTerminalRun)
 	t.Run("follow run logs project mismatch", TestFollowRunLogsRejectsProjectMismatch)
+	t.Run("engine capabilities frozen matrix", TestEngineCapabilitiesHandlerReportsFrozenMatrix)
+	t.Run("engine capabilities provider matrix", TestEngineCapabilitiesHandlerReportsProviderMatrix)
 }
 
 func TestE2EAPIHandlerRuntimeWorkflows(t *testing.T) {
