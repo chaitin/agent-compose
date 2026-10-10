@@ -67,6 +67,7 @@ capabilities. Page layout is intentionally not part of this stable contract.
 | Image/cache/volume management | `ImageService`, `CacheService`, `VolumeService` |
 | Settings and workspace presets | `SettingsService` |
 | Capability status and catalog | `CapabilityService` |
+| Engine driver/provider capability matrix | `EngineService.GetCapabilities` |
 | Dashboard overview and watch | `DashboardService` |
 | Control-plane LLM generation | `LLMService.Generate` |
 | Polymorphic identifier lookup | `ResourceService.ResolveID` |
