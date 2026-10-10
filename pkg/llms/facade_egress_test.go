@@ -101,12 +101,39 @@ func TestFacadeEgressPolicyGolden(t *testing.T) {
 			if result.Allowed() && result.RuleID == "" {
 				t.Fatalf("allow decision %+v names no rule", result)
 			}
+			if result.Allowed() && result.Reason != "" {
+				t.Fatalf("allow decision %+v carries deny reason %q", result, result.Reason)
+			}
 
 			gotModel, gotAllowed := tc.token.ResolveUpstreamModel(tc.requested)
 			if gotModel != result.Target || gotAllowed != result.Allowed() {
 				t.Fatalf("ResolveUpstreamModel() = (%q, %t), decision = (%q, %t)", gotModel, gotAllowed, result.Target, result.Allowed())
 			}
 		})
+	}
+}
+
+// TestFacadeEgressPolicyAllowCarriesNoDenyReason pins the Result.Reason
+// contract directly: a reason explains a deny, so an allow must never carry one.
+// The guest-model rule once set the not-authorized reason on its allow branch,
+// which made a permitted request look unauthorized in the decision record.
+func TestFacadeEgressPolicyAllowCarriesNoDenyReason(t *testing.T) {
+	allowed := FacadeToken{SandboxID: "sandbox-1", ProviderID: "baizhi", Model: "baizhi/deepseek-v4", GuestModel: "agent-compose/baizhi/deepseek-v4"}
+	result := egress.Decide(FacadeEgressPolicy(allowed), FacadeEgressRequest(allowed, "agent-compose/baizhi/deepseek-v4"))
+	if !result.Allowed() {
+		t.Fatalf("decision = %+v, want allow", result)
+	}
+	if result.Reason != "" {
+		t.Fatalf("allow decision carries reason %q, want empty", result.Reason)
+	}
+
+	refused := FacadeToken{SandboxID: "sandbox-1", GuestModel: "agent-compose/gpt"}
+	denied := egress.Decide(FacadeEgressPolicy(refused), FacadeEgressRequest(refused, "agent-compose/gpt"))
+	if denied.Allowed() {
+		t.Fatalf("decision = %+v, want deny", denied)
+	}
+	if denied.Reason != reasonModelNotAuthorized {
+		t.Fatalf("deny reason = %q, want %q", denied.Reason, reasonModelNotAuthorized)
 	}
 }
 
