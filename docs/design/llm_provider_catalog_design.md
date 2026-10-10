@@ -125,7 +125,7 @@ catalog Provider 只有在最终定义包含非空 API Key 时才可用。
 
 ```text
 agent 声明的 model
-> models.json default / daemon 环境声明的默认模型
+> models.json default（优先）/ daemon 环境声明的默认模型（兜底）
 > 配置前置条件错误
 ```
 
@@ -144,7 +144,7 @@ agent 声明凭据被吸收成的 declared 连接
 1. run/session 环境里声明的凭据，如果 daemon 能识别**且能代理**，会被吸收成一条 scope 为 `declared` 的连接（ID 为 `session-env:<sandbox-id>:<family>:<declaration-digest>`，digest 是声明内容的摘要，见 §声明的第一方凭据），再用 Catalog 正常解析它的 endpoint、protocol、key 和选定模型；缺失值不能从 catalog 或 daemon 环境借用。识别不了的 `*_API_KEY` 不参与连接解析，原样下发到 sandbox 环境。
 2. 没有声明凭据时，daemon 先在声明了该模型的连接中选择；同一模型被多个连接声明时，按调用方协议偏好优先 passthrough，同协议候选随机择一。
 3. `models.json` 顶层 `default` 用 `provider/model` 指定默认连接与默认模型；agent 的 `model` 不会被再次拆分。没有连接声明该模型时，它优先于其他兜底规则。
-4. agent 未声明模型时，使用 catalog default 模型（`models.json.default` 的右侧，或 daemon 环境声明的默认模型）。
+4. agent 未声明模型时使用 catalog default 模型。两者的优先级即代码事实：`models.json.default`（`llm_catalog_default`）优先，daemon 环境声明的默认模型（`llm_model.default_model`）只是启动兜底。
 5. 所有来源都无法得到可用连接和模型时，以配置前置条件错误失败。
 
 继续兼容的环境变量包括：
