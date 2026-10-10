@@ -13,9 +13,10 @@ import (
 
 const providerColumns = `id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, auth, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at`
 
-// CreateLLMProvider creates an API-owned upstream provider without changing
-// defaults. An explicit authentication choice is stored independently of the
-// protocol, even when it currently matches the protocol's default.
+// CreateLLMProvider creates an API-owned upstream provider with its declared
+// models, in one transaction. An explicit authentication choice is stored
+// independently of the protocol, even when it currently matches the protocol's
+// default.
 func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderReplacement) (llms.Provider, error) {
 	input, err := llms.NormalizeProviderReplacement(input)
 	if err != nil {
@@ -31,7 +32,13 @@ func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderRep
 	auth := providerAuthValue(input.Auth)
 	family, header, scheme := managedProviderAuth(input.Protocol, auth)
 	now := time.Now().UTC().Unix()
-	row := s.db.QueryRowContext(ctx, `INSERT INTO llm_provider (`+providerColumns+`)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return llms.Provider{}, fmt.Errorf("begin provider create: %w", err)
+	}
+	// Rollback after commit is harmless; on errors it releases the transaction.
+	defer func() { _ = tx.Rollback() }()
+	row := tx.QueryRowContext(ctx, `INSERT INTO llm_provider (`+providerColumns+`)
  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10, ?, ?, ?, ?)
  ON CONFLICT(id) DO NOTHING RETURNING `+providerColumns,
 		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, string(auth), llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
@@ -41,6 +48,12 @@ func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderRep
 	}
 	if err != nil {
 		return llms.Provider{}, fmt.Errorf("create llm provider: %w", err)
+	}
+	if err := replaceProviderModels(ctx, tx, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
+		return llms.Provider{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return llms.Provider{}, fmt.Errorf("commit provider create: %w", err)
 	}
 	return provider, nil
 }
@@ -137,10 +150,92 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 	if err != nil {
 		return llms.Provider{}, fmt.Errorf("update llm provider: %w", err)
 	}
+	if err := ensureRetainedModelProtocols(ctx, tx, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
+		return llms.Provider{}, err
+	}
+	if err := replaceProviderModels(ctx, tx, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
+		return llms.Provider{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return llms.Provider{}, fmt.Errorf("commit provider update: %w", err)
 	}
 	return provider, nil
+}
+
+// ensureRetainedModelProtocols checks the bindings an update keeps against the
+// connection's new protocol. A binding's explicit protocol outranks the
+// connection protocol when a target is built, so a protocol-family change that
+// retains a binding from the old family would resolve requests to an endpoint and
+// protocol that disagree — a combination this package rejects when a client
+// states it in a model spec. A request that carries models states the new intent
+// and is validated against that set instead, so only retained bindings are
+// checked here.
+func ensureRetainedModelProtocols(ctx context.Context, tx *sql.Tx, providerID, providerProtocol string, replacement *[]llms.ModelSpec) error {
+	if replacement != nil {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT model_id, wire_api FROM llm_provider_model WHERE provider_id = ? ORDER BY model_id`, providerID)
+	if err != nil {
+		return fmt.Errorf("read retained provider %q models: %w", providerID, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var modelID, wireAPI string
+		if err := rows.Scan(&modelID, &wireAPI); err != nil {
+			return fmt.Errorf("scan retained provider %q model: %w", providerID, err)
+		}
+		if err := llms.ValidateModelSpecProtocol(providerProtocol, wireAPI); err != nil {
+			return fmt.Errorf("retained model %q declared as %q does not fit the new connection protocol %q, resend the model set to restate it: %w",
+				modelID, wireAPI, providerProtocol, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate retained provider %q models: %w", providerID, err)
+	}
+	return nil
+}
+
+// replaceProviderModels writes a connection's declared model set. A nil set
+// leaves the stored set alone; a non-nil set replaces it, so an empty set clears
+// every binding. Model identity rows are shared across connections by model ID,
+// so an existing row another source owns keeps its scope and metadata and only
+// the binding is written.
+func replaceProviderModels(ctx context.Context, tx *sql.Tx, providerID, providerProtocol string, models *[]llms.ModelSpec) error {
+	if models == nil {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_provider_model WHERE provider_id = ?`, providerID); err != nil {
+		return fmt.Errorf("replace provider %q models: %w", providerID, err)
+	}
+	now := time.Now().UTC().Unix()
+	for _, model := range *models {
+		if err := llms.ValidateModelSpecProtocol(providerProtocol, model.Protocol); err != nil {
+			return err
+		}
+		// An unset model protocol stays unset, which makes the target builder
+		// inherit the connection protocol instead of fabricating responses.
+		protocol := ""
+		if model.Protocol != "" {
+			protocol = llms.NormalizeWireAPI(model.Protocol)
+		}
+		headersJSON, err := encodeCatalogHeaders(model.Headers)
+		if err != nil {
+			return fmt.Errorf("encode provider %q model %q headers: %w", providerID, model.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO llm_model(id, name, description, default_model, enabled, scope, created_at, updated_at)
+			VALUES(?, ?, '', 0, 1, ?, ?, ?)
+			ON CONFLICT(id) DO NOTHING`,
+			model.ID, firstNonEmptyString(model.Name, model.ID), llms.ProviderScopeAPI, now, now); err != nil {
+			return fmt.Errorf("record provider %q model %q identity: %w", providerID, model.ID, err)
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider_model(
+			provider_id, model_id, wire_api, weight, base_url, headers_json, max_output_tokens, display_name)
+			VALUES(?, ?, ?, 10, ?, ?, ?, ?)`,
+			providerID, model.ID, protocol, model.BaseURL, headersJSON, model.MaxOutputTokens, model.Name); err != nil {
+			return fmt.Errorf("bind provider %q model %q: %w", providerID, model.ID, err)
+		}
+	}
+	return nil
 }
 
 // DeleteLLMProvider removes an API provider and its tokens atomically. Removing

@@ -61,6 +61,7 @@ func RegisterDependencies(di do.Injector) {
 	do.MustAs[*workspaces.Provisioner, workspaces.WorkspaceEnsurer](di)
 	do.Provide(di, NewRuntimeProvider)
 	do.Provide(di, NewLLMClient)
+	do.Provide(di, NewLLMUpstreamProber)
 	do.Provide(di, NewProjectOctoBusTargetResolver)
 	do.Provide(di, NewCapabilityProvider)
 	do.Provide(di, NewCapabilitySandboxResolver)
@@ -160,7 +161,7 @@ func RegisterRoutes(di do.Injector) {
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewCapabilityServiceHandler(api.NewCapabilityV2Handler(do.MustInvoke[capabilities.Provider](di), capabilityRuntimeConfig{config: do.MustInvoke[*appconfig.Config](di)}))
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewLLMServiceHandler(api.NewLLMHandler(do.MustInvoke[*adapters.LLMClient](di), do.MustInvoke[*configstore.ConfigStore](di)))
+	path, handler = agentcomposev2connect.NewLLMServiceHandler(api.NewLLMHandler(do.MustInvoke[*adapters.LLMClient](di), do.MustInvoke[*configstore.ConfigStore](di)).WithUpstreamProbe(do.MustInvoke[*adapters.LLMUpstreamProber](di)))
 	app.Any(path+"*", echo.WrapHandler(handler))
 	resourceHandler := api.NewResourceHandler(do.MustInvoke[*resources.Locator](di))
 	path, handler = agentcomposev2connect.NewResourceServiceHandler(resourceHandler)
@@ -257,6 +258,7 @@ func StartBackground(di do.Injector) error {
 	if err := loadLLMConfig(ctx, do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)); err != nil {
 		return fmt.Errorf("load llm configuration: %w", err)
 	}
+	do.MustInvoke[*adapters.LLMUpstreamProber](di).ProbeConfigured(ctx, do.MustInvoke[*configstore.ConfigStore](di))
 	for _, warning := range do.MustInvoke[*adapters.SandboxRPCBridge](di).RecoverStoppedRuntimeReleases(ctx) {
 		slog.Warn("failed to recover stopped runtime release", "warning", warning)
 	}
@@ -400,6 +402,12 @@ func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {
 
 func NewLLMClient(di do.Injector) (*adapters.LLMClient, error) {
 	return adapters.NewLLMClient(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)), nil
+}
+
+// NewLLMUpstreamProber builds the shared upstream protocol prober used by the
+// startup sweep and by the LLM service after a provider write.
+func NewLLMUpstreamProber(di do.Injector) (*adapters.LLMUpstreamProber, error) {
+	return adapters.NewLLMUpstreamProber(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*slog.Logger](di)), nil
 }
 
 func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {

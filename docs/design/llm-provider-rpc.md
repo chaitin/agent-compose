@@ -21,12 +21,46 @@ configuration under them at startup.
 Create requires an absolute HTTP(S) base URL, a supported protocol, and a nonempty
 literal API key. Responses contain api_key_set, never the credential. Update
 applies explicit fields only; omitted name, base_url, protocol, api_key, auth,
-and enabled preserve stored values. Absent api_key preserves the current key
-atomically, present nonempty rotates it, and present empty is invalid. An absent
-enabled field means true on create and is preserved on update. An empty name
-defaults to the ID on create and is preserved on update. Anthropic Messages
-providers send anthropic-version: 2023-06-01 by default. Per-model overrides,
-custom headers, and default-model management remain outside this change.
+enabled, and models preserve stored values. Absent api_key preserves the current
+key atomically, present nonempty rotates it, and present empty is invalid. An
+absent enabled field means true on create and is preserved on update. An empty
+name defaults to the ID on create and is preserved on update. Anthropic Messages
+providers send anthropic-version: 2023-06-01 by default.
+
+`models` declares the model names an operator types, so the UI can configure a
+connection without depending on what the endpoint advertises. Each entry carries
+id, name, protocol, base_url, headers and max_output_tokens, mirroring the
+models.json model definition; a model-level protocol must stay in the
+connection's family and an empty one inherits the connection protocol. The field
+is an optional wrapper message rather than a bare repeated field, because a bare
+repeated field cannot distinguish "not sent" from "sent empty": absent preserves
+the stored set, present empty clears it. Get and List return the declared set
+ordered by model ID. Declared models are not an allowlist — a model ID reaching
+resolution is opaque, so a connection still forwards a literal it never listed.
+
+A retained set is revalidated when the connection protocol changes: because a
+model-level protocol outranks the connection protocol, changing protocol family
+while keeping a binding from the old one would resolve requests to an endpoint
+and protocol that disagree. Such an update is rejected as InvalidArgument and
+the stored protocol and bindings are left alone; a same-family change keeps
+every retained binding, and a request that carries models states the new intent
+and is validated against that set instead.
+
+GetDefaultModel, SetDefaultModel and ClearDefaultModel manage the reference the
+daemon uses for runs that declare no model. SetDefaultModel requires an existing
+enabled connection; the model may be a literal the connection does not enumerate,
+so the write only ensures a model identity and never invents a binding. An
+unknown provider is NotFound, a disabled one is FailedPrecondition, and an empty
+provider_id or model_id is InvalidArgument without replacing the stored
+reference.
+
+Probe verdicts appear as capabilities on provider responses. They are read from
+the in-memory probe cache, so a connection the daemon has not probed reports
+none; nothing about probing is persisted and the field never changes routing. A
+verdict the probe's deadline cut short is not cached, because it says nothing
+about the endpoint: caching it would answer the next trigger with an undecided
+report instead of probing. The startup sweep shares one deadline, stops when it
+ends, and logs how many connections it could not reach.
 
 Protocol selects the default upstream credential presentation: Bearer for the
 OpenAI protocols and x-api-key for Anthropic Messages. A gateway can serve the
@@ -72,6 +106,28 @@ Catalog synchronization affects only catalog scope, and existing collision check
 reject models.json entries that collide with API-owned IDs. Restart therefore
 preserves API-owned configuration. Environment bootstrap cannot overwrite it
 because its fixed IDs are unavailable to API creation.
+
+A declared model writes a binding for this connection plus a model identity row
+in scope api. Model identities are keyed by model ID alone, so the same name may
+be served by several connections: an identity another source owns keeps its scope
+and metadata, and this write adds only its own binding. Replace semantics match
+models.json: an update that includes models removes this connection's bindings and
+inserts the new set in one transaction. Model identities are not removed when a
+connection stops declaring them, because another connection or source may still
+serve them.
+
+The default model reference is the llm_catalog_default singleton, shared with a
+models.json `default`. The startup projection writes that row only when the file
+declares a default; when it declares none, the stored reference is left alone, so
+a reference set through SetDefaultModel survives restart. This is a deliberate
+asymmetry: an explicit declaration in the operator's file replaces the stored
+reference, while the absence of one is not a declaration and must not silently
+wipe a runtime choice. The remaining precedence still matches the environment
+rule — the row wins over the environment's llm_model default flag — and a
+reference whose connection no longer exists is treated as absent so the
+environment fallback takes its turn instead of leaving the daemon with a default
+it cannot serve. This is why nothing was renamed: the table keeps holding the
+effective default, and only its owner set widened.
 
 API keys follow the existing provider storage contract: application-level
 plaintext in data.db, never returned by the management RPCs. The existing daemon
@@ -180,14 +236,17 @@ the default model or bind the model to exactly one connection.
 The next target resolution reads current provider settings, so address/key
 updates require no restart. Existing in-flight requests use their resolved
 configuration; agent-side model/protocol setup may require restarting a run after
-protocol changes. API CRUD does not change global or catalog defaults. A model id
+protocol changes. API CRUD changes no global defaults; only SetDefaultModel and
+ClearDefaultModel write the default reference, and a models.json `default`
+replaces that reference at the next startup. A model id
 reaching the runtime LLM facade is forwarded as written; clients should verify
 provider existence when constructing a new reference after deletion.
 
 ## Validation
 
-Domain tests cover ID/protocol/URL/key/auth validation and input ownership, and
-the resolution rules above: model selection with and without a catalog default,
+Domain tests cover ID/protocol/URL/key/auth validation, declared-model
+validation, family compatibility and input ownership, and the
+resolution rules above: model selection with and without a catalog default,
 connection precedence from the catalog default model down to the only
 connection, ambiguity rejection naming its candidates, the no-connection case,
 disabled-connection exclusion, binding precedence, and the diagnostic for the
@@ -196,8 +255,11 @@ integration tests cover literal routing, bare-model routing with an RPC-created
 provider, key preservation/rotation, protocol mapping, the protocol-default and
 explicit credential presentations, presentation-only updates, disabled providers,
 restart/catalog coexistence, collisions, cancellation, concurrent create and
-token invalidation across deletion/recreation. Connect integration tests exercise
-generated clients over HTTP, response redaction, pagination, error codes, and the
+token invalidation across deletion/recreation, declared-model presence rules,
+same-name identity ownership, and the default-model reference lifecycle including
+its survival across an empty catalog projection. Connect integration tests exercise
+generated clients over HTTP, response redaction, pagination, error codes,
+declared-model and capabilities round trips, the default-model methods, and the
 auth override round trip. A
 local service E2E exercises CreateProvider, Generate, URL/key rotation and
 disabled-provider rejection against an HTTP upstream stub. Existing Generate and

@@ -54,6 +54,22 @@ func IsUnmanagedAgentLLMError(err error) bool {
 		errors.Is(err, ErrUnsupportedAgentDialect)
 }
 
+// UnmanagedAgentLLMReason names why a run is not managed, for a log line at the
+// call site. The text is stable and carries no credential: it explains the
+// configuration gap to an operator without exposing an upstream or a key.
+func UnmanagedAgentLLMReason(err error) string {
+	switch {
+	case errors.Is(err, ErrNoModel):
+		return "no default model is configured and the agent declared none"
+	case errors.Is(err, ErrNoConnection):
+		return "no llm connection is configured"
+	case errors.Is(err, ErrUnsupportedAgentDialect):
+		return "the agent kind has no llm facade"
+	default:
+		return "the daemon has no managed llm configuration for the agent"
+	}
+}
+
 // AgentLLM is the resolved, guest-facing LLM configuration of one run.
 type AgentLLM struct {
 	Dialect    Dialect

@@ -66,6 +66,8 @@ type Config struct {
 	LLMModel                   string
 	LLMTimeout                 time.Duration
 	LLMMaxOutputTokens         int
+	LLMUpstreamProbe           bool
+	LLMProbeTimeout            time.Duration
 	CodexRequestMaxRetries     uint64
 	CodexStreamMaxRetries      uint64
 	CodexStreamIdleTimeout     time.Duration
@@ -293,6 +295,8 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		LLMModel:                   llm.LLMModel,
 		LLMTimeout:                 llm.LLMTimeout,
 		LLMMaxOutputTokens:         llm.LLMMaxOutputTokens,
+		LLMUpstreamProbe:           llm.LLMUpstreamProbe,
+		LLMProbeTimeout:            llm.LLMProbeTimeout,
 		CodexRequestMaxRetries:     llm.CodexRequestMaxRetries,
 		CodexStreamMaxRetries:      llm.CodexStreamMaxRetries,
 		CodexStreamIdleTimeout:     llm.CodexStreamIdleTimeout,
@@ -452,6 +456,8 @@ type llmEnvConfig struct {
 	LLMAPIKey              string
 	LLMModel               string
 	LLMMaxOutputTokens     int
+	LLMUpstreamProbe       bool
+	LLMProbeTimeout        time.Duration
 	RuntimeBaseURL         string
 	LLMTimeout             time.Duration
 	CodexRequestMaxRetries uint64
@@ -477,12 +483,37 @@ func loadLLMEnvConfig(logger *slog.Logger) llmEnvConfig {
 		}
 	}
 	codexRuntime := loadCodexRuntimeConfig(logger, llmTimeout)
+	// Upstream probing is a diagnostic: it verifies which protocols an endpoint
+	// actually serves. It is on by default because a wrong protocol declaration
+	// otherwise fails only at request time, and it can be turned off for
+	// deployments that do not want probe traffic.
+	llmUpstreamProbe := true
+	if raw := strings.TrimSpace(os.Getenv("LLM_UPSTREAM_PROBE")); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			logger.Warn("failed to parse LLM_UPSTREAM_PROBE", "value", raw, "error", err)
+		} else {
+			llmUpstreamProbe = parsed
+		}
+	}
+	llmProbeTimeout := 15 * time.Second
+	if raw := os.Getenv("LLM_PROBE_TIMEOUT"); raw != "" {
+		if parsed, err := time.ParseDuration(raw); err != nil {
+			logger.Warn("failed to parse LLM_PROBE_TIMEOUT", "value", raw, "error", err)
+		} else if parsed <= 0 {
+			logger.Warn("ignored non-positive LLM_PROBE_TIMEOUT", "value", raw)
+		} else {
+			llmProbeTimeout = parsed
+		}
+	}
 	return llmEnvConfig{
 		LLMAPIEndpoint:         llmAPIEndpoint,
 		LLMAPIProtocol:         llmAPIProtocol,
 		LLMAPIKey:              llmAPIKey,
 		LLMModel:               llmModel,
 		LLMMaxOutputTokens:     llmMaxOutputTokens,
+		LLMUpstreamProbe:       llmUpstreamProbe,
+		LLMProbeTimeout:        llmProbeTimeout,
 		RuntimeBaseURL:         runtimeBaseURL,
 		LLMTimeout:             llmTimeout,
 		CodexRequestMaxRetries: codexRuntime.requestMaxRetries,

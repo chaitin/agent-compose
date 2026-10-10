@@ -2,6 +2,7 @@ package runtimefacade
 
 import (
 	"context"
+	"log/slog"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/llms"
@@ -86,6 +87,12 @@ func EnsureSessionAgentRuntimeConfig(ctx context.Context, req SessionFacadeConfi
 	})
 	if err != nil {
 		if llms.IsUnmanagedAgentLLMError(err) {
+			// The agent keeps its own authentication. Report the gap so the
+			// operator can configure a model when they expected the daemon to
+			// manage this run; never fail the run over it.
+			slog.Warn("agent run is not managed by the daemon llm facade",
+				"sandbox_id", req.Session.Summary.ID, "agent", req.Agent, "model", req.Model,
+				"reason", llms.UnmanagedAgentLLMReason(err))
 			return AgentRuntimeConfig{}, nil
 		}
 		return AgentRuntimeConfig{}, err

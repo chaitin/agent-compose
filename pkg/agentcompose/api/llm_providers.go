@@ -2,23 +2,25 @@ package api
 
 import (
 	"context"
-	"fmt"
 
 	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/chaitin/agent-compose/pkg/llms"
-	domain "github.com/chaitin/agent-compose/pkg/model"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
-// LLMProviderStore supplies persistent API-owned upstream provider management.
+// LLMProviderStore supplies persistent API-owned upstream provider management
+// and the effective default model reference.
 type LLMProviderStore interface {
 	CreateLLMProvider(context.Context, llms.ProviderReplacement) (llms.Provider, error)
 	GetManagedLLMProvider(context.Context, string) (llms.Provider, error)
 	ListManagedLLMProviders(context.Context) ([]llms.Provider, error)
 	UpdateLLMProvider(context.Context, llms.ProviderReplacement) (llms.Provider, error)
 	DeleteLLMProvider(context.Context, string) error
+	ListLLMProviderModelConfigs(context.Context) ([]llms.ProviderModelBinding, error)
+	DefaultLLMModelReference(context.Context) (string, string, bool, error)
+	SetDefaultLLMModel(context.Context, llms.ModelReference) (llms.ModelReference, error)
+	ClearDefaultLLMModel(context.Context) error
 }
 
 // CreateProvider creates an API-owned upstream model provider.
@@ -31,7 +33,12 @@ func (h *LLMHandler) CreateProvider(ctx context.Context, req *connect.Request[ag
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
-	return connect.NewResponse(&agentcomposev2.CreateProviderResponse{Provider: providerToV2(provider)}), nil
+	h.probeUpstream(ctx, provider)
+	response, err := h.providerResponse(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&agentcomposev2.CreateProviderResponse{Provider: response}), nil
 }
 
 // GetProvider returns public configuration for an API-owned provider.
@@ -40,12 +47,20 @@ func (h *LLMHandler) GetProvider(ctx context.Context, req *connect.Request[agent
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
-	return connect.NewResponse(&agentcomposev2.GetProviderResponse{Provider: providerToV2(provider)}), nil
+	response, err := h.providerResponse(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&agentcomposev2.GetProviderResponse{Provider: response}), nil
 }
 
 // ListProviders lists API-owned providers, including disabled entries.
 func (h *LLMHandler) ListProviders(ctx context.Context, req *connect.Request[agentcomposev2.ListProvidersRequest]) (*connect.Response[agentcomposev2.ListProvidersResponse], error) {
 	providers, err := h.providers.ListManagedLLMProviders(ctx)
+	if err != nil {
+		return nil, ConnectErrorForDomain(err)
+	}
+	bindings, err := h.providers.ListLLMProviderModelConfigs(ctx)
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
@@ -55,7 +70,11 @@ func (h *LLMHandler) ListProviders(ctx context.Context, req *connect.Request[age
 	}
 	result := make([]*agentcomposev2.LLMProvider, 0, len(page))
 	for _, provider := range page {
-		result = append(result, providerToV2(provider))
+		converted, err := providerToV2(provider, bindings, h.cachedCapabilities(provider))
+		if err != nil {
+			return nil, ConnectErrorForDomain(err)
+		}
+		result = append(result, converted)
 	}
 	return connect.NewResponse(&agentcomposev2.ListProvidersResponse{Providers: result, Total: total}), nil
 }
@@ -70,7 +89,42 @@ func (h *LLMHandler) UpdateProvider(ctx context.Context, req *connect.Request[ag
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
-	return connect.NewResponse(&agentcomposev2.UpdateProviderResponse{Provider: providerToV2(provider)}), nil
+	h.probeUpstream(ctx, provider)
+	response, err := h.providerResponse(ctx, provider)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&agentcomposev2.UpdateProviderResponse{Provider: response}), nil
+}
+
+// probeUpstream runs the synchronous post-write protocol check, bounded by the
+// configured probe timeout. A connection that declares models is probed with one
+// of them; otherwise the probe names one the endpoint advertises.
+func (h *LLMHandler) probeUpstream(ctx context.Context, provider llms.Provider) {
+	if h == nil || h.prober == nil {
+		return
+	}
+	h.prober.ProbeConnection(ctx, provider, h.declaredProbeModel(ctx, provider.ID))
+}
+
+// declaredProbeModel returns the first declared model id in stable order, or ""
+// when the connection declares none. A failed read is deliberately ignored: the
+// probe is advisory, and an unnamed model only costs the /v1/models lookup.
+func (h *LLMHandler) declaredProbeModel(ctx context.Context, providerID string) string {
+	bindings, err := h.providers.ListLLMProviderModelConfigs(ctx)
+	if err != nil {
+		return ""
+	}
+	model := ""
+	for _, binding := range bindings {
+		if binding.ProviderID != providerID {
+			continue
+		}
+		if model == "" || binding.ModelID < model {
+			model = binding.ModelID
+		}
+	}
+	return model
 }
 
 // DeleteProvider removes API-owned configuration and its facade credentials.
@@ -79,62 +133,4 @@ func (h *LLMHandler) DeleteProvider(ctx context.Context, req *connect.Request[ag
 		return nil, ConnectErrorForDomain(err)
 	}
 	return connect.NewResponse(&agentcomposev2.DeleteProviderResponse{}), nil
-}
-
-func providerReplacementFromV2(spec *agentcomposev2.LLMProviderSpec) (llms.ProviderReplacement, error) {
-	if spec == nil {
-		return llms.ProviderReplacement{}, fmt.Errorf("%w: provider is required", domain.ErrInvalidArgument)
-	}
-	auth, err := providerAuthFromV2(spec.Auth)
-	if err != nil {
-		return llms.ProviderReplacement{}, err
-	}
-	return llms.ProviderReplacement{ID: spec.GetId(), Name: spec.GetName(), BaseURL: spec.GetBaseUrl(), Protocol: spec.GetProtocol(), APIKey: spec.ApiKey, Enabled: spec.Enabled, Auth: auth}, nil
-}
-
-// providerAuthFromV2 maps the optional presence onto the replacement's explicit
-// intent. An absent field leaves Auth nil, which takes the protocol convention on
-// create and preserves the stored override on update, including protocol
-// changes; an explicit value — including the unspecified presentation that
-// clears an override — is carried through.
-func providerAuthFromV2(auth *agentcomposev2.LLMProviderAuth) (*llms.ProviderAuth, error) {
-	if auth == nil {
-		return nil, nil
-	}
-	presentation := llms.ProviderAuth("")
-	switch *auth {
-	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED:
-		presentation = ""
-	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY:
-		presentation = llms.ProviderAuthXAPIKey
-	case agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER:
-		presentation = llms.ProviderAuthBearer
-	default:
-		return nil, fmt.Errorf("%w: auth must be x-api-key or bearer", domain.ErrInvalidArgument)
-	}
-	return &presentation, nil
-}
-
-func providerToV2(provider llms.Provider) *agentcomposev2.LLMProvider {
-	return &agentcomposev2.LLMProvider{
-		Id: provider.ID, Name: provider.Name,
-		BaseUrl: provider.BaseURL, Protocol: provider.DefaultWireAPI,
-		Enabled: provider.Enabled, ApiKeySet: provider.APIKey != "",
-		// The stored override, not the effective header, so a client can send the
-		// response back through Update without hardening the protocol convention
-		// into an explicit override.
-		Auth:      providerAuthToV2(provider.Auth),
-		CreatedAt: timestamppb.New(provider.CreatedAt), UpdatedAt: timestamppb.New(provider.UpdatedAt),
-	}
-}
-
-func providerAuthToV2(auth llms.ProviderAuth) agentcomposev2.LLMProviderAuth {
-	switch auth {
-	case llms.ProviderAuthXAPIKey:
-		return agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_X_API_KEY
-	case llms.ProviderAuthBearer:
-		return agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_BEARER
-	default:
-		return agentcomposev2.LLMProviderAuth_LLM_PROVIDER_AUTH_UNSPECIFIED
-	}
 }

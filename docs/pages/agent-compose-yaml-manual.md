@@ -579,7 +579,9 @@ The daemon loads `$DATA_ROOT/models.json` once during startup. A missing file is
 
 The optional `models` array adds per-model metadata and behavior: `id`, `name`, `baseUrl`, `protocol`, `headers`, and the positive integer `maxOutputTokens`. A model-level `protocol` must remain in the Provider's protocol family: OpenAI Providers (`responses` or `chat_completions`) allow `responses` and `chat_completions`, while Anthropic Providers (`anthropic_messages`) allow only `anthropic_messages`. These attributes belong to the specific Provider/model deployment, so Providers that share a model ID do not overwrite one another. The array is not an allowlist. For a configured `gateway` Provider, `gateway/a-model-not-listed-here` is still forwarded as the literal upstream model ID using Provider defaults.
 
-All compatible coding agents and `scheduler.llm` use this catalog for agent-compose Provider routing and model selection; it does not replace an agent's native model-capability catalog. A first-party credential declared in project `variables` or agent `env` is imported into this same catalog as a daemon-owned connection and served through the facade, so the key stays on the daemon and the sandbox only sees a run-scoped facade token; this is the compatibility path for a complete `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, and `LLM_API_KEY` declaration as well as for the vendor-specific names listed under `variables` and `env`. Optional daemon or Agent `LLM_API_HEADERS` is a JSON object of static extra HTTP headers on that env-backed Provider; it does not replace catalog `headers`, and the raw value is not exposed to the guest runtime. The variable is shared by env-backed OpenAI and Anthropic Providers, so each configured header must be safe to send to every configured upstream. The daemon's complete `LLM_*` configuration remains the default ahead of `models.json.default`. A catalog Provider ID that conflicts with an existing non-catalog Provider causes startup to fail without overwriting the existing configuration.
+All compatible coding agents and `scheduler.llm` use this catalog for agent-compose Provider routing and model selection; it does not replace an agent's native model-capability catalog. A first-party credential declared in project `variables` or agent `env` is imported into this same catalog as a daemon-owned connection and served through the facade, so the key stays on the daemon and the sandbox only sees a run-scoped facade token; this is the compatibility path for a complete `LLM_API_ENDPOINT`, `LLM_API_PROTOCOL`, and `LLM_API_KEY` declaration as well as for the vendor-specific names listed under `variables` and `env`. Optional daemon or Agent `LLM_API_HEADERS` is a JSON object of static extra HTTP headers on that env-backed Provider; it does not replace catalog `headers`, and the raw value is not exposed to the guest runtime. The variable is shared by env-backed OpenAI and Anthropic Providers, so each configured header must be safe to send to every configured upstream. The daemon's `LLM_*` configuration is a bootstrap fallback rather than a precedence winner. The default model is resolved in three steps: a `models.json` `default` reference wins whenever the file declares one; otherwise the reference set through `LLMService.SetDefaultModel` applies and survives restarts; only when neither exists does the environment's default model take over. A `models.json` that declares no `default` leaves the stored reference alone, so a default chosen at runtime is not wiped by the next startup; call `LLMService.ClearDefaultModel` to remove it. The environment projection also never takes over an ID another source owns: when it conflicts with a `models.json` Provider or model, the existing configuration stays and the daemon logs a warning. The reverse direction is still a hard error: a `models.json` Provider ID that conflicts with an existing non-catalog Provider fails startup without overwriting the existing configuration. When no default model is configured at all, the daemon logs a warning at startup and agents that declare no model keep their own authentication.
+
+At startup, and again after every `LLMService` provider write, the daemon verifies each enabled connection: it calls the connection's `/v1/models` endpoint and then sends one minimal `ping` request — with a one-token output limit — per protocol the connection's family can serve. Each protocol is probed independently, so an endpoint that serves both `responses` and `chat_completions` is reported as supporting both instead of stopping at the first success. The probe is a diagnostic only: it never changes routing or stored configuration, it does not use `/v1/models` to decide protocol support, and its findings are logged rather than written to the database. A fresh verdict is held in memory for a short window, keyed by endpoint and credential, so repeated triggers do not repeat identical traffic; it is lost on restart and re-derived then. Results appear as `endpoint <url> supports model list: <ids>` and `endpoint <url> supports <protocol> protocol`, with a distinct warning for a protocol the probe proved absent, an unreachable endpoint, a timeout, or a rejected credential; a rejected credential leaves protocol support unknown. After a provider write the check runs synchronously, bounded by `LLM_PROBE_TIMEOUT` (default `15s`), and the startup sweep shares one such deadline: when it ends, the sweep stops and logs how many connections it could not reach, and a verdict the deadline cut short is not cached, so the next trigger probes again. A connection that declares models is probed with one of them; a connection that declares none is probed with a model the endpoint advertises. The most recent verdict is also reported as `capabilities` on `GetProvider` and `ListProviders`: `probes` keeps a protocol the daemon proved unsupported distinct from one it could not decide, `models` lists what the endpoint advertised, and `probedModel` / `probedAt` name the model and time. `capabilities` is absent until the daemon has probed the connection, and it disappears on restart because nothing about probing is persisted. Set `LLM_UPSTREAM_PROBE=false` to disable probing entirely.
 
 ### Managing LLM providers through RPC
 
@@ -630,6 +632,19 @@ Other methods share the service path prefix.
 - `apiKey` is literal, without environment interpolation. Create requires a
   nonempty key. On update, omission preserves it, a nonempty value rotates it,
   and an empty value is invalid. Responses expose only `apiKeySet`, never the key.
+- `models` optionally declares the model names an operator types, each with
+  `id`, `name`, `protocol`, `baseUrl`, `headers`, and a positive
+  `maxOutputTokens`. A model-level `protocol` must stay in the provider's protocol
+  family. Declared names are routing metadata, not an allowlist: a bare `model`
+  value the connection does not list is still forwarded as written. `GetProvider`
+  and `ListProviders` return the declared set ordered by model ID. On
+  `UpdateProvider`, an omitted `models` field preserves the declared set and a
+  present empty array clears it. A retained set is revalidated when `protocol`
+  changes: a model pinned to the previous protocol family makes the update fail
+  with `InvalidArgument` and leaves the stored protocol and models alone, so
+  restate `models` to move a connection to another family. Same-name models are
+  shared across connections by ID: one another source already owns keeps its owner
+  and metadata, and the new connection only gains a binding of its own.
 - Create defaults an empty `name` to the ID and an omitted `enabled` field to
   `true`. `anthropic_messages` providers send `anthropic-version: 2023-06-01` by
   default; other protocols send no extra headers.
@@ -645,7 +660,8 @@ Other methods share the service path prefix.
   set, so `update --base-url ...` does not re-enable a disabled provider.
   `--auth x-api-key|bearer` overrides the protocol default and
   `--auth protocol-default` clears a stored override; both are accepted on either
-  command.
+  command. The CLI does not set `models` or the default model; use the RPC or the
+  UI for those.
 - `GetProvider` / `DeleteProvider` take `{"id":"team-gateway"}`.
   `ListProviders` takes `offset` / `limit`, orders by ID, includes disabled entries,
   and returns `providers` and `total`.
@@ -662,9 +678,30 @@ Other methods share the service path prefix.
   on new requests retain the existing literal-model interpretation. Disabling
   retains configuration and tokens, allowing use again after re-enabling.
 
-These methods do not change default models or manage per-model overrides or custom
-headers. Credentials use the existing database storage contract without additional
-application-level encryption.
+These methods do not change per-model overrides through `models` beyond what
+`UpdateProvider` applies, and they never edit `models.json`. Credentials use the
+existing database storage contract without additional application-level
+encryption.
+
+### Choosing the default model through RPC
+
+`GetDefaultModel`, `SetDefaultModel`, and `ClearDefaultModel` manage the model the
+daemon uses for runs that declare none, which is the same reference a
+`models.json` `default` writes. `SetDefaultModel` takes
+`{"model":{"providerId":"team-gateway","modelId":"model-id"}}` and requires an
+existing, enabled provider; the model may be a literal the connection does not
+declare, because a model ID is opaque. An unknown provider returns `NotFound`, a
+disabled provider returns `FailedPrecondition`, and an empty `providerId` or
+`modelId` returns `InvalidArgument` without changing the stored reference.
+`GetDefaultModel` returns `model`, or omits it when no default is configured.
+`ClearDefaultModel` removes the reference, after which the environment's default
+model applies again if it declares one.
+
+The reference set here survives restarts. It is replaced only when `models.json`
+declares a `default` of its own, which the next startup applies over it, or when
+`ClearDefaultModel` removes it. Removing a `default` from `models.json` therefore
+does not restore an earlier state; the last reference the daemon stored stays in
+effect.
 
 ### `image`
 

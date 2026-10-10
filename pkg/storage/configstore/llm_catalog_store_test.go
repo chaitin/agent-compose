@@ -108,7 +108,7 @@ func resolveCatalogModel(ctx context.Context, store *ConfigStore, requested stri
 	return snapshot.Resolve("", model, llms.DefaultProtocolPreference())
 }
 
-func TestIntegrationApplyEmptyModelCatalogOnlyClearsCatalogOwnedState(t *testing.T) {
+func TestIntegrationApplyEmptyModelCatalogClearsCatalogOwnedStateButKeepsTheStoredDefault(t *testing.T) {
 	clearLLMTestEnvironment(t)
 	ctx := context.Background()
 	store := FromDB(newMemoryDB(t))
@@ -151,8 +151,19 @@ func TestIntegrationApplyEmptyModelCatalogOnlyClearsCatalogOwnedState(t *testing
 	if len(models) != 1 || models[0].ID != legacyModel.ID || !models[0].DefaultModel || models[0].Scope != llms.ProviderScopeSystem {
 		t.Fatalf("enabled models = %#v, want unchanged legacy default", models)
 	}
-	if providerID, modelID, ok, err := store.DefaultLLMModelReference(ctx); err != nil || ok {
-		t.Fatalf("catalog default = %q/%q ok=%v err=%v, want cleared", providerID, modelID, ok, err)
+	// A models.json that declares no default leaves the stored reference alone:
+	// removing a declaration must not silently wipe an operator's choice.
+	if providerID, modelID, ok, err := store.DefaultLLMModelReference(ctx); err != nil || !ok || providerID != "catalog" || modelID != "catalog-model" {
+		t.Fatalf("catalog default = %q/%q ok=%v err=%v, want the stored reference preserved", providerID, modelID, ok, err)
+	}
+	// The preserved reference now names a connection the empty catalog removed,
+	// so resolution ignores it and the environment default takes over.
+	resolved, err := resolveCatalogModel(ctx, store, "")
+	if err != nil {
+		t.Fatalf("resolve after empty catalog: %v", err)
+	}
+	if resolved.Provider.ID != legacyProvider.ID || resolved.Model.ID != legacyModel.ID {
+		t.Fatalf("resolved default = %#v, want the legacy environment default", resolved)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/chaitin/agent-compose/pkg/llms"
+	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
 // ApplyModelCatalog atomically projects models.json into the runtime
@@ -149,6 +150,14 @@ func ensureCatalogModelIdentity(ctx context.Context, tx *sql.Tx, modelID string,
 }
 
 func applyCatalogDefault(ctx context.Context, tx *sql.Tx, reference string, now int64) error {
+	reference = strings.TrimSpace(reference)
+	if reference == "" {
+		// A models.json that declares no default leaves the stored reference
+		// alone. The row is the effective default, so an operator's choice made
+		// through the LLM service survives every restart instead of being wiped
+		// by the next projection.
+		return nil
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_catalog_default`); err != nil {
 		return fmt.Errorf("clear model catalog default: %w", err)
 	}
@@ -199,8 +208,9 @@ func firstNonEmptyString(values ...string) string {
 	return ""
 }
 
-// DefaultLLMModelReference returns the exact provider/model default declared
-// by models.json.
+// DefaultLLMModelReference returns the effective default model: the reference
+// models.json declared, or the one an operator set through the LLM service when
+// models.json declares none.
 func (s *llmStore) DefaultLLMModelReference(ctx context.Context) (providerID, modelID string, ok bool, err error) {
 	err = s.db.QueryRowContext(ctx, `SELECT provider_id, model_id FROM llm_catalog_default WHERE singleton = 1`).Scan(&providerID, &modelID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -210,6 +220,61 @@ func (s *llmStore) DefaultLLMModelReference(ctx context.Context) (providerID, mo
 		return "", "", false, fmt.Errorf("query model catalog default: %w", err)
 	}
 	return providerID, modelID, true, nil
+}
+
+// SetDefaultLLMModel records the effective default model, replacing any earlier
+// reference. The connection must exist and be enabled, because the reference is
+// what the daemon falls back to for runs that declare no model; the model
+// itself may be a literal the connection does not enumerate, so only its
+// identity row is ensured and no binding is invented.
+func (s *llmStore) SetDefaultLLMModel(ctx context.Context, reference llms.ModelReference) (llms.ModelReference, error) {
+	providerID := strings.TrimSpace(reference.ProviderID)
+	modelID := strings.TrimSpace(reference.ModelID)
+	if providerID == "" || modelID == "" {
+		return llms.ModelReference{}, fmt.Errorf("%w: provider_id and model_id are required", domain.ErrInvalidArgument)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return llms.ModelReference{}, fmt.Errorf("begin default model update: %w", err)
+	}
+	// Rollback after commit is harmless; on errors it releases the transaction.
+	defer func() { _ = tx.Rollback() }()
+	var enabled int
+	err = tx.QueryRowContext(ctx, `SELECT enabled FROM llm_provider WHERE id = ?`, providerID).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return llms.ModelReference{}, fmt.Errorf("%w: llm provider not found", domain.ErrNotFound)
+	}
+	if err != nil {
+		return llms.ModelReference{}, fmt.Errorf("read default model provider: %w", err)
+	}
+	if enabled == 0 {
+		return llms.ModelReference{}, fmt.Errorf("%w: provider %q is disabled", domain.ErrFailedPrecondition, providerID)
+	}
+	now := time.Now().UTC().Unix()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_model(id, name, description, default_model, enabled, scope, created_at, updated_at)
+		VALUES(?, ?, '', 0, 1, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING`, modelID, modelID, llms.ProviderScopeAPI, now, now); err != nil {
+		return llms.ModelReference{}, fmt.Errorf("record default model identity: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_catalog_default`); err != nil {
+		return llms.ModelReference{}, fmt.Errorf("clear llm default model: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_catalog_default(singleton, provider_id, model_id, updated_at) VALUES(1, ?, ?, ?)`, providerID, modelID, now); err != nil {
+		return llms.ModelReference{}, fmt.Errorf("store llm default model: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return llms.ModelReference{}, fmt.Errorf("commit default model update: %w", err)
+	}
+	return llms.ModelReference{ProviderID: providerID, ModelID: modelID}, nil
+}
+
+// ClearDefaultLLMModel removes the effective default model. A models.json that
+// declares its own default restores that reference at the next startup.
+func (s *llmStore) ClearDefaultLLMModel(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_catalog_default`); err != nil {
+		return fmt.Errorf("clear llm default model: %w", err)
+	}
+	return nil
 }
 
 // LLMProviderModelConfig returns all effective model-binding overrides.

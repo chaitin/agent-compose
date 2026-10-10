@@ -176,10 +176,19 @@ func (c *Catalog) indexBindings(bindings []ProviderModelBinding) {
 // explicitly through llm_catalog_default; the daemon environment declares it
 // through the llm_model default flag, whose owning connection is the only
 // connection that serves the model.
+//
+// A stored reference can outlive the catalog that declared it, because a
+// models.json without a default leaves the stored reference in place. A
+// reference whose connection is gone is therefore treated as absent, which lets
+// the environment fallback take its documented turn instead of leaving the
+// daemon with a default it cannot serve.
 func (c *Catalog) setDefault(providerID, modelID string, hasReference bool, models []Model) {
 	if hasReference {
 		c.defaultConnection = strings.TrimSpace(providerID)
 		c.defaultModel = strings.TrimSpace(modelID)
+		if _, ok := c.providers[c.defaultConnection]; !ok {
+			c.defaultConnection, c.defaultModel = "", ""
+		}
 	}
 	if c.defaultModel == "" {
 		c.defaultConnection, c.defaultModel = c.defaultFromModelFlag(models)

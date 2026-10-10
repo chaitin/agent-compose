@@ -2,6 +2,8 @@ package llms
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -13,6 +15,49 @@ import (
 // once at startup, and afterwards every request reads the catalog.
 type DefaultConfigStore interface {
 	UpsertDefaultLLMConfig(ctx context.Context, provider Provider, model Model) error
+}
+
+// ErrDefaultConfigConflict reports that materializing the daemon environment
+// would take over an id another configuration source already owns, such as a
+// models.json connection or an RPC-created one. The environment is a bootstrap
+// fallback, so the existing owner keeps the id and startup continues.
+var ErrDefaultConfigConflict = errors.New("llm default configuration conflicts with an existing owner")
+
+// DefaultConfigConflict names the provider or model id the daemon environment
+// tried to take over and the scope that already owns it.
+type DefaultConfigConflict struct {
+	Kind  string
+	ID    string
+	Scope string
+}
+
+func (c *DefaultConfigConflict) Error() string {
+	return fmt.Sprintf("llm default configuration %s %q is owned by scope %q", c.Kind, c.ID, c.Scope)
+}
+
+func (c *DefaultConfigConflict) Is(target error) bool { return target == ErrDefaultConfigConflict }
+
+// AsDefaultConfigConflict extracts the ownership conflict from err, if any.
+func AsDefaultConfigConflict(err error) (*DefaultConfigConflict, bool) {
+	var conflict *DefaultConfigConflict
+	if errors.As(err, &conflict) {
+		return conflict, true
+	}
+	return nil, false
+}
+
+// EnvProjectionOwnsScope reports whether the daemon environment projection is
+// allowed to maintain a connection or model that already carries scope. Only
+// the scopes the environment bootstrap itself writes qualify: an unset scope
+// and the legacy "system" default. Every other scope names an owner that
+// declared the id explicitly, so the environment must not rewrite it.
+func EnvProjectionOwnsScope(scope string) bool {
+	switch strings.TrimSpace(scope) {
+	case "", ProviderScopeSystem, ProviderScopeEnvDefault:
+		return true
+	default:
+		return false
+	}
 }
 
 // EnvProviderLookup resolves an environment value for LLM connection

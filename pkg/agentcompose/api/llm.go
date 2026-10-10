@@ -18,10 +18,30 @@ type LLMGenerator interface {
 type LLMHandler struct {
 	generator LLMGenerator
 	providers LLMProviderStore
+	prober    LLMUpstreamProber
+}
+
+// LLMUpstreamProber verifies which protocols a connection actually serves. The
+// service calls it after a provider write so the operator sees the verdict at
+// configuration time, not at the first request. A nil prober disables the check.
+type LLMUpstreamProber interface {
+	ProbeConnection(ctx context.Context, provider llms.Provider, model string)
+	// Capabilities reports the most recent cached verdict for a connection.
+	// Probes are advisory and in-memory, so a missing verdict is normal.
+	Capabilities(provider llms.Provider) (llms.UpstreamProbeResult, bool)
 }
 
 func NewLLMHandler(generator LLMGenerator, providers LLMProviderStore) *LLMHandler {
 	return &LLMHandler{generator: generator, providers: providers}
+}
+
+// WithUpstreamProbe attaches the post-write protocol probe and returns the
+// handler so composition can chain it.
+func (h *LLMHandler) WithUpstreamProbe(prober LLMUpstreamProber) *LLMHandler {
+	if h != nil {
+		h.prober = prober
+	}
+	return h
 }
 
 func (h *LLMHandler) Generate(ctx context.Context, req *connect.Request[agentcomposev2.GenerateLLMRequest]) (*connect.Response[agentcomposev2.GenerateLLMResponse], error) {
