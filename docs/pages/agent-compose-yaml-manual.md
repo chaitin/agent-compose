@@ -1044,9 +1044,15 @@ sandbox:
 
 Hosts are lowercased, duplicate entries are rejected, and entries are sorted, so the normalized declaration enters canonical JSON and the spec hash independently of declaration order. Declaring `network` changes the hash; leaving it out keeps the hash byte-identical to a spec written before the field existed.
 
+An `allow` list restricts traffic only together with `default: deny`. Under the default `allow-all` the entries are still validated, stored, and hashed, but nothing is denied, so an `allow` list without `default: deny` leaves outbound access unrestricted.
+
 When `default: deny` applies, the engine automatically allows its own endpoints: the runtime LLM facade and the telemetry endpoint a guest exports to. These are engine-side entries, not user declarations: a project cannot declare, remove, or override them, they are as narrow as the exact endpoint the engine hands the guest, and every request they allow is recorded against an engine rule (`engine.llm-facade`, `engine.telemetry`) so the exemption is visible rather than hidden.
 
-The declaration is validated, hashed, round-trips through the API, and compiles into the engine's single egress decision model. **It does not by itself enforce anything yet**: enforcement on the runtime drivers and the transparent mediator that consumes this policy are a later step. Until that lands, a declared `default: deny` does not block traffic; treat it as a validated declaration, not as an active network restriction.
+The declaration is validated, hashed, round-trips through the API, and compiles into the engine's single egress decision model. Whether it restricts traffic depends on the runtime driver:
+
+- On Microsandbox the SDK network configuration applies the declaration: `allow` entries become ordered allow rules and traffic no engine rule or `allow` entry matches is denied under `default: deny`.
+- On Docker, Kubernetes, and BoxLite the engine **refuses to create the sandbox** when the declaration asks for `default: deny`, because those drivers cannot express the declared allowances while keeping the engine's own LLM facade and telemetry endpoint reachable. The sandbox fails to start with an error naming the driver instead of silently running with unrestricted egress.
+- A declaration whose default is `allow-all` (including an `allow` list without `default: deny`) never restricts traffic and never makes a sandbox fail to start.
 
 ### `scheduler`
 
