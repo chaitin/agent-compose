@@ -73,6 +73,31 @@ type AgentSpec struct {
 
 type SandboxSpec struct {
 	StoppedRuntimePolicy string `yaml:"stopped_runtime_policy,omitempty" json:"stopped_runtime_policy,omitempty"`
+	// Network declares this agent's outbound network policy. A nil Network is
+	// undeclared, and undeclared keeps the engine's existing behavior:
+	// unrestricted outbound access. Default-deny is a policy that takes effect
+	// only because this block was declared; it is not an engine default (D3).
+	Network *SandboxNetworkSpec `yaml:"network,omitempty" json:"network,omitempty"`
+}
+
+// SandboxNetworkSpec declares the outbound network policy for one agent's
+// sandboxes. Declaring the block is what makes the policy exist; omitting it
+// leaves outbound access exactly as it is today.
+type SandboxNetworkSpec struct {
+	// Default is "allow-all" (the value an omitted default normalizes to) or
+	// "deny". It applies only because this block was declared.
+	Default string                    `yaml:"default,omitempty" json:"default,omitempty"`
+	Allow   []SandboxNetworkAllowSpec `yaml:"allow,omitempty" json:"allow,omitempty"`
+}
+
+// SandboxNetworkAllowSpec is one declared allowance. Host may be a host
+// pattern whose labels are separated by "."; "*" matches exactly one label.
+type SandboxNetworkAllowSpec struct {
+	Host string `yaml:"host,omitempty" json:"host,omitempty"`
+	Port int    `yaml:"port,omitempty" json:"port,omitempty"`
+	// Protocol is optional. An omitted protocol normalizes to "any", which is
+	// an opaque allowance: the engine does not claim it can inspect it.
+	Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
 }
 
 type AgentMCPEntriesSpec []AgentMCPEntrySpec
@@ -552,7 +577,32 @@ func validateAgent(node *yaml.Node, path string) error {
 func validateSandbox(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
 		"stopped_runtime_policy": validateScalar,
+		"network":                validateSandboxNetwork,
 	})
+}
+
+func validateSandboxNetwork(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"default": validateScalar,
+		"allow":   validateSandboxNetworkAllowList,
+	})
+}
+
+func validateSandboxNetworkAllowList(node *yaml.Node, path string) error {
+	if err := requireKind(node, path, yaml.SequenceNode, "sequence"); err != nil {
+		return err
+	}
+	for index, item := range node.Content {
+		itemPath := fmt.Sprintf("%s[%d]", path, index)
+		if err := validateMapping(item, itemPath, map[string]nodeValidator{
+			"host":     validateScalar,
+			"port":     validateInt,
+			"protocol": validateScalar,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func validateMCPMap(node *yaml.Node, path string) error {

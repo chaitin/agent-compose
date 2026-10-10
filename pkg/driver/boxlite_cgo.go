@@ -459,6 +459,9 @@ func notifyBoxliteExecExit(exitCode int, handle uintptr) {
 }
 
 func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+	if err := RequireSandboxNetworkEnforcement(RuntimeDriverBoxlite, sandbox.NetworkPolicy); err != nil {
+		return SandboxVMInfo{}, err
+	}
 	if _, err := sandboxWorkspaceMount(sandbox, RuntimeDriverBoxlite); err != nil {
 		return SandboxVMInfo{}, err
 	}

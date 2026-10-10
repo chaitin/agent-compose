@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"strings"
 	"time"
+
+	"github.com/chaitin/agent-compose/pkg/egress"
 )
 
 // NewFacadeTokenRequest describes the token NewFacadeToken mints. It
@@ -66,17 +68,13 @@ func NewFacadeToken(req NewFacadeTokenRequest) (string, FacadeToken, error) {
 //
 // Only a token with no connection keeps the legacy behaviour of pinning one
 // model, because there is no upstream for a request to belong to.
+//
+// The decision itself is evaluated by the shared egress entry point against
+// FacadeEgressPolicy; this method reports the resolved model and whether the
+// token authorized it.
 func (t FacadeToken) ResolveUpstreamModel(requested string) (string, bool) {
-	requested = strings.TrimSpace(requested)
-	if guestModel := strings.TrimSpace(t.GuestModel); guestModel != "" && requested == guestModel {
-		model := strings.TrimSpace(t.Model)
-		return model, model != ""
-	}
-	pinned := strings.TrimSpace(t.Model)
-	if t.ProviderID == "" && pinned != "" {
-		return pinned, pinned == requested
-	}
-	return requested, true
+	result := egress.Decide(FacadeEgressPolicy(t), FacadeEgressRequest(t, requested))
+	return result.Target, result.Allowed()
 }
 
 func HashFacadeToken(value string) (string, string) {

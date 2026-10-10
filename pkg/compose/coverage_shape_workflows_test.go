@@ -76,6 +76,15 @@ func TestIntegrationComposeParseNormalizeAndOutputWorkflows(t *testing.T) {
 	t.Run("k8s rejects local bind mount", TestNormalizeRejectsK8sLocalBindMount)
 	t.Run("k8s rejects stopped runtime retention", TestNormalizeAgentRejectsK8sStoppedRuntimeRetention)
 	t.Run("k8s allows stopped runtime removal", TestNormalizeAgentAllowsK8sStoppedRuntimeRemoval)
+	t.Run("normalize sandbox network", TestNormalizeSandboxNetwork)
+	t.Run("reject invalid sandbox network", TestSandboxNetworkRejectsInvalidDeclarations)
+	t.Run("sandbox network egress declaration", TestSandboxNetworkEgressDeclaration)
+	t.Run("sandbox network allow-all declaration", TestSandboxNetworkEgressDeclarationAllowAll)
+	t.Run("sandbox network default fails closed", TestEgressActionForSandboxNetworkDefaultFailsClosed)
+	t.Run("sandbox network deep clone", TestSandboxNetworkReturnsDeepClone)
+	t.Run("hash declared sandbox network", TestSpecHashIncludesDeclaredSandboxNetwork)
+	t.Run("undeclared sandbox network keeps hash", TestUndeclaredSandboxNetworkKeepsCanonicalHash)
+	t.Run("stopped runtime only keeps hash", TestStoppedRuntimeOnlySandboxKeepsCanonicalHash)
 }
 
 func TestE2EComposeParseNormalizeAndOutputWorkflows(t *testing.T) {
