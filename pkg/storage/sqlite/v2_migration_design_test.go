@@ -192,7 +192,7 @@ func TestV2MigrationDesignBuildsCleanDatabaseThroughHistoricalChain(t *testing.T
 		t.Fatalf("apply clean v2 migration chain: %v", err)
 	}
 	assertSQLiteTablesAbsent(t, db, "agent_definition", "loader", "loader_run")
-	assertSQLiteTablesPresent(t, db, "project_agent", "project_scheduler", "scheduler_run")
+	assertSQLiteTablesPresent(t, db, "project_agent", "project_scheduler", "scheduler_run", "credential_handle")
 	assertNoForeignKeyViolations(t, db)
 	if _, err := db.Exec(`INSERT INTO project(id,name,created_at,updated_at) VALUES('identity-project','identity',1,1)`); err != nil {
 		t.Fatalf("seed identity constraint project: %v", err)
@@ -430,8 +430,8 @@ func loadV2MigrationDesignChain(t *testing.T) []migration {
 	}
 	// The count is asserted so a migration that is added or removed without
 	// extending the historical-prefix coverage below fails loudly.
-	if len(chain) != 17 {
-		t.Fatalf("migration count = %d, want 17", len(chain))
+	if len(chain) != 18 {
+		t.Fatalf("migration count = %d, want 18", len(chain))
 	}
 	return chain
 }

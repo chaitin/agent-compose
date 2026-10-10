@@ -40,7 +40,7 @@ func TestMigrationBaseline(t *testing.T) {
 		"scheduler_run", "scheduler_event", "scheduler_state", "scheduler_sandbox_binding", "project",
 		"project_revision", "project_agent", "project_scheduler", "project_run",
 		"project_run_event", "project_run_completion", "project_run_label", "event", "webhook_source", "event_delivery", "event_sandbox_link",
-		"sandbox_projection_meta", "sandboxes",
+		"sandbox_projection_meta", "sandboxes", "credential_handle",
 	}
 	for _, table := range tables {
 		var count int
@@ -77,6 +77,7 @@ func TestMigrationBaseline(t *testing.T) {
 		"idx_project_volumes_volume", "idx_sandboxes_project_updated", "idx_sandboxes_type_updated", "idx_sandboxes_updated",
 		"idx_sandboxes_vm_status_updated", "idx_volumes_driver", "idx_volumes_project",
 		"idx_webhook_source_enabled_topic",
+		"idx_credential_handle_token_hash", "idx_credential_handle_sandbox",
 	} {
 		assertSQLiteIndexExists(t, db, index)
 	}
