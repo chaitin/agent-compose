@@ -848,6 +848,8 @@ capset_ids:
 
 Skill 目录必须包含有效的 `SKILL.md`。provider 支持 `file`、`http` 和 `git`；同一 Agent 的最终 Skill 名不可重复。ZIP 是内容格式，不是 provider。
 
+`provider` 为 `dsh` 的 Agent 只接受更窄的 Skill 名：`^[a-z0-9]+(?:-[a-z0-9]+)*$`，即小写字母和数字，中间用单个连字符连接。DSH 会静默丢弃不符合该规则的 Skill，因此这类名字在项目校验时即被拒绝。Skill 的 `SKILL.md` 中的 `name` 必须是同一个值。
+
 本地目录：
 
 ```yaml

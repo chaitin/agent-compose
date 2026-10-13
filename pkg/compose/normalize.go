@@ -316,6 +316,9 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 	if err != nil {
 		return NormalizedAgentSpec{}, err
 	}
+	if err := validateDshSkillNames(joinPath("agents", name)+".skills", agent.Provider, skills); err != nil {
+		return NormalizedAgentSpec{}, err
+	}
 	model, err := interpolateEnvValue(joinPath("agents", name)+".model", strings.TrimSpace(agent.Model), options)
 	if err != nil {
 		return NormalizedAgentSpec{}, err
