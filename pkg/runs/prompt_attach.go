@@ -322,9 +322,23 @@ type promptStartFrame struct {
 	Config     *appconfig.Config
 	SchemaPath string
 	// SkillNames are the skills sandbox preparation published for this agent.
-	// Runners that only load explicitly named skills (pi, dsh) see none without
-	// them, the same names a one-shot run passes as --skill.
+	// They reach the runner only for providers that need them; see
+	// providerNeedsNamedSkills.
 	SkillNames []string
+}
+
+// providerNeedsNamedSkills reports whether a provider's runner loads only the
+// skills named for the session. pi and dsh do, so an attached session without
+// names sees none. codex, claude and opencode discover the skills directory on
+// their own; naming skills for them changes what they load and, for codex, the
+// system context that decides whether a stored thread is resumed.
+func providerNeedsNamedSkills(provider string) bool {
+	switch domain.NormalizeAgentKind(provider) {
+	case "pi", "dsh":
+		return true
+	default:
+		return false
+	}
 }
 
 func (w *promptWrapperInput) Start(start promptStartFrame) error {
@@ -344,7 +358,7 @@ func (w *promptWrapperInput) Start(start promptStartFrame) error {
 	if strings.TrimSpace(schemaPath) != "" {
 		frame["outputSchemaFile"] = strings.TrimSpace(schemaPath)
 	}
-	if len(start.SkillNames) > 0 {
+	if len(start.SkillNames) > 0 && providerNeedsNamedSkills(agent.Provider) {
 		frame["skills"] = start.SkillNames
 	}
 	return w.send(frame)

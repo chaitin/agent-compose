@@ -190,8 +190,9 @@ function effortField(frame: StreamFrame): "low" | "medium" | "high" | "xhigh" | 
  * Read the optional skill names from a start frame.
  *
  * The daemon sends the names sandbox preparation published for the agent, the
- * same ones a one-shot run passes as --skill. Absent when the agent declares
- * no skills, or when the daemon predates the field.
+ * same ones a one-shot run passes as --skill, but only for the providers whose
+ * runner loads nothing without them (pi, dsh). Absent otherwise, when the
+ * agent declares no skills, or when the daemon predates the field.
  */
 function skillsField(frame: StreamFrame): string[] | undefined {
   const value = frame.skills;

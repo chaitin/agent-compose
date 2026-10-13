@@ -16,13 +16,14 @@ import (
 
 // A runner that only loads explicitly named skills sees none unless the start
 // frame names them, so the frame must carry what sandbox preparation published.
+// Providers that discover skills themselves keep a frame without names.
 func TestPromptAttachStartFrameNamesPublishedSkills(t *testing.T) {
 	config := &appconfig.Config{GuestStateRoot: "/state", GuestWorkspacePath: "/workspace", GuestHomePath: "/root"}
-	startFrame := func(t *testing.T, skillNames []string) map[string]any {
+	startFrame := func(t *testing.T, provider string, skillNames []string) map[string]any {
 		t.Helper()
 		interaction := &closingRuntimeInteraction{}
 		input := &promptWrapperInput{interaction: interaction}
-		if err := input.Start(promptStartFrame{Agent: execution.AgentConfig{Provider: "dsh"}, Config: config, SkillNames: skillNames}); err != nil {
+		if err := input.Start(promptStartFrame{Agent: execution.AgentConfig{Provider: provider}, Config: config, SkillNames: skillNames}); err != nil {
 			t.Fatal(err)
 		}
 		if len(interaction.sent) != 1 {
@@ -35,12 +36,20 @@ func TestPromptAttachStartFrameNamesPublishedSkills(t *testing.T) {
 		return frame
 	}
 
-	frame := startFrame(t, []string{"review", "needs_underscore"})
-	skills, _ := frame["skills"].([]any)
-	if len(skills) != 2 || skills[0] != "review" || skills[1] != "needs_underscore" {
-		t.Fatalf("start frame skills = %#v, want the published names", frame["skills"])
+	published := []string{"review", "needs_underscore"}
+	for _, provider := range []string{"dsh", "deepseek", "pi", "pi-agent"} {
+		frame := startFrame(t, provider, published)
+		skills, _ := frame["skills"].([]any)
+		if len(skills) != 2 || skills[0] != "review" || skills[1] != "needs_underscore" {
+			t.Fatalf("%s start frame skills = %#v, want the published names", provider, frame["skills"])
+		}
 	}
-	if _, ok := startFrame(t, nil)["skills"]; ok {
+	for _, provider := range []string{"codex", "claude", "opencode", ""} {
+		if _, ok := startFrame(t, provider, published)["skills"]; ok {
+			t.Fatalf("%q start frame names skills, want none for a provider that discovers them", provider)
+		}
+	}
+	if _, ok := startFrame(t, "dsh", nil)["skills"]; ok {
 		t.Fatal("start frame names skills for an agent that declares none")
 	}
 }
