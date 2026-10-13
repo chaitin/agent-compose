@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -50,6 +51,18 @@ func HostAgentSkillsDir(session *domain.Sandbox) string {
 		return ""
 	}
 	return filepath.Join(HostSandboxDir(session), "home", ".agents", "skills")
+}
+
+// PublishedAgentSkillNames returns the skill names the sandbox's last
+// preparation committed to its private skills directory. A caller that starts
+// a run in an already prepared sandbox uses it to name the skills the guest
+// runner should enable, without resolving the skill sources a second time.
+func PublishedAgentSkillNames(session *domain.Sandbox) []string {
+	skillsDir := HostAgentSkillsDir(session)
+	if skillsDir == "" {
+		return nil
+	}
+	return slices.Clone(readAgentSkillsManifest(skillsDir).Names)
 }
 
 // WriteAgentSkills refreshes private skill copies only when their contents have

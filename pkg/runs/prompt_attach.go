@@ -26,6 +26,7 @@ type preparedPromptInteraction struct {
 	LogsPath           string
 	AgentConfig        execution.AgentConfig
 	SchemaPath         string
+	SkillNames         []string
 	Env                map[string]string
 	ManagedEnv         map[string]string
 	VMState            domain.VMState
@@ -111,6 +112,7 @@ func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx
 		LogsPath:           logsPath,
 		AgentConfig:        agentConfig,
 		SchemaPath:         schemaPath,
+		SkillNames:         execution.PublishedAgentSkillNames(sandbox),
 		Env:                env,
 		ManagedEnv:         managedEnv,
 		VMState:            vmState,
@@ -175,7 +177,7 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 	defer func() { _ = interaction.CloseSend() }()
 	projector := newPersistentPromptAttachProjector(context.WithoutCancel(ctx), persistentPromptAttachProjectorDeps{Run: run, Sandbox: sandbox, LogsPath: logsPath, Hub: c.runLogs, EventStore: c.configDB})
 	input := &promptWrapperInput{interaction: interaction}
-	if err := input.Start(prepared.AgentConfig, c.config, prepared.SchemaPath); err != nil {
+	if err := input.Start(promptStartFrame{Agent: prepared.AgentConfig, Config: c.config, SchemaPath: prepared.SchemaPath, SkillNames: prepared.SkillNames}); err != nil {
 		transition.ExitCode = 1
 		transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 		return transition, err
@@ -313,7 +315,20 @@ type promptWrapperInput struct {
 	seq         int
 }
 
-func (w *promptWrapperInput) Start(agent execution.AgentConfig, config *appconfig.Config, schemaPath string) error {
+// promptStartFrame bundles what the guest runner needs to open an interactive
+// session: the agent, the guest paths, and the per-run schema and skills.
+type promptStartFrame struct {
+	Agent      execution.AgentConfig
+	Config     *appconfig.Config
+	SchemaPath string
+	// SkillNames are the skills sandbox preparation published for this agent.
+	// Runners that only load explicitly named skills (pi, dsh) see none without
+	// them, the same names a one-shot run passes as --skill.
+	SkillNames []string
+}
+
+func (w *promptWrapperInput) Start(start promptStartFrame) error {
+	agent, config, schemaPath := start.Agent, start.Config, start.SchemaPath
 	frame := map[string]any{
 		"v":         1,
 		"seq":       w.nextSeq(),
@@ -328,6 +343,9 @@ func (w *promptWrapperInput) Start(agent execution.AgentConfig, config *appconfi
 	}
 	if strings.TrimSpace(schemaPath) != "" {
 		frame["outputSchemaFile"] = strings.TrimSpace(schemaPath)
+	}
+	if len(start.SkillNames) > 0 {
+		frame["skills"] = start.SkillNames
 	}
 	return w.send(frame)
 }

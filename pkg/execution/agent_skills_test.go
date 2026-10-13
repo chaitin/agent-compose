@@ -221,3 +221,21 @@ func TestAgentSkillsConcurrentPreparationSerializesPublication(t *testing.T) {
 	}
 	assertSkillProjectionMatches(t, session, skills)
 }
+
+func TestPublishedAgentSkillNamesFollowsLastPreparation(t *testing.T) {
+	session, skills := skillProjectionFixture(t, 1)
+	if got := PublishedAgentSkillNames(session); len(got) != 0 {
+		t.Fatalf("names before preparation = %v, want none", got)
+	}
+	projectSkills(t, session, skills)
+	if got := PublishedAgentSkillNames(session); !reflect.DeepEqual(got, []string{"pdf"}) {
+		t.Fatalf("names after preparation = %v, want [pdf]", got)
+	}
+	projectSkills(t, session, nil)
+	if got := PublishedAgentSkillNames(session); len(got) != 0 {
+		t.Fatalf("names after skills were removed = %v, want none", got)
+	}
+	if got := PublishedAgentSkillNames(nil); got != nil {
+		t.Fatalf("names without a sandbox = %v, want nil", got)
+	}
+}

@@ -189,9 +189,9 @@ function effortField(frame: StreamFrame): "low" | "medium" | "high" | "xhigh" | 
 /**
  * Read the optional skill names from a start frame.
  *
- * Also unset by the daemon today: prompt-attach never resolves or materialises
- * an agent's skills the way AgentRunner.prepareAgentFiles does for a one-shot
- * run, so there are no names to send.
+ * The daemon sends the names sandbox preparation published for the agent, the
+ * same ones a one-shot run passes as --skill. Absent when the agent declares
+ * no skills, or when the daemon predates the field.
  */
 function skillsField(frame: StreamFrame): string[] | undefined {
   const value = frame.skills;

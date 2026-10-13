@@ -9,8 +9,41 @@ import (
 	"testing"
 	"time"
 
+	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
+	"github.com/chaitin/agent-compose/pkg/execution"
 )
+
+// A runner that only loads explicitly named skills sees none unless the start
+// frame names them, so the frame must carry what sandbox preparation published.
+func TestPromptAttachStartFrameNamesPublishedSkills(t *testing.T) {
+	config := &appconfig.Config{GuestStateRoot: "/state", GuestWorkspacePath: "/workspace", GuestHomePath: "/root"}
+	startFrame := func(t *testing.T, skillNames []string) map[string]any {
+		t.Helper()
+		interaction := &closingRuntimeInteraction{}
+		input := &promptWrapperInput{interaction: interaction}
+		if err := input.Start(promptStartFrame{Agent: execution.AgentConfig{Provider: "dsh"}, Config: config, SkillNames: skillNames}); err != nil {
+			t.Fatal(err)
+		}
+		if len(interaction.sent) != 1 {
+			t.Fatalf("sent frames = %d, want 1", len(interaction.sent))
+		}
+		var frame map[string]any
+		if err := json.Unmarshal(interaction.sent[0].Data, &frame); err != nil {
+			t.Fatal(err)
+		}
+		return frame
+	}
+
+	frame := startFrame(t, []string{"review", "needs_underscore"})
+	skills, _ := frame["skills"].([]any)
+	if len(skills) != 2 || skills[0] != "review" || skills[1] != "needs_underscore" {
+		t.Fatalf("start frame skills = %#v, want the published names", frame["skills"])
+	}
+	if _, ok := startFrame(t, nil)["skills"]; ok {
+		t.Fatal("start frame names skills for an agent that declares none")
+	}
+}
 
 func TestAttachInputPumpsCloseRuntimeInputOnReceiveError(t *testing.T) {
 	receiveErr := errors.New("stream reset")
