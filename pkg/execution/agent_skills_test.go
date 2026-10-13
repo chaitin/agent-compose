@@ -223,19 +223,59 @@ func TestAgentSkillsConcurrentPreparationSerializesPublication(t *testing.T) {
 }
 
 func TestPublishedAgentSkillNamesFollowsLastPreparation(t *testing.T) {
+	publishedNames := func(t *testing.T, session *domain.Sandbox) []string {
+		t.Helper()
+		names, err := PublishedAgentSkillNames(session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return names
+	}
 	session, skills := skillProjectionFixture(t, 1)
-	if got := PublishedAgentSkillNames(session); len(got) != 0 {
+	if got := publishedNames(t, session); len(got) != 0 {
 		t.Fatalf("names before preparation = %v, want none", got)
 	}
 	projectSkills(t, session, skills)
-	if got := PublishedAgentSkillNames(session); !reflect.DeepEqual(got, []string{"pdf"}) {
+	if got := publishedNames(t, session); !reflect.DeepEqual(got, []string{"pdf"}) {
 		t.Fatalf("names after preparation = %v, want [pdf]", got)
 	}
 	projectSkills(t, session, nil)
-	if got := PublishedAgentSkillNames(session); len(got) != 0 {
+	if got := publishedNames(t, session); len(got) != 0 {
 		t.Fatalf("names after skills were removed = %v, want none", got)
 	}
-	if got := PublishedAgentSkillNames(nil); got != nil {
+	if got := publishedNames(t, nil); got != nil {
 		t.Fatalf("names without a sandbox = %v, want nil", got)
+	}
+}
+
+// An unusable manifest must not read as "no skills declared": the caller would
+// start the runner without names and the agent would silently lose its skills.
+func TestPublishedAgentSkillNamesReportsUntrustedManifest(t *testing.T) {
+	for name, damage := range map[string]func(t *testing.T, manifestPath string){
+		"undecodable": func(t *testing.T, manifestPath string) {
+			if err := os.WriteFile(manifestPath, []byte("{not json"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"newer version": func(t *testing.T, manifestPath string) {
+			if err := os.WriteFile(manifestPath, []byte(`{"version":3,"names":["pdf"]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"missing beside skill directories": func(t *testing.T, manifestPath string) {
+			if err := os.Remove(manifestPath); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			session, skills := skillProjectionFixture(t, 1)
+			projectSkills(t, session, skills)
+			damage(t, filepath.Join(HostAgentSkillsDir(session), agentSkillsManifestFileName))
+			names, err := PublishedAgentSkillNames(session)
+			if err == nil || len(names) != 0 {
+				t.Fatalf("names = %v, err = %v, want no names and an error", names, err)
+			}
+		})
 	}
 }

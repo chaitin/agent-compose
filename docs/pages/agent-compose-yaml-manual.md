@@ -865,6 +865,8 @@ A resolved skill directory must contain a valid `SKILL.md`. Providers can be `fi
 
 An agent whose `provider` is `dsh` accepts a narrower set of skill names: `^[a-z0-9]+(?:-[a-z0-9]+)*$`, lowercase letters and digits joined by single hyphens. DSH silently drops a skill named otherwise, so such a name is rejected when the project is validated. The `name` in the skill's `SKILL.md` must be the same value.
 
+An interactive session uses the skills published into its sandbox when the sandbox was last prepared. A session attached to a sandbox that is already running does not pick up skills added, removed, or changed since; they take effect once the sandbox is prepared again, for example when a new sandbox starts.
+
 Local directory:
 
 ```yaml

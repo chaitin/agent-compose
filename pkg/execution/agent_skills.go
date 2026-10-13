@@ -57,12 +57,39 @@ func HostAgentSkillsDir(session *domain.Sandbox) string {
 // preparation committed to its private skills directory. A caller that starts
 // a run in an already prepared sandbox uses it to name the skills the guest
 // runner should enable, without resolving the skill sources a second time.
-func PublishedAgentSkillNames(session *domain.Sandbox) []string {
+//
+// It returns an error when the names cannot be trusted: the manifest is
+// unreadable or newer than this daemon understands, or skill directories exist
+// with no manifest. A sandbox that never published a skill yields no names and
+// no error.
+func PublishedAgentSkillNames(session *domain.Sandbox) ([]string, error) {
 	skillsDir := HostAgentSkillsDir(session)
 	if skillsDir == "" {
+		return nil, nil
+	}
+	manifest, err := loadAgentSkillsManifest(skillsDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, unmanifestedAgentSkillsError(skillsDir)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clone(manifest.Names), nil
+}
+
+// unmanifestedAgentSkillsError reports skill directories that no manifest
+// accounts for, which a caller would otherwise read as "no skills declared".
+func unmanifestedAgentSkillsError(skillsDir string) error {
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
 		return nil
 	}
-	return slices.Clone(readAgentSkillsManifest(skillsDir).Names)
+	for _, entry := range entries {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			return fmt.Errorf("agent skills directory %s holds skills but no manifest", skillsDir)
+		}
+	}
+	return nil
 }
 
 // WriteAgentSkills refreshes private skill copies only when their contents have
@@ -233,16 +260,30 @@ func ensureAgentSkillsDirectory(path string) error {
 	return nil
 }
 
+// readAgentSkillsManifest treats an unusable manifest as an empty one, which is
+// what reconciliation wants: every skill is then rewritten.
 func readAgentSkillsManifest(skillsDir string) agentSkillsManifest {
-	data, err := os.ReadFile(filepath.Join(skillsDir, agentSkillsManifestFileName))
+	manifest, err := loadAgentSkillsManifest(skillsDir)
 	if err != nil {
 		return agentSkillsManifest{}
 	}
-	var manifest agentSkillsManifest
-	if json.Unmarshal(data, &manifest) != nil || manifest.Version > 2 {
-		return agentSkillsManifest{}
-	}
 	return manifest
+}
+
+func loadAgentSkillsManifest(skillsDir string) (agentSkillsManifest, error) {
+	path := filepath.Join(skillsDir, agentSkillsManifestFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return agentSkillsManifest{}, fmt.Errorf("read agent skills manifest: %w", err)
+	}
+	var manifest agentSkillsManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return agentSkillsManifest{}, fmt.Errorf("decode agent skills manifest %s: %w", path, err)
+	}
+	if manifest.Version > 2 {
+		return agentSkillsManifest{}, fmt.Errorf("agent skills manifest %s has unsupported version %d", path, manifest.Version)
+	}
+	return manifest, nil
 }
 
 func agentSkillsManifestBytes(manifest agentSkillsManifest) ([]byte, error) {

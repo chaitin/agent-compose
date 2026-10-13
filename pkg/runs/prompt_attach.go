@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,12 +108,18 @@ func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx
 		env = llms.MergeManagedExecEnv(env, managedEnv)
 		agentConfig.Model = promptAttachRuntimeModel(agentConfig, managedEnv)
 	}
+	skillNames, err := execution.PublishedAgentSkillNames(sandbox)
+	if err != nil {
+		// The session still starts: a provider that needs named skills runs
+		// without them, which is what this warning makes visible.
+		slog.Warn("published agent skills are unavailable; the interactive session starts without named skills", "run_id", run.RunID, "sandbox_id", sandbox.Summary.ID, "error", err)
+	}
 	return preparedPromptInteraction{
 		Run:                run,
 		LogsPath:           logsPath,
 		AgentConfig:        agentConfig,
 		SchemaPath:         schemaPath,
-		SkillNames:         execution.PublishedAgentSkillNames(sandbox),
+		SkillNames:         skillNames,
 		Env:                env,
 		ManagedEnv:         managedEnv,
 		VMState:            vmState,
