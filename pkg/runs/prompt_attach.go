@@ -108,11 +108,14 @@ func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx
 		env = llms.MergeManagedExecEnv(env, managedEnv)
 		agentConfig.Model = promptAttachRuntimeModel(agentConfig, managedEnv)
 	}
-	skillNames, err := execution.PublishedAgentSkillNames(sandbox)
-	if err != nil {
-		// The session still starts: a provider that needs named skills runs
-		// without them, which is what this warning makes visible.
-		slog.Warn("published agent skills are unavailable; the interactive session starts without named skills", "run_id", run.RunID, "sandbox_id", sandbox.Summary.ID, "error", err)
+	var skillNames []string
+	if providerNeedsNamedSkills(agentConfig.Provider) {
+		skillNames, err = execution.PublishedAgentSkillNames(sandbox)
+		if err != nil {
+			// The session still starts, with whichever names could be
+			// trusted; this warning is what makes the missing skills visible.
+			slog.Warn("some published agent skills are unavailable to the interactive session", "run_id", run.RunID, "sandbox_id", sandbox.Summary.ID, "provider", agentConfig.Provider, "named_skills", skillNames, "error", err)
+		}
 	}
 	return preparedPromptInteraction{
 		Run:                run,
@@ -339,6 +342,11 @@ type promptStartFrame struct {
 // names sees none. codex, claude and opencode discover the skills directory on
 // their own; naming skills for them changes what they load and, for codex, the
 // system context that decides whether a stored thread is resumed.
+//
+// This follows what the harness versions pinned in
+// guest-images/Dockerfile.agent-compose-guest were observed to do
+// (CODEX_VERSION 0.146.0, CLAUDE_CODE_VERSION 2.1.220, OPENCODE_VERSION 1.18.9).
+// Nothing asserts it automatically: recheck when one of those is bumped.
 func providerNeedsNamedSkills(provider string) bool {
 	switch domain.NormalizeAgentKind(provider) {
 	case "pi", "dsh":

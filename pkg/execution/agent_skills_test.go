@@ -248,6 +248,25 @@ func TestPublishedAgentSkillNamesFollowsLastPreparation(t *testing.T) {
 	}
 }
 
+// A runner fails to start on a named skill it cannot find, so a listed skill
+// that is gone from disk is dropped from the names and reported instead.
+func TestPublishedAgentSkillNamesOmitsSkillsMissingFromDisk(t *testing.T) {
+	session, skills := skillProjectionFixture(t, 1)
+	skills = append(skills, ResolvedAgentSkill{Name: "docx", LocalDir: skills[0].LocalDir})
+	projectSkills(t, session, skills)
+	gone := skills[0].Name
+	if err := os.RemoveAll(filepath.Join(HostAgentSkillsDir(session), gone)); err != nil {
+		t.Fatal(err)
+	}
+	names, err := PublishedAgentSkillNames(session)
+	if err == nil || !strings.Contains(err.Error(), gone) {
+		t.Fatalf("err = %v, want it to name the missing skill %q", err, gone)
+	}
+	if !reflect.DeepEqual(names, []string{skills[1].Name}) {
+		t.Fatalf("names = %v, want only the skill still on disk %q", names, skills[1].Name)
+	}
+}
+
 // An unusable manifest must not read as "no skills declared": the caller would
 // start the runner without names and the agent would silently lose its skills.
 func TestPublishedAgentSkillNamesReportsUntrustedManifest(t *testing.T) {

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -54,11 +53,18 @@ func HostAgentSkillsDir(session *domain.Sandbox) string {
 }
 
 // PublishedAgentSkillNames returns the skill names the sandbox's last
-// preparation committed to its private skills directory. A caller that starts
-// a run in an already prepared sandbox uses it to name the skills the guest
-// runner should enable, without resolving the skill sources a second time.
+// preparation committed to its private skills directory and that are still
+// present there. A caller that starts a run in an already prepared sandbox uses
+// it to name the skills the guest runner should enable, without resolving the
+// skill sources a second time.
 //
-// It returns an error when the names cannot be trusted: the manifest is
+// The read takes no lock against a concurrent preparation, which moves skill
+// directories before it rewrites the manifest, so the result is best effort. A
+// runner fails to start on a named skill it cannot find; a listed name whose
+// SKILL.md is missing is therefore left out and reported in the error, and the
+// names returned alongside that error remain usable.
+//
+// It returns no names and an error when none can be trusted: the manifest is
 // unreadable or newer than this daemon understands, or skill directories exist
 // with no manifest. A sandbox that never published a skill yields no names and
 // no error.
@@ -74,15 +80,30 @@ func PublishedAgentSkillNames(session *domain.Sandbox) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return slices.Clone(manifest.Names), nil
+	var present, missing []string
+	for _, name := range manifest.Names {
+		if _, err := os.Stat(filepath.Join(skillsDir, name, "SKILL.md")); err != nil {
+			missing = append(missing, name)
+			continue
+		}
+		present = append(present, name)
+	}
+	if len(missing) > 0 {
+		return present, fmt.Errorf("agent skills manifest in %s lists skills with no readable SKILL.md: %s", skillsDir, strings.Join(missing, ", "))
+	}
+	return present, nil
 }
 
 // unmanifestedAgentSkillsError reports skill directories that no manifest
 // accounts for, which a caller would otherwise read as "no skills declared".
+// A skills directory that does not exist holds none.
 func unmanifestedAgentSkillsError(skillsDir string) error {
 	entries, err := os.ReadDir(skillsDir)
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read agent skills directory: %w", err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
@@ -260,8 +281,9 @@ func ensureAgentSkillsDirectory(path string) error {
 	return nil
 }
 
-// readAgentSkillsManifest treats an unusable manifest as an empty one, which is
-// what reconciliation wants: every skill is then rewritten.
+// readAgentSkillsManifest treats an unusable manifest as an empty one, so
+// reconciliation regards no existing skill directory as its own. It then
+// refuses a skill whose path is already occupied rather than overwriting it.
 func readAgentSkillsManifest(skillsDir string) agentSkillsManifest {
 	manifest, err := loadAgentSkillsManifest(skillsDir)
 	if err != nil {
