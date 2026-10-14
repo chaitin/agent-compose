@@ -723,6 +723,7 @@ func registerRuntimeLLMFacadeRoutes(app *echo.Echo, di do.Injector) {
 		},
 		Client:          proxy.NewRuntimeLLMHTTPClient(config.LLMTimeout),
 		MaxOutputTokens: config.LLMMaxOutputTokens,
+		Logger:          do.MustInvoke[*slog.Logger](di),
 	})
 }
 

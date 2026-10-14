@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -49,6 +50,10 @@ type RuntimeLLMOptions struct {
 	// does not send max_output_tokens itself, so without this API proxies that
 	// default to a small limit silently truncate long outputs.
 	MaxOutputTokens int
+	// Logger records why a proxied call failed. The guest receives a fixed
+	// message, so the log is the only place the cause survives. Defaults to
+	// slog.Default.
+	Logger *slog.Logger
 }
 
 func RegisterRuntimeLLMFacadeRoutes(app *echo.Echo, opts RuntimeLLMOptions) {
@@ -220,6 +225,7 @@ func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge
 	llms.ApplyForwardHeaders(upstreamReq.Header, target.Headers)
 	resp, err := h.httpClient().Do(upstreamReq)
 	if err != nil {
+		h.logUpstreamFailure(c, "call upstream llm failed", upstreamCall{Target: target, Model: llmReq.Model, Protocol: upstreamProtocol}, err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "call upstream llm failed"})
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -251,6 +257,7 @@ func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge
 	}
 	upstreamRespBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 	if err != nil {
+		h.logUpstreamFailure(c, "read upstream llm response failed", upstreamCall{Target: target, Model: llmReq.Model, Protocol: upstreamProtocol}, err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "read upstream llm response failed"})
 	}
 	clientBody, err := llms.EncodeRuntimeClientResponse(inboundProtocol, upstreamProtocol, target, upstreamRespBody)
@@ -330,6 +337,7 @@ func (h runtimeLLMHandler) proxyTransparent(c echo.Context, req proxyTransparent
 	llms.ApplyForwardHeaders(upstreamReq.Header, target.Headers)
 	resp, err := h.httpClient().Do(upstreamReq)
 	if err != nil {
+		h.logUpstreamFailure(c, "call upstream llm failed", upstreamCall{Target: target, Model: req.RequestedModel, Protocol: upstreamProtocol}, err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "call upstream llm failed"})
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -343,6 +351,7 @@ func (h runtimeLLMHandler) proxyTransparent(c echo.Context, req proxyTransparent
 		}
 		upstreamRespBody, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
 		if err != nil {
+			h.logUpstreamFailure(c, "read upstream llm response failed", upstreamCall{Target: target, Model: req.RequestedModel, Protocol: upstreamProtocol}, err)
 			return c.JSON(http.StatusBadGateway, map[string]string{"error": "read upstream llm response failed"})
 		}
 		clientBody, err := llms.EncodeRuntimeClientResponse(protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIChat, target, upstreamRespBody)
@@ -391,6 +400,40 @@ func copyTransparentRuntimeResponse(dst io.Writer, resp *http.Response, model st
 		return err
 	}
 	return llms.CopyRuntimeResponseBody(dst, resp)
+}
+
+// upstreamCall identifies the upstream call a failure is logged for. Model is
+// the one requested, because the connection's configured model may be blank on
+// a passthrough.
+type upstreamCall struct {
+	Target   llms.ResolvedTarget
+	Model    string
+	Protocol protocolbridge.Protocol
+}
+
+// logUpstreamFailure records why a proxied call answered 502. A guest that
+// hung up mid-call cancels the upstream request too, and without the cause it
+// is indistinguishable from an upstream that refused the connection, so the
+// two are logged apart.
+func (h runtimeLLMHandler) logUpstreamFailure(c echo.Context, msg string, call upstreamCall, err error) {
+	ctx := c.Request().Context()
+	attrs := []any{
+		"sandbox_id", c.Param("sandbox_id"), "route", c.Path(),
+		"connection", call.Target.Provider.ID, "model", call.Model,
+		"upstream_protocol", string(call.Protocol), "error", err,
+	}
+	if ctx.Err() != nil {
+		h.logger().InfoContext(ctx, msg+": the guest disconnected", attrs...)
+		return
+	}
+	h.logger().WarnContext(ctx, msg, attrs...)
+}
+
+func (h runtimeLLMHandler) logger() *slog.Logger {
+	if h.opts.Logger != nil {
+		return h.opts.Logger
+	}
+	return slog.Default()
 }
 
 func (h runtimeLLMHandler) httpClient() HTTPDoer {
