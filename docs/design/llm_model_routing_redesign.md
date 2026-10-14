@@ -337,12 +337,19 @@ token 绑定 `{SandboxID, ConnectionID, InboundProtocol, Model, GuestModel}`。
 
 ```
 route -> inbound
-token.inbound == inbound          // 防串路由
+family(token.inbound) == family(inbound)   // 防串协议族
 conn = catalog[token.connectionID]
 model = token.ResolveUpstreamModel(request.model)   // 见下表
 target = conn + spec(model)       // 只取 per-model 覆盖，不做选择
 convert(inbound, conn.Protocol)
 ```
+
+> **修订（后续实现）**：入站协议最初要求与 token 记录的完全相等，现在只要求**同一协议族**。
+> token 记录的是被选中 agent 说的协议，但它发布在整个家族的变量里（codex 的 token 就是
+> `OPENAI_API_KEY`），镜像里的其他程序也会读到：entrypoint 另起的 Grok CLI 默认发
+> chat completions，用 codex 的 Responses token 时被 403 `wire api mismatch` 挡住。
+> 同族两种协议之间由 §3.7 的转换承担，所以放开同族不会让请求走到无法服务的格子；
+> 跨家族（OpenAI token 打 messages 路由，或反过来）仍然拒绝。实现见 `FacadeToken.ServesWireAPI`。
 
 没有 per-request resolution、没有 provider family 偏好、代理也不会查询 catalog 去判断
 "这个模型是否可用"。
@@ -385,9 +392,12 @@ family 的旧镜像会因为 403 而无法启动。
 | pi | 透传 | 透传 | 透传 |
 | dsh | 透传 | 透传 | 透传 |
 
-全表 15 格全部可服务。补齐 messages→chat 后家族约束从代码里彻底消失：
+全表 15 格全部可服务。补齐 messages→chat 后家族约束从**连接选择与转换**里消失：
 `connectionFor` 不认识 family，`PrepareAgentLLM` 只做 `Supported` 集合判断，
-`runtime_llm.go` 只做 `inbound==upstream ? 透传 : 转换`。
+`runtime_llm.go` 的转换只做 `inbound==upstream ? 透传 : 转换`。
+family 仍然留在一处：§3.6 的 token 校验 `family(token.inbound) == family(inbound)`。
+它是凭据边界而不是选路规则——一个家族的 token 不能拿去打另一家族的路由——删除它会放行
+跨家族路由，不属于"家族约束已消失"的范围。
 
 > pi/dsh 保留全协议透传是有实测理由的：某些网关会发自定义事件
 > （`assets/.dsh/profiles/agent-compose/cordis.patch.yml:7-16` 记录的
