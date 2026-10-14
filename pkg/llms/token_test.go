@@ -87,3 +87,34 @@ func TestFacadeTokenResolveUpstreamModel(t *testing.T) {
 		})
 	}
 }
+
+// TestFacadeTokenServesWireAPI pins the routes a token may be presented on: the
+// whole family it was issued for, so a second OpenAI CLI in a codex sandbox can
+// post chat completions with the Responses-bound token, and never the other
+// family.
+func TestFacadeTokenServesWireAPI(t *testing.T) {
+	tests := []struct {
+		issued string
+		route  string
+		want   bool
+	}{
+		{APIProtocolResponses, APIProtocolResponses, true},
+		{APIProtocolResponses, APIProtocolChatCompletions, true},
+		{APIProtocolChatCompletions, APIProtocolResponses, true},
+		{"chat", APIProtocolChatCompletions, true},
+		{APIProtocolMessages, APIProtocolMessages, true},
+		{APIProtocolResponses, APIProtocolMessages, false},
+		{APIProtocolChatCompletions, APIProtocolMessages, false},
+		{APIProtocolMessages, APIProtocolChatCompletions, false},
+		{APIProtocolMessages, APIProtocolResponses, false},
+		{"", APIProtocolMessages, true},
+		{"", APIProtocolChatCompletions, true},
+		{"gemini", "gemini", false},
+	}
+	for _, tc := range tests {
+		got := FacadeToken{WireAPI: tc.issued}.ServesWireAPI(tc.route)
+		if got != tc.want {
+			t.Errorf("token %q on route %q = %v, want %v", tc.issued, tc.route, got, tc.want)
+		}
+	}
+}

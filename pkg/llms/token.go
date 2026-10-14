@@ -63,6 +63,28 @@ func (t FacadeToken) HasConnection() bool {
 	return strings.TrimSpace(t.ProviderID) != ""
 }
 
+// ServesWireAPI reports whether the token may be presented on the facade route
+// that serves route.
+//
+// A token is bound to a protocol family, not to one protocol in it. The wire
+// API recorded at issue time is the one the selected agent speaks, but the
+// variables the token is published under belong to the whole family, and any
+// program in the image may read them: a codex sandbox publishes its token as
+// OPENAI_API_KEY, and a second CLI the entrypoint starts can post chat
+// completions with it. Both OpenAI routes decode their own protocol and reach
+// the connection through the protocol bridge, so the family is what keeps a
+// request on routes the connection can be converted to. An Anthropic token is
+// still refused on the OpenAI routes, and the reverse.
+//
+// A token with no recorded wire API serves every route, as before.
+func (t FacadeToken) ServesWireAPI(route string) bool {
+	if strings.TrimSpace(t.WireAPI) == "" {
+		return true
+	}
+	issued := catalogProtocolFamily(NormalizeWireAPI(t.WireAPI))
+	return issued != "" && issued == catalogProtocolFamily(NormalizeWireAPI(route))
+}
+
 // ResolveUpstreamModel maps the model a guest asked for to the model the
 // upstream knows, reporting ok=false only when the token names no upstream the
 // request could belong to.

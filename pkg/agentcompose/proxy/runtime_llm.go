@@ -107,7 +107,7 @@ func (h runtimeLLMHandler) authorizeAndResolveRuntimeLLMRequest(c echo.Context, 
 	if token.SandboxID != sandboxID || !token.RevokedAt.IsZero() || (!token.ExpiresAt.IsZero() && now.After(token.ExpiresAt)) {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token is not valid for this sandbox"})
 	}
-	if token.WireAPI != "" && llms.NormalizeWireAPI(token.WireAPI) != llms.NormalizeWireAPI(facadeWireAPI) {
+	if !token.ServesWireAPI(facadeWireAPI) {
 		return resolvedRuntimeLLMRequest{}, true, c.JSON(http.StatusForbidden, map[string]string{"error": "llm facade token wire api mismatch"})
 	}
 	session, err := h.opts.Sandboxes.GetSandbox(c.Request().Context(), sandboxID)
