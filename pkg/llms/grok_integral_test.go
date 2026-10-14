@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func TestWholeIntegralArgsDropsOnlyZeroFractions(t *testing.T) {
@@ -68,5 +69,32 @@ func TestCopyRuntimeResponseBodyForModelRewritesSplitSSEDelta(t *testing.T) {
 		Body:   io.NopCloser(strings.NewReader(stream)),
 	}, "gpt-5.5"); err != nil || other.String() != stream {
 		t.Fatalf("non-grok stream changed: %q err=%v", other.String(), err)
+	}
+}
+
+func TestGrokResponsesStreamMatchesTheWholeBodyRewrite(t *testing.T) {
+	stream := strings.Join([]string{
+		`data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"{\"timeout_ms\":66121."}`,
+		"",
+		`data: {"type":"response.function_call_arguments.delta","item_id":"fc_1","delta":"0,\"ratio\":1.5}"}`,
+		"",
+		`data: {"type":"response.function_call_arguments.done","item_id":"fc_1","arguments":"{\"timeout_ms\":66121.0,\"ratio\":1.5}"}`,
+		"",
+		"",
+	}, "\n")
+	got, err := io.ReadAll(GrokResponsesStream(iotest.OneByteReader(strings.NewReader(stream))))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var copied bytes.Buffer
+	resp := &http.Response{Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(stream))}
+	if err := CopyRuntimeResponseBodyForModel(&copied, resp, "grok-4.7"); err != nil {
+		t.Fatalf("copy: %v", err)
+	}
+	if string(got) != copied.String() {
+		t.Fatalf("reader = %q\ncopy   = %q", got, copied.String())
+	}
+	if strings.Contains(string(got), "66121.0") || strings.Contains(string(got), `66121.\"`) {
+		t.Fatalf("zero fraction survived: %s", got)
 	}
 }

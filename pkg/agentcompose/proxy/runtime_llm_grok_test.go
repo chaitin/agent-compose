@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/labstack/echo/v4"
@@ -74,6 +76,41 @@ func TestRuntimeLLMFacadeServesGrokChatCompletionsThroughAResponsesToken(t *test
 	}
 }
 
+func TestRuntimeLLMFacadeRewritesGrokIntegralFloatsInABridgedStream(t *testing.T) {
+	events := []string{
+		`{"type":"response.created","response":{"id":"resp_2","object":"response","status":"in_progress","model":"grok-4.6"}}`,
+		`{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"exec_command","call_id":"call_1","arguments":""}}`,
+		`{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"{\"timeout_ms\":66121."}`,
+		`{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":0,"delta":"0,\"ratio\":1.5}"}`,
+		`{"type":"response.function_call_arguments.done","item_id":"fc_1","output_index":0,"arguments":"{\"timeout_ms\":66121.0,\"ratio\":1.5}"}`,
+		`{"type":"response.output_item.done","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"completed","name":"exec_command","call_id":"call_1","arguments":"{\"timeout_ms\":66121.0,\"ratio\":1.5}"}}`,
+		`{"type":"response.completed","response":{"id":"resp_2","object":"response","status":"completed","model":"grok-4.6","output":[],"usage":{"input_tokens":4,"output_tokens":6,"total_tokens":10}}}`,
+	}
+	var stream strings.Builder
+	for _, event := range events {
+		stream.WriteString("data: " + event + "\n\n")
+	}
+	run := func(model string) string {
+		t.Helper()
+		client := &fakeRuntimeLLMHTTPClient{
+			status:     http.StatusOK,
+			header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			bodyReader: iotest.OneByteReader(strings.NewReader(stream.String())),
+		}
+		rec := serveRuntimeLLMChat(t, client, `{"model":"`+model+`","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", model, rec.Code, rec.Body.String())
+		}
+		return streamedChatToolArguments(t, rec.Body.String())
+	}
+	if got := run("grok-4.6"); got != `{"timeout_ms":66121,"ratio":1.5}` {
+		t.Fatalf("grok streamed arguments = %q", got)
+	}
+	if got := run("gpt-5.5"); got != `{"timeout_ms":66121.0,"ratio":1.5}` {
+		t.Fatalf("non-grok streamed arguments = %q", got)
+	}
+}
+
 func serveRuntimeLLMChat(t *testing.T, client *fakeRuntimeLLMHTTPClient, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	e := echo.New()
@@ -89,4 +126,35 @@ func serveRuntimeLLMChat(t *testing.T, client *fakeRuntimeLLMHTTPClient, body st
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 	return rec
+}
+
+func streamedChatToolArguments(t *testing.T, body string) string {
+	t.Helper()
+	var arguments strings.Builder
+	for _, line := range strings.Split(body, "\n") {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok || data == "[DONE]" {
+			continue
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					ToolCalls []struct {
+						Function struct {
+							Arguments string `json:"arguments"`
+						} `json:"function"`
+					} `json:"tool_calls"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			t.Fatalf("chunk %s: %v", data, err)
+		}
+		for _, choice := range chunk.Choices {
+			for _, call := range choice.Delta.ToolCalls {
+				arguments.WriteString(call.Function.Arguments)
+			}
+		}
+	}
+	return arguments.String()
 }

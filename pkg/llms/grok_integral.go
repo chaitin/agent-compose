@@ -169,38 +169,71 @@ func CopyRuntimeResponseBodyForModel(dst io.Writer, resp *http.Response, model s
 
 func copyGrokResponsesStream(dst io.Writer, src io.Reader) error {
 	flusher, _ := dst.(http.Flusher)
-	var pending []byte
-	var calls grokArgStreams
+	stream := GrokResponsesStream(src)
 	buf := make([]byte, 32*1024)
-	write := func(chunk []byte) error {
-		if len(chunk) == 0 {
-			return nil
-		}
-		if _, err := dst.Write(chunk); err != nil {
-			return err
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-		return nil
-	}
 	for {
-		n, readErr := src.Read(buf)
+		n, readErr := stream.Read(buf)
 		if n > 0 {
-			pending = append(pending, buf[:n]...)
-			out, rest := calls.rewriteSSEPrefix(pending)
-			pending = append([]byte(nil), rest...)
-			if err := write(out); err != nil {
+			if _, err := dst.Write(buf[:n]); err != nil {
 				return err
+			}
+			if flusher != nil {
+				flusher.Flush()
 			}
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
-				return write(calls.rewriteSSETail(pending))
+				return nil
 			}
 			return readErr
 		}
 	}
+}
+
+// GrokResponsesStream reads a streaming Grok Responses body with zero
+// fractions removed from its function_call arguments. The bridged proxy path
+// reads through it before the protocol bridge decodes the stream, so a guest
+// on any inbound protocol receives the same whole numbers a transparent
+// Responses guest does.
+func GrokResponsesStream(src io.Reader) io.Reader {
+	return &grokResponsesStreamReader{src: src, buf: make([]byte, 32*1024)}
+}
+
+// grokResponsesStreamReader rewrites each complete SSE event as soon as it
+// arrives and holds only the incomplete tail, so a reader is never kept
+// waiting for an event the upstream has already finished.
+type grokResponsesStreamReader struct {
+	src     io.Reader
+	buf     []byte
+	pending []byte
+	out     []byte
+	calls   grokArgStreams
+	err     error
+}
+
+func (r *grokResponsesStreamReader) Read(p []byte) (int, error) {
+	for len(r.out) == 0 {
+		if r.err != nil {
+			return 0, r.err
+		}
+		n, err := r.src.Read(r.buf)
+		if n > 0 {
+			r.pending = append(r.pending, r.buf[:n]...)
+			out, rest := r.calls.rewriteSSEPrefix(r.pending)
+			r.out = out
+			r.pending = append([]byte(nil), rest...)
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				r.out = append(r.out, r.calls.rewriteSSETail(r.pending)...)
+				r.pending = nil
+			}
+			r.err = err
+		}
+	}
+	n := copy(p, r.out)
+	r.out = r.out[n:]
+	return n, nil
 }
 
 // grokArgStreams keeps one number rewriter per streamed function call.

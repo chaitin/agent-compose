@@ -232,6 +232,17 @@ func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge
 		return nil
 	}
 	if llms.RuntimeResponseShouldFlush(resp.Header) {
+		// The bridge relays streamed tool-call argument deltas as written, so
+		// Grok's integral floats are fixed in its own Responses stream before
+		// the bridge decodes it. A buffered body needs nothing: the bridge parses
+		// its arguments and re-encodes the numbers whole. The model is the one
+		// requested, as on the transparent path.
+		if llms.GrokResponsesModel(llmReq.Model, upstreamProtocol) != "" {
+			resp.Body = struct {
+				io.Reader
+				io.Closer
+			}{llms.GrokResponsesStream(resp.Body), resp.Body}
+		}
 		return BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 			InboundProtocol:  inboundProtocol,
 			UpstreamProtocol: upstreamProtocol,
