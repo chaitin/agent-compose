@@ -238,17 +238,7 @@ func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge
 		return nil
 	}
 	if llms.RuntimeResponseShouldFlush(resp.Header) {
-		// The bridge relays streamed tool-call argument deltas as written, so
-		// Grok's integral floats are fixed in its own Responses stream before
-		// the bridge decodes it. A buffered body needs nothing: the bridge parses
-		// its arguments and re-encodes the numbers whole. The model is the one
-		// requested, as on the transparent path.
-		if llms.GrokResponsesModel(llmReq.Model, upstreamProtocol) != "" {
-			resp.Body = struct {
-				io.Reader
-				io.Closer
-			}{llms.GrokResponsesStream(resp.Body), resp.Body}
-		}
+		rewriteGrokResponsesStream(resp, llmReq.Model, upstreamProtocol)
 		return BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 			InboundProtocol:  inboundProtocol,
 			UpstreamProtocol: upstreamProtocol,
@@ -343,6 +333,7 @@ func (h runtimeLLMHandler) proxyTransparent(c echo.Context, req proxyTransparent
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && llms.UseGenericResponsesTextParts(target, upstreamProtocol) {
 		if llms.RuntimeResponseShouldFlush(resp.Header) {
+			rewriteGrokResponsesStream(resp, req.RequestedModel, upstreamProtocol)
 			return BridgeRuntimeLLMStreamResponse(c, resp, runtimeLLMStreamBridgeRequest{
 				InboundProtocol:  protocolbridge.ProtocolOpenAIResponses,
 				UpstreamProtocol: protocolbridge.ProtocolOpenAIResponses,
@@ -400,6 +391,23 @@ func copyTransparentRuntimeResponse(dst io.Writer, resp *http.Response, model st
 		return err
 	}
 	return llms.CopyRuntimeResponseBody(dst, resp)
+}
+
+// rewriteGrokResponsesStream makes a streamed Grok Responses body read with
+// zero fractions removed from its tool-call arguments. It is for every path
+// that hands the stream to the protocol bridge: the bridge relays argument
+// deltas as written, so the fix has to happen in Grok's own format before the
+// bridge decodes it. A buffered body needs nothing, because the bridge parses
+// its arguments and re-encodes the numbers whole. model is the one requested,
+// as on the transparent path.
+func rewriteGrokResponsesStream(resp *http.Response, model string, upstreamProtocol protocolbridge.Protocol) {
+	if llms.GrokResponsesModel(model, upstreamProtocol) == "" {
+		return
+	}
+	resp.Body = struct {
+		io.Reader
+		io.Closer
+	}{llms.GrokResponsesStream(resp.Body), resp.Body}
 }
 
 // upstreamCall identifies the upstream call a failure is logged for. Model is

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +77,9 @@ func TestRuntimeLLMFacadeServesGrokChatCompletionsThroughAResponsesToken(t *test
 	}
 }
 
-func TestRuntimeLLMFacadeRewritesGrokIntegralFloatsInABridgedStream(t *testing.T) {
+// grokFunctionCallStream is a streamed Grok Responses reply whose tool-call
+// arguments carry 66121.0, split across two deltas as Grok can send it.
+func grokFunctionCallStream() string {
 	events := []string{
 		`{"type":"response.created","response":{"id":"resp_2","object":"response","status":"in_progress","model":"grok-4.6"}}`,
 		`{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","status":"in_progress","name":"exec_command","call_id":"call_1","arguments":""}}`,
@@ -90,12 +93,16 @@ func TestRuntimeLLMFacadeRewritesGrokIntegralFloatsInABridgedStream(t *testing.T
 	for _, event := range events {
 		stream.WriteString("data: " + event + "\n\n")
 	}
+	return stream.String()
+}
+
+func TestRuntimeLLMFacadeRewritesGrokIntegralFloatsInABridgedStream(t *testing.T) {
 	run := func(model string) string {
 		t.Helper()
 		client := &fakeRuntimeLLMHTTPClient{
 			status:     http.StatusOK,
 			header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-			bodyReader: iotest.OneByteReader(strings.NewReader(stream.String())),
+			bodyReader: iotest.OneByteReader(strings.NewReader(grokFunctionCallStream())),
 		}
 		rec := serveRuntimeLLMChat(t, client, `{"model":"`+model+`","stream":true,"messages":[{"role":"user","content":"hi"}]}`)
 		if rec.Code != http.StatusOK {
@@ -157,4 +164,45 @@ func streamedChatToolArguments(t *testing.T, body string) string {
 		}
 	}
 	return arguments.String()
+}
+
+// A connection with generic Responses text parts re-encodes its stream through
+// the bridge even when the guest speaks Responses too, so it needs the same
+// rewrite as a cross-protocol stream.
+func TestRuntimeLLMFacadeRewritesGrokIntegralFloatsForGenericTextParts(t *testing.T) {
+	run := func(model string) string {
+		t.Helper()
+		e := echo.New()
+		RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
+			Tokens:    fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: model, ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
+			Sandboxes: fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
+			Connections: func(_ context.Context, _, model string) (llms.ResolvedTarget, error) {
+				return llms.ResolvedTarget{
+					Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: "http://upstream.test/v1", UseGenericResponsesTextParts: true},
+					Model:    llms.Model{Name: model},
+					WireAPI:  llms.APIProtocolResponses,
+				}, nil
+			},
+			Client: &fakeRuntimeLLMHTTPClient{
+				status:     http.StatusOK,
+				header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+				bodyReader: iotest.OneByteReader(strings.NewReader(grokFunctionCallStream())),
+			},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses", strings.NewReader(`{"model":"`+model+`","stream":true,"input":"hi"}`))
+		req.Header.Set("Authorization", "Bearer raw-token")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", model, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	if got := run("grok-4.6"); strings.Contains(got, "66121.0") || !strings.Contains(got, "66121") || !strings.Contains(got, "1.5") {
+		t.Fatalf("grok stream through generic text parts:\n%s", got)
+	}
+	if got := run("gpt-5.5"); !strings.Contains(got, "66121.0") {
+		t.Fatalf("non-grok stream was rewritten:\n%s", got)
+	}
 }
