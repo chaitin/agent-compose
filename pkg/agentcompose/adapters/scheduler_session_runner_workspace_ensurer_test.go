@@ -11,6 +11,7 @@ import (
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
 )
 
@@ -142,6 +143,59 @@ func TestSchedulerSandboxRunnerEnsureUsesWorkspaceEnsurerBeforeGuideAndDriver(t 
 		t.Fatalf("scheduler binding = %#v ok=%v err=%v, want sandbox %q", binding, ok, err, sandbox.Summary.ID)
 	}
 	assertSchedulerLifecycleEvidence(t, bridge, publisher, sandbox.Summary.ID, "sandbox.created", "agent-compose.session.created")
+}
+
+func TestSchedulerSandboxRunnerEnsureReportsSandboxBeforeStartingRuntime(t *testing.T) {
+	ctx := context.Background()
+	bridge, driver := newTestSandboxRPCBridge(t)
+	var acquired []string
+	startsAtAcquire := -1
+	hookCtx := schedulers.WithSandboxAcquiredHook(ctx, func(sandboxID string) {
+		acquired = append(acquired, sandboxID)
+		startsAtAcquire = len(driver.startCalls)
+	})
+	runner := NewSchedulerSandboxRunner(SchedulerSandboxRunnerDeps{
+		Config:           bridge.config,
+		Store:            bridge.store,
+		ConfigDB:         bridge.configDB,
+		WorkspaceEnsurer: &recordingSchedulerWorkspaceEnsurer{},
+		Driver:           driver,
+		Cap:              bridge.cap,
+		Streams:          bridge.streams,
+		Publisher:        &schedulerSessionPublisherFake{},
+		AgentExecutor:    bridge.agentExecutor,
+	})
+	scheduler := createNativeTestScheduler(t, ctx, bridge.configDB, domain.Scheduler{Summary: domain.SchedulerSummary{
+		ID:            "scheduler-acquire",
+		Name:          "Scheduler Acquire",
+		Driver:        driverpkg.RuntimeDriverDocker,
+		SandboxPolicy: domain.SchedulerSandboxPolicySticky,
+	}})
+	request := domain.SchedulerAgentRequest{BindingTriggerID: "trigger-acquire"}
+
+	created, _, err := runner.Ensure(hookCtx, scheduler, request, false)
+	if err != nil {
+		t.Fatalf("Ensure returned error: %v", err)
+	}
+	if len(acquired) != 1 || acquired[0] != created.Summary.ID {
+		t.Fatalf("acquired = %#v, want the created sandbox %q", acquired, created.Summary.ID)
+	}
+	if startsAtAcquire != 0 || len(driver.startCalls) != 1 {
+		t.Fatalf("driver starts when the sandbox was reported = %d (total %d), want it reported before the runtime starts", startsAtAcquire, len(driver.startCalls))
+	}
+
+	// A running sticky sandbox is reused without a start and is still reported.
+	acquired = nil
+	reused, _, err := runner.Ensure(hookCtx, scheduler, request, false)
+	if err != nil {
+		t.Fatalf("second Ensure returned error: %v", err)
+	}
+	if reused.Summary.ID != created.Summary.ID || len(driver.startCalls) != 1 {
+		t.Fatalf("second Ensure sandbox = %q starts = %d, want the running sandbox reused", reused.Summary.ID, len(driver.startCalls))
+	}
+	if len(acquired) != 1 || acquired[0] != created.Summary.ID {
+		t.Fatalf("acquired on reuse = %#v, want the reused sandbox %q", acquired, created.Summary.ID)
+	}
 }
 
 func TestSchedulerSandboxRunnerEnsureWorkspaceEnsurerErrorShortCircuitsDriver(t *testing.T) {

@@ -79,10 +79,13 @@ type ControllerDependencies struct {
 	// EventDeliveryScope bounds which Projects receive a published event. An
 	// empty value selects the Project scope.
 	EventDeliveryScope domain.EventDeliveryScope
-	Schedulers         map[string]domain.Scheduler
-	Running            map[string]int
-	Now                func() time.Time
-	NewID              func() string
+	// InterruptedSandboxes stops the sandboxes a daemon restart left running
+	// under an interrupted run. Nil leaves them as they are.
+	InterruptedSandboxes InterruptedRunSandboxStopper
+	Schedulers           map[string]domain.Scheduler
+	Running              map[string]int
+	Now                  func() time.Time
+	NewID                func() string
 }
 
 type Controller struct {
