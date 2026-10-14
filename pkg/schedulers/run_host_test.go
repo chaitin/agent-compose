@@ -773,6 +773,8 @@ func (e *hostEventsFake) types() []string {
 }
 
 type hostSessionsFake struct {
+	ensureCtx   context.Context
+	ensureReq   domain.SchedulerAgentRequest
 	session     *domain.Sandbox
 	ensureErr   error
 	loadErr     error
@@ -782,7 +784,9 @@ type hostSessionsFake struct {
 	shutdowns   []string
 }
 
-func (s *hostSessionsFake) Ensure(context.Context, domain.Scheduler, domain.SchedulerAgentRequest, bool) (*domain.Sandbox, string, error) {
+func (s *hostSessionsFake) Ensure(ctx context.Context, _ domain.Scheduler, request domain.SchedulerAgentRequest, _ bool) (*domain.Sandbox, string, error) {
+	s.ensureCtx = ctx
+	s.ensureReq = request
 	s.ensureCalls++
 	if s.ensureErr != nil {
 		return nil, "", s.ensureErr

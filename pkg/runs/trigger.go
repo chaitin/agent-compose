@@ -62,6 +62,10 @@ func (c *Controller) resolveTriggerForManualRun(ctx context.Context, req RunAgen
 	if strings.TrimSpace(schedulers.AgentSandboxPolicy(captured.request)) != "" {
 		effectivePolicy = schedulers.NormalizeSandboxPolicy(schedulers.AgentSandboxPolicy(captured.request))
 	}
+	// A run that carries a user's identity must not enter the trigger's sticky
+	// sandbox: that sandbox is shared with the scheduler's unattended runs and
+	// would keep the user's capability binding and data after this run ends.
+	effectivePolicy = schedulers.SandboxPolicyForIdentity(ctx, effectivePolicy)
 	if effectivePolicy == domain.SchedulerSandboxPolicySticky {
 		configHash, err := schedulers.SchedulerSandboxConfigHash(definition)
 		if err != nil {

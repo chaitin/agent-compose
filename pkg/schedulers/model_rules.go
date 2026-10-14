@@ -1,6 +1,7 @@
 package schedulers
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -47,6 +48,25 @@ func NormalizeSandboxPolicy(policy string) string {
 
 func AgentSandboxPolicy(request domain.SchedulerAgentRequest) string {
 	return strings.TrimSpace(request.SandboxPolicy)
+}
+
+// SandboxPolicyForIdentity keeps a user's identity out of reusable sandboxes. An
+// execution that carries trusted ingress headers runs on behalf of the user who
+// started it, while a sticky sandbox outlives the execution and is shared with
+// the scheduler's unattended runs. Such an execution therefore always gets a
+// sandbox of its own, discarded along with its capability binding when the
+// execution ends. An execution without identity keeps the configured policy.
+//
+// Trusted headers are stored by the deployment's trusted ingress only, which
+// admits x-mpi-* names, so any stored header means an identified caller. This is
+// the single definition of the rule: every entry point that can put a caller's
+// identity into a sandbox applies it, so the scheduler script host and the
+// trigger's sticky binding cannot drift apart.
+func SandboxPolicyForIdentity(ctx context.Context, policy string) string {
+	if len(domain.TrustedHeadersFromContext(ctx)) > 0 {
+		return domain.SchedulerSandboxPolicyNew
+	}
+	return policy
 }
 
 func AgentSandboxEnv(request domain.SchedulerAgentRequest) []domain.SandboxEnvVar {
