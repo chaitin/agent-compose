@@ -6,9 +6,11 @@ on:
       - "runtime-v*"
   workflow_dispatch:
 
+# Publishing authenticates through npm trusted publishing (GitHub OIDC), so no
+# long-lived registry token is involved. The two publish jobs each request
+# `id-token: write`; no other job needs it.
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   verify:
@@ -20,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
       - id: version
         name: Verify shared runtime version
         run: |
@@ -44,6 +46,9 @@ jobs:
     name: Publish @chaitin-ai/agent-compose-runtime
     needs: verify
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: runtime/javascript
@@ -51,30 +56,50 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 24 bundles npm 11.x; trusted publishing (OIDC) requires npm >= 11.5.1.
+          # Node 22 bundles npm 10.9.x, which predates trusted publishing entirely.
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: runtime/javascript/package-lock.json
       - run: npm ci
       - run: npm run build
       - run: npm run test:unit
-      - name: Check npm token
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Check trusted publishing preconditions
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::NPM_TOKEN secret is required to publish @chaitin-ai/agent-compose-runtime"
+          npm_version="$(npm --version)"
+          echo "npm version: $npm_version"
+          if [ "$(printf '%s\n%s\n' 11.5.1 "$npm_version" | sort -V | head -1)" != "11.5.1" ]; then
+            echo "::error::npm $npm_version predates trusted publishing; npm >= 11.5.1 is required (Node 24 bundles npm 11.x)"
             exit 1
           fi
-      - name: Publish
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::GitHub OIDC token endpoint is unavailable; this job needs 'permissions: id-token: write'"
+            exit 1
+          fi
+      - id: published
+        name: Check published version
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE: "@chaitin-ai/agent-compose-runtime"
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          if npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$PACKAGE@$VERSION is already published; skipping publish"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish
+        if: steps.published.outputs.skip != 'true'
         run: npm publish --access public --provenance
 
   publish-runtime-sdk:
     name: Publish @chaitin-ai/agent-compose-runtime-sdk
     needs: [verify, publish-runtime]
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         working-directory: runtime/agent-compose-runtime-sdk
@@ -82,7 +107,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 24 bundles npm 11.x; trusted publishing (OIDC) requires npm >= 11.5.1.
+          # Node 22 bundles npm 10.9.x, which predates trusted publishing entirely.
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: runtime/agent-compose-runtime-sdk/package-lock.json
@@ -90,15 +117,30 @@ jobs:
       - run: npm run build
       - run: npm test
       - run: npm run test:packaging
-      - name: Check npm token
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Check trusted publishing preconditions
         run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::error::NPM_TOKEN secret is required to publish @chaitin-ai/agent-compose-runtime-sdk"
+          npm_version="$(npm --version)"
+          echo "npm version: $npm_version"
+          if [ "$(printf '%s\n%s\n' 11.5.1 "$npm_version" | sort -V | head -1)" != "11.5.1" ]; then
+            echo "::error::npm $npm_version predates trusted publishing; npm >= 11.5.1 is required (Node 24 bundles npm 11.x)"
             exit 1
           fi
-      - name: Publish
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::GitHub OIDC token endpoint is unavailable; this job needs 'permissions: id-token: write'"
+            exit 1
+          fi
+      - id: published
+        name: Check published version
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PACKAGE: "@chaitin-ai/agent-compose-runtime-sdk"
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          if npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "$PACKAGE@$VERSION is already published; skipping publish"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish
+        if: steps.published.outputs.skip != 'true'
         run: npm publish --access public --provenance
