@@ -10,8 +10,8 @@ github.com/cenkalti/backoff/v5 v5.0.3 h1:ZN+IMa753KfX5hd8vVaMixjnqRZ3y8CuJKRKj1x
 github.com/cenkalti/backoff/v5 v5.0.3/go.mod h1:rkhZdG3JZukswDf7f0cwqPNk4K0sa+F97BxZthm/crw=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
-github.com/chaitin/ai-api-protocol-bridge v1.2.1-0.20261013064107-ea6587971c0f h1:5ZyStEkwLNpBXD/TKVdEHLTDORIa7BzWjV58l7yHdLc=
-github.com/chaitin/ai-api-protocol-bridge v1.2.1-0.20261013064107-ea6587971c0f/go.mod h1:hSbqFEyrkL/j6r4k9NooMaV3gkjXzMR96GddRH/AObA=
+github.com/chaitin/ai-api-protocol-bridge v1.2.1-0.20261014111939-58ae8a3baf41 h1:Q39Mx+mo/4KrQ8jJBK5c62LmGqM+chvGKllP80FYt8M=
+github.com/chaitin/ai-api-protocol-bridge v1.2.1-0.20261014111939-58ae8a3baf41/go.mod h1:hSbqFEyrkL/j6r4k9NooMaV3gkjXzMR96GddRH/AObA=
 github.com/chzyer/logex v1.2.1 h1:XHDu3E6q+gdHgsdTPH6ImJMIp436vR6MPtH8gP05QzM=
 github.com/chzyer/logex v1.2.1/go.mod h1:JLbx6lG2kDbNRFnfkgvh4eRJRPX1QCoOIWomwysCBrQ=
 github.com/chzyer/readline v1.5.1 h1:upd/6fQk4src78LMRzh5vItIt361/o4uq553V8B5sGI=
