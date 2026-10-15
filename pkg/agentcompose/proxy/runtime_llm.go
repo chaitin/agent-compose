@@ -250,6 +250,7 @@ func (h runtimeLLMHandler) handle(c echo.Context, inboundProtocol protocolbridge
 		h.logUpstreamFailure(c, "read upstream llm response failed", upstreamCall{Target: target, Model: llmReq.Model, Protocol: upstreamProtocol}, err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "read upstream llm response failed"})
 	}
+	upstreamRespBody = rewriteGrokBufferedBody(llmReq.Model, upstreamProtocol, upstreamRespBody)
 	clientBody, err := llms.EncodeRuntimeClientResponse(inboundProtocol, upstreamProtocol, target, upstreamRespBody)
 	if err != nil {
 		raw, status := inboundAdapter.EncodeError(err)
@@ -352,6 +353,7 @@ func (h runtimeLLMHandler) proxyTransparent(c echo.Context, req proxyTransparent
 		}
 		// The upstream is the connection's Responses endpoint, as on the
 		// streaming branch above; decoding it as chat refused every reply.
+		upstreamRespBody = rewriteGrokBufferedBody(req.RequestedModel, upstreamProtocol, upstreamRespBody)
 		clientBody, err := llms.EncodeRuntimeClientResponse(protocolbridge.ProtocolOpenAIResponses, protocolbridge.ProtocolOpenAIResponses, target, upstreamRespBody)
 		if err != nil {
 			adapter := protocolbridge.NewOpenAIResponsesAdapter()

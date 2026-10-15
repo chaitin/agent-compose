@@ -207,6 +207,44 @@ func TestRuntimeLLMFacadeRewritesGrokIntegralFloatsForGenericTextParts(t *testin
 	}
 }
 
+// A buffered Grok reply on a generic-text-parts connection is re-encoded
+// through the bridge too, so its integral floats leak as 66121.0 unless the
+// rewrite runs on the Responses body before EncodeRuntimeClientResponse.
+func TestRuntimeLLMFacadeRewritesGrokIntegralFloatsForGenericTextPartsBuffered(t *testing.T) {
+	upstream := `{"id":"resp_1","object":"response","status":"completed","model":"grok-4.6","output":[{"type":"function_call","id":"fc_1","call_id":"call_1","name":"exec_command","arguments":"{\"timeout_ms\":66121.0,\"ratio\":1.5}"}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	run := func(model string) string {
+		t.Helper()
+		e := echo.New()
+		RegisterRuntimeLLMFacadeRoutes(e, RuntimeLLMOptions{
+			Tokens:    fakeRuntimeLLMTokens{token: llms.FacadeToken{SandboxID: "sandbox-1", Model: model, ProviderID: "provider-1", WireAPI: llms.APIProtocolResponses, ExpiresAt: time.Now().Add(time.Hour)}},
+			Sandboxes: fakeRuntimeLLMSessions{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning}}},
+			Connections: func(_ context.Context, _, model string) (llms.ResolvedTarget, error) {
+				return llms.ResolvedTarget{
+					Provider: llms.Provider{ID: "provider-1", ProviderType: llms.ProviderFamilyOpenAI, BaseURL: "http://upstream.test/v1", UseGenericResponsesTextParts: true},
+					Model:    llms.Model{Name: model},
+					WireAPI:  llms.APIProtocolResponses,
+				}, nil
+			},
+			Client: &fakeRuntimeLLMHTTPClient{status: http.StatusOK, body: upstream},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/runtime/sandboxes/sandbox-1/llm/openai/v1/responses", strings.NewReader(`{"model":"`+model+`","input":"hi"}`))
+		req.Header.Set("Authorization", "Bearer raw-token")
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status=%d body=%s", model, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	if got := run("grok-4.6"); strings.Contains(got, "66121.0") || !strings.Contains(got, "66121") || !strings.Contains(got, "1.5") {
+		t.Fatalf("grok buffered body through generic text parts:\n%s", got)
+	}
+	if got := run("gpt-5.5"); !strings.Contains(got, "66121.0") {
+		t.Fatalf("non-grok buffered body was rewritten:\n%s", got)
+	}
+}
+
 // A Claude client behind a Grok Responses connection reaches it through the
 // messages -> responses bridge. The streamed tool input it reads back must carry
 // the same whole numbers as a chat or Responses client.
