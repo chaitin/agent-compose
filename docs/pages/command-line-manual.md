@@ -92,8 +92,12 @@ not authenticate the sender: any client that can reach the endpoint can forge
 a GitHub event. Use it only behind a trusted reverse proxy or network access
 control. If a source token is configured, the token is still required, so a
 proxy can authenticate the request and inject it. A tokenless unsigned source
-cannot share its webhook URL with another enabled source because it would make
-source selection ambiguous.
+must not share its webhook URL with another enabled source, because two such
+sources make source selection ambiguous. The daemon accepts the second
+`PUT /api/webhook-sources/<source-id>` without warning and stores both sources;
+the ambiguity is reported when a delivery arrives, as
+`409 {"error":"unsigned webhook source is ambiguous"}`. Keep at most one enabled
+tokenless unsigned source per webhook URL.
 
 Because signature secrets are write-only, omitting or sending an empty
 `signature_secret` while updating an existing source preserves its current
@@ -362,6 +366,7 @@ Notes:
 - `down` only affects the selected project.
 - When using `-f` or `--project-name`, verify that the command targets the intended project.
 - If some sandboxes cannot be stopped, the command exits non-zero, reports the failed items, and leaves the project active so `down` can be retried.
+- `down` cancels scheduler runs that are still in flight. A cancelled run is recorded as `failed` with `context canceled` (plus `docker runtime could not confirm termination of guest execution` when the guest stop cannot be confirmed), and its `sandboxids` list is empty even when the run had already started a sandbox. Wait until the scheduler is idle — `scheduler runs` showing no `running` row — before calling `down` when run history matters.
 
 ## `run`: Run a Sandbox
 

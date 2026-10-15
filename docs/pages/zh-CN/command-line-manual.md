@@ -85,8 +85,12 @@ GitHub 也允许 webhook 的 Secret 留空。若要直接接收这类无签名�
 token 留空。未配置 signature secret 时，daemon 会跳过签名校验。该模式不会认证
 发送者：任何能够访问此 endpoint 的客户端都可以伪造 GitHub 事件，因此只能在受信任
 的反向代理或网络访问控制之后使用。若 source 配置了 token，daemon 仍会要求该
-token，便于代理完成认证后注入。无 token 的 unsigned source 不能与另一个启用的
-source 共用 webhook URL，否则无法唯一选择 source。
+token，便于代理完成认证后注入。无 token 的 unsigned source **不得**与另一个启用的
+source 共用同一个 webhook URL，因为两个这样的 source 会让选择变得不唯一。daemon 接受
+第二个 `PUT /api/webhook-sources/<source-id>` 时**不会有任何预警**，两个 source 都会
+被存下来；直到真正投递时才以
+`409 {"error":"unsigned webhook source is ambiguous"}` 报出歧义。请把每个 webhook URL
+上的「启用且无签名无 token」的 source 控制在一个以内。
 
 由于 signature secret 是 write-only，更新已有 source 时省略
 `signature_secret` 或传入空值会保留当前 secret。若要将已有的 signed source 切换为
@@ -330,6 +334,7 @@ agent-compose -f /path/to/project/agent-compose.yml down
 - `down` 只影响当前 project。
 - 使用 `-f` 或 `--project-name` 时，应确认定位到的是预期 project。
 - 如果部分 sandbox 停止失败，命令返回非零退出码并说明失败项，同时保持 project 为 active，以便再次执行 `down`。
+- `down` 会取消仍在飞行的 scheduler run。被取消的 run 记为 `failed`，错误为 `context canceled`（若无法确认 guest 已停止，还会带上 `docker runtime could not confirm termination of guest execution`），且它的 `sandboxids` 是**空**的，即使该 run 已经起过 sandbox。关心 run 历史时，请先等 scheduler 空闲（`scheduler runs` 里没有 `running` 行）再执行 `down`。
 
 ## `run`：运行 sandbox
 

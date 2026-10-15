@@ -874,6 +874,8 @@ driver:
 | `k8s` | `context`, `namespace` | Creates sandbox Pods through Kubernetes. `context` selects a kubeconfig context; when omitted, client-go uses the kubeconfig current context or in-cluster configuration. `namespace` overrides `K8S_NAMESPACE`, whose final fallback is `default`. |
 | `firecracker` | `kernel`, `rootfs` | Reserved in the parser schema. Normalization currently returns `unsupported runtime driver firecracker`, so it cannot be used. |
 
+The `boxlite` and `microsandbox` drivers boot a real kernel with its own user-space network stack and DNS instead of joining the Docker network. Such a sandbox does not resolve Docker Compose service names, and it cannot reach a daemon that is published only on the host loopback. On those drivers `AGENT_COMPOSE_RUNTIME_BASE_URL` (or the driver-specific override) must be an address the sandbox itself can reach — for example the host bridge address used by the KVM deployment — and the daemon must actually be published on that address. Otherwise the runtime LLM facade and the egress proxy stay unreachable from the sandbox even though the daemon reports healthy, and the first `run --prompt` fails with `error sending request for url (http://<compose-service-name>:<port>/api/runtime/…)`.
+
 The k8s driver builds its client from kubeconfig: it uses an explicit
 `K8S_KUBECONFIG`/`KUBECONFIG` path when set, otherwise the `~/.kube/config`
 loading rules, and falls back to in-cluster configuration only when neither
@@ -967,6 +969,16 @@ The selected IDs drive capability gateway environment and guide injection. Missi
 ### `skills`
 
 A resolved skill directory must contain a valid `SKILL.md`. Providers can be `file`, `http`, or `git`; final skill names must be unique within an agent. ZIP is a content format, not a provider.
+
+`SKILL.md` must start with YAML frontmatter: the first line is a `---` fence, the frontmatter ends at the next `---` line, and both `name` and `description` inside it must be non-empty. The frontmatter `name` must be exactly the name configured for that skill. Project validation checks only the skill-name rules; the content rules are enforced when the sandbox starts:
+
+| Condition | Error | Reported when |
+| --- | --- | --- |
+| No frontmatter | `skill <name> invalid SKILL.md: frontmatter is required` | sandbox start |
+| Missing `name` or `description` | `skill <name> SKILL.md requires name and description` | sandbox start |
+| Frontmatter `name` differs from the configured name | `skill name mismatch: configured "<configured>", SKILL.md "<declared>"` | sandbox start |
+
+A `SKILL.md` that violates these rules therefore passes `config`/`config --quiet` and fails on the first `run`.
 
 An agent whose `provider` is `dsh` accepts a narrower set of skill names: `^[a-z0-9]+(?:-[a-z0-9]+)*$`, lowercase letters and digits joined by single hyphens. DSH silently drops a skill named otherwise, so such a name is rejected when the project is validated. The `name` in the skill's `SKILL.md` must be the same value.
 
@@ -1233,6 +1245,8 @@ A scheduler uses either declarative `triggers` or JavaScript `script`; the two f
 | `script` | string/object | Empty | Inline JavaScript or a flat `file`/`http`/`git` source mapping. Cannot coexist with `triggers`. |
 
 `new` creates a new sandbox for scheduler calls. `sticky` allows the scheduler to bind and reuse a sandbox. A trigger-level `sandbox_policy` controls the generated agent call for that trigger.
+
+`sandbox_policy` shapes the sandbox of the agent calls a scheduler generates, for declarative triggers and script schedulers alike. One case silently falls back to `new`: a call that carries per-call options — `title`, `driver`, `guestImage`, `workspaceId`, `env`, or `volumes` — runs in its own fresh session sandbox, and the sticky binding is neither looked up nor recorded. `title` is only a display field, so adding a title to an otherwise unchanged call can turn a sticky scheduler into one sandbox per call. A declarative trigger issues a bare `scheduler.agent(<prompt>)` call, with `{ sandboxPolicy: … }` added only when the trigger declares one, so it stays on the sticky path.
 
 `concurrency_policy` applies to the whole agent scheduler, including all declarative or script-registered triggers and manual scheduler invocations. With `skip`, a run that overlaps another run from the same scheduler is recorded as `skipped` and is not queued. With `parallel`, overlapping runs may execute concurrently. It is not a per-trigger policy.
 

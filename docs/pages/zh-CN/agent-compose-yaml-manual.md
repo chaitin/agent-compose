@@ -847,6 +847,8 @@ driver:
 | `k8s` | `context`, `namespace` | 通过 Kubernetes 创建 sandbox Pod。`context` 选择 kubeconfig context；省略时由 client-go 使用 kubeconfig 当前 context 或集群内配置。`namespace` 覆盖 `K8S_NAMESPACE`，最终回退到 `default`。 |
 | `firecracker` | `kernel`, `rootfs` | 仅保留在解析 schema 中；当前规范化会明确报 `unsupported runtime driver firecracker`，不可使用。 |
 
+`boxlite` 与 `microsandbox` 会启动一个真正的内核，拥有自己的用户态网络栈与 DNS，**不加入 Docker 网络**。因此这类 sandbox 既**不解析 Docker Compose 服务名**，也**访问不到只发布在宿主回环上的 daemon**。在这两个驱动上，`AGENT_COMPOSE_RUNTIME_BASE_URL`（或驱动专用覆盖项）必须填写 **sandbox 自己能访问到**的地址——例如 KVM 部署里宿主网桥的地址——并且 daemon 要真的发布在该地址上。否则即使 daemon 健康，runtime LLM facade 与前置代理在 sandbox 内依然不可达，第一次 `run --prompt` 会以 `error sending request for url (http://<compose 服务名>:<port>/api/runtime/…)` 失败。
+
 k8s driver 通过 kubeconfig 构建 client：设置了显式的 `K8S_KUBECONFIG`/`KUBECONFIG`
 路径时使用该路径，否则使用 `~/.kube/config` 的加载规则；只有两者都解析不到配置时才回退到
 集群内配置。Sandbox Pod 通过 `K8S_RUNTIME_BASE_URL`（会覆盖
@@ -937,6 +939,16 @@ capset_ids:
 ### `skills`
 
 Skill 目录必须包含有效的 `SKILL.md`。provider 支持 `file`、`http` 和 `git`；同一 Agent 的最终 Skill 名不可重复。ZIP 是内容格式，不是 provider。
+
+`SKILL.md` 必须以 YAML frontmatter 开头：第一行是 `---` 围栏，frontmatter 在下一个 `---` 行结束，其中的 `name` 与 `description` **都必须非空**，且 frontmatter 里的 `name` 必须与配置中该 Skill 的名字完全一致。项目校验只检查 Skill 名规则；下面是内容规则，**都在 sandbox 启动时才报错**：
+
+| 情况 | 报错 | 出现时机 |
+| --- | --- | --- |
+| 没有 frontmatter | `skill <name> invalid SKILL.md: frontmatter is required` | sandbox 启动 |
+| 缺 `name` 或缺 `description` | `skill <name> SKILL.md requires name and description` | sandbox 启动 |
+| frontmatter 的 `name` 与配置不一致 | `skill name mismatch: configured "<配置值>", SKILL.md "<声明值>"` | sandbox 启动 |
+
+也就是说，违反上述规则的 `SKILL.md` 能通过 `config`/`config --quiet`，直到第一次 `run` 才失败。
 
 `provider` 为 `dsh` 的 Agent 只接受更窄的 Skill 名：`^[a-z0-9]+(?:-[a-z0-9]+)*$`，即小写字母和数字，中间用单个连字符连接。DSH 会静默丢弃不符合该规则的 Skill，因此这类名字在项目校验时即被拒绝。Skill 的 `SKILL.md` 中的 `name` 必须是同一个值。
 
@@ -1197,6 +1209,8 @@ Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`
 | `script` | string/object | 空 | 内联 JavaScript，或扁平的 `file`/`http`/`git` 来源配置。不能和 `triggers` 同时使用。 |
 
 `new` 为每次调用创建新 sandbox；`sticky` 允许 Scheduler 绑定并复用 sandbox。单个 Trigger 的 `sandbox_policy` 可覆盖执行 Agent 时的策略。
+
+`sandbox_policy` 决定的是 Scheduler 生成的 Agent 调用所用 sandbox，声明式 Trigger 与脚本式 Scheduler 都适用。有一种情况会**静默退回 `new`**：调用只要带上**调用级选项**——`title`、`driver`、`guestImage`、`workspaceId`、`env` 或 `volumes`——就会使用一次独立的新会话 sandbox，`sticky` 要复用的绑定既不查也不写。由于 `title` 只是展示字段，给一个本来没变的调用加上标题，就可能把 sticky 变成「每次调用一个新 sandbox」。声明式 Trigger 发出的是裸 `scheduler.agent(<prompt>)` 调用，仅在 Trigger 自己声明了策略时才追加 `{ sandboxPolicy: … }`，因此始终走 sticky 路径。
 
 `concurrency_policy` 作用于整个 Agent Scheduler，包括全部声明式或脚本注册的 Trigger，以及手动 Scheduler 调用。`skip` 会把与同一 Scheduler 既有运行重叠的新 run 记录为 `skipped`，且不会排队补跑；`parallel` 允许重叠 run 并行执行。它不是 Trigger 级策略。
 
