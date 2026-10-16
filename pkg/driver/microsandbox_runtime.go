@@ -82,15 +82,42 @@ type microsandboxExecReceiveResult struct {
 	err   error
 }
 
-func terminateMicrosandboxExec(ctx context.Context, handle microsandboxExecTerminationHandle) error {
+// terminateMicrosandboxExec ends a guest exec. terminateTree, when set, runs
+// first: Microsandbox kills the exec's process group, which misses descendants
+// that started their own group, so the marked tree is terminated before the
+// driver kill reaps the exec itself.
+func terminateMicrosandboxExec(ctx context.Context, handle microsandboxExecTerminationHandle, terminateTree func(context.Context) error) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), execTerminationTimeout)
 	defer cancel()
+	var treeErr error
+	if terminateTree != nil {
+		treeErr = terminateTree(cleanupCtx)
+	}
 	killErr := handle.Kill(cleanupCtx)
 	_, waitErr := handle.Wait(cleanupCtx)
-	if waitErr == nil {
+	if waitErr != nil {
+		return errors.Join(treeErr, killErr, waitErr)
+	}
+	return treeErr
+}
+
+// microsandboxMarkedExecTerminator returns a termination step that ends every
+// guest process tagged with marker through a separate control exec.
+func microsandboxMarkedExecTerminator(sandbox *microsandbox.Sandbox, marker string) func(context.Context) error {
+	return func(ctx context.Context) error {
+		command := markedExecTerminationCommand(guestExecMarkerEnv, marker)
+		output, err := sandbox.Exec(ctx, command[0], command[1:], microsandbox.WithExecCwd("/"))
+		if err != nil {
+			return fmt.Errorf("run microsandbox exec termination control: %w", err)
+		}
+		if output == nil {
+			return fmt.Errorf("run microsandbox exec termination control: empty result")
+		}
+		if code := output.ExitCode(); code != 0 {
+			return fmt.Errorf("microsandbox exec termination control exited with code %d", code)
+		}
 		return nil
 	}
-	return errors.Join(killErr, waitErr)
 }
 
 // microsandboxExecLivenessProbe reports whether the guest process is still
@@ -508,8 +535,16 @@ func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmStat
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
 		},
 		func() (ExecResult, error) {
+			marker := newExecMarker()
+			spec.Env = execEnvMapWithMarker(spec.Env, marker)
 			output, err := sandbox.Exec(ctx, spec.Command, spec.Args, r.execOptions(ctx, spec)...)
 			if err != nil {
+				if ctx.Err() != nil {
+					cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), execTerminationTimeout)
+					defer cancel()
+					terminationErr := microsandboxMarkedExecTerminator(sandbox, marker)(cleanupCtx)
+					return ExecResult{}, execTerminationResultError(RuntimeDriverMicrosandbox, marker, err, terminationErr)
+				}
 				return ExecResult{}, err
 			}
 			return ExecResult{
@@ -540,6 +575,9 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
 		},
 		func() (ExecResult, error) {
+			marker := newExecMarker()
+			spec.Env = execEnvMapWithMarker(spec.Env, marker)
+			terminateTree := microsandboxMarkedExecTerminator(sandbox, marker)
 			handle, err := sandbox.ExecStream(ctx, spec.Command, spec.Args, r.execOptions(ctx, spec)...)
 			if err != nil {
 				return ExecResult{}, err
@@ -563,7 +601,9 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 				ctx,
 				handle.Recv,
 				closeHandle,
-				func(cleanupCtx context.Context) error { return terminateMicrosandboxExec(cleanupCtx, handle) },
+				func(cleanupCtx context.Context) error {
+					return terminateMicrosandboxExec(cleanupCtx, handle, terminateTree)
+				},
 				collector,
 				microsandboxExecExitIdleGracePeriod,
 				microsandboxExecLivenessProbeFor(sandbox),

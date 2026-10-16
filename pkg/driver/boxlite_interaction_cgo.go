@@ -74,6 +74,7 @@ import "C"
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -91,6 +92,7 @@ type boxliteCommandInteraction struct {
 	runtimeHandle *C.CBoxliteRuntime
 	box           *cgoBoxHandle
 	execution     *C.CExecutionHandle
+	marker        string
 	awaiter       *boxliteExecAwaiter
 	awaiterHandle uintptr
 
@@ -162,7 +164,10 @@ func (r *cgoSandboxRuntime) openBoxliteInteraction(ctx context.Context, sandbox 
 		return nil, err
 	}
 
-	execution, err := boxliteStartInteractionExecution(box, ExecSpecFromRuntimeStartSpec(spec), spec.TTY)
+	execSpec := ExecSpecFromRuntimeStartSpec(spec)
+	marker := newExecMarker()
+	execSpec.Env = execEnvMapWithMarker(execSpec.Env, marker)
+	execution, err := boxliteStartInteractionExecution(box, execSpec, spec.TTY)
 	if err != nil {
 		box.free()
 		cancel()
@@ -173,6 +178,7 @@ func (r *cgoSandboxRuntime) openBoxliteInteraction(ctx context.Context, sandbox 
 		runtimeHandle: runtimeHandle,
 		box:           box,
 		execution:     execution,
+		marker:        marker,
 		ctx:           childCtx,
 		cancel:        cancel,
 		operationID:   spec.OperationID,
@@ -415,7 +421,7 @@ func (i *boxliteCommandInteraction) run() {
 	defer i.cleanup()
 	exitCode, err := i.runtime.waitForExecCompletion(i.ctx, i.runtimeHandle, i.awaiter)
 	if err != nil && i.ctx.Err() != nil {
-		terminationErr := i.runtime.killExecution(i.ctx, i.runtimeHandle, i.execution)
+		terminationErr := i.terminate()
 		err = execTerminationResultError(RuntimeDriverBoxlite, i.operationID, i.ctx.Err(), terminationErr)
 	}
 	i.runtime.flushRuntimeCallbacks(i.runtimeHandle)
@@ -498,8 +504,18 @@ func (i *boxliteCommandInteraction) startOutput() {
 	}()
 }
 
+// terminate ends the interaction's whole guest process tree, then kills the
+// exec leader. BoxLite's kill alone reaches only the leader.
+func (i *boxliteCommandInteraction) terminate() error {
+	var treeErr error
+	if i.marker != "" {
+		treeErr = i.runtime.terminateMarkedBoxExec(i.ctx, i.box, i.marker)
+	}
+	return errors.Join(treeErr, i.runtime.killExecution(i.ctx, i.runtimeHandle, i.execution))
+}
+
 func (i *boxliteCommandInteraction) cleanupStart() {
-	terminationErr := i.runtime.killExecution(i.ctx, i.runtimeHandle, i.execution)
+	terminationErr := i.terminate()
 	if terminationErr != nil {
 		slog.Warn("failed to terminate boxlite interaction after startup error", "operation_id", i.operationID, "error", terminationErr)
 	}

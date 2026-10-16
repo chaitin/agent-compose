@@ -11,7 +11,6 @@ import (
 	containerapi "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/google/uuid"
 )
 
 const (
@@ -21,41 +20,8 @@ const (
 // Docker has no kill-exec API. Every exec therefore carries a driver-owned
 // marker inherited by its descendants. A separate control exec can terminate
 // exactly that process tree without stopping a KEEP_RUNNING sandbox.
-const dockerTerminateMarkedExecScript = `
-marker=$1
-expected=` + dockerExecMarkerEnv + `=$marker
-
-matching_pids() {
-  for path in /proc/[0-9]*/environ; do
-    [ -r "$path" ] || continue
-    if tr '\000' '\n' <"$path" 2>/dev/null | grep -Fqx "$expected"; then
-      pid=${path#/proc/}
-      printf '%s\n' "${pid%/environ}"
-    fi
-  done
-}
-
-signal_until_gone() {
-  signal=$1
-  attempts=$2
-  attempt=0
-  while [ "$attempt" -lt "$attempts" ]; do
-    pids=$(matching_pids)
-    [ -z "$pids" ] && return 0
-    for pid in $pids; do
-      kill "-$signal" "$pid" 2>/dev/null || true
-    done
-    attempt=$((attempt + 1))
-    sleep 0.1
-  done
-  [ -z "$(matching_pids)" ]
-}
-
-signal_until_gone TERM 20 || signal_until_gone KILL 30
-`
-
 func newDockerExecMarker() string {
-	return uuid.NewString()
+	return newExecMarker()
 }
 
 func dockerExecEnvWithMarker(env []string, marker string) []string {
@@ -85,7 +51,7 @@ func (r *dockerRuntime) terminateDockerExec(ctx context.Context, dockerClient *c
 	control, err := dockerClient.ContainerExecCreate(cleanupCtx, target.ContainerID, containerapi.ExecOptions{
 		AttachStdout: true,
 		AttachStderr: true,
-		Cmd:          []string{"sh", "-c", dockerTerminateMarkedExecScript, "agent-compose-exec-cleanup", target.Marker},
+		Cmd:          markedExecTerminationCommand(dockerExecMarkerEnv, target.Marker),
 		User:         "0",
 		WorkingDir:   "/",
 	})
