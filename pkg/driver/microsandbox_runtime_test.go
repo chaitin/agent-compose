@@ -218,11 +218,42 @@ func TestTerminateMicrosandboxExecKillsThenWaitsWithFreshContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	handle := &recordingMicrosandboxTerminationHandle{}
-	if err := terminateMicrosandboxExec(ctx, handle); err != nil {
+	if err := terminateMicrosandboxExec(ctx, handle, nil); err != nil {
 		t.Fatalf("terminateMicrosandboxExec returned error: %v", err)
 	}
 	if got := strings.Join(handle.calls, ","); got != "kill,wait" {
 		t.Fatalf("termination calls = %q, want kill,wait", got)
+	}
+}
+
+func TestTerminateMicrosandboxExecEndsMarkedTreeBeforeKill(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	handle := &recordingMicrosandboxTerminationHandle{}
+	terminateTree := func(ctx context.Context) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		handle.calls = append(handle.calls, "tree")
+		return nil
+	}
+	if err := terminateMicrosandboxExec(ctx, handle, terminateTree); err != nil {
+		t.Fatalf("terminateMicrosandboxExec returned error: %v", err)
+	}
+	if got := strings.Join(handle.calls, ","); got != "tree,kill,wait" {
+		t.Fatalf("termination calls = %q, want tree,kill,wait", got)
+	}
+}
+
+func TestTerminateMicrosandboxExecReportsSurvivingTree(t *testing.T) {
+	treeErr := errors.New("marked processes survived")
+	handle := &recordingMicrosandboxTerminationHandle{}
+	err := terminateMicrosandboxExec(context.Background(), handle, func(context.Context) error { return treeErr })
+	if !errors.Is(err, treeErr) {
+		t.Fatalf("terminateMicrosandboxExec error = %v, want %v", err, treeErr)
+	}
+	if got := strings.Join(handle.calls, ","); got != "kill,wait" {
+		t.Fatalf("termination calls = %q, want kill,wait after a failed tree termination", got)
 	}
 }
 

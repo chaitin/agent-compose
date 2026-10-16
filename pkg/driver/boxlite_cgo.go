@@ -542,6 +542,32 @@ func (r *cgoSandboxRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, v
 	return missing, nil
 }
 
+// IsSandboxAlive reports whether the sandbox's box still exists and is
+// running. Without it, startup reconciliation cannot tell that a BoxLite VM
+// died and leaves the sandbox reported as running.
+func (r *cgoSandboxRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
+	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
+	if sandbox != nil {
+		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
+	}
+	if lookup == "" {
+		return false, nil
+	}
+	box, err := r.getBox(ctx, lookup)
+	if err != nil {
+		if isBoxNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	defer box.free()
+	info, err := r.boxInfo(ctx, box)
+	if err != nil {
+		return false, err
+	}
+	return info.State.Running, nil
+}
+
 func (r *cgoSandboxRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState) error {
 	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
 	if sandbox != nil {
@@ -1366,8 +1392,50 @@ func (r *cgoSandboxRuntime) boxInfo(ctx context.Context, box *cgoBoxHandle) (cgo
 }
 
 func (r *cgoSandboxRuntime) executeBox(ctx context.Context, box *cgoBoxHandle, spec ExecSpec, stream ExecStreamWriter) (ExecResult, error) {
+	return r.executeBoxCommand(ctx, box, spec, stream, true)
+}
+
+// terminateMarkedBoxExec ends every guest process tagged with marker through a
+// separate control exec. BoxLite's execution kill signals only the exec leader,
+// so without this step everything the leader started keeps running. The
+// control runs on a separately attached box handle so it can proceed while the
+// cancelled execution is still registered.
+func (r *cgoSandboxRuntime) terminateMarkedBoxExec(ctx context.Context, box *cgoBoxHandle, marker string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), execTerminationTimeout)
+	defer cancel()
+	boxID, err := r.boxID(box)
+	if err != nil {
+		return fmt.Errorf("resolve box for BoxLite exec termination control: %w", err)
+	}
+	// boxlite_get hands out an independent handle that holds its own reference
+	// to the box, so freeing control leaves the caller's handle valid.
+	control, err := r.getBox(cleanupCtx, boxID)
+	if err != nil {
+		return fmt.Errorf("attach BoxLite exec termination control: %w", err)
+	}
+	defer control.free()
+	command := markedExecTerminationCommand(guestExecMarkerEnv, marker)
+	result, err := r.executeBoxCommand(cleanupCtx, control, ExecSpec{Command: command[0], Args: command[1:], Cwd: "/"}, nil, false)
+	if err != nil {
+		return fmt.Errorf("run BoxLite exec termination control: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("BoxLite exec termination control exited with code %d", result.ExitCode)
+	}
+	return nil
+}
+
+// executeBoxCommand runs spec in box. With markTree, the exec is tagged so a
+// cancellation can terminate its whole process tree; control execs leave it
+// off so a cancelled cleanup never starts another cleanup.
+func (r *cgoSandboxRuntime) executeBoxCommand(ctx context.Context, box *cgoBoxHandle, spec ExecSpec, stream ExecStreamWriter, markTree bool) (ExecResult, error) {
 	if strings.TrimSpace(spec.Command) == "" {
 		return ExecResult{}, fmt.Errorf("command is required")
+	}
+	marker := ""
+	if markTree {
+		marker = newExecMarker()
+		spec.Env = execEnvMapWithMarker(spec.Env, marker)
 	}
 	runtimeHandle, err := r.runtimeHandle()
 	if err != nil {
@@ -1444,7 +1512,11 @@ func (r *cgoSandboxRuntime) executeBox(ctx context.Context, box *cgoBoxHandle, s
 	}
 	exitCode, err := r.waitForExecCompletion(ctx, runtimeHandle, awaiter)
 	if err != nil && ctx.Err() != nil {
-		terminationErr := r.killExecution(ctx, runtimeHandle, execution)
+		var treeErr error
+		if marker != "" {
+			treeErr = r.terminateMarkedBoxExec(ctx, box, marker)
+		}
+		terminationErr := errors.Join(treeErr, r.killExecution(ctx, runtimeHandle, execution))
 		r.flushRuntimeCallbacks(runtimeHandle)
 		collector.finish()
 		return ExecResult{}, execTerminationResultError(RuntimeDriverBoxlite, fmt.Sprintf("%d", awaiterHandle), ctx.Err(), terminationErr)

@@ -37,6 +37,7 @@ type microsandboxCommandInteraction struct {
 	handle         microsandboxInteractionExec
 	stdin          microsandboxInteractionStdin
 	release        func()
+	terminateTree  func(context.Context) error
 	operationID    string
 	tty            bool
 	attachStdin    bool
@@ -105,6 +106,9 @@ func (r *microsandboxRuntime) OpenInteraction(ctx context.Context, session *Sand
 	}
 
 	execSpec := ExecSpecFromRuntimeStartSpec(spec)
+	marker := newExecMarker()
+	execSpec.Env = execEnvMapWithMarker(execSpec.Env, marker)
+	terminateTree := microsandboxMarkedExecTerminator(sandbox, marker)
 	options := r.execOptions(childCtx, execSpec)
 	if spec.AttachStdin {
 		options = append(options, microsandbox.WithExecStdinPipe())
@@ -122,14 +126,14 @@ func (r *microsandboxRuntime) OpenInteraction(ctx context.Context, session *Sand
 	if spec.AttachStdin {
 		stdin = handle.TakeStdin()
 		if stdin == nil {
-			cleanupErr := cleanupMicrosandboxInteractionStart(childCtx, handle, nil, release)
+			cleanupErr := cleanupMicrosandboxInteractionStart(childCtx, handle, nil, release, terminateTree)
 			cancel()
 			return nil, errors.Join(fmt.Errorf("microsandbox interaction stdin pipe is unavailable"), cleanupErr)
 		}
 	}
 	if rows != 0 || cols != 0 {
 		if err := handle.Resize(childCtx, rows, cols); err != nil {
-			cleanupErr := cleanupMicrosandboxInteractionStart(childCtx, handle, stdin, release)
+			cleanupErr := cleanupMicrosandboxInteractionStart(childCtx, handle, stdin, release, terminateTree)
 			cancel()
 			return nil, errors.Join(fmt.Errorf("resize microsandbox interaction terminal: %w", err), cleanupErr)
 		}
@@ -141,6 +145,7 @@ func (r *microsandboxRuntime) OpenInteraction(ctx context.Context, session *Sand
 		handle:         handle,
 		stdin:          stdin,
 		release:        release,
+		terminateTree:  terminateTree,
 		operationID:    spec.OperationID,
 		tty:            spec.TTY,
 		attachStdin:    spec.AttachStdin,
@@ -179,12 +184,12 @@ func microsandboxTerminalSize(rows, cols uint32) (uint16, uint16, error) {
 	return uint16(rows), uint16(cols), nil
 }
 
-func cleanupMicrosandboxInteractionStart(ctx context.Context, handle microsandboxInteractionExec, stdin microsandboxInteractionStdin, release func()) error {
+func cleanupMicrosandboxInteractionStart(ctx context.Context, handle microsandboxInteractionExec, stdin microsandboxInteractionStdin, release func(), terminateTree func(context.Context) error) error {
 	var stdinErr error
 	if stdin != nil {
 		stdinErr = stdin.Close()
 	}
-	terminationErr := terminateMicrosandboxExec(ctx, handle)
+	terminationErr := terminateMicrosandboxExec(ctx, handle, terminateTree)
 	closeErr := handle.Close()
 	if release != nil {
 		release()
@@ -265,7 +270,7 @@ func (i *microsandboxCommandInteraction) run() {
 	state := i.consumeOutput()
 	i.flushOutput()
 	if state.err != nil && !state.processGone && (i.ctx.Err() != nil || !state.sawExit) {
-		terminationErr := terminateMicrosandboxExec(i.ctx, i.handle)
+		terminationErr := terminateMicrosandboxExec(i.ctx, i.handle, i.terminateTree)
 		state.err = execTerminationResultError(RuntimeDriverMicrosandbox, i.operationID, state.err, terminationErr)
 	}
 	i.finish(state)
