@@ -31,6 +31,16 @@ type SandboxGracefulStopRuntime interface {
 	PrepareSandboxStop(context.Context, *domain.Sandbox, domain.VMState, time.Duration) (sandboxes.StopPreparationResult, error)
 }
 
+// SandboxRuntimePreflight is implemented by a driver whose runtime can prove it
+// is usable before the start path creates any runtime state. StartSandboxVM asks
+// the capability before EnsureSandbox, so a runtime that already knows it cannot
+// start fails the sandbox with a classified reason instead of leaving partially
+// created runtime state behind. Runtimes without it have nothing to check and
+// are started directly.
+type SandboxRuntimePreflight interface {
+	PreflightSandboxRuntime(context.Context, *domain.Sandbox, domain.VMState) error
+}
+
 // GuestFileReader and GuestDirReader are implemented only by drivers with no
 // shared filesystem between the daemon and the sandbox (currently just k8s
 // - see docs/design/k8s_pod_runtime_driver_design.md §2.1). Drivers with a
@@ -302,6 +312,22 @@ func (r driverRuntimeAdapter) EnsureSandbox(ctx context.Context, session *domain
 	domainInfo := execution.FromDriverSandboxVMInfo(info)
 	domainInfo.EgressPolicy = egressPolicy
 	return domainInfo, nil
+}
+
+// PreflightSandboxRuntime forwards the capability to the wrapped runtime and
+// reports success for runtimes that do not implement it: a runtime with no way
+// to judge its own usability must still be started rather than blocked. The
+// driver receives the same driver-boundary projection EnsureSandbox gets, so a
+// preflight cannot pass against a different view of the sandbox than the start
+// it guards.
+func (r driverRuntimeAdapter) PreflightSandboxRuntime(ctx context.Context, session *domain.Sandbox, vmState domain.VMState) error {
+	preflight, ok := r.runtime.(interface {
+		PreflightSandboxRuntime(context.Context, *driverpkg.Sandbox, driverpkg.VMState) error
+	})
+	if !ok {
+		return nil
+	}
+	return preflight.PreflightSandboxRuntime(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState))
 }
 
 func (r driverRuntimeAdapter) StopSandbox(ctx context.Context, session *domain.Sandbox, vmState domain.VMState) (bool, error) {

@@ -81,6 +81,8 @@ func TestIntegrationAPIHandlerRuntimeWorkflows(t *testing.T) {
 	t.Run("exec run selector and stream sender", TestExecHandlerRunSelectorAndStreamSenderWorkflow)
 	t.Run("exec selector errors", TestExecHandlerSelectorErrors)
 	t.Run("project and run store backed handlers", TestProjectAndRunHandlersStoreBackedWorkflows)
+	t.Run("run handler abandons a stuck completion", TestRunHandlerAbandonRunCompletionEndsAStuckCleanup)
+	t.Run("run handler classifies abandon refusals", TestRunHandlerAbandonRunCompletionClassifiesRefusals)
 	t.Run("follow run logs offsets tail and final", TestFollowRunLogsStreamsOffsetsTailAndFinal)
 	t.Run("follow run logs missing terminal file", TestFollowRunLogsMissingLogFileReturnsEmptyFinalForTerminalRun)
 	t.Run("follow run logs project mismatch", TestFollowRunLogsRejectsProjectMismatch)
@@ -782,11 +784,25 @@ func TestExecAttachInputFrameMapping(t *testing.T) {
 	}
 }
 
-type sequenceRunStopper struct{ calls int }
+type sequenceRunStopper struct {
+	calls int
+	// abandonRun and abandonErr let a test drive AbandonRunCompletion.
+	abandonRun   domain.ProjectRunRecord
+	abandoned    bool
+	abandonErr   error
+	abandonCalls int
+	abandonNote  string
+}
 
 func (s *sequenceRunStopper) StopActiveRun(context.Context, string, string) (bool, error) {
 	s.calls++
 	return s.calls == 1, nil
+}
+
+func (s *sequenceRunStopper) AbandonRunCompletion(_ context.Context, _ string, reason string) (domain.ProjectRunRecord, bool, error) {
+	s.abandonCalls++
+	s.abandonNote = reason
+	return s.abandonRun, s.abandoned, s.abandonErr
 }
 
 func TestProjectAndRunHandlersStoreBackedWorkflows(t *testing.T) {

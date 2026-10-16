@@ -388,6 +388,29 @@ func (c *RemovalCoordinator) now() time.Time {
 	return time.Now().UTC()
 }
 
+// PrunableStatus reports whether prune may target a sandbox in this canonical VM
+// status.
+//
+// DELETING is prunable even though it is an intermediate state: a crash between
+// the deletion intent write and the runtime call leaves a record there, and
+// before the rollback existed no product path could clear it - prune refused the
+// status and `sandbox rm` failed the same way on every retry. It is safe now
+// because Remove resumes a deletion from its journal, and when a runtime step
+// fails, rollbackDeletionIntent restores a real lifecycle state on both the
+// record and the journal. A prune attempt can therefore only complete the
+// deletion or hand back a retryable record, never strand the record in DELETING.
+//
+// RUNNING stays unprunable: prune never stops a live runtime behind the
+// operator's back; that is what `sandbox rm --force` is for.
+func PrunableStatus(status string) bool {
+	switch status {
+	case domain.VMStatusStopped, domain.VMStatusFailed, domain.VMStatusDeleting:
+		return true
+	default:
+		return false
+	}
+}
+
 func normalizePruneStatuses(values []string) (map[string]struct{}, error) {
 	if len(values) == 0 {
 		values = []string{domain.VMStatusStopped, domain.VMStatusFailed}
@@ -395,7 +418,7 @@ func normalizePruneStatuses(values []string) (map[string]struct{}, error) {
 	result := make(map[string]struct{}, len(values))
 	for _, value := range values {
 		status := strings.ToUpper(strings.TrimSpace(value))
-		if status != domain.VMStatusStopped && status != domain.VMStatusFailed {
+		if !PrunableStatus(status) {
 			return nil, fmt.Errorf("sandbox prune status %q is unsafe", value)
 		}
 		result[status] = struct{}{}

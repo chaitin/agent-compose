@@ -37,7 +37,7 @@ func newComposeServiceStubServer(t *testing.T, stubs composeServiceStubs) *httpt
 		path, handler := agentcomposev2connect.NewProjectServiceHandler(stubs.project)
 		mux.Handle(path, handler)
 	}
-	if stubs.run.startRun != nil || stubs.run.runAgentStream != nil || stubs.run.getRun != nil || stubs.run.listRuns != nil || stubs.run.listRunEvents != nil || stubs.run.followRunLogs != nil {
+	if stubs.run.startRun != nil || stubs.run.runAgentStream != nil || stubs.run.getRun != nil || stubs.run.listRuns != nil || stubs.run.listRunEvents != nil || stubs.run.followRunLogs != nil || stubs.run.abandonCompletion != nil {
 		path, handler := agentcomposev2connect.NewRunServiceHandler(stubs.run)
 		mux.Handle(path, handler)
 	}

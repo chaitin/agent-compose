@@ -2817,6 +2817,21 @@ type fakeControllerDriver struct {
 	store     *sandboxstore.Store
 	onStart   func(*domain.Sandbox) error
 	onStop    func(*domain.Sandbox) error
+	// preflightErr makes the runtime preflight refuse, so a test can pin what
+	// the run path does before it creates a sandbox record. preflightState
+	// records what the preflight was asked about.
+	preflightErr   error
+	preflightCalls int
+	preflightState domain.VMState
+}
+
+// PreflightSandboxRuntime makes the fake implement the controller's optional
+// capability, so every fixture run exercises the run-path preflight: it accepts
+// unless a test makes it refuse.
+func (d *fakeControllerDriver) PreflightSandboxRuntime(_ context.Context, _ *domain.Sandbox, vmState domain.VMState) error {
+	d.preflightCalls++
+	d.preflightState = vmState
+	return d.preflightErr
 }
 
 func (d *fakeControllerDriver) StartSandboxVM(_ context.Context, session *domain.Sandbox) error {

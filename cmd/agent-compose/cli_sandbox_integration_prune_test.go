@@ -68,6 +68,7 @@ agents:
 		session("session-running", "RUNNING", "project-cli-prune", "reviewer", "docker", oldTime),
 		session("session-pending", "PENDING", "project-cli-prune", "worker", "boxlite", oldTime),
 		session("session-error", "ERROR", "project-cli-prune", "worker", "microsandbox", oldTime),
+		session("session-deleting", "DELETING", "project-cli-prune", "worker", "k8s", oldTime),
 		session("session-micro", "STOPPED", "project-cli-prune", "reviewer", "microsandbox", oldTime),
 		session("session-new", "STOPPED", "project-cli-prune", "reviewer", "docker", newTime),
 		createdFallback,
@@ -132,7 +133,7 @@ agents:
 			t.Fatalf("default prune matched %#v, want %s", defaultMatches, want)
 		}
 	}
-	for _, notWant := range []string{"session-running", "session-pending", "session-error", "session-foreign"} {
+	for _, notWant := range []string{"session-running", "session-pending", "session-error", "session-foreign", "session-deleting"} {
 		if defaultMatches[notWant] {
 			t.Fatalf("default prune matched %#v, should not include %s", defaultMatches, notWant)
 		}
@@ -141,6 +142,13 @@ agents:
 	statusMatches := matched(runPrune("--status", "failed"))
 	if !reflect.DeepEqual(statusMatches, map[string]bool{"session-failed": true}) {
 		t.Fatalf("status failed matches = %#v", statusMatches)
+	}
+
+	// DELETING is the intermediate state a crashed deletion leaves behind. It is
+	// the record issue #772 reports as unclearable, so it must be selectable.
+	deletingMatches := matched(runPrune("--status", "deleting"))
+	if !reflect.DeepEqual(deletingMatches, map[string]bool{"session-deleting": true}) {
+		t.Fatalf("status deleting matches = %#v", deletingMatches)
 	}
 
 	agentMatches := matched(runPrune("--agent", "worker"))
@@ -388,8 +396,7 @@ func TestIntegrationCLISandboxPruneRejectsUnsafeStatuses(t *testing.T) {
 	}{
 		{status: "running", want: "sandbox prune cannot target running sandboxes"},
 		{status: "pending", want: "sandbox prune cannot target pending sandboxes"},
-		{status: "deleting", want: "sandbox prune cannot target deleting sandboxes"},
-		{status: "definitely-invalid", want: `invalid --status "definitely-invalid": expected stopped or failed`},
+		{status: "definitely-invalid", want: `invalid --status "definitely-invalid": expected stopped, failed, or deleting`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.status, func(t *testing.T) {

@@ -173,6 +173,16 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	if sandboxes.RuntimeReleaseIntentional(session) {
 		runtimeVMState.StoppedAt = time.Time{}
 	}
+	// A runtime that can tell it is unusable is asked before any runtime state is
+	// created, so the sandbox fails with the reason the runtime gave instead of
+	// leaving a partially created runtime that cleanup then has to chase.
+	if preflight, ok := runtime.(SandboxRuntimePreflight); ok {
+		if err := preflight.PreflightSandboxRuntime(ctx, session, runtimeVMState); err != nil {
+			vmState.LastError = err.Error()
+			_ = d.Store.SaveVMState(session.Summary.ID, vmState)
+			return err
+		}
+	}
 	info, err := runtime.EnsureSandbox(ctx, session, runtimeVMState, proxyState)
 	if err != nil {
 		vmState.LastError = err.Error()

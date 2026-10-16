@@ -426,6 +426,38 @@ Rules:
 - A run normally becomes terminal only after its completion cleanup succeeds. The default policy stops the sandbox; remove-on-completion fully deletes a sandbox created by that run, while a reused sandbox is only stopped. Keep-running is the explicit exception and performs no cleanup.
 - Cleanup failures leave the run `running` with `cleanup_error` populated while the daemon retries immediately and then with bounded backoff, including after restart. Retries are bounded: once the attempt limit is reached the run is finalized in the terminal state its first completion writer selected (`succeeded` for a successful execution, `canceled` for a stop request) with `cleanup_error` still populated, and the pending completion is abandoned instead of retried indefinitely. A foreground or streaming call stops waiting at its own completion deadline and returns an error naming the status the run is stuck in; the run still converges through those background retries. Detached starts remain asynchronous.
 - `StopRun` requests cancellation and can return `stop_requested=true` while the run is still `running`. Execution records the cancellation result, performs the configured cleanup, and only then commits `canceled`. Pending/running runs left behind after daemon restart follow the same path to `failed` with a `daemon interrupted` error.
+- A stuck cleanup can also be abandoned explicitly; see `abandon-completion`.
+
+## `abandon-completion`: End a Run Whose Cleanup Cannot Converge
+
+End a run whose sandbox cleanup is staged but cannot succeed, for example when a cluster or runtime is permanently unreachable. This is the operator path out of a run that the bounded background cleanup retries cannot finish.
+
+```bash
+agent-compose abandon-completion <run>
+agent-compose abandon-completion <run> --reason "kubeconfig points at a deleted cluster"
+```
+
+| Option | Description |
+| --- | --- |
+| `--reason <text>` | Operator note recorded with the abandoned cleanup. |
+
+Rules:
+
+- The run reaches the terminal state its first completion writer selected (`succeeded`, `failed`, or `canceled`) instead of staying `running`, and the pending completion is released.
+- The recorded `cleanup_error` says the cleanup was abandoned by the operator and that the sandbox runtime may still exist. It also keeps the last cleanup error the retry loop recorded, because the abandoned completion no longer holds it.
+- The command does not stop or remove the sandbox runtime. Clean it up separately, for example with `sandbox stop`, `sandbox rm`, or the driver's own tooling.
+- The command waits for a cleanup attempt already in flight for that run to return before it finalizes the run, so its own response is bounded by that attempt rather than by the retry schedule.
+- Use `stop` for a run that is still executing: that path still cleans up the runtime. Abandoning such a run is rejected with `failed_precondition`.
+- A run that is already terminal exits 0 and reports `already terminal; nothing was abandoned`, so repeating the command after a lost response is safe.
+- Abandonment is a decision, not a repair: the runtime is left as it was, and the run record is the only note that it may still exist.
+
+Examples:
+
+```bash
+agent-compose abandon-completion run_123
+agent-compose abandon-completion run_123 --reason "cluster deleted during incident"
+agent-compose abandon-completion run_123 --json
+```
 
 ## `scheduler`: Invoke, Inspect, and Operate Project Schedulers
 
@@ -520,7 +552,7 @@ Subcommands:
 
 | Option | Description |
 | --- | --- |
-| `--status <status>[,<status>...]` | Override the default `stopped,failed` status filter. `running` and `pending` are rejected; use `sandbox rm --force <sandbox>` for running sandboxes. |
+| `--status <status>[,<status>...]` | Override the default `stopped,failed` status filter. `deleting` is accepted so a record left in that intermediate state by an interrupted deletion can be cleared; `running` and `pending` are rejected, so use `sandbox rm --force <sandbox>` for running sandboxes. |
 | `--agent <agent>` | Match only sandboxes for one agent name. |
 | `--driver <docker|boxlite|microsandbox>` | Match only sandboxes using one runtime driver. |
 | `--older-than <duration>` | Match sandboxes whose `updated_at`, or `created_at` when `updated_at` is missing, is older than a duration such as `7d` or `168h`. |
@@ -533,7 +565,7 @@ Rules:
 - With `--include-orphans`, `--driver` and `--older-than` filter both record and residue candidates; `--status` and `--agent` only filter records. A runtime resource associated with any known sandbox record is never an orphan.
 - Ownership-incomplete, corrupt, path-escaping, active, or unknown-schema residue is displayed as non-removable and remains skipped even with `--force`.
 - `sandbox prune` calls the daemon `SandboxService.PruneSandboxes` use case. It removes sandbox-owned runtime/data state, not shared cache artifacts; use `cache prune` or `cache rm` for cache inventory.
-- If a forced prune fails to remove one matched sandbox, it continues with later matches, writes the skipped item, and exits non-zero.
+- If a forced prune fails to remove one matched sandbox, it continues with later matches, writes the skipped item, and exits non-zero. The failed record is rolled back to the status it had before the deletion was attempted, so it stays visible and retryable instead of remaining in `deleting`; the skipped reason carries the runtime error, because the runtime object may still exist.
 
 `sandbox stop` applies the stopped-runtime policy snapshotted when the sandbox was created. `retain` preserves resumable driver state; `remove` first confirms the latest start has stopped and then releases the private runtime while keeping durable sandbox data. The compatibility default is an immediate force stop. With `--graceful`, the daemon rejects new executions, sends `SIGTERM` to each active `agent-compose-runtime` process, and waits for the JS runtime to cancel its provider, run `finally` cleanup, persist partial output, and exit. The default grace period is 10 seconds and can be changed with `SANDBOX_GRACEFUL_STOP_TIMEOUT`; `--grace-period` overrides it for one request, up to 5 minutes. After timeout or signaling failure, the daemon force-terminates tracked executions before stopping the sandbox. Text and JSON output include `graceful`, `forced-after-grace-timeout`, or `forced-after-grace-error`. Escalation is a successful stop when the sandbox is ultimately stopped, so both the API and CLI return success while preserving the outcome for observability; an error is returned only if the sandbox itself cannot be stopped.
 

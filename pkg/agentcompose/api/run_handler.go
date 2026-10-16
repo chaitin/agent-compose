@@ -27,8 +27,15 @@ type RunAgentDelegate interface {
 	AttachAgentRun(context.Context, *connect.BidiStream[agentcomposev2.AttachAgentRunRequest, agentcomposev2.AttachAgentRunResponse]) error
 }
 
+// ActiveRunStopper is what the handler needs from the app layer to end a run:
+// cancelling a run that is still executing, and releasing a run whose staged
+// sandbox cleanup has not converged. They are separate operations because they
+// make different promises: stop asks the execution to finish and still cleans up
+// its runtime, while abandon gives up on that cleanup and records that the
+// runtime may still exist.
 type ActiveRunStopper interface {
 	StopActiveRun(context.Context, string, string) (bool, error)
+	AbandonRunCompletion(context.Context, string, string) (domain.ProjectRunRecord, bool, error)
 }
 
 type RunStore interface {

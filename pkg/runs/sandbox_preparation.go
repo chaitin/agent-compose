@@ -240,9 +240,16 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 	}); err != nil {
 		return SandboxResult{}, err
 	}
-	if driverK8s := driverK8sOptionsFromAgentDefinition(prepared.AgentDefinition); driverK8s != nil {
+	driverK8s := driverK8sOptionsFromAgentDefinition(prepared.AgentDefinition)
+	if driverK8s != nil {
 		jupyterOptions.DriverK8sContext = driverK8s.Context
 		jupyterOptions.DriverK8sNamespace = driverK8s.Namespace
+	}
+	// Reject an unusable runtime before this controller creates the sandbox
+	// record: a run that cannot start must not leave a sandbox behind for the
+	// removal path to clean up.
+	if err := c.preflightSandboxRuntime(ctx, run, driver, guestImage, driverK8s); err != nil {
+		return SandboxResult{}, err
 	}
 	sandbox, err := c.store.CreateSandboxWithOptions(ctx,
 		SandboxTitle(run),

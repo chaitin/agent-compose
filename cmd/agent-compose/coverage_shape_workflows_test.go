@@ -99,6 +99,8 @@ func TestE2ECLIProjectAndRunPublicContractWorkflow(t *testing.T) {
 	TestIntegrationCLILogsFiltersRunAgentSessionAndJSON(t)
 	TestIntegrationCLILogsTimestampAndMultiRunPrefixes(t)
 	TestIntegrationCLILogsFollowPrintsDelayedPromptWithoutOutput(t)
+	TestIntegrationCLIAbandonCompletionEndsAStuckCleanup(t)
+	TestIntegrationCLIAbandonCompletionReportsWhatStillNeedsCleaning(t)
 }
 
 func TestE2ECLISandboxPrunePublicContractWorkflow(t *testing.T) {

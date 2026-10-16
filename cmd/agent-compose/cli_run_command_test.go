@@ -198,8 +198,17 @@ type runServiceStub struct {
 	listRuns       func(context.Context, *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error)
 	listRunEvents  func(context.Context, *connect.Request[agentcomposev2.ListRunEventsRequest]) (*connect.Response[agentcomposev2.ListRunEventsResponse], error)
 	followRunLogs  func(context.Context, *connect.Request[agentcomposev2.FollowRunLogsRequest], *connect.ServerStream[agentcomposev2.RunLogChunk]) error
+	// abandonCompletion drives `agent-compose abandon-completion`.
+	abandonCompletion func(context.Context, *connect.Request[agentcomposev2.AbandonRunCompletionRequest]) (*connect.Response[agentcomposev2.AbandonRunCompletionResponse], error)
 
 	agentcomposev2connect.UnimplementedRunServiceHandler
+}
+
+func (s runServiceStub) AbandonRunCompletion(ctx context.Context, req *connect.Request[agentcomposev2.AbandonRunCompletionRequest]) (*connect.Response[agentcomposev2.AbandonRunCompletionResponse], error) {
+	if s.abandonCompletion == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("AbandonRunCompletion stub is not configured"))
+	}
+	return s.abandonCompletion(ctx, req)
 }
 
 func (s runServiceStub) StartAgentRun(ctx context.Context, req *connect.Request[agentcomposev2.StartAgentRunRequest]) (*connect.Response[agentcomposev2.StartAgentRunResponse], error) {

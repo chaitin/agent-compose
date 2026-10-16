@@ -483,6 +483,11 @@ func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox,
 	if created {
 		slog.Info("agent-compose boxlite starting box", "sandbox_id", sandbox.Summary.ID)
 		if err := r.startBox(ctx, box); err != nil {
+			// A failed start leaves the detached shim (and the bwrap jail holding
+			// the VM's /dev/kvm handle) running, so release it here: the caller
+			// only learns that this start failed, and a retry would otherwise
+			// accumulate KVM handles.
+			r.releaseFailedBoxStart(ctx, sandbox, box)
 			return SandboxVMInfo{}, err
 		}
 		slog.Info("agent-compose boxlite box started", "sandbox_id", sandbox.Summary.ID, "elapsed_ms", time.Since(startedAt).Milliseconds())

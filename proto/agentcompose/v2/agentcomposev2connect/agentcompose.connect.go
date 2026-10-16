@@ -146,6 +146,9 @@ const (
 	RunServiceFollowRunLogsProcedure = "/agentcompose.v2.RunService/FollowRunLogs"
 	// RunServiceStopRunProcedure is the fully-qualified name of the RunService's StopRun RPC.
 	RunServiceStopRunProcedure = "/agentcompose.v2.RunService/StopRun"
+	// RunServiceAbandonRunCompletionProcedure is the fully-qualified name of the RunService's
+	// AbandonRunCompletion RPC.
+	RunServiceAbandonRunCompletionProcedure = "/agentcompose.v2.RunService/AbandonRunCompletion"
 	// RunServiceListRunEventsProcedure is the fully-qualified name of the RunService's ListRunEvents
 	// RPC.
 	RunServiceListRunEventsProcedure = "/agentcompose.v2.RunService/ListRunEvents"
@@ -984,6 +987,12 @@ type RunServiceClient interface {
 	ListRuns(context.Context, *connect.Request[v2.ListRunsRequest]) (*connect.Response[v2.ListRunsResponse], error)
 	FollowRunLogs(context.Context, *connect.Request[v2.FollowRunLogsRequest]) (*connect.ServerStreamForClient[v2.RunLogChunk], error)
 	StopRun(context.Context, *connect.Request[v2.StopRunRequest]) (*connect.Response[v2.StopRunResponse], error)
+	// Finalizes a run whose staged sandbox cleanup has not converged, so an
+	// operator can end a run that the bounded retry loop cannot finish. The run
+	// reaches the terminal state its first completion writer selected and keeps
+	// the cleanup failure recorded: the sandbox runtime may still exist, because
+	// this call gives up on removing it rather than removing it.
+	AbandonRunCompletion(context.Context, *connect.Request[v2.AbandonRunCompletionRequest]) (*connect.Response[v2.AbandonRunCompletionResponse], error)
 	ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error)
 	ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error)
 }
@@ -1047,6 +1056,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("StopRun")),
 			connect.WithClientOptions(opts...),
 		),
+		abandonRunCompletion: connect.NewClient[v2.AbandonRunCompletionRequest, v2.AbandonRunCompletionResponse](
+			httpClient,
+			baseURL+RunServiceAbandonRunCompletionProcedure,
+			connect.WithSchema(runServiceMethods.ByName("AbandonRunCompletion")),
+			connect.WithClientOptions(opts...),
+		),
 		listRunEvents: connect.NewClient[v2.ListRunEventsRequest, v2.ListRunEventsResponse](
 			httpClient,
 			baseURL+RunServiceListRunEventsProcedure,
@@ -1072,6 +1087,7 @@ type runServiceClient struct {
 	listRuns             *connect.Client[v2.ListRunsRequest, v2.ListRunsResponse]
 	followRunLogs        *connect.Client[v2.FollowRunLogsRequest, v2.RunLogChunk]
 	stopRun              *connect.Client[v2.StopRunRequest, v2.StopRunResponse]
+	abandonRunCompletion *connect.Client[v2.AbandonRunCompletionRequest, v2.AbandonRunCompletionResponse]
 	listRunEvents        *connect.Client[v2.ListRunEventsRequest, v2.ListRunEventsResponse]
 	listSandboxRunEvents *connect.Client[v2.ListSandboxRunEventsRequest, v2.ListSandboxRunEventsResponse]
 }
@@ -1116,6 +1132,11 @@ func (c *runServiceClient) StopRun(ctx context.Context, req *connect.Request[v2.
 	return c.stopRun.CallUnary(ctx, req)
 }
 
+// AbandonRunCompletion calls agentcompose.v2.RunService.AbandonRunCompletion.
+func (c *runServiceClient) AbandonRunCompletion(ctx context.Context, req *connect.Request[v2.AbandonRunCompletionRequest]) (*connect.Response[v2.AbandonRunCompletionResponse], error) {
+	return c.abandonRunCompletion.CallUnary(ctx, req)
+}
+
 // ListRunEvents calls agentcompose.v2.RunService.ListRunEvents.
 func (c *runServiceClient) ListRunEvents(ctx context.Context, req *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error) {
 	return c.listRunEvents.CallUnary(ctx, req)
@@ -1154,6 +1175,12 @@ type RunServiceHandler interface {
 	ListRuns(context.Context, *connect.Request[v2.ListRunsRequest]) (*connect.Response[v2.ListRunsResponse], error)
 	FollowRunLogs(context.Context, *connect.Request[v2.FollowRunLogsRequest], *connect.ServerStream[v2.RunLogChunk]) error
 	StopRun(context.Context, *connect.Request[v2.StopRunRequest]) (*connect.Response[v2.StopRunResponse], error)
+	// Finalizes a run whose staged sandbox cleanup has not converged, so an
+	// operator can end a run that the bounded retry loop cannot finish. The run
+	// reaches the terminal state its first completion writer selected and keeps
+	// the cleanup failure recorded: the sandbox runtime may still exist, because
+	// this call gives up on removing it rather than removing it.
+	AbandonRunCompletion(context.Context, *connect.Request[v2.AbandonRunCompletionRequest]) (*connect.Response[v2.AbandonRunCompletionResponse], error)
 	ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error)
 	ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error)
 }
@@ -1213,6 +1240,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("StopRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceAbandonRunCompletionHandler := connect.NewUnaryHandler(
+		RunServiceAbandonRunCompletionProcedure,
+		svc.AbandonRunCompletion,
+		connect.WithSchema(runServiceMethods.ByName("AbandonRunCompletion")),
+		connect.WithHandlerOptions(opts...),
+	)
 	runServiceListRunEventsHandler := connect.NewUnaryHandler(
 		RunServiceListRunEventsProcedure,
 		svc.ListRunEvents,
@@ -1243,6 +1276,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceFollowRunLogsHandler.ServeHTTP(w, r)
 		case RunServiceStopRunProcedure:
 			runServiceStopRunHandler.ServeHTTP(w, r)
+		case RunServiceAbandonRunCompletionProcedure:
+			runServiceAbandonRunCompletionHandler.ServeHTTP(w, r)
 		case RunServiceListRunEventsProcedure:
 			runServiceListRunEventsHandler.ServeHTTP(w, r)
 		case RunServiceListSandboxRunEventsProcedure:
@@ -1286,6 +1321,10 @@ func (UnimplementedRunServiceHandler) FollowRunLogs(context.Context, *connect.Re
 
 func (UnimplementedRunServiceHandler) StopRun(context.Context, *connect.Request[v2.StopRunRequest]) (*connect.Response[v2.StopRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.StopRun is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) AbandonRunCompletion(context.Context, *connect.Request[v2.AbandonRunCompletionRequest]) (*connect.Response[v2.AbandonRunCompletionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.AbandonRunCompletion is not implemented"))
 }
 
 func (UnimplementedRunServiceHandler) ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error) {

@@ -60,7 +60,7 @@ capabilities. Page layout is intentionally not part of this stable contract.
 | Web operation | Connect service and methods |
 | --- | --- |
 | Project validation/apply/list/get/remove/watch | `ProjectService.ValidateProject`, `ApplyProject`, `ListProjects`, `GetProject`, `RemoveProject`, `WatchProject` |
-| Run start/stream/attach/stop/log/events | `RunService.RunAgent`, `StartAgentRun`, `StreamAgentRun`, `AttachAgentRun`, `StopRun`, `FollowRunLogs`, `ListRunEvents`, `ListSandboxRunEvents` |
+| Run start/stream/attach/stop/abandon/log/events | `RunService.RunAgent`, `StartAgentRun`, `StreamAgentRun`, `AttachAgentRun`, `StopRun`, `AbandonRunCompletion`, `FollowRunLogs`, `ListRunEvents`, `ListSandboxRunEvents` |
 | Scheduler configuration, invocation, runs, events, and streams | the scheduler methods on `ProjectService` |
 | Sandbox list/get/history/watch/lifecycle/stats | `SandboxService` |
 | Interactive execution | `ExecService.AttachExec`; non-interactive execution uses `Exec` or `StreamExec` |

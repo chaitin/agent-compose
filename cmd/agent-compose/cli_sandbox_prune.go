@@ -12,7 +12,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
-	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
@@ -27,7 +26,7 @@ type composeSandboxPruneOptions struct {
 }
 
 func addSandboxPruneFlags(cmd *cobra.Command, options *composeSandboxPruneOptions) {
-	cmd.Flags().StringVar(&options.Status, "status", "", "Filter sandboxes by status: stopped or failed (comma-separated)")
+	cmd.Flags().StringVar(&options.Status, "status", "", "Filter sandboxes by status: stopped, failed, or deleting (comma-separated)")
 	cmd.Flags().StringVar(&options.Agent, "agent", "", "Filter sandboxes by agent name")
 	cmd.Flags().StringVar(&options.Driver, "driver", "", "Filter sandboxes by driver: docker, boxlite, or microsandbox")
 	cmd.Flags().StringVar(&options.OlderThan, "older-than", "", "Only match sandboxes older than a duration such as 7d or 24h")
@@ -196,10 +195,13 @@ func sandboxPruneStatusFilter(value string) (map[string]bool, error) {
 		}
 		canonical, err := sandboxes.NormalizeVMStatus(status)
 		if err != nil {
-			return nil, fmt.Errorf("invalid --status %q: expected stopped or failed", status)
+			return nil, fmt.Errorf("invalid --status %q: expected stopped, failed, or deleting", status)
 		}
-		if canonical != domain.VMStatusStopped && canonical != domain.VMStatusFailed {
-			return nil, fmt.Errorf("sandbox prune cannot target %s sandboxes; only stopped or failed sandboxes are safe to prune", status)
+		// The domain owns which statuses may be pruned (see PrunableStatus); the
+		// CLI only turns its refusal into a usage error before contacting the
+		// daemon.
+		if !sandboxes.PrunableStatus(canonical) {
+			return nil, fmt.Errorf("sandbox prune cannot target %s sandboxes; only stopped, failed, and deleting records can be pruned", status)
 		}
 		result[status] = true
 	}

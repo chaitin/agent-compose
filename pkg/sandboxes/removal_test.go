@@ -372,6 +372,91 @@ func TestRemovalCoordinatorPruneSeparatesRecordsAndResidues(t *testing.T) {
 	}
 }
 
+// TestPrunableStatusAcceptsTheRecoverableIntermediateState pins the rule the CLI
+// and the coordinator share. DELETING is prunable because Remove resumes the
+// deletion from its journal and rolls back to a real lifecycle state when a
+// runtime step fails, so a prune attempt can no longer strand a record there.
+// RUNNING is not: prune must never stop a live runtime behind the operator's
+// back.
+func TestPrunableStatusAcceptsTheRecoverableIntermediateState(t *testing.T) {
+	tests := []struct {
+		status string
+		want   bool
+	}{
+		{status: domain.VMStatusStopped, want: true},
+		{status: domain.VMStatusFailed, want: true},
+		{status: domain.VMStatusDeleting, want: true},
+		{status: domain.VMStatusRunning, want: false},
+		{status: domain.VMStatusPending, want: false},
+		{status: "", want: false},
+	}
+	for _, tt := range tests {
+		if got := sandboxes.PrunableStatus(tt.status); got != tt.want {
+			t.Fatalf("PrunableStatus(%q) = %v, want %v", tt.status, got, tt.want)
+		}
+	}
+}
+
+// TestRemovalCoordinatorPruneClearsAStuckDeletingRecord covers the record a crash
+// between the deletion intent and the runtime call leaves in DELETING - the
+// state issue #772 reports as having no product exit. Prune refused the status,
+// so the record stayed DELETING forever. It may now target it, and a failed
+// attempt must leave a real lifecycle state on both the record and its journal,
+// so the record becomes something the operator can act on again.
+func TestRemovalCoordinatorPruneClearsAStuckDeletingRecord(t *testing.T) {
+	root := t.TempDir()
+	stuck := removalTestSandbox(t, removalTestSandboxSpec{
+		Root:    root,
+		ID:      "sandbox-stuck-deleting",
+		Status:  domain.VMStatusDeleting,
+		Updated: time.Now().Add(-time.Hour),
+	})
+	record, err := sandboxes.ReadOwnershipRecord(root, stuck.Summary.ID)
+	if err != nil {
+		t.Fatalf("ReadOwnershipRecord: %v", err)
+	}
+	// The intent journal, as a crash mid-delete leaves it.
+	record.LifecycleState = "deleting"
+	if err := sandboxes.WriteOwnershipRecord(root, record); err != nil {
+		t.Fatalf("WriteOwnershipRecord: %v", err)
+	}
+	store := &removalTestStore{sandboxes: map[string]*domain.Sandbox{stuck.Summary.ID: stuck}}
+	runtime := &removalTestRuntime{removeErrors: []error{errors.New("injected remove failure")}}
+	coordinator := &sandboxes.RemovalCoordinator{SandboxRoot: root, Store: store, Runtime: runtime}
+
+	result, err := coordinator.Prune(context.Background(), sandboxes.PruneRequest{Statuses: []string{domain.VMStatusDeleting}, Force: true})
+	if err != nil {
+		t.Fatalf("Prune returned error: %v", err)
+	}
+	if len(result.Matched) != 1 || len(result.Skipped) != 1 || len(result.Removed) != 0 {
+		t.Fatalf("prune result = %#v, want the stuck record matched and reported as skipped", result)
+	}
+	if reasons := strings.Join(result.Skipped[0].BlockedReasons, " "); !strings.Contains(reasons, "remove sandbox runtime") {
+		t.Fatalf("skipped reasons = %#v, want the runtime removal failure reported to the operator", result.Skipped[0].BlockedReasons)
+	}
+	if status := store.sandboxes[stuck.Summary.ID].Summary.VMStatus; status == domain.VMStatusDeleting {
+		t.Fatalf("sandbox status = %q, want a real lifecycle state after the failed deletion", status)
+	}
+	rolled, err := sandboxes.ReadOwnershipRecord(root, stuck.Summary.ID)
+	if err != nil {
+		t.Fatalf("ReadOwnershipRecord after prune: %v", err)
+	}
+	if rolled.LifecycleState == "deleting" {
+		t.Fatalf("journal lifecycle = %q, want a state the recovery scan no longer retries", rolled.LifecycleState)
+	}
+
+	// The rolled-back record is an ordinary stopped record now, so the retry that
+	// used to be impossible succeeds once the runtime is reachable again.
+	runtime.removeErrors = nil
+	result, err = coordinator.Prune(context.Background(), sandboxes.PruneRequest{Statuses: []string{domain.VMStatusStopped}, Force: true})
+	if err != nil || len(result.Removed) != 1 {
+		t.Fatalf("second prune result = %#v err = %v, want the record removed", result, err)
+	}
+	if _, err := sandboxes.ReadOwnershipRecord(root, stuck.Summary.ID); !os.IsNotExist(err) {
+		t.Fatalf("ownership record remains after prune: %v", err)
+	}
+}
+
 func TestRemovalCoordinatorSerializesConcurrentResume(t *testing.T) {
 	root := t.TempDir()
 	config := &appconfig.Config{DataRoot: root, SandboxRoot: filepath.Join(root, "sandboxes"), RuntimeDriver: "docker", DefaultImage: "guest:latest"}

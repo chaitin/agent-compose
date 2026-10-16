@@ -68,6 +68,12 @@ service RunService {
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc FollowRunLogs(FollowRunLogsRequest) returns (stream RunLogChunk);
   rpc StopRun(StopRunRequest) returns (StopRunResponse);
+  // Finalizes a run whose staged sandbox cleanup has not converged, so an
+  // operator can end a run that the bounded retry loop cannot finish. The run
+  // reaches the terminal state its first completion writer selected and keeps
+  // the cleanup failure recorded: the sandbox runtime may still exist, because
+  // this call gives up on removing it rather than removing it.
+  rpc AbandonRunCompletion(AbandonRunCompletionRequest) returns (AbandonRunCompletionResponse);
   rpc ListRunEvents(ListRunEventsRequest) returns (ListRunEventsResponse);
   rpc ListSandboxRunEvents(ListSandboxRunEventsRequest) returns (ListSandboxRunEventsResponse);
 }
@@ -1347,6 +1353,19 @@ message StopRunRequest {
 message StopRunResponse {
   RunDetail run = 1;
   bool stop_requested = 2;
+}
+
+message AbandonRunCompletionRequest {
+  string run_id = 1;
+  // Optional operator note recorded with the abandoned cleanup.
+  string reason = 2;
+}
+
+message AbandonRunCompletionResponse {
+  RunDetail run = 1;
+  // True when this call finalized a staged completion. False means there was
+  // nothing left to abandon because the run was already terminal.
+  bool abandoned = 2;
 }
 
 message ListRunEventsRequest {

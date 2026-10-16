@@ -1,6 +1,45 @@
 {
   "commands": [
     {
+      "path": "agent-compose abandon-completion",
+      "use": "abandon-completion \u003crun\u003e",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "reason",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
       "path": "agent-compose agent",
       "use": "agent",
       "flags": [
