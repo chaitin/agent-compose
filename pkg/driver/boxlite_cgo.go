@@ -1407,6 +1407,8 @@ func (r *cgoSandboxRuntime) terminateMarkedBoxExec(ctx context.Context, box *cgo
 	if err != nil {
 		return fmt.Errorf("resolve box for BoxLite exec termination control: %w", err)
 	}
+	// boxlite_get hands out an independent handle that holds its own reference
+	// to the box, so freeing control leaves the caller's handle valid.
 	control, err := r.getBox(cleanupCtx, boxID)
 	if err != nil {
 		return fmt.Errorf("attach BoxLite exec termination control: %w", err)
