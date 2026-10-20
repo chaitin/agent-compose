@@ -91,10 +91,10 @@ If protobuf contracts change, regenerate the sibling UI's checked-in TypeScript 
 - Daemon: native `build/agent-compose` process.
 - UI with sibling source: native Go UI server plus Vite dev server.
 - UI without sibling source: `chaitin/agent-compose-ui:latest` in Docker. Override with `AGENT_COMPOSE_UI_IMAGE`.
-- UI authentication for local source runs: `<sibling-ui-repo>/.env`. If it does not exist, the script creates it with username `admin`, password `admin`, and a stable local-only session secret.
+- UI authentication for local source runs: `<sibling-ui-repo>/.env`. If it does not exist, the script creates it with username `admin`, password `admin`, and a stable local-only session secret. Existing files are parsed as data rather than sourced as shell code.
 - Agent sandboxes: Docker containers using `chaitin/agent-compose-guest:latest` unless `DEFAULT_IMAGE` selects another image.
 - UI browser port: `127.0.0.1:<ui-port>`.
-- Daemon port: `0.0.0.0:<engine-port>` so Docker sandboxes can reach the runtime facade; use the UI as the browser entrypoint and keep the daemon port on a trusted local network.
+- Daemon port: loopback on Docker Desktop and the Docker bridge gateway on Linux, so host tools and sandboxes can reach the runtime facade without binding the unauthenticated control plane to every network interface.
 - Data: `<root>/data`; UI state: `<root>/ui-data`; daemon log: `<root>/daemon.log`.
 
 Do not default to `task image:agent-compose`; it depends on optional BoxLite and Microsandbox artifacts. The native Docker-only binary is sufficient for UI testing.
@@ -104,7 +104,7 @@ Do not default to `task image:agent-compose`; it depends on optional BoxLite and
 After startup, confirm:
 
 ```bash
-curl -fsS http://127.0.0.1:<engine-port>/api/version
+curl -fsS <daemon-url>/api/version
 curl -fsS http://127.0.0.1:<ui-port>/
 ```
 

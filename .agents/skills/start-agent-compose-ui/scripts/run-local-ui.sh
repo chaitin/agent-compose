@@ -173,6 +173,7 @@ trap 'exit 143' TERM
 
 acquire_lock() {
   local owner=""
+  local command_line=""
   if mkdir "$lock_dir" 2>/dev/null; then
     printf '%s\n' "$$" >"$lock_dir/pid"
     lock_owned=1
@@ -182,6 +183,9 @@ acquire_lock() {
     owner="$(cat "$lock_dir/pid" 2>/dev/null || true)"
   fi
   if [[ "$owner" =~ ^[0-9]+$ ]] && kill -0 "$owner" 2>/dev/null; then
+    command_line="$(ps -p "$owner" -o command= 2>/dev/null || true)"
+  fi
+  if [[ "$command_line" == *"start-agent-compose-ui/scripts/run-local-ui.sh"* ]]; then
     echo "another start-agent-compose-ui invocation is preparing the stack (pid $owner)" >&2
     echo "wait for it to finish, then rerun this command" >&2
     exit 4
@@ -427,20 +431,116 @@ ensure_ui_env() {
 }
 
 ensure_ui_env
-unset AUTH_USERNAME AUTH_PASSWORD AUTH_SECRET AUTH_SESSION_TTL
-# shellcheck disable=SC1091
-. "$ui_env_file"
-export -n AUTH_USERNAME AUTH_PASSWORD AUTH_SECRET AUTH_SESSION_TTL 2>/dev/null || true
+
+load_ui_env() {
+  local marker=""
+  {
+    IFS= read -r -d '' AUTH_USERNAME || true
+    IFS= read -r -d '' AUTH_PASSWORD || true
+    IFS= read -r -d '' AUTH_SECRET || true
+    IFS= read -r -d '' AUTH_SESSION_TTL || true
+    IFS= read -r -d '' marker || true
+    [[ "$marker" == "complete" ]]
+  } < <(python3 - "$ui_env_file" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+keys = ["AUTH_USERNAME", "AUTH_PASSWORD", "AUTH_SECRET", "AUTH_SESSION_TTL"]
+required = keys[:3]
+values = dict()
+
+
+def parse_value(raw):
+    value = raw.lstrip()
+    if not value:
+        return ""
+    if value.startswith('"'):
+        result = []
+        escaped = False
+        for index in range(1, len(value)):
+            char = value[index]
+            if escaped:
+                if char == "n":
+                    char = "\n"
+                elif char == "r":
+                    char = "\r"
+                elif char == "t":
+                    char = "\t"
+                result.append(char)
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                remainder = value[index + 1:].strip()
+                if remainder and not remainder.startswith("#"):
+                    raise ValueError("unexpected content after double-quoted value")
+                return "".join(result)
+            else:
+                result.append(char)
+        raise ValueError("unterminated double-quoted value")
+    if value.startswith("'"):
+        end = value.find("'", 1)
+        if end == -1:
+            raise ValueError("unterminated single-quoted value")
+        remainder = value[end + 1:].strip()
+        if remainder and not remainder.startswith("#"):
+            raise ValueError("unexpected content after single-quoted value")
+        return value[1:end]
+    return re.sub(r"\s+#.*$", "", value).rstrip()
+
+
+try:
+    with open(path, encoding="utf-8") as handle:
+        for raw in handle:
+            match = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", raw)
+            if not match or match.group(1) not in keys:
+                continue
+            values[match.group(1)] = parse_value(match.group(2))
+except (OSError, ValueError) as exc:
+    print("invalid UI env file %s: %s" % (path, exc), file=sys.stderr)
+    sys.exit(2)
+
+missing = [key for key in required if not values.get(key)]
+if missing:
+    print("UI env file is missing non-empty values for: %s" % ", ".join(missing), file=sys.stderr)
+    sys.exit(2)
+for key in keys:
+    sys.stdout.buffer.write(values.get(key, "").encode("utf-8") + b"\0")
+sys.stdout.buffer.write(b"complete\0")
+PY
+  ) || {
+    echo "failed to parse UI env file: $ui_env_file" >&2
+    exit 1
+  }
+}
+
+load_ui_env
+
+daemon_listen_host=127.0.0.1
+daemon_connect_host=127.0.0.1
+container_daemon_host=host.docker.internal
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  docker_gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
+  if [[ -n "$docker_gateway" && "$docker_gateway" != "<no value>" ]]; then
+    daemon_listen_host="$docker_gateway"
+    daemon_connect_host="$docker_gateway"
+    container_daemon_host="$docker_gateway"
+  else
+    echo "warning: could not determine the Docker bridge gateway; daemon HTTP will bind to loopback only" >&2
+  fi
+fi
+daemon_url="http://$daemon_connect_host:$engine_port"
 
 daemon_log="$root/daemon.log"
 ui_server_log="$root/ui-server.log"
 ui_log="$root/ui.log"
 
 export DATA_ROOT="$root/data"
-export HTTP_LISTEN="0.0.0.0:$engine_port"
+export HTTP_LISTEN="$daemon_listen_host:$engine_port"
 export AGENT_COMPOSE_SOCKET="$root/agent-compose.sock"
 export DEFAULT_IMAGE="$guest_image"
-export AGENT_COMPOSE_RUNTIME_BASE_URL="http://host.docker.internal:$engine_port"
+export AGENT_COMPOSE_RUNTIME_BASE_URL="http://$container_daemon_host:$engine_port"
 
 (
   cd "$repo_root"
@@ -451,12 +551,9 @@ daemon_pid=$!
 if [[ "$ui_mode" == "local" ]]; then
   (
     cd "$ui_repo"
-    set -a
-    # shellcheck disable=SC1091
-    . "$ui_env_file"
-    set +a
+    export AUTH_USERNAME AUTH_PASSWORD AUTH_SECRET AUTH_SESSION_TTL
     export AGENT_COMPOSE_UI_LISTEN="127.0.0.1:$ui_server_port"
-    export AGENT_COMPOSE_BACKEND="http://127.0.0.1:$engine_port"
+    export AGENT_COMPOSE_BACKEND="$daemon_url"
     export UI_DATABASE_PATH="$root/ui-data/agent-compose-ui.db"
     export SANDBOX_ROOT="$root/data/sandboxes"
     exec "$ui_server_binary"
@@ -480,7 +577,7 @@ else
     -p "127.0.0.1:$ui_port:8000" \
     --env-file "$ui_env_file" \
     -e UI_DATABASE_PATH=/data/agent-compose-ui.db \
-    -e AGENT_COMPOSE_BACKEND="http://host.docker.internal:$engine_port" \
+    -e AGENT_COMPOSE_BACKEND="http://$container_daemon_host:$engine_port" \
     -e JUPYTER_PROXY_BASE=/jupyter \
     -e NGINX_JUPYTER_PROXY_BASE=/jupyter \
     -e SANDBOX_ROOT=/data/sandboxes \
@@ -497,6 +594,7 @@ state_tmp="$state_file.tmp.$$"
   echo "STATE_UI_SERVER_PORT=$ui_server_port"
   echo "STATE_UI_REPO=$ui_repo"
   echo "STATE_UI_ENV_FILE=$ui_env_file"
+  echo "STATE_DAEMON_URL=$daemon_url"
   echo "STATE_SUPERVISOR_PID=$$"
   echo "STATE_DAEMON_PID=$daemon_pid"
   echo "STATE_UI_SERVER_PID=$ui_server_pid"
@@ -522,7 +620,7 @@ wait_for_url() {
   return 1
 }
 
-if ! wait_for_url "http://127.0.0.1:$engine_port/api/version" "daemon"; then
+if ! wait_for_url "$daemon_url/api/version" "daemon"; then
   tail -n 60 "$daemon_log" >&2 || true
   exit 1
 fi
@@ -572,7 +670,7 @@ Username: $AUTH_USERNAME
 Password: $AUTH_PASSWORD
 UI env: $ui_env_file
 
-Daemon: http://127.0.0.1:$engine_port
+Daemon: $daemon_url
 Data: $root/data
 UI data: $root/ui-data
 Daemon log: $daemon_log
@@ -590,7 +688,7 @@ echo "URL: http://localhost:$ui_port"
 echo "Username: $AUTH_USERNAME"
 echo "Password: $AUTH_PASSWORD"
 echo "UI env: $ui_env_file"
-echo "Daemon: http://127.0.0.1:$engine_port"
+echo "Daemon: $daemon_url"
 echo "Daemon log: $daemon_log"
 if [[ "$ui_mode" == "local" ]]; then
   echo "UI: local source $ui_repo (Vite HMR enabled)"
