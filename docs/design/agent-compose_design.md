@@ -506,6 +506,15 @@ existing running sandbox. Target lookup can use:
 The default cwd is the guest workspace path `/workspace`, and requests may
 override it.
 
+The command execution boundary does not currently provide a dedicated secret
+transport. Therefore `RunAgent` command requests, `Exec`/`StreamExec` requests,
+and attached exec requests reject an environment entry marked `secret: true`
+with the stable reason `secret_command_env_unsupported` before creating or
+writing command artifacts. Project and agent sandbox environment declarations
+retain their existing secret handling; a future command secret transport must
+preserve the marker and define artifact permissions and lifecycle before this
+request-level restriction can be relaxed.
+
 `ImageService` currently has three backend entry points:
 
 - `ListImages` supports reference query, `--all`, and pagination.

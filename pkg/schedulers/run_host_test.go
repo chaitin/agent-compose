@@ -88,6 +88,14 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	if sandboxes.ensureCalls != 2 || sandboxes.loadCalls != 1 || commandExecutor.calls != 2 {
 		t.Fatalf("command ensure/load/exec calls = %d/%d/%d", sandboxes.ensureCalls, sandboxes.loadCalls, commandExecutor.calls)
 	}
+	_, err = host.Command(ctx, domain.SchedulerCommandRequest{
+		Mode:       "shell",
+		Script:     "echo secret",
+		SandboxEnv: []domain.SandboxEnvVar{{Name: "REQUEST_TOKEN", Value: "do-not-leak", Secret: true}},
+	})
+	if err == nil || sandboxes.ensureCalls != 2 || commandExecutor.calls != 2 || strings.Contains(err.Error(), "do-not-leak") {
+		t.Fatalf("secret scheduler env err=%v ensure=%d exec=%d, want rejection before sandbox", err, sandboxes.ensureCalls, commandExecutor.calls)
+	}
 	host.CleanupCommandSessions(ctx)
 	if len(sandboxes.shutdowns) != 2 || sandboxes.shutdowns[1] != "session-host" {
 		t.Fatalf("shutdowns after cleanup = %#v", sandboxes.shutdowns)

@@ -37,6 +37,9 @@ type execPreparation struct {
 }
 
 func (h *ExecHandler) prepareExecCommand(ctx context.Context, sandbox *domain.Sandbox, req *agentcomposev2.ExecRequest, execID string) (execPreparation, error) {
+	if err := execution.ValidateCommandEnv(req.GetEnv()); err != nil {
+		return execPreparation{}, ConnectErrorForDomain(err)
+	}
 	appconfig.ApplyDefaultGuestPaths(h.config)
 	cwd := strings.TrimSpace(req.GetCwd())
 	if cwd == "" {
@@ -145,6 +148,9 @@ func (h *ExecHandler) executeProjectCommand(ctx context.Context, req *agentcompo
 	}
 	if strings.TrimSpace(req.GetCommand().GetCommand()) == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("exec command is required"))
+	}
+	if err := execution.ValidateCommandEnv(req.GetEnv()); err != nil {
+		return nil, ConnectErrorForDomain(err)
 	}
 	if send != nil {
 		if err := send(&agentcomposev2.StreamExecResponse{

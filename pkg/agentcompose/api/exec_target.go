@@ -13,6 +13,7 @@ import (
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
+	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
@@ -41,6 +42,9 @@ func (h *ExecHandler) prepareExecAttach(ctx context.Context, start *agentcompose
 	command := strings.TrimSpace(req.GetCommand().GetCommand())
 	if command == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("exec command is required"))
+	}
+	if err := execution.ValidateCommandEnv(req.GetEnv()); err != nil {
+		return nil, ConnectErrorForDomain(err)
 	}
 	appconfig.ApplyDefaultGuestPaths(h.config)
 	cwd := strings.TrimSpace(req.GetCwd())

@@ -252,6 +252,11 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		return StartedProjectRun{}, err
 	}
 	req = resolved.Request
+	if strings.TrimSpace(req.Command) != "" {
+		if err := execution.ValidateCommandEnv(req.Env); err != nil {
+			return StartedProjectRun{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+		}
+	}
 	warnings := resolved.Warnings
 	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
 	run, err := coordinator.BeginRun(ctx, StartRequest{
