@@ -180,6 +180,10 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 		transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 		return transition, err
 	}
+	session, err := c.interactiveSessions.Get(run.RunID)
+	if err != nil {
+		return transition, err
+	}
 	interaction, err = c.interactiveSessions.BindRuntime(run.RunID, interaction)
 	if err != nil {
 		return transition, err
@@ -196,16 +200,18 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 	defer cancelInput()
 	turnReady := make(chan struct{}, 1)
 	if prompt := strings.TrimSpace(runCtx.Request.Prompt); prompt != "" {
+		session.beginInitialPromptTurn()
 		if err := input.HumanMessage(prompt); err != nil {
 			transition.ExitCode = 1
 			transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 			return transition, err
 		}
 	} else {
+		session.enablePromptTurns()
 		releasePromptTurn(turnReady)
 	}
 	go pumpRunPromptAttachInput(inputCtx, receive, promptInputPump{Input: input, TurnReady: turnReady, OnHumanMessage: projector.AppendHumanMessageFrame})
-	return receivePromptInteractionFrames(run, sandbox, transition, promptInteractionReceiveState{Interaction: interaction, Projector: projector, TurnReady: turnReady}, send)
+	return receivePromptInteractionFrames(run, sandbox, transition, promptInteractionReceiveState{Interaction: interaction, Projector: projector, TurnReady: turnReady, Session: session}, send)
 }
 
 // promptInteractionReceiveState bundles the open interaction, log
@@ -215,10 +221,11 @@ type promptInteractionReceiveState struct {
 	Interaction driverpkg.RuntimeInteraction
 	Projector   *promptAttachProjector
 	TurnReady   chan struct{}
+	Session     *InteractiveSession
 }
 
 func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain.Sandbox, transition TransitionRequest, state promptInteractionReceiveState, send RunAttachSender) (TransitionRequest, error) {
-	interaction, projector, turnReady := state.Interaction, state.Projector, state.TurnReady
+	interaction, projector, turnReady, session := state.Interaction, state.Projector, state.TurnReady, state.Session
 	logsPath := transition.LogsPath
 	var promptTransition *TransitionRequest
 	for {
@@ -265,6 +272,9 @@ func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain
 				return transition, err
 			}
 			for _, resp := range responses {
+				if resp.Kind == RunAttachOutputAgentTurnCompleted && session != nil {
+					session.completePromptTurn()
+				}
 				if err := send(resp); err != nil {
 					transition.ExitCode = 1
 					transition.Error = fmt.Sprintf("agent execution failed: %v", err)

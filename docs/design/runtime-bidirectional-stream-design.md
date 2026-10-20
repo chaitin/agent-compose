@@ -527,14 +527,16 @@ Rules:
 2. Only after `TurnCompleted` should the daemon/CLI show the next input prompt.
 3. EOF or `/exit` enters Closing.
 4. Client disconnect cancels the current interactive foreground session by default.
+5. `StopRun` uses the session's own turn state, not the request reason, to choose the disposition. In `WaitingInput` (no active turn) it sends the prompt wrapper `eof` and commits `succeeded`; in `RunningTurn` it sends `cancel` and commits `canceled`. A turn that already failed commits `failed`. `reason` is audit-only. The RPC may return `stop_requested=true` before the terminal completion commit.
 
 ## Compatibility and Deprecation Strategy
 
 1. Keep regular `Exec`, `StreamExec`, `RunAgent`, `StartAgentRun`, and `StreamAgentRun` with unchanged external semantics.
 2. Do not mark `StreamExec` / `StreamAgentRun` as legacy/deprecated. They are stable server-stream projections.
-3. Only consider comments or `deprecated = true` for fields/APIs that are no longer used internally and are genuinely not recommended externally.
-4. Do not destructively remove file artifacts.
-5. The new stream result is the source of truth for the online path; old result files are mirrors and crash recovery artifacts.
+3. The prompt-interactive `StopRun` disposition is state-derived as described above. Its wire shape and `RunStatus` values are unchanged; command and non-interactive stops keep their cancellation semantics.
+4. Only consider comments or `deprecated = true` for fields/APIs that are no longer used internally and are genuinely not recommended externally.
+5. Do not destructively remove file artifacts.
+6. The new stream result is the source of truth for the online path; old result files are mirrors and crash recovery artifacts.
 
 ## Technical Challenges
 

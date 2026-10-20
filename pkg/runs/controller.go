@@ -378,6 +378,43 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	return nil
 }
 
+// StopInteractiveRun asks a prompt session to end according to its own engine
+// state. The caller's reason is audit data only: an idle session receives eof
+// and ends successfully, while an in-flight turn receives cancel and ends
+// canceled. Command sessions return handled=false and keep the existing
+// supervisor cancellation path.
+func (c *Controller) StopInteractiveRun(ctx context.Context, runID, reason string) (bool, error) {
+	if c == nil || c.interactiveSessions == nil {
+		return false, nil
+	}
+	session, err := c.interactiveSessions.Get(strings.TrimSpace(runID))
+	if err != nil {
+		if errors.Is(err, ErrInteractiveSessionNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	prompt, running := session.promptTurnRunning()
+	if !prompt {
+		return false, nil
+	}
+	input := RunAttachInput{Kind: RunAttachInputStdinEOF}
+	if running {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			reason = "stop requested"
+		}
+		input = RunAttachInput{Kind: RunAttachInputCancel, Reason: reason}
+	}
+	if err := session.Send(ctx, input); err != nil {
+		if errors.Is(err, ErrInteractiveSessionClosed) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 func (c *Controller) attachExistingInteractiveSession(ctx context.Context, runID string, receive RunAttachReceiver, send RunAttachSender) error {
 	runID = strings.TrimSpace(runID)
 	if c.configDB == nil {

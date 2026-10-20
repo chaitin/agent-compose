@@ -165,3 +165,7 @@ func (c *runSupervisorHeaderController) RunProjectCommandAttachRegistered(
 		return nil
 	}
 }
+
+func (*runSupervisorHeaderController) StopInteractiveRun(context.Context, string, string) (bool, error) {
+	return false, nil
+}

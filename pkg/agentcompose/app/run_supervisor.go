@@ -29,6 +29,7 @@ type RunSupervisor struct {
 type runSupervisorController interface {
 	StartProjectRun(context.Context, runs.RunAgentRequest) (runs.StartedProjectRun, error)
 	RunProjectCommandAttachRegistered(context.Context, context.Context, runs.RunAttachReceiver, runs.RunAttachSender, func(string, <-chan struct{})) error
+	StopInteractiveRun(context.Context, string, string) (bool, error)
 }
 
 type activeRun struct {
@@ -196,6 +197,9 @@ func (s *RunSupervisor) Shutdown(ctx context.Context) error {
 	}
 }
 
+// StopActiveRun lets the controller close a prompt session according to its
+// own turn state before falling back to context cancellation for command and
+// non-interactive runs.
 func (s *RunSupervisor) StopActiveRun(ctx context.Context, runID, reason string) (bool, error) {
 	runID = strings.TrimSpace(runID)
 	if runID == "" {
@@ -214,6 +218,19 @@ func (s *RunSupervisor) StopActiveRun(ctx context.Context, runID, reason string)
 		reason = strings.TrimSpace(reason)
 		if reason == "" {
 			reason = "stop requested"
+		}
+		if s.controller != nil {
+			handled, err := s.controller.StopInteractiveRun(ctx, runID, reason)
+			if handled {
+				active.stopped = true
+				return
+			}
+			if err != nil {
+				active.cancel(errors.New(reason))
+				active.stopped = true
+				active.stopErr = err
+				return
+			}
 		}
 		active.cancel(errors.New(reason))
 		active.stopped = true

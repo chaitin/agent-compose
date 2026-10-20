@@ -209,6 +209,10 @@ func (c *runSupervisorInteractiveController) RunProjectCommandAttachRegistered(
 	}
 }
 
+func (*runSupervisorInteractiveController) StopInteractiveRun(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
 type runSupervisorAttachController struct {
 	started         chan struct{}
 	inputCanceled   chan struct{}
@@ -250,6 +254,10 @@ func (c *runSupervisorAttachController) RunProjectCommandAttachRegistered(
 	case <-c.finishExecution:
 		return nil
 	}
+}
+
+func (*runSupervisorAttachController) StopInteractiveRun(context.Context, string, string) (bool, error) {
+	return false, nil
 }
 
 func TestRunSupervisorStopActiveRunRequestsCancellationWithoutMarkingTerminal(t *testing.T) {
@@ -350,4 +358,70 @@ func newRunSupervisorTestConfigStore(t *testing.T) *configstore.ConfigStore {
 		}
 	})
 	return store
+}
+
+type runSupervisorStoppingController struct {
+	handled bool
+	stopErr error
+	stops   chan string
+}
+
+func (*runSupervisorStoppingController) StartProjectRun(context.Context, runs.RunAgentRequest) (runs.StartedProjectRun, error) {
+	return runs.StartedProjectRun{}, errors.New("unexpected StartProjectRun call")
+}
+
+func (*runSupervisorStoppingController) RunProjectCommandAttachRegistered(
+	context.Context,
+	context.Context,
+	runs.RunAttachReceiver,
+	runs.RunAttachSender,
+	func(string, <-chan struct{}),
+) error {
+	return errors.New("unexpected RunProjectCommandAttachRegistered call")
+}
+
+func (c *runSupervisorStoppingController) StopInteractiveRun(_ context.Context, runID, reason string) (bool, error) {
+	select {
+	case c.stops <- runID + ":" + reason:
+	default:
+	}
+	return c.handled, c.stopErr
+}
+
+func TestRunSupervisorStopActiveRunUsesInteractiveSessionStopBeforeCanceling(t *testing.T) {
+	controller := &runSupervisorStoppingController{handled: true, stops: make(chan string, 2)}
+	cancelCalls := 0
+	supervisor := &RunSupervisor{
+		controller: controller,
+		active: map[string]*activeRun{
+			"run-1": {cancel: func(error) { cancelCalls++ }},
+		},
+	}
+	stopped, err := supervisor.StopActiveRun(context.Background(), "run-1", "audit reason")
+	if err != nil || !stopped {
+		t.Fatalf("StopActiveRun() stopped=%v err=%v, want true/nil", stopped, err)
+	}
+	if cancelCalls != 0 {
+		t.Fatalf("interactive stop canceled the execution context %d times, want 0", cancelCalls)
+	}
+	select {
+	case got := <-controller.stops:
+		if got != "run-1:audit reason" {
+			t.Fatalf("stop request = %q, want run-1:audit reason", got)
+		}
+	default:
+		t.Fatal("controller did not receive the interactive stop")
+	}
+	stopped, err = supervisor.StopActiveRun(context.Background(), "run-1", "second stop")
+	if err != nil || !stopped {
+		t.Fatalf("second StopActiveRun() stopped=%v err=%v, want true/nil", stopped, err)
+	}
+	if cancelCalls != 0 {
+		t.Fatalf("second stop canceled the execution context %d times, want 0", cancelCalls)
+	}
+	select {
+	case got := <-controller.stops:
+		t.Fatalf("second stop reached the controller as %q, want none", got)
+	default:
+	}
 }

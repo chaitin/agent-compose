@@ -29,15 +29,17 @@ const (
 type InteractiveSession struct {
 	RunID string
 
-	mu             sync.Mutex
-	state          InteractiveSessionState
-	input          chan RunAttachInput
-	done           chan struct{}
-	attached       bool
-	closeOnce      sync.Once
-	runtime        driverpkg.RuntimeInteraction
-	subscribers    map[uint64]chan RunAttachOutput
-	nextSubscriber uint64
+	mu                 sync.Mutex
+	state              InteractiveSessionState
+	input              chan RunAttachInput
+	done               chan struct{}
+	attached           bool
+	closeOnce          sync.Once
+	runtime            driverpkg.RuntimeInteraction
+	subscribers        map[uint64]chan RunAttachOutput
+	nextSubscriber     uint64
+	promptTurns        bool
+	promptTurnsPending int
 }
 
 type InteractiveSessionAttachment struct {
@@ -137,6 +139,45 @@ func (s *InteractiveSession) State() InteractiveSessionState {
 
 func (s *InteractiveSession) Start() error { return s.transition(InteractiveSessionRunning) }
 
+// enablePromptTurns marks this session as a prompt-session-level multi-turn
+// interaction. Command sessions never enter this state, so StopRun keeps their
+// existing cancellation behavior.
+func (s *InteractiveSession) enablePromptTurns() {
+	s.mu.Lock()
+	s.promptTurns = true
+	s.mu.Unlock()
+}
+
+// beginInitialPromptTurn arms prompt turn tracking and records the prompt that
+// is sent before the session's input pump starts. Doing both under one lock
+// means a stop arriving before that prompt falls back to cancellation instead
+// of being queued as a normal close for work that never started.
+func (s *InteractiveSession) beginInitialPromptTurn() {
+	s.mu.Lock()
+	if !interactiveSessionTerminal(s.state) {
+		s.promptTurns = true
+		s.promptTurnsPending++
+	}
+	s.mu.Unlock()
+}
+
+// completePromptTurn records the agent's completed-turn frame. StopRun reads
+// the remaining queued/current turns to choose a normal eof close over an
+// interrupt cancel.
+func (s *InteractiveSession) completePromptTurn() {
+	s.mu.Lock()
+	if s.promptTurnsPending > 0 {
+		s.promptTurnsPending--
+	}
+	s.mu.Unlock()
+}
+
+func (s *InteractiveSession) promptTurnRunning() (enabled, running bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.promptTurns, s.promptTurnsPending > 0
+}
+
 func (s *InteractiveSession) transition(next InteractiveSessionState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -184,6 +225,9 @@ func (s *InteractiveSession) send(ctx context.Context, input RunAttachInput, att
 		s.mu.Unlock()
 		return ErrInteractiveSessionClosed
 	}
+	if s.promptTurns && startsPromptTurn(input) {
+		s.promptTurnsPending++
+	}
 	s.mu.Unlock()
 	select {
 	case <-ctx.Done():
@@ -219,6 +263,17 @@ func (s *InteractiveSession) Receive() RunAttachReceiver {
 		case <-s.done:
 			return RunAttachInput{}, ErrInteractiveSessionClosed
 		}
+	}
+}
+
+func startsPromptTurn(input RunAttachInput) bool {
+	switch input.Kind {
+	case RunAttachInputHumanMessage:
+		return true
+	case RunAttachInputStdin:
+		return true
+	default:
+		return false
 	}
 }
 

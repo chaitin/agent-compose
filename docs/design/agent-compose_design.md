@@ -445,8 +445,14 @@ scheduler trigger, or future API clients.
     attempts are exhausted the run is finalized in the terminal state its first
     completion writer selected, with the cleanup failure preserved.
 11. After cleanup succeeds, atomically commit the terminal run fields and its
-    unique status event and remove the completion journal. `StopRun` is a
-    cancellation request and can therefore return before this terminal commit.
+    unique status event and remove the completion journal. `StopRun` asks the
+    run to end and can therefore return before this terminal commit. For a
+    prompt interactive session the engine derives the disposition from its own
+    turn state: an idle session is closed normally with the wrapper's `eof`
+    frame and commits `succeeded`; an in-flight turn receives `cancel` and
+    commits `canceled`; an execution error remains `failed`. The request
+    `reason` is audit data only and never selects the status. Command and
+    non-interactive runs retain their existing cancellation behavior.
     `AbandonRunCompletion` is the operator counterpart for a cleanup that will
     not converge: it performs the same terminal commit while recording that the
     sandbox runtime may still exist, because it does not remove it.

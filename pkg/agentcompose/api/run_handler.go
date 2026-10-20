@@ -549,6 +549,8 @@ func (h *RunHandler) StopRun(ctx context.Context, req *connect.Request[agentcomp
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
 	}
 	if h.stopper != nil {
+		// The reason is audit data. Prompt sessions derive succeeded/canceled
+		// from their own turn state; command sessions retain cancellation.
 		stopped, err := h.stopper.StopActiveRun(ctx, runID, req.Msg.GetReason())
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
