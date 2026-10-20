@@ -172,6 +172,14 @@ func (s *InteractiveSession) completePromptTurn() {
 	s.mu.Unlock()
 }
 
+func (s *InteractiveSession) rollbackPromptTurnReservation() {
+	s.mu.Lock()
+	if s.promptTurnsPending > 0 {
+		s.promptTurnsPending--
+	}
+	s.mu.Unlock()
+}
+
 func (s *InteractiveSession) promptTurnRunning() (enabled, running bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -220,6 +228,7 @@ func (s *InteractiveSession) Send(ctx context.Context, input RunAttachInput) err
 }
 
 func (s *InteractiveSession) send(ctx context.Context, input RunAttachInput, attachmentDone <-chan struct{}) error {
+	reservedTurn := false
 	s.mu.Lock()
 	if interactiveSessionTerminal(s.state) {
 		s.mu.Unlock()
@@ -227,26 +236,33 @@ func (s *InteractiveSession) send(ctx context.Context, input RunAttachInput, att
 	}
 	if s.promptTurns && startsPromptTurn(input) {
 		s.promptTurnsPending++
+		reservedTurn = true
 	}
 	s.mu.Unlock()
+	fail := func(err error) error {
+		if reservedTurn {
+			s.rollbackPromptTurnReservation()
+		}
+		return err
+	}
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return fail(ctx.Err())
 	case <-attachmentDone:
-		return ErrInteractiveSessionClosed
+		return fail(ErrInteractiveSessionClosed)
 	case <-s.done:
-		return ErrInteractiveSessionClosed
+		return fail(ErrInteractiveSessionClosed)
 	default:
 	}
 	select {
 	case s.input <- input:
 		return nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return fail(ctx.Err())
 	case <-attachmentDone:
-		return ErrInteractiveSessionClosed
+		return fail(ErrInteractiveSessionClosed)
 	case <-s.done:
-		return ErrInteractiveSessionClosed
+		return fail(ErrInteractiveSessionClosed)
 	}
 }
 

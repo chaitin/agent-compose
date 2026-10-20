@@ -151,6 +151,52 @@ func TestInteractiveSessionAttachmentCloseInterruptsBackpressure(t *testing.T) {
 	}
 }
 
+func TestInteractiveSessionDetachedSendRollsBackPromptTurn(t *testing.T) {
+	m := NewInteractiveSessionManager()
+	s, err := m.Create("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.enablePromptTurns()
+	attachment, err := m.Attach("run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range cap(s.input) {
+		if err := s.Send(context.Background(), RunAttachInput{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sendDone := make(chan error, 1)
+	go func() {
+		sendDone <- attachment.Send(context.Background(), RunAttachInput{Kind: RunAttachInputHumanMessage})
+	}()
+	deadline := time.After(time.Second)
+	for {
+		if _, running := s.promptTurnRunning(); running {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("prompt turn was not reserved for the blocked Send")
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	attachment.Close()
+	select {
+	case err := <-sendDone:
+		if !errors.Is(err, ErrInteractiveSessionClosed) {
+			t.Fatalf("blocked Send() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("attachment Close() did not interrupt blocked Send()")
+	}
+	if _, running := s.promptTurnRunning(); running {
+		t.Fatal("failed Send() left a prompt turn reserved after detach")
+	}
+}
+
 func TestStartRunAttachInputForwarderReleasesInitialLeaseBeforeResume(t *testing.T) {
 	m := NewInteractiveSessionManager()
 	s, err := m.Create("run-1")
