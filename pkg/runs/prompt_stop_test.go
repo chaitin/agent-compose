@@ -15,16 +15,15 @@ import (
 
 func TestControllerStopInteractiveRunChoosesEOFOrCancelFromTurnState(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		prompt     bool
-		turn       bool
-		wantKind   RunAttachInputKind
-		wantStop   bool
-		wantReason string
+		name     string
+		prompt   bool
+		turn     bool
+		wantKind RunAttachInputKind
+		wantStop bool
 	}{
 		{name: "idle prompt closes normally", prompt: true, wantKind: RunAttachInputStdinEOF, wantStop: true},
-		{name: "running prompt is canceled", prompt: true, turn: true, wantKind: RunAttachInputCancel, wantStop: true, wantReason: "audit only"},
-		{name: "command session keeps supervisor cancellation", wantStop: false},
+		{name: "running prompt falls back to context cancellation", prompt: true, turn: true, wantStop: false},
+		{name: "command session falls back to supervisor cancellation", wantStop: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manager := NewInteractiveSessionManager()
@@ -50,8 +49,8 @@ func TestControllerStopInteractiveRunChoosesEOFOrCancelFromTurnState(t *testing.
 			if err != nil {
 				t.Fatal(err)
 			}
-			if input.Kind != tc.wantKind || input.Reason != tc.wantReason {
-				t.Fatalf("stop input = %#v, want kind=%q reason=%q", input, tc.wantKind, tc.wantReason)
+			if input.Kind != tc.wantKind {
+				t.Fatalf("stop input = %#v, want kind=%q", input, tc.wantKind)
 			}
 		})
 	}
@@ -131,6 +130,7 @@ type turnHoldInteraction struct {
 	frames      chan driverpkg.RuntimeOutputFrame
 	sent        chan driverpkg.RuntimeInputFrame
 	turnStarted chan struct{}
+	recvErr     chan error
 	finishOnce  sync.Once
 }
 
@@ -139,6 +139,7 @@ func newTurnHoldInteraction() *turnHoldInteraction {
 		frames:      make(chan driverpkg.RuntimeOutputFrame, 8),
 		sent:        make(chan driverpkg.RuntimeInputFrame, 8),
 		turnStarted: make(chan struct{}),
+		recvErr:     make(chan error, 1),
 	}
 }
 
@@ -178,11 +179,15 @@ func (i *turnHoldInteraction) CloseSend() error {
 }
 
 func (i *turnHoldInteraction) Recv() (driverpkg.RuntimeOutputFrame, error) {
-	frame, ok := <-i.frames
-	if !ok {
-		return driverpkg.RuntimeOutputFrame{}, io.EOF
+	select {
+	case err := <-i.recvErr:
+		return driverpkg.RuntimeOutputFrame{}, err
+	case frame, ok := <-i.frames:
+		if !ok {
+			return driverpkg.RuntimeOutputFrame{}, io.EOF
+		}
+		return frame, nil
 	}
-	return frame, nil
 }
 
 func (*turnHoldInteraction) Wait() (driverpkg.RuntimeResult, error) {
@@ -198,10 +203,12 @@ func TestControllerStopPromptAttachDuringTurnEndsCanceled(t *testing.T) {
 	requests <- RunAttachInput{Kind: RunAttachInputStart, Mode: RunAttachModePrompt, Request: RunAgentRequest{
 		ProjectID: "project-1", AgentName: "worker", Prompt: "long task",
 	}}
+	execCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	started := make(chan string, 1)
 	done := make(chan error, 1)
 	go func() {
-		done <- controller.RunProjectCommandAttach(context.Background(), func() (RunAttachInput, error) {
+		done <- controller.RunProjectCommandAttach(execCtx, func() (RunAttachInput, error) {
 			input, ok := <-requests
 			if !ok {
 				return RunAttachInput{}, io.EOF
@@ -227,9 +234,11 @@ func TestControllerStopPromptAttachDuringTurnEndsCanceled(t *testing.T) {
 		t.Fatal("prompt turn did not start")
 	}
 	handled, err := controller.StopInteractiveRun(context.Background(), runID, "user stopped")
-	if err != nil || !handled {
-		t.Fatalf("StopInteractiveRun() handled=%v err=%v, want true/nil", handled, err)
+	if err != nil || handled {
+		t.Fatalf("StopInteractiveRun() handled=%v err=%v, want false/nil for a running turn", handled, err)
 	}
+	cancel()
+	interaction.recvErr <- io.ErrClosedPipe
 	select {
 	case err := <-done:
 		if err != nil {

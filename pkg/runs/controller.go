@@ -378,12 +378,11 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	return nil
 }
 
-// StopInteractiveRun asks a prompt session to end according to its own engine
-// state. The caller's reason is audit data only: an idle session receives eof
-// and ends successfully, while an in-flight turn receives cancel and ends
-// canceled. Command sessions return handled=false and keep the existing
-// supervisor cancellation path.
-func (c *Controller) StopInteractiveRun(ctx context.Context, runID, reason string) (bool, error) {
+// StopInteractiveRun gracefully closes an idle prompt session. It returns
+// handled=false while a turn is running or for a command session, leaving the
+// supervisor's execution-context cancellation as the interrupt path. The
+// request reason is audit data only and never selects the disposition.
+func (c *Controller) StopInteractiveRun(ctx context.Context, runID, _ string) (bool, error) {
 	if c == nil || c.interactiveSessions == nil {
 		return false, nil
 	}
@@ -398,15 +397,10 @@ func (c *Controller) StopInteractiveRun(ctx context.Context, runID, reason strin
 	if !prompt {
 		return false, nil
 	}
-	input := RunAttachInput{Kind: RunAttachInputStdinEOF}
 	if running {
-		reason = strings.TrimSpace(reason)
-		if reason == "" {
-			reason = "stop requested"
-		}
-		input = RunAttachInput{Kind: RunAttachInputCancel, Reason: reason}
+		return false, nil
 	}
-	if err := session.Send(ctx, input); err != nil {
+	if err := session.Send(ctx, RunAttachInput{Kind: RunAttachInputStdinEOF}); err != nil {
 		if errors.Is(err, ErrInteractiveSessionClosed) {
 			return false, nil
 		}

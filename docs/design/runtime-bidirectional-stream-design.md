@@ -527,7 +527,7 @@ Rules:
 2. Only after `TurnCompleted` should the daemon/CLI show the next input prompt.
 3. EOF or `/exit` enters Closing.
 4. Client disconnect cancels the current interactive foreground session by default.
-5. `StopRun` uses the session's own turn state, not the request reason, to choose the disposition. In `WaitingInput` (no active turn) it sends the prompt wrapper `eof` and commits `succeeded`; in `RunningTurn` it sends `cancel` and commits `canceled`. A turn that already failed commits `failed`. `reason` is audit-only. The RPC may return `stop_requested=true` before the terminal completion commit.
+5. `StopRun` uses the session's own turn state, not the request reason, to choose the disposition. In `WaitingInput` (no active turn) it sends the prompt wrapper `eof` and commits `succeeded`; in `RunningTurn` it interrupts the execution context and commits `canceled`. A turn that already failed commits `failed`. `reason` is audit-only. The RPC may return `stop_requested=true` before the terminal completion commit.
 
 ## Compatibility and Deprecation Strategy
 

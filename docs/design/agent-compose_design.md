@@ -449,8 +449,8 @@ scheduler trigger, or future API clients.
     run to end and can therefore return before this terminal commit. For a
     prompt interactive session the engine derives the disposition from its own
     turn state: an idle session is closed normally with the wrapper's `eof`
-    frame and commits `succeeded`; an in-flight turn receives `cancel` and
-    commits `canceled`; an execution error remains `failed`. The request
+    frame and commits `succeeded`; an in-flight turn is interrupted by cancelling its
+    execution context and commits `canceled`; an execution error remains `failed`. The request
     `reason` is audit data only and never selects the status. Command and
     non-interactive runs retain their existing cancellation behavior.
     `AbandonRunCompletion` is the operator counterpart for a cleanup that will

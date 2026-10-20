@@ -25,7 +25,11 @@ func markProjectRunTerminalError(ctx context.Context, coordinator *Coordinator, 
 
 func (c *Controller) completeProjectRunError(ctx, executionCtx context.Context, transition TransitionRequest, err error) (domain.ProjectRunRecord, error) {
 	transition.Status = domain.ProjectRunStatusFailed
-	if errors.Is(err, context.Canceled) {
+	// An explicitly cancelled execution context is authoritative even when the
+	// runtime adapter reports the resulting I/O failure as a different error.
+	// This is how StopRun interrupts a running turn without mistaking it for an
+	// execution failure.
+	if errors.Is(executionCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 		transition.Status = domain.ProjectRunStatusCanceled
 		if cause := context.Cause(executionCtx); cause != nil {
 			transition.Error = cause.Error()

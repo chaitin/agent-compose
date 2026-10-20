@@ -425,3 +425,29 @@ func TestRunSupervisorStopActiveRunUsesInteractiveSessionStopBeforeCanceling(t *
 	default:
 	}
 }
+
+func TestRunSupervisorStopActiveRunFallsBackToContextCancelForRunningTurn(t *testing.T) {
+	controller := &runSupervisorStoppingController{handled: false, stops: make(chan string, 1)}
+	cancelCalls := 0
+	supervisor := &RunSupervisor{
+		controller: controller,
+		active: map[string]*activeRun{
+			"run-1": {cancel: func(error) { cancelCalls++ }},
+		},
+	}
+	stopped, err := supervisor.StopActiveRun(context.Background(), "run-1", "turn interrupted")
+	if err != nil || !stopped {
+		t.Fatalf("StopActiveRun() stopped=%v err=%v, want true/nil", stopped, err)
+	}
+	if cancelCalls != 1 {
+		t.Fatalf("execution context cancellation calls = %d, want 1", cancelCalls)
+	}
+	select {
+	case got := <-controller.stops:
+		if got != "run-1:turn interrupted" {
+			t.Fatalf("stop request = %q, want run-1:turn interrupted", got)
+		}
+	default:
+		t.Fatal("controller did not receive the running-turn stop")
+	}
+}
