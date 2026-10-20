@@ -1,0 +1,4 @@
+interface:
+  display_name: "Start local agent-compose UI"
+  short_description: "Start or refresh the local daemon and Web UI"
+  default_prompt: "Use $start-agent-compose-ui to start or refresh the singleton local daemon and Web UI; use ../agent-compose-ui source when present and require an LLM key in the repository .env."
