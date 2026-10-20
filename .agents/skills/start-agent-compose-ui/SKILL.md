@@ -94,7 +94,7 @@ If protobuf contracts change, regenerate the sibling UI's checked-in TypeScript 
 - UI authentication for local source runs: `<sibling-ui-repo>/.env`. If it does not exist, the script creates it with username `admin`, password `admin`, and a stable local-only session secret. Existing files are parsed as data rather than sourced as shell code.
 - Agent sandboxes: Docker containers using `chaitin/agent-compose-guest:latest` unless `DEFAULT_IMAGE` selects another image.
 - UI browser port: `127.0.0.1:<ui-port>`.
-- Daemon port: loopback on Docker Desktop and the Docker bridge gateway on Linux, so host tools and sandboxes can reach the runtime facade without binding the unauthenticated control plane to every network interface.
+- Daemon port: loopback on Docker Desktop and a locally assigned Docker bridge gateway on Linux, so host tools and sandboxes can reach the runtime facade without binding the unauthenticated control plane to every network interface. If a Linux engine exposes only a gateway from another network namespace or VM (for example rootless Docker), the script fails before startup instead of advertising an unreachable runtime URL.
 - Data: `<root>/data`; UI state: `<root>/ui-data`; daemon log: `<root>/daemon.log`.
 
 Do not default to `task image:agent-compose`; it depends on optional BoxLite and Microsandbox artifacts. The native Docker-only binary is sufficient for UI testing.

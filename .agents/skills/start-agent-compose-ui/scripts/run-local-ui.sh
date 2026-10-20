@@ -517,17 +517,42 @@ PY
 
 load_ui_env
 
+can_bind_tcp_host() {
+  python3 - "$1" "$2" <<'PY'
+import socket
+import sys
+
+host = sys.argv[1]
+port = int(sys.argv[2])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((host, port))
+    except OSError:
+        sys.exit(1)
+PY
+}
+
 daemon_listen_host=127.0.0.1
 daemon_connect_host=127.0.0.1
 container_daemon_host=host.docker.internal
 if [[ "$(uname -s)" != "Darwin" ]]; then
   docker_gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}' 2>/dev/null || true)"
-  if [[ -n "$docker_gateway" && "$docker_gateway" != "<no value>" ]]; then
+  if [[ -n "$docker_gateway" && "$docker_gateway" != "<no value>" ]] && can_bind_tcp_host "$docker_gateway" "$engine_port"; then
     daemon_listen_host="$docker_gateway"
     daemon_connect_host="$docker_gateway"
     container_daemon_host="$docker_gateway"
   else
-    echo "warning: could not determine the Docker bridge gateway; daemon HTTP will bind to loopback only" >&2
+    docker_os="$(docker info --format '{{.OperatingSystem}}' 2>/dev/null || true)"
+    if [[ "$docker_os" != *"Docker Desktop"* ]]; then
+      cat >&2 <<EOF
+cannot determine a Docker-reachable daemon address for engine port $engine_port
+Docker bridge gateway ${docker_gateway:-<unknown>} is not assigned to this host,
+and the active Docker engine is not Docker Desktop. Use Docker Desktop or a
+rootful Docker bridge network for this local UI workflow.
+EOF
+      exit 1
+    fi
   fi
 fi
 daemon_url="http://$daemon_connect_host:$engine_port"
