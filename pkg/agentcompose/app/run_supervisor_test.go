@@ -6,6 +6,7 @@ import (
 	"io"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -344,6 +345,111 @@ func TestRunSupervisorUnregisterRemovesStoppingRun(t *testing.T) {
 	supervisor.unregister("run-1")
 	if _, ok := supervisor.active["run-1"]; ok {
 		t.Fatalf("stopping run remained registered")
+	}
+}
+
+// runSupervisorStartController returns a fixed run for StartProjectRun and
+// counts Execute calls so the idempotency dedup in StartRun/Run can be asserted.
+type runSupervisorStartController struct {
+	run      domain.ProjectRunRecord
+	executed atomic.Int32
+}
+
+func (c *runSupervisorStartController) StartProjectRun(_ context.Context, _ runs.RunAgentRequest) (runs.StartedProjectRun, error) {
+	return runs.StartedProjectRun{
+		Run: c.run,
+		Execute: func(context.Context, *runs.StreamSink) (domain.ProjectRunRecord, error, error) {
+			c.executed.Add(1)
+			return c.run, nil, nil
+		},
+	}, nil
+}
+
+func (*runSupervisorStartController) RunProjectCommandAttachRegistered(context.Context, context.Context, runs.RunAttachReceiver, runs.RunAttachSender, func(string, <-chan struct{})) error {
+	return errors.New("unexpected RunProjectCommandAttachRegistered call")
+}
+
+func (*runSupervisorStartController) ReattachDetachedRun(context.Context, domain.ProjectRunRecord) (domain.ProjectRunRecord, error) {
+	return domain.ProjectRunRecord{}, errors.New("unexpected ReattachDetachedRun call")
+}
+
+func (*runSupervisorStartController) StopInteractiveRun(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func TestRunSupervisorStartRunDoesNotReexecuteRunningRun(t *testing.T) {
+	// A detached run that survived a daemon restart is already running: a retry
+	// with the same idempotency key must resolve to it without starting a second
+	// execution.
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	t.Cleanup(cancelRoot)
+	controller := &runSupervisorStartController{run: domain.ProjectRunRecord{RunID: "run-1", Status: domain.ProjectRunStatusRunning}}
+	supervisor := &RunSupervisor{root: rootCtx, controller: controller, active: map[string]*activeRun{}}
+
+	run, err := supervisor.StartRun(context.Background(), runs.RunAgentRequest{})
+	if err != nil {
+		t.Fatalf("StartRun() error = %v", err)
+	}
+	if run.RunID != "run-1" || run.Status != domain.ProjectRunStatusRunning {
+		t.Fatalf("StartRun() run = %#v, want running run-1", run)
+	}
+	if controller.executed.Load() != 0 {
+		t.Fatalf("Execute called %d times, want 0 for an already-running run", controller.executed.Load())
+	}
+	supervisor.mu.Lock()
+	_, active := supervisor.active["run-1"]
+	supervisor.mu.Unlock()
+	if active {
+		t.Fatal("already-running run was registered for a second execution")
+	}
+}
+
+func TestRunSupervisorStartRunDoesNotReexecuteRegisteredRun(t *testing.T) {
+	// Two concurrent requests with the same idempotency key both observe the
+	// run as pending; the second must not execute again and must not overwrite
+	// the first request's registration.
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	t.Cleanup(cancelRoot)
+	controller := &runSupervisorStartController{run: domain.ProjectRunRecord{RunID: "run-1", Status: domain.ProjectRunStatusPending}}
+	supervisor := &RunSupervisor{
+		root:       rootCtx,
+		controller: controller,
+		active:     map[string]*activeRun{"run-1": {cancel: func(error) {}}},
+	}
+
+	run, err := supervisor.StartRun(context.Background(), runs.RunAgentRequest{})
+	if err != nil {
+		t.Fatalf("StartRun() error = %v", err)
+	}
+	if run.RunID != "run-1" {
+		t.Fatalf("StartRun() run = %#v, want run-1", run)
+	}
+	if controller.executed.Load() != 0 {
+		t.Fatalf("Execute called %d times, want 0 for an already-registered run", controller.executed.Load())
+	}
+	supervisor.mu.Lock()
+	active, ok := supervisor.active["run-1"]
+	supervisor.mu.Unlock()
+	if !ok || active == nil {
+		t.Fatal("existing registration was removed or overwritten")
+	}
+}
+
+func TestRunSupervisorRunDoesNotReexecuteRunningRun(t *testing.T) {
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	t.Cleanup(cancelRoot)
+	controller := &runSupervisorStartController{run: domain.ProjectRunRecord{RunID: "run-1", Status: domain.ProjectRunStatusRunning}}
+	supervisor := &RunSupervisor{root: rootCtx, controller: controller, active: map[string]*activeRun{}}
+
+	run, _, err := supervisor.Run(context.Background(), runs.RunAgentRequest{}, nil)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if run.RunID != "run-1" {
+		t.Fatalf("Run() run = %#v, want run-1", run)
+	}
+	if controller.executed.Load() != 0 {
+		t.Fatalf("Execute called %d times, want 0 for an already-running run", controller.executed.Load())
 	}
 }
 
