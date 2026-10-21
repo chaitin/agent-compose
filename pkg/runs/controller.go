@@ -341,6 +341,25 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	if err != nil {
 		return err
 	}
+	if started.Run.Status == domain.ProjectRunStatusRunning {
+		// The run is already running (a retry with the same idempotency key
+		// after it detached and survived a restart): tell the caller which run
+		// it is and close, without opening a second interactive session. The
+		// onStarted callback still fires with an already-released input so
+		// startInteractiveRun can return the run it resolved to.
+		if onStarted != nil {
+			released := make(chan struct{})
+			close(released)
+			onStarted(started.Run.RunID, released)
+		}
+		return send(RunAttachOutput{
+			Kind:      RunAttachOutputStarted,
+			CreatedAt: time.Now().UTC(),
+			Run:       started.Run,
+			SandboxID: started.Run.SandboxID,
+			Warnings:  append([]string(nil), started.Warnings...),
+		})
+	}
 	session, releaseInput, err := c.interactiveSessions.CreateAttached(started.Run.RunID)
 	if err != nil {
 		return err

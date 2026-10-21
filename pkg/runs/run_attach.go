@@ -40,12 +40,6 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 	warnings := attach.Warnings
 	start := attach.Start
 	mode := attach.Mode
-	// A retry of an already-running interactive run (the same idempotency key
-	// resolving to a detached run that survived a restart) must not open a
-	// second interactive session.
-	if run.Status == domain.ProjectRunStatusRunning {
-		return withRunWarnings(run, warnings), nil, nil
-	}
 	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
 	transitionCtx := context.WithoutCancel(ctx)
 	// Only a detached interactive task may outlive the daemon; preparation and

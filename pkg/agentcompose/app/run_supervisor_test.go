@@ -453,6 +453,72 @@ func TestRunSupervisorRunDoesNotReexecuteRunningRun(t *testing.T) {
 	}
 }
 
+// runSupervisorInteractiveRunningController simulates an interactive start whose
+// idempotency key resolves to an already-running run: onStarted fires and the
+// attach returns immediately without running a second session.
+type runSupervisorInteractiveRunningController struct {
+	runID string
+}
+
+func (*runSupervisorInteractiveRunningController) StartProjectRun(context.Context, runs.RunAgentRequest) (runs.StartedProjectRun, error) {
+	return runs.StartedProjectRun{}, errors.New("unexpected StartProjectRun call")
+}
+
+func (c *runSupervisorInteractiveRunningController) RunProjectCommandAttachRegistered(
+	_ context.Context,
+	_ context.Context,
+	_ runs.RunAttachReceiver,
+	_ runs.RunAttachSender,
+	onStarted func(string, <-chan struct{}),
+) error {
+	if onStarted != nil {
+		released := make(chan struct{})
+		onStarted(c.runID, released)
+		close(released)
+	}
+	return nil
+}
+
+func (*runSupervisorInteractiveRunningController) ReattachDetachedRun(context.Context, domain.ProjectRunRecord) (domain.ProjectRunRecord, error) {
+	return domain.ProjectRunRecord{}, errors.New("unexpected ReattachDetachedRun call")
+}
+
+func (*runSupervisorInteractiveRunningController) StopInteractiveRun(context.Context, string, string) (bool, error) {
+	return false, nil
+}
+
+func TestRunSupervisorInteractiveStartReturnsRunningRunOnRetry(t *testing.T) {
+	// An interactive retry whose key resolves to an already-running run must
+	// return that run, not race the started/failed channels into an empty run.
+	rootCtx, cancelRoot := context.WithCancel(context.Background())
+	t.Cleanup(cancelRoot)
+	store := newRunSupervisorTestConfigStore(t)
+	if _, err := store.UpsertProject(context.Background(), domain.ProjectRecord{ID: "project-1", Name: "project", SourcePath: "/tmp/project", SourceJSON: "{}"}); err != nil {
+		t.Fatalf("UpsertProject: %v", err)
+	}
+	agent, err := store.UpsertProjectAgent(context.Background(), domain.ProjectAgentRecord{ProjectID: "project-1", AgentName: "worker"})
+	if err != nil {
+		t.Fatalf("UpsertProjectAgent: %v", err)
+	}
+	if _, err := store.CreateProjectRun(context.Background(), domain.ProjectRunRecord{
+		RunID: "run-1", ProjectID: "project-1", ProjectName: "project", AgentName: "worker", AgentID: agent.ID,
+		Source: domain.ProjectRunSourceManual, Status: domain.ProjectRunStatusRunning, ResultJSON: "{}",
+	}); err != nil {
+		t.Fatalf("CreateProjectRun: %v", err)
+	}
+
+	controller := &runSupervisorInteractiveRunningController{runID: "run-1"}
+	supervisor := &RunSupervisor{root: rootCtx, controller: controller, store: store, active: map[string]*activeRun{}}
+
+	run, err := supervisor.StartRun(context.Background(), runs.RunAgentRequest{Interactive: true, Prompt: "already running"})
+	if err != nil {
+		t.Fatalf("StartRun() error = %v", err)
+	}
+	if run.RunID != "run-1" || run.Status != domain.ProjectRunStatusRunning {
+		t.Fatalf("StartRun() run = %#v, want running run-1", run)
+	}
+}
+
 func newRunSupervisorTestConfigStore(t *testing.T) *configstore.ConfigStore {
 	t.Helper()
 	root := t.TempDir()

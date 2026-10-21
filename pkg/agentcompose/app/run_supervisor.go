@@ -147,7 +147,9 @@ func (s *RunSupervisor) startInteractiveRun(ctx context.Context, req runs.RunAge
 		defer s.wg.Done()
 		defer cancel(nil)
 		var runID string
+		var startedID string
 		err := s.controller.RunProjectCommandAttachRegistered(execCtx, execCtx, receive, func(runs.RunAttachOutput) error { return nil }, func(id string, inputReleased <-chan struct{}) {
+			startedID = id
 			if s.register(id, cancel) {
 				runID = id
 			}
@@ -156,7 +158,13 @@ func (s *RunSupervisor) startInteractiveRun(ctx context.Context, req runs.RunAge
 		if runID != "" {
 			s.unregister(runID)
 		}
-		failed <- err
+		// Only a failure before onStarted is a start failure the caller must
+		// see as an error. Once onStarted fired (even for an already-running
+		// run), the started channel carries the result and a nil error must not
+		// race it and surface an empty run.
+		if startedID == "" {
+			failed <- err
+		}
 	}()
 	select {
 	case run := <-started:
