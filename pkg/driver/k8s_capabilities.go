@@ -15,11 +15,11 @@ func k8sRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 		},
 	}
 	dimensions = append(dimensions, securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{
-		CapabilityDrop: "neither the Pod nor the container declares a SecurityContext",
-		ReadOnlyRootfs: "the container SecurityContext is unset, so its root filesystem stays writable",
+		CapabilityDrop: "the container SecurityContext sets Capabilities.Drop to exactly [NET_RAW] and leaves every other runtime default capability in place",
+		ReadOnlyRootfs: "the container SecurityContext sets only capabilities and leaves ReadonlyRootfs unset, so its root filesystem stays writable",
 		NonRootUser:    "no PodSecurityContext runAsNonRoot or runAsUser is set, and ServiceAccountName is empty",
 		UserNamespaces: "no PodSecurityContext is set, so no user-namespace remapping is requested",
-	})...)
+	}, mechanismK8sCapabilityDrop)...)
 	dimensions = append(dimensions,
 		egressPolicyFacts(RuntimeDriverK8s),
 		credentialPlaceholderFacts("the Pod path has no credential substitution of its own: every other declared environment value is written verbatim"),

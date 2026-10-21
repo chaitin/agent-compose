@@ -1008,6 +1008,11 @@ func dockerSandboxHostConfig(mounts []mountapi.Mount, portBindings nat.PortMap, 
 		AutoRemove:   false,
 		NetworkMode:  networkMode,
 		Init:         &useInit,
+		// A sandbox is untrusted code. NET_RAW is what lets it open raw
+		// sockets, ARP-spoof a shared bridge and capture traffic between the
+		// control plane and the engine; the agent runtime never needs it, so
+		// it is dropped from Docker's default capability set.
+		CapDrop: []string{"NET_RAW"},
 	}
 }
 

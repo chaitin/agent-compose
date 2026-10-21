@@ -36,7 +36,7 @@ func microVMRuntimeCapabilityFacts(driver string, observed microVMObserved) Runt
 		ReadOnlyRootfs: reasonUnsupported,
 		NonRootUser:    reasonNotConfigured,
 		UserNamespaces: reasonUnsupported,
-	}, observed.SecurityContext)...)
+	}, observed.SecurityContext, "")...)
 	dimensions = append(dimensions,
 		egressPolicyFacts(driver),
 		credentialPlaceholderFacts(observed.CredentialPlaceholder),

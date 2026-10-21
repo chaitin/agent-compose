@@ -34,14 +34,27 @@ func uniformSecurityContextReasons(reason string) securityContextReasons {
 
 // securityContextFacts builds the four security-context dimension
 // declarations from their per-dimension reasons and evidence.
-func securityContextFacts(reasons securityContextReasons, observed securityContextObserved) []RuntimeCapabilityDimensionFacts {
+//
+// capabilityDropMechanism names the mechanism that enforces the
+// capability-drop dimension when the driver writes one into its runtime
+// configuration, and is empty for a driver that exposes no capability-drop
+// surface (the dimension then keeps reasons.CapabilityDrop). Folding the
+// enforcement here, instead of letting each driver overwrite the returned
+// dimension, keeps the enforced claim beside its evidence so the two cannot
+// drift the way the k8s read-only-rootfs evidence once did.
+func securityContextFacts(reasons securityContextReasons, observed securityContextObserved, capabilityDropMechanism string) []RuntimeCapabilityDimensionFacts {
+	capabilityDrop := RuntimeCapabilityDimensionFacts{
+		Dimension:       dimensionCapabilityDrop,
+		Mechanism:       reasons.CapabilityDrop,
+		Observed:        observed.CapabilityDrop,
+		DefaultBehavior: "the workload keeps the image's default Linux capability set",
+	}
+	if capabilityDropMechanism != "" {
+		capabilityDrop.Enforced = true
+		capabilityDrop.Mechanism = capabilityDropMechanism
+	}
 	return []RuntimeCapabilityDimensionFacts{
-		{
-			Dimension:       dimensionCapabilityDrop,
-			Mechanism:       reasons.CapabilityDrop,
-			Observed:        observed.CapabilityDrop,
-			DefaultBehavior: "the workload keeps the image's default Linux capability set",
-		},
+		capabilityDrop,
 		{
 			Dimension:       dimensionReadOnlyRootfs,
 			Mechanism:       reasons.ReadOnlyRootfs,

@@ -16,11 +16,11 @@ func dockerRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 		},
 	}
 	dimensions = append(dimensions, securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{
-		CapabilityDrop: "HostConfig.SecurityOpt and HostConfig.CapDrop are unset",
+		CapabilityDrop: "dockerSandboxHostConfig sets CapDrop to exactly [NET_RAW] and leaves every other Docker default capability in place",
 		ReadOnlyRootfs: "HostConfig.ReadonlyRootfs is false",
 		NonRootUser:    "the sandbox container Config.User is unset and the exec control path runs as User \"0\"",
 		UserNamespaces: "HostConfig.UsernsMode is unset",
-	})...)
+	}, mechanismDockerCapabilityDrop)...)
 	dimensions = append(dimensions,
 		egressPolicyFacts(RuntimeDriverDocker),
 		credentialPlaceholderFacts("the container path has no credential substitution of its own: every other declared environment value is written verbatim"),

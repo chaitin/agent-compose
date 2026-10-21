@@ -475,6 +475,16 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 					WorkingDir:      r.config.GuestWorkspacePath,
 					Env:             k8sEnvVars(env),
 					VolumeMounts:    volumeMounts,
+					// A sandbox is untrusted code. NET_RAW is what lets it open
+					// raw sockets, ARP-spoof a shared network and capture traffic
+					// between the control plane and the engine; the agent runtime
+					// never needs it, so it is dropped from the container's
+					// capability set.
+					SecurityContext: &corev1.SecurityContext{
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"NET_RAW"},
+						},
+					},
 				},
 			},
 			Volumes: volumes,
