@@ -14,21 +14,12 @@ func k8sRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 			DefaultBehavior: "an undeclared resource limit is not applied to the Pod",
 		},
 	}
-	security := securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{
-		CapabilityDrop: "the sandbox container's SecurityContext drops NET_RAW from its capability set",
+	dimensions = append(dimensions, securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{
+		CapabilityDrop: "the container SecurityContext sets Capabilities.Drop to exactly [NET_RAW] and leaves every other runtime default capability in place",
 		ReadOnlyRootfs: "the container SecurityContext sets only capabilities and leaves ReadonlyRootfs unset, so its root filesystem stays writable",
 		NonRootUser:    "no PodSecurityContext runAsNonRoot or runAsUser is set, and ServiceAccountName is empty",
 		UserNamespaces: "no PodSecurityContext is set, so no user-namespace remapping is requested",
-	})
-	for i := range security {
-		if security[i].Dimension != dimensionCapabilityDrop {
-			continue
-		}
-		security[i].Enforced = true
-		security[i].Mechanism = mechanismK8sSecurityContext
-		security[i].DefaultBehavior = "without the drop the sandbox could open raw sockets and ARP-spoof frames on a shared network"
-	}
-	dimensions = append(dimensions, security...)
+	}, mechanismK8sCapabilityDrop)...)
 	dimensions = append(dimensions,
 		egressPolicyFacts(RuntimeDriverK8s),
 		credentialPlaceholderFacts("the Pod path has no credential substitution of its own: every other declared environment value is written verbatim"),

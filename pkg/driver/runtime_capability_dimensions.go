@@ -27,8 +27,8 @@ const (
 	mechanismStoppedContainerRuntime = "stopped_container_retention"
 	mechanismStoppedMicroVMRuntime   = "stopped_microvm_retention"
 	mechanismSDKNetworkPolicy        = "sdk_network_policy"
-	mechanismDockerSecurityOptions   = "docker_security_options"
-	mechanismK8sSecurityContext      = "k8s_security_context"
+	mechanismDockerCapabilityDrop    = "docker_capability_drop"
+	mechanismK8sCapabilityDrop       = "k8s_capability_drop"
 	// mechanismRuntimeLLMFacadeToken is the engine-wide mechanism that replaces
 	// a declared LLM provider credential with a run-scoped facade token before
 	// the guest can read it. It lives in pkg/llms, not in a driver, so every

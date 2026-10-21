@@ -47,8 +47,14 @@ func TestK8sCapabilitiesMatchPodSpec(t *testing.T) {
 	if len(drop) != 1 || drop[0] != "NET_RAW" {
 		t.Fatalf("container capability drop = %v, want exactly NET_RAW", drop)
 	}
-	if capabilityDrop := capabilityDimensionForTest(t, facts, dimensionCapabilityDrop); !capabilityDrop.Enforced || capabilityDrop.Mechanism != mechanismK8sSecurityContext {
-		t.Fatalf("capability_drop declaration = %+v, want enforced via %q", capabilityDrop, mechanismK8sSecurityContext)
+	capabilityDrop := capabilityDimensionForTest(t, facts, dimensionCapabilityDrop)
+	if !capabilityDrop.Enforced || capabilityDrop.Mechanism != mechanismK8sCapabilityDrop {
+		t.Fatalf("capability_drop declaration = %+v, want enforced via %q", capabilityDrop, mechanismK8sCapabilityDrop)
+	}
+	for _, dropped := range drop {
+		if !strings.Contains(capabilityDrop.Observed, string(dropped)) {
+			t.Fatalf("capability_drop observed = %q does not name dropped capability %q; update the report when Capabilities.Drop changes", capabilityDrop.Observed, dropped)
+		}
 	}
 	if readOnly := capabilityDimensionForTest(t, facts, dimensionReadOnlyRootfs); !strings.Contains(readOnly.Observed, "ReadonlyRootfs") {
 		t.Fatalf("read_only_rootfs observed = %q, want it to name the unset ReadonlyRootfs field", readOnly.Observed)

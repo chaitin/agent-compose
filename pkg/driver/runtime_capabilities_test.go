@@ -47,8 +47,14 @@ func TestDockerCapabilitiesMatchHostConfig(t *testing.T) {
 	if len(hostConfig.CapDrop) != 1 || hostConfig.CapDrop[0] != "NET_RAW" || len(hostConfig.CapAdd) != 0 || len(hostConfig.SecurityOpt) != 0 {
 		t.Fatalf("HostConfig capability options = drop %v add %v opt %v, want only NET_RAW dropped", hostConfig.CapDrop, hostConfig.CapAdd, hostConfig.SecurityOpt)
 	}
-	if capabilityDrop := capabilityDimensionForTest(t, facts, dimensionCapabilityDrop); !capabilityDrop.Enforced || capabilityDrop.Mechanism != mechanismDockerSecurityOptions {
-		t.Fatalf("capability_drop declaration = %+v, want enforced via %q", capabilityDrop, mechanismDockerSecurityOptions)
+	capabilityDrop := capabilityDimensionForTest(t, facts, dimensionCapabilityDrop)
+	if !capabilityDrop.Enforced || capabilityDrop.Mechanism != mechanismDockerCapabilityDrop {
+		t.Fatalf("capability_drop declaration = %+v, want enforced via %q", capabilityDrop, mechanismDockerCapabilityDrop)
+	}
+	for _, dropped := range hostConfig.CapDrop {
+		if !strings.Contains(capabilityDrop.Observed, dropped) {
+			t.Fatalf("capability_drop observed = %q does not name dropped capability %q; update the report when CapDrop changes", capabilityDrop.Observed, dropped)
+		}
 	}
 
 	if hostConfig.ReadonlyRootfs {

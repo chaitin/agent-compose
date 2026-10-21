@@ -15,21 +15,12 @@ func dockerRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 			DefaultBehavior: "an undeclared resource limit is not applied to the sandbox container",
 		},
 	}
-	security := securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{
-		CapabilityDrop: "dockerSandboxHostConfig drops NET_RAW from the sandbox container's capability set",
+	dimensions = append(dimensions, securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{
+		CapabilityDrop: "dockerSandboxHostConfig sets CapDrop to exactly [NET_RAW] and leaves every other Docker default capability in place",
 		ReadOnlyRootfs: "HostConfig.ReadonlyRootfs is false",
 		NonRootUser:    "the sandbox container Config.User is unset and the exec control path runs as User \"0\"",
 		UserNamespaces: "HostConfig.UsernsMode is unset",
-	})
-	for i := range security {
-		if security[i].Dimension != dimensionCapabilityDrop {
-			continue
-		}
-		security[i].Enforced = true
-		security[i].Mechanism = mechanismDockerSecurityOptions
-		security[i].DefaultBehavior = "without the drop the sandbox could open raw sockets and ARP-spoof frames on a shared bridge"
-	}
-	dimensions = append(dimensions, security...)
+	}, mechanismDockerCapabilityDrop)...)
 	dimensions = append(dimensions,
 		egressPolicyFacts(RuntimeDriverDocker),
 		credentialPlaceholderFacts("the container path has no credential substitution of its own: every other declared environment value is written verbatim"),
