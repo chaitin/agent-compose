@@ -8,6 +8,18 @@ on:
       - main
     tags:
       - "v*"
+    # The pull request that produced a documentation, example, or test-only
+    # merge already ran this workflow. Path filters are not evaluated for tag
+    # pushes, so release tags always run.
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "examples/**"
+      - "charts/**"
+      - "**/*_test.go"
+      - "**/*.test.ts"
+      - "**/*.test.js"
+      - "**/__tests__/**"
 
 permissions:
   contents: read

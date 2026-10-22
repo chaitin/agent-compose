@@ -70,6 +70,7 @@ require_regex "$trigger_block" '^[[:space:]]*branches:[[:space:]]*$' 'CI push br
 require_regex "$trigger_block" '^[[:space:]]*-[[:space:]]*main[[:space:]]*$' 'CI push on main'
 require_regex "$trigger_block" '^[[:space:]]*tags:[[:space:]]*$' 'CI push tag filter'
 require_regex "$trigger_block" "^[[:space:]]*-[[:space:]]*[\"']?v\\*[\"']?[[:space:]]*$" 'CI push on v* tags'
+require_regex "$trigger_block" '^[[:space:]]*paths-ignore:[[:space:]]*$' 'CI push path filter'
 
 load_job "$CI_WORKFLOW" binary-matrix binary_matrix
 load_job "$CI_WORKFLOW" binary-darwin binary_darwin

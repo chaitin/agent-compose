@@ -43,6 +43,19 @@ on:
       - main
     tags:
       - "*"
+    # A merged commit that only touches documentation, examples, or tests cannot
+    # change a published image, and the pull request that produced it already ran
+    # this workflow. Path filters are not evaluated for tag pushes, so release
+    # tags always publish.
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "examples/**"
+      - "charts/**"
+      - "**/*_test.go"
+      - "**/*.test.ts"
+      - "**/*.test.js"
+      - "**/__tests__/**"
   workflow_dispatch:
 
 permissions:
@@ -72,6 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       platforms: ${{ steps.platforms.outputs.json }}
+      archlinux: ${{ steps.changes.outputs.archlinux }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate image CI contract
@@ -81,6 +95,28 @@ jobs:
       # the generated ABI manifest disagree.
       - name: Validate the provider lock
         run: ./scripts/tests/test-provider-lock.sh
+      # The Arch Linux guest Dockerfile bakes guest-image inputs only (assets,
+      # runtime, guest-images); it does not compile the daemon. A pull request
+      # that touches none of those inputs would rebuild and boot it for no
+      # signal, so tell image-smoke whether the Arch Linux leg is meaningful.
+      - id: changes
+        name: Detect Arch Linux guest input changes
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if ! git fetch --no-tags --depth=1 origin "$BASE_SHA" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            BASE_SHA=FETCH_HEAD
+          fi
+          changed="$(git diff --name-only "$BASE_SHA" HEAD)"
+          if grep -Eq '^(assets/|guest-images/|runtime/|scripts/provider-lock\.sh$|\.github/workflows/images\.yml$)' <<<"$changed"; then
+            echo "archlinux=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "archlinux=false" >> "$GITHUB_OUTPUT"
+          fi
       - id: platforms
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -238,6 +274,12 @@ jobs:
   # Build loadable amd64 images independently from the push-by-digest matrix.
   # The smoke proves the published Dockerfile starts without KVM and completes
   # a real Docker-driver sandbox lifecycle through the public API.
+  #
+  # Pushes reuse the images the build matrix already pushed. Rebuilding them here
+  # compiled the daemon a second time, and that compile is always cold because
+  # the Dockerfile's Go build cache mount is not exported to the GHA cache
+  # (moby/buildkit#3011). Pull requests publish nothing, so they still build the
+  # Dockerfiles locally.
   image-smoke:
     name: Full image Docker smoke (linux/amd64)
     needs:
@@ -268,7 +310,44 @@ jobs:
       - name: Generate Protobuf sources
         run: buf generate
       - uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.DOCKERIO_USERNAME }}
+          password: ${{ secrets.DOCKERIO_PASSWORD }}
+      - name: Download the digests built for this commit
+        if: github.event_name != 'pull_request'
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*-amd64
+      - name: Pull the images built for this commit
+        if: github.event_name != 'pull_request'
+        run: |
+          set -euo pipefail
+          digests="$RUNNER_TEMP/digests"
+          digest_for() { # $1=digest artifact name suffix
+            local file
+            file="$(find "$digests/digests-$1" -maxdepth 1 -type f | head -n 1)"
+            if [ -z "$file" ]; then
+              echo "missing digest artifact digests-$1" >&2
+              exit 1
+            fi
+            printf 'sha256:%s' "$(basename "$file")"
+          }
+          daemon="${IMAGE_PREFIX}/agent-compose@$(digest_for agent-compose--amd64)"
+          guest="${IMAGE_PREFIX}/agent-compose-guest@$(digest_for agent-compose-guest--amd64)"
+          archlinux="${IMAGE_PREFIX}/agent-compose-guest@$(digest_for agent-compose-guest-archlinux--amd64)"
+          docker pull "$daemon"
+          docker pull "$guest"
+          docker pull "$archlinux"
+          docker tag "$daemon" agent-compose:image-smoke
+          docker tag "$guest" agent-compose-guest:image-smoke
+          docker tag "$archlinux" agent-compose-guest:archlinux-image-smoke
       - name: Build loadable guest image
+        if: github.event_name == 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -282,6 +361,7 @@ jobs:
           cache-from: type=gha,scope=agent-compose-guest-amd64
           cache-to: type=gha,mode=max,scope=agent-compose-guest-amd64
       - name: Build loadable Arch Linux guest image
+        if: github.event_name == 'pull_request' && needs.setup.outputs.archlinux == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -295,6 +375,7 @@ jobs:
           cache-from: type=gha,scope=agent-compose-guest-archlinux-amd64
           cache-to: type=gha,mode=max,scope=agent-compose-guest-archlinux-amd64
       - name: Build loadable full daemon image
+        if: github.event_name == 'pull_request'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -321,6 +402,7 @@ jobs:
           GOCACHE: ${{ github.workspace }}/.cache/go-build
         run: ./scripts/test-image-docker-e2e.sh
       - name: Run Arch Linux guest no-KVM Docker lifecycle smoke
+        if: github.event_name != 'pull_request' || needs.setup.outputs.archlinux == 'true'
         env:
           AGENT_COMPOSE_E2E_DAEMON_IMAGE: agent-compose:image-smoke
           AGENT_COMPOSE_E2E_GUEST_IMAGE: agent-compose-guest:archlinux-image-smoke
