@@ -328,15 +328,6 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.S
 }
 
 func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerCommandRequest) (domain.SchedulerCommandResult, error) {
-	if err := execution.ValidateSandboxCommandEnv(request.SandboxEnv); err != nil {
-		_ = h.addSchedulerEvent(ctx, SchedulerEventInput{
-			EventType: "scheduler.command.failed",
-			Level:     "error",
-			Message:   err.Error(),
-			Payload:   CommandEventPayload(request, domain.SchedulerCommandResult{}),
-		})
-		return domain.SchedulerCommandResult{}, err
-	}
 	cleanupSession := h.commandRequiresCleanup(request)
 	agentRequest := domain.SchedulerAgentRequest{
 		SandboxPolicy:    CommandSandboxPolicy(request),

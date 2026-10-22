@@ -88,14 +88,6 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	if sandboxes.ensureCalls != 2 || sandboxes.loadCalls != 1 || commandExecutor.calls != 2 {
 		t.Fatalf("command ensure/load/exec calls = %d/%d/%d", sandboxes.ensureCalls, sandboxes.loadCalls, commandExecutor.calls)
 	}
-	_, err = host.Command(ctx, domain.SchedulerCommandRequest{
-		Mode:       "shell",
-		Script:     "echo secret",
-		SandboxEnv: []domain.SandboxEnvVar{{Name: "REQUEST_TOKEN", Value: "do-not-leak", Secret: true}},
-	})
-	if err == nil || sandboxes.ensureCalls != 2 || commandExecutor.calls != 2 || strings.Contains(err.Error(), "do-not-leak") {
-		t.Fatalf("secret scheduler env err=%v ensure=%d exec=%d, want rejection before sandbox", err, sandboxes.ensureCalls, commandExecutor.calls)
-	}
 	host.CleanupCommandSessions(ctx)
 	if len(sandboxes.shutdowns) != 2 || sandboxes.shutdowns[1] != "session-host" {
 		t.Fatalf("shutdowns after cleanup = %#v", sandboxes.shutdowns)
@@ -431,6 +423,36 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{EventID: "topic-event"})
 	if _, err := rpcHost.CallSandboxRPC(ctx, "GetSandbox", `{"sandboxId":"sandbox-rpc"}`); err == nil || !rpcEvents.contains("scheduler.sandbox.rpc.failed") || !rpcStore.containsLink("sandbox-rpc", "sandbox_rpc_failed") {
 		t.Fatalf("rpc err=%v events=%#v links=%#v", err, rpcEvents.types(), rpcStore.links)
+	}
+}
+
+func TestRuntimeHostCommandPassesSecretSandboxEnvToSession(t *testing.T) {
+	ctx := context.Background()
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-secret-env"}}
+	run := &domain.SchedulerRunSummary{ID: "run-secret-env", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-secret-env"}
+	sessions := &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-secret-env", VMStatus: domain.VMStatusRunning}}}
+	executor := &hostCommandExecutorFake{}
+	host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+		Sessions:        sessions,
+		CommandExecutor: executor,
+	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{})
+
+	secretEnv := []domain.SandboxEnvVar{
+		{Name: "GITHUB_TOKEN", Value: "do-not-leak", Secret: true},
+		{Name: "MODE", Value: "deploy"},
+	}
+	if _, err := host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "bash deploy.sh", SandboxEnv: secretEnv}); err != nil {
+		t.Fatalf("Command returned error: %v", err)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("command executor calls = %d, want 1", executor.calls)
+	}
+	if len(sessions.requests) != 1 {
+		t.Fatalf("session ensure requests = %d, want 1", len(sessions.requests))
+	}
+	got := sessions.requests[0].SandboxEnv
+	if len(got) != len(secretEnv) || got[0] != secretEnv[0] || got[1] != secretEnv[1] {
+		t.Fatalf("session sandbox env = %#v, want %#v", got, secretEnv)
 	}
 }
 
@@ -782,6 +804,7 @@ func (e *hostEventsFake) types() []string {
 
 type hostSessionsFake struct {
 	session     *domain.Sandbox
+	requests    []domain.SchedulerAgentRequest
 	ensureErr   error
 	loadErr     error
 	shutdownErr error
@@ -790,8 +813,9 @@ type hostSessionsFake struct {
 	shutdowns   []string
 }
 
-func (s *hostSessionsFake) Ensure(context.Context, domain.Scheduler, domain.SchedulerAgentRequest, bool) (*domain.Sandbox, string, error) {
+func (s *hostSessionsFake) Ensure(_ context.Context, _ domain.Scheduler, request domain.SchedulerAgentRequest, _ bool) (*domain.Sandbox, string, error) {
 	s.ensureCalls++
+	s.requests = append(s.requests, request)
 	if s.ensureErr != nil {
 		return nil, "", s.ensureErr
 	}

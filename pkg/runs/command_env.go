@@ -1,4 +1,4 @@
-package execution
+package runs
 
 import (
 	"errors"
@@ -31,28 +31,6 @@ func ValidateCommandEnv(items []*agentcomposev2.EnvVarSpec) error {
 		return domain.ClassifyError(
 			domain.ErrInvalidArgument,
 			fmt.Sprintf("%s: command environment variable %q uses secret=true, which is unsupported", secretCommandEnvRejection, name),
-			ErrSecretCommandEnvUnsupported,
-		)
-	}
-	return nil
-}
-
-// ValidateSandboxCommandEnv rejects secret-marked sandbox environment
-// variables supplied to scheduler commands. Daemon-managed runtime env (for
-// example a facade token) is validated separately and is not part of this
-// caller-controlled request.
-func ValidateSandboxCommandEnv(items []domain.SandboxEnvVar) error {
-	for _, item := range items {
-		if !item.Secret {
-			continue
-		}
-		name := strings.TrimSpace(item.Name)
-		if name == "" {
-			name = "<unnamed>"
-		}
-		return domain.ClassifyError(
-			domain.ErrInvalidArgument,
-			fmt.Sprintf("%s: command sandbox environment variable %q uses secret=true, which is unsupported", secretCommandEnvRejection, name),
 			ErrSecretCommandEnvUnsupported,
 		)
 	}

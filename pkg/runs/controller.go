@@ -253,7 +253,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 	}
 	req = resolved.Request
 	if strings.TrimSpace(req.Command) != "" {
-		if err := execution.ValidateCommandEnv(req.Env); err != nil {
+		if err := ValidateCommandEnv(req.Env); err != nil {
 			return StartedProjectRun{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 		}
 	}

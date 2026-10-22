@@ -126,7 +126,7 @@ func (c *Controller) openCommandInteraction(ctx context.Context, runCtx interact
 	if c.store == nil || c.runtime == nil {
 		return commandInteractionSession{}, fmt.Errorf("command runtime dependencies are required")
 	}
-	if err := execution.ValidateCommandEnv(req.Env); err != nil {
+	if err := ValidateCommandEnv(req.Env); err != nil {
 		return commandInteractionSession{}, err
 	}
 	appconfig.ApplyDefaultGuestPaths(c.config)

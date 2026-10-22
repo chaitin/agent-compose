@@ -40,7 +40,7 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectR
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
 		return transition, err
 	}
-	if err := execution.ValidateCommandEnv(req.Env); err != nil {
+	if err := ValidateCommandEnv(req.Env); err != nil {
 		transition.ExitCode = 1
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
 		return transition, err

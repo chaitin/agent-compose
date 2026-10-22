@@ -510,10 +510,12 @@ The command execution boundary does not currently provide a dedicated secret
 transport. Therefore `RunAgent` command requests, `Exec`/`StreamExec` requests,
 and attached exec requests reject an environment entry marked `secret: true`
 with the stable reason `secret_command_env_unsupported` before creating or
-writing command artifacts. Project and agent sandbox environment declarations
-retain their existing secret handling; a future command secret transport must
-preserve the marker and define artifact permissions and lifecycle before this
-request-level restriction can be relaxed.
+writing command artifacts. Project, agent, and scheduler sandbox environment
+declarations retain their existing secret handling: scheduler command
+`sandboxEnv` entries are passed to sandbox creation and injected by the driver
+secret mechanism, so they never enter `command-request.json`. A future command
+secret transport must preserve the marker and define artifact permissions and
+lifecycle before this request-level restriction can be relaxed.
 
 `ImageService` currently has three backend entry points:
 
