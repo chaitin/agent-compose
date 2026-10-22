@@ -41,6 +41,11 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectR
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
 		return transition, err
 	}
+	if err := ValidateCommandEnv(req.Env); err != nil {
+		transition.ExitCode = 1
+		transition.Error = fmt.Sprintf("command execution failed: %v", err)
+		return transition, err
+	}
 	if sink != nil && sink.SendStarted != nil {
 		if err := sink.SendStarted(run, time.Now().UTC()); err != nil {
 			transition.ExitCode = 1

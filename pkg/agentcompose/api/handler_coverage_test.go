@@ -396,6 +396,18 @@ func TestExecHandlerSandboxTargetWorkflow(t *testing.T) {
 	if commandRequest.Env["FOO"] != "bar" || commandRequest.Command != "echo" || len(commandRequest.Args) != 1 || commandRequest.Args[0] != "hi" {
 		t.Fatalf("command request = %#v", commandRequest)
 	}
+	_, err = handler.Exec(ctx, connect.NewRequest(&agentcomposev2.ExecRequest{
+		Target:  &agentcomposev2.ExecRequest_SandboxId{SandboxId: "sandbox-1"},
+		Command: &agentcomposev2.ExecCommand{Command: "echo", Args: []string{"secret"}},
+		Env:     []*agentcomposev2.EnvVarSpec{{Name: "REQUEST_TOKEN", Value: "do-not-leak", Secret: true}},
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || strings.Contains(err.Error(), "do-not-leak") {
+		t.Fatalf("secret exec env error = %v, want invalid argument without value", err)
+	}
+	requestFiles, err = filepath.Glob(filepath.Join(sandboxRoot, "state", "exec", "*", "command-request.json"))
+	if err != nil || len(requestFiles) != 1 {
+		t.Fatalf("secret exec env created an artifact: files=%#v err=%v", requestFiles, err)
+	}
 	outputData, err := os.ReadFile(filepath.Join(filepath.Dir(requestFiles[0]), "output.txt"))
 	if err != nil || string(outputData) != "hi\n" {
 		t.Fatalf("exec output artifact = %q err=%v", string(outputData), err)
@@ -406,6 +418,20 @@ func TestExecHandlerSandboxTargetWorkflow(t *testing.T) {
 	store.sandbox = &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusStopped}}
 	if _, err := handler.Exec(ctx, connect.NewRequest(&agentcomposev2.ExecRequest{Target: &agentcomposev2.ExecRequest_SandboxId{SandboxId: "sandbox-1"}, Command: &agentcomposev2.ExecCommand{Command: "echo"}})); connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("expected stopped sandbox error, got %v", err)
+	}
+}
+
+func TestPrepareExecAttachRejectsSecretEnv(t *testing.T) {
+	handler := newExecAttachTestHandler(t, &apiExecRuntime{})
+	_, err := handler.prepareExecAttach(context.Background(), &agentcomposev2.AttachExecStart{
+		Request: &agentcomposev2.ExecRequest{
+			Target:  &agentcomposev2.ExecRequest_SandboxId{SandboxId: "session-attach"},
+			Command: &agentcomposev2.ExecCommand{Command: "echo"},
+			Env:     []*agentcomposev2.EnvVarSpec{{Name: "REQUEST_TOKEN", Value: "do-not-leak", Secret: true}},
+		},
+	})
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || strings.Contains(err.Error(), "do-not-leak") {
+		t.Fatalf("secret attach env error = %v, want invalid argument without value", err)
 	}
 }
 
