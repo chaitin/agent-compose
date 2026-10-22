@@ -1,5 +1,46 @@
+# KVM overlay for BoxLite and Microsandbox deployments.
+#
+# It moves the VM runtime out of the daemon container and into a long-lived
+# sandbox-host service that owns the VM processes, so recreating the daemon
+# container (an upgrade) no longer tears the VMs down. The daemon shares the
+# sandbox-host network namespace so a guest still reaches the daemon through
+# the `agent-compose:7410` alias, and both services share the unix socket that
+# carries the daemon<->sandbox-host RPC. See
+# docs/design/daemon-upgrade-sandbox-survival.zh-CN.md section 3.4.
+#
+# Requires Docker Compose v2.24.4 or later for the `ports: !reset []` override.
 services:
-  agent-compose:
+  sandbox-host:
+    image: ${AGENT_COMPOSE_SANDBOX_HOST_IMAGE:-${AGENT_COMPOSE_IMAGE:-chaitin/agent-compose:latest}}
+    container_name: agent-compose-sandbox-host
+    restart: always
+    command: ["agent-compose", "sandbox-host"]
     privileged: true
     devices:
       - /dev/kvm:/dev/kvm
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/localtime:/etc/localtime:ro
+      - ${AGENT_COMPOSE_DATA_DIR:-./data}:/data
+      - ./.env:/data/work/.env:ro
+      - sandbox-host-run:/run/agent-compose
+    working_dir: /data/work
+    ports:
+      - 127.0.0.1:7410:7410
+    networks:
+      default:
+        aliases:
+          - agent-compose
+
+  agent-compose:
+    network_mode: "service:sandbox-host"
+    ports: !reset []
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/localtime:/etc/localtime:ro
+      - ${AGENT_COMPOSE_DATA_DIR:-./data}:/data
+      - ./.env:/data/work/.env:ro
+      - sandbox-host-run:/run/agent-compose
+
+volumes:
+  sandbox-host-run:

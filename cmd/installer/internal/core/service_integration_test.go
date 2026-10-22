@@ -12,13 +12,13 @@ import (
 )
 
 type fakeRunner struct {
-	calls    []string
-	failOn   string
-	failures []string
+	calls          []string
+	failOn         string
+	failures       []string
+	composeVersion string
 }
 
-func (r *fakeRunner) Run(_ context.Context, dir, name string, args ...string) error {
-	call := strings.TrimSpace(dir + "|" + name + " " + strings.Join(args, " "))
+func (r *fakeRunner) record(call string) error {
 	r.calls = append(r.calls, call)
 	if r.failOn != "" && strings.Contains(call, r.failOn) {
 		return errors.New("injected command failure")
@@ -29,6 +29,21 @@ func (r *fakeRunner) Run(_ context.Context, dir, name string, args ...string) er
 		}
 	}
 	return nil
+}
+
+func (r *fakeRunner) Run(_ context.Context, dir, name string, args ...string) error {
+	return r.record(strings.TrimSpace(dir + "|" + name + " " + strings.Join(args, " ")))
+}
+
+func (r *fakeRunner) RunOutput(_ context.Context, dir, name string, args ...string) (string, error) {
+	call := strings.TrimSpace(dir + "|" + name + " " + strings.Join(args, " "))
+	if err := r.record(call); err != nil {
+		return "", err
+	}
+	if r.composeVersion == "" {
+		r.composeVersion = "v2.30.0"
+	}
+	return r.composeVersion, nil
 }
 
 func TestIntegrationInstallUpgradePreservesUserConfiguration(t *testing.T) {
@@ -259,7 +274,7 @@ func TestIntegrationFailedInitialStartRetainsFilesWhenCleanupFails(t *testing.T)
 	installDir := filepath.Join(root, "install")
 	runner := &fakeRunner{failures: []string{
 		"docker compose up -d",
-		"docker compose down --remove-orphans",
+		"docker compose stop agent-compose",
 	}}
 	options := DefaultOptions()
 	options.InstallDir = installDir
@@ -295,8 +310,8 @@ func TestIntegrationFailedInitialStartRollsBackAfterCleanup(t *testing.T) {
 	if _, err := os.Stat(installDir); !os.IsNotExist(err) {
 		t.Fatalf("failed installation was not rolled back: %v", err)
 	}
-	wantDown := installDir + "|docker compose down --remove-orphans"
-	if !slices.Contains(runner.calls, wantDown) {
+	wantStop := installDir + "|docker compose stop agent-compose"
+	if !slices.Contains(runner.calls, wantStop) {
 		t.Fatalf("cleanup command missing: %#v", runner.calls)
 	}
 }
@@ -378,7 +393,10 @@ func makeTestBundle(t *testing.T, version string) string {
 		"AGENT_COMPOSE_IMAGE=registry.example/agent-compose:" + version + "\n" +
 		"AGENT_COMPOSE_FRONTEND_VERSION=latest\n" +
 		"AGENT_COMPOSE_FRONTEND_IMAGE=registry.example/agent-compose-ui:latest\n" +
-		"DEFAULT_IMAGE=registry.example/agent-compose-guest:" + version + "\n"
+		"DEFAULT_IMAGE=registry.example/agent-compose-guest:" + version + "\n" +
+		// The sandbox-host image is pinned independently of the daemon version,
+		// so a daemon-only upgrade does not recreate the host.
+		"AGENT_COMPOSE_SANDBOX_HOST_IMAGE=registry.example/agent-compose:host-v1\n"
 	writeTestFile(t, filepath.Join(dir, "images", "manifest.env"), manifest, 0o644)
 	return dir
 }

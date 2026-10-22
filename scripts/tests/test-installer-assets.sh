@@ -24,6 +24,7 @@ build_assets() {
     IMAGE_PREFIX=registry.example/agent-compose \
     AGENT_COMPOSE_FRONTEND_VERSION=v-ui-test \
     AGENT_COMPOSE_FRONTEND_VERSIONS=v-ui-test,v-ui-legacy \
+    AGENT_COMPOSE_SANDBOX_HOST_VERSION=v-host-test \
     "$BUILDER" "$output" >/dev/null
 }
 
@@ -90,7 +91,7 @@ grep -Fxq 'AUTH_PASSWORD=' "$payload/.env.example" \
 grep -Fxq 'AUTH_SECRET=' "$payload/.env.example" \
   || fail '.env.example must keep AUTH_SECRET empty'
 
-expected_manifest=$'INSTALLER_PAYLOAD_VERSION=1\nAGENT_COMPOSE_IMAGE=registry.example/agent-compose/agent-compose:v9.8.7\nAGENT_COMPOSE_FRONTEND_VERSION=v-ui-test\nAGENT_COMPOSE_FRONTEND_VERSIONS=v-ui-test,v-ui-legacy\nAGENT_COMPOSE_FRONTEND_IMAGE=registry.example/agent-compose/agent-compose-ui:v-ui-test\nDEFAULT_IMAGE=registry.example/agent-compose/agent-compose-guest:v9.8.7'
+expected_manifest=$'INSTALLER_PAYLOAD_VERSION=1\nAGENT_COMPOSE_IMAGE=registry.example/agent-compose/agent-compose:v9.8.7\nAGENT_COMPOSE_FRONTEND_VERSION=v-ui-test\nAGENT_COMPOSE_FRONTEND_VERSIONS=v-ui-test,v-ui-legacy\nAGENT_COMPOSE_FRONTEND_IMAGE=registry.example/agent-compose/agent-compose-ui:v-ui-test\nDEFAULT_IMAGE=registry.example/agent-compose/agent-compose-guest:v9.8.7\nAGENT_COMPOSE_SANDBOX_HOST_IMAGE=registry.example/agent-compose/agent-compose:v-host-test'
 actual_manifest=$(<"$payload/images/manifest.env")
 [[ $actual_manifest == "$expected_manifest" ]] \
   || fail "image manifest differs: $actual_manifest"

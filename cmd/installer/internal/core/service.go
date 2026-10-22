@@ -102,8 +102,12 @@ func (s Service) checkCompose(ctx context.Context) error {
 	if err := s.runner().Run(ctx, "", "docker", "version", "--format", "{{.Server.Version}}"); err != nil {
 		return fmt.Errorf("docker is unavailable; install Docker Engine and retry: %w", err)
 	}
-	if err := s.runner().Run(ctx, "", "docker", "compose", "version", "--short"); err != nil {
+	version, err := s.runner().RunOutput(ctx, "", "docker", "compose", "version", "--short")
+	if err != nil {
 		return fmt.Errorf("docker compose v2 is unavailable; install the Docker Compose plugin and retry: %w", err)
+	}
+	if err := checkComposeVersion(version); err != nil {
+		return err
 	}
 	return nil
 }
@@ -168,7 +172,10 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 			return
 		}
 		if tx.upAttempted && !tx.previousInstall {
-			if cleanupErr := s.compose(context.Background(), options.InstallDir, "down", "--remove-orphans"); cleanupErr != nil {
+			// Stop only the daemon. The sandbox-host owns BoxLite/Microsandbox VM
+			// processes and must survive a rollback (design §3.4); a full
+			// `down --remove-orphans` would also tear the host and its VMs down.
+			if cleanupErr := s.compose(context.Background(), options.InstallDir, "stop", "agent-compose"); cleanupErr != nil {
 				// Keep the candidate project metadata so the operator can retry cleanup.
 				tx.Commit()
 				message := fmt.Sprintf("cleanup incomplete; deployment files retained in %s", options.InstallDir)

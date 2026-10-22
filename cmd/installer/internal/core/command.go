@@ -16,6 +16,8 @@ const commandCancelGrace = 5 * time.Second
 
 type CommandRunner interface {
 	Run(context.Context, string, string, ...string) error
+	// RunOutput runs the command and returns its captured standard output.
+	RunOutput(context.Context, string, string, ...string) (string, error)
 }
 
 type ExecRunner struct {
@@ -23,10 +25,22 @@ type ExecRunner struct {
 }
 
 func (r ExecRunner) Run(ctx context.Context, dir, name string, args ...string) error {
+	return r.run(ctx, dir, name, args, r.Output, r.Output)
+}
+
+func (r ExecRunner) RunOutput(ctx context.Context, dir, name string, args ...string) (string, error) {
+	var stdout strings.Builder
+	if err := r.run(ctx, dir, name, args, &stdout, r.Output); err != nil {
+		return "", err
+	}
+	return stdout.String(), nil
+}
+
+func (r ExecRunner) run(ctx context.Context, dir, name string, args []string, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	cmd.Stdout = r.Output
-	cmd.Stderr = r.Output
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.Env = filteredComposeEnvironment(os.Environ())
 	// `docker` runs `compose` as a plugin in a separate process that inherits
 	// this output pipe. CommandContext only signals the direct child, so the

@@ -8,8 +8,10 @@ usage() {
 usage: build-installer-assets.sh [OUTPUT_DIR]
 
 Build the three GitHub Release installer assets. VERSION and IMAGE_PREFIX must
-be set. AGENT_COMPOSE_FRONTEND_VERSION defaults to latest, and
-AGENT_COMPOSE_FRONTEND_VERSIONS defaults to that single version.
+be set. AGENT_COMPOSE_FRONTEND_VERSION defaults to latest,
+AGENT_COMPOSE_FRONTEND_VERSIONS defaults to that single version, and
+AGENT_COMPOSE_SANDBOX_HOST_VERSION (the sandbox-host image tag) defaults to
+VERSION.
 EOF
 }
 
@@ -28,11 +30,12 @@ VERSION=${VERSION:-}
 IMAGE_PREFIX=${IMAGE_PREFIX:-}
 FRONTEND_VERSION=${AGENT_COMPOSE_FRONTEND_VERSION:-latest}
 FRONTEND_VERSIONS=${AGENT_COMPOSE_FRONTEND_VERSIONS:-$FRONTEND_VERSION}
+SANDBOX_HOST_VERSION=${AGENT_COMPOSE_SANDBOX_HOST_VERSION:-$VERSION}
 OUTPUT_DIR=${1:-"$ROOT_DIR/upload"}
 
 [[ -n $VERSION ]] || die 'VERSION is required'
 [[ -n $IMAGE_PREFIX ]] || die 'IMAGE_PREFIX is required'
-for value_name in VERSION IMAGE_PREFIX FRONTEND_VERSION FRONTEND_VERSIONS; do
+for value_name in VERSION IMAGE_PREFIX FRONTEND_VERSION FRONTEND_VERSIONS SANDBOX_HOST_VERSION; do
   value=${!value_name}
   [[ $value != *$'\n'* && $value != *$'\r'* ]] \
     || die "$value_name must not contain a newline"
@@ -91,6 +94,7 @@ install -m 0644 "$ROOT_DIR/.env.example" "$payload/.env.example"
   printf 'AGENT_COMPOSE_FRONTEND_VERSIONS=%s\n' "$FRONTEND_VERSIONS"
   printf 'AGENT_COMPOSE_FRONTEND_IMAGE=%s/agent-compose-ui:%s\n' "$IMAGE_PREFIX" "$FRONTEND_VERSION"
   printf 'DEFAULT_IMAGE=%s/agent-compose-guest:%s\n' "$IMAGE_PREFIX" "$VERSION"
+  printf 'AGENT_COMPOSE_SANDBOX_HOST_IMAGE=%s/agent-compose:%s\n' "$IMAGE_PREFIX" "$SANDBOX_HOST_VERSION"
 } >"$payload/images/manifest.env"
 chmod 0644 "$payload/images/manifest.env"
 
