@@ -547,6 +547,28 @@ func (r *cgoSandboxRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, v
 	return missing, nil
 }
 
+// NeedsCreate reports whether the sandbox's box does not yet exist. It is the
+// sandbox-host's existence probe for the two-phase ensure split; it performs no
+// side effects beyond a box lookup.
+func (r *cgoSandboxRuntime) NeedsCreate(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
+	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
+	if sandbox != nil {
+		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
+	}
+	if lookup == "" {
+		return true, nil
+	}
+	box, err := r.getBox(ctx, lookup)
+	if err != nil {
+		if isBoxNotFound(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	box.free()
+	return false, nil
+}
+
 // IsSandboxAlive reports whether the sandbox's box still exists and is
 // running. Without it, startup reconciliation cannot tell that a BoxLite VM
 // died and leaves the sandbox reported as running.

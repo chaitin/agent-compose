@@ -215,6 +215,15 @@ type ProcessTreeTerminator interface {
 	TerminateProcessTree(context.Context, *Sandbox, VMState, string) error
 }
 
+// SandboxNeedsCreate is an optional SandboxRuntime capability the sandbox-host
+// uses to split ensure into two phases. It reports whether the sandbox's
+// runtime does not yet exist, so the daemon can resolve create-time credentials
+// (ProxyEnv) only when a runtime will actually be created rather than on every
+// ensure. It performs no side effects beyond a lookup.
+type SandboxNeedsCreate interface {
+	NeedsCreate(context.Context, *Sandbox, VMState) (bool, error)
+}
+
 // sandboxEnvMap merges guest environment from two sources with different trust.
 //
 //   - declared is what the project or agent declared. It is filtered through

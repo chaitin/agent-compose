@@ -63,6 +63,7 @@ type Config struct {
 	DaemonAuthToken            string
 	AgentComposeSocket         string
 	AgentComposeHost           string
+	SandboxHostSocket          string
 	WebhookBodyLimitBytes      int64
 	WebhookQueueRulesJSON      string
 	WebhookQueueDefaultWorkers int
@@ -309,6 +310,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		DaemonAuthToken:            daemonHTTP.DaemonAuthToken,
 		AgentComposeSocket:         daemonHTTP.AgentComposeSocket,
 		AgentComposeHost:           daemonHTTP.AgentComposeHost,
+		SandboxHostSocket:          daemonHTTP.SandboxHostSocket,
 		WebhookBodyLimitBytes:      httpLimits.WebhookBodyLimitBytes,
 		WebhookQueueRulesJSON:      httpLimits.WebhookQueueRulesJSON,
 		WebhookQueueDefaultWorkers: httpLimits.WebhookQueueDefaultWorkers,
@@ -448,6 +450,7 @@ type daemonHTTPConfig struct {
 	DaemonAuthToken    string
 	AgentComposeSocket string
 	AgentComposeHost   string
+	SandboxHostSocket  string
 }
 
 func loadDaemonHTTPConfig() (daemonHTTPConfig, error) {
@@ -468,11 +471,16 @@ func loadDaemonHTTPConfig() (daemonHTTPConfig, error) {
 			return daemonHTTPConfig{}, err
 		}
 	}
+	sandboxHostSocket, err := resolveSandboxHostSocket(os.Getenv("AGENT_COMPOSE_SANDBOX_HOST_SOCKET"))
+	if err != nil {
+		return daemonHTTPConfig{}, err
+	}
 	return daemonHTTPConfig{
 		HttpListen:         httpListen,
 		DaemonAuthToken:    daemonAuthToken,
 		AgentComposeSocket: agentComposeSocket,
 		AgentComposeHost:   agentComposeHost,
+		SandboxHostSocket:  sandboxHostSocket,
 	}, nil
 }
 
@@ -1109,6 +1117,29 @@ func DefaultAgentComposeSocket() string {
 		return filepath.Join(runtimeDir, "agent-compose.sock")
 	}
 	return DefaultAgentComposeSocketPath
+}
+
+// defaultSandboxHostSocketDir is the compose-deployment mount point the daemon
+// and sandbox-host share (see docs/design/daemon-upgrade-sandbox-survival.zh-CN.md
+// §3.4), and the fallback directory for a native deployment on Linux.
+const defaultSandboxHostSocketDir = "/run/agent-compose"
+
+func DefaultSandboxHostSocket() string {
+	if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {
+		return filepath.Join(runtimeDir, "agent-compose", "sandbox-host.sock")
+	}
+	return filepath.Join(defaultSandboxHostSocketDir, "sandbox-host.sock")
+}
+
+func resolveSandboxHostSocket(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = DefaultSandboxHostSocket()
+	}
+	if strings.IndexByte(value, 0) >= 0 {
+		return "", fmt.Errorf("invalid AGENT_COMPOSE_SANDBOX_HOST_SOCKET %q: path contains NUL byte", value)
+	}
+	return mustAbs(value), nil
 }
 
 func validateTCPListenAddress(name, value string) error {

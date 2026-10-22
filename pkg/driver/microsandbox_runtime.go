@@ -966,6 +966,24 @@ func (r *microsandboxRuntime) connectLiveSandbox(ctx context.Context, handle *mi
 	return nil, false, err
 }
 
+// NeedsCreate reports whether the sandbox's runtime does not yet exist. It is
+// the sandbox-host's existence probe for the two-phase ensure split; it performs
+// no side effects beyond a sandbox lookup.
+func (r *microsandboxRuntime) NeedsCreate(ctx context.Context, session *Sandbox, vmState VMState) (bool, error) {
+	if err := r.ensureReady(ctx); err != nil {
+		return false, err
+	}
+	name := r.sandboxName(session, vmState)
+	_, err := microsandbox.GetSandbox(ctx, name)
+	if err != nil {
+		if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	return false, nil
+}
+
 func (r *microsandboxRuntime) IsSandboxAlive(ctx context.Context, session *Sandbox, vmState VMState) (bool, error) {
 	if err := r.ensureReady(ctx); err != nil {
 		return false, err
