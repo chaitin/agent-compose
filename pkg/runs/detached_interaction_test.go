@@ -282,6 +282,19 @@ func TestReattachInteractiveCommandRunServesNewClients(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("client got no output")
 	}
+	// The reattached task forwards the client's stdin asynchronously. Wait for
+	// it to arrive before ending the run so the assertion below does not race
+	// the input pump being torn down on exit.
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if frames := attach.stdinFrames(t); len(frames) > 0 && frames[0] == "D:x\n" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("client stdin never reached the reattached task: %q", attach.stdinFrames(t))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	attach.output <- stdoutFrame(`{"t":"exit","code":0,"reason":"completed"}`)
 
 	finished := <-done
