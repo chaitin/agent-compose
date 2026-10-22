@@ -70,13 +70,37 @@ func TestCheckComposeVersion(t *testing.T) {
 	}
 }
 
-func TestCheckComposeRejectsOldPlugin(t *testing.T) {
-	runner := &fakeRunner{composeVersion: "v2.20.0"}
-	err := (Service{Runner: runner}).checkCompose(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "2.24.4 or later is required") {
+func TestCheckComposeReturnsVersion(t *testing.T) {
+	version, err := (Service{Runner: &fakeRunner{composeVersion: "v2.20.0"}}).checkCompose(context.Background())
+	if err != nil {
 		t.Fatalf("checkCompose with v2.20.0 = %v", err)
 	}
-	if err := (Service{Runner: &fakeRunner{composeVersion: "v2.30.0"}}).checkCompose(context.Background()); err != nil {
-		t.Fatalf("checkCompose with v2.30.0 = %v", err)
+	if version != "v2.20.0" {
+		t.Fatalf("checkCompose version = %q, want v2.20.0", version)
+	}
+}
+
+func TestCheckComposeRequiresDockerAndComposePlugin(t *testing.T) {
+	if _, err := (Service{Runner: &fakeRunner{failures: []string{"docker version"}}}).checkCompose(context.Background()); err == nil {
+		t.Fatal("checkCompose with unavailable docker expected an error")
+	}
+	if _, err := (Service{Runner: &fakeRunner{failures: []string{"docker compose version"}}}).checkCompose(context.Background()); err == nil {
+		t.Fatal("checkCompose with unavailable compose plugin expected an error")
+	}
+}
+
+func TestComposeFileUsesKVM(t *testing.T) {
+	for _, testCase := range []struct {
+		files string
+		want  bool
+	}{
+		{"docker-compose.yml", false},
+		{"docker-compose.yml:docker-compose.kvm.yml", true},
+		{"docker-compose.kvm.yml:docker-compose.yml", true},
+		{"docker-compose.yml:custom.yml", false},
+	} {
+		if got := composeFileUsesKVM(testCase.files); got != testCase.want {
+			t.Fatalf("composeFileUsesKVM(%q) = %v, want %v", testCase.files, got, testCase.want)
+		}
 	}
 }

@@ -7,11 +7,12 @@ usage() {
   cat <<'EOF'
 usage: build-installer-assets.sh [OUTPUT_DIR]
 
-Build the three GitHub Release installer assets. VERSION and IMAGE_PREFIX must
-be set. AGENT_COMPOSE_FRONTEND_VERSION defaults to latest,
-AGENT_COMPOSE_FRONTEND_VERSIONS defaults to that single version, and
-AGENT_COMPOSE_SANDBOX_HOST_VERSION (the sandbox-host image tag) defaults to
-VERSION.
+Build the three GitHub Release installer assets. VERSION, IMAGE_PREFIX, and
+AGENT_COMPOSE_SANDBOX_HOST_VERSION (the sandbox-host image tag) must be set.
+AGENT_COMPOSE_FRONTEND_VERSION defaults to latest and
+AGENT_COMPOSE_FRONTEND_VERSIONS defaults to that single version. The sandbox-host
+tag is advanced independently of VERSION so a daemon-only upgrade does not
+recreate the host and its VMs, and therefore has no fallback.
 EOF
 }
 
@@ -30,11 +31,12 @@ VERSION=${VERSION:-}
 IMAGE_PREFIX=${IMAGE_PREFIX:-}
 FRONTEND_VERSION=${AGENT_COMPOSE_FRONTEND_VERSION:-latest}
 FRONTEND_VERSIONS=${AGENT_COMPOSE_FRONTEND_VERSIONS:-$FRONTEND_VERSION}
-SANDBOX_HOST_VERSION=${AGENT_COMPOSE_SANDBOX_HOST_VERSION:-$VERSION}
+SANDBOX_HOST_VERSION=${AGENT_COMPOSE_SANDBOX_HOST_VERSION:-}
 OUTPUT_DIR=${1:-"$ROOT_DIR/upload"}
 
 [[ -n $VERSION ]] || die 'VERSION is required'
 [[ -n $IMAGE_PREFIX ]] || die 'IMAGE_PREFIX is required'
+[[ -n $SANDBOX_HOST_VERSION ]] || die 'AGENT_COMPOSE_SANDBOX_HOST_VERSION is required (the sandbox-host image tag is advanced independently of VERSION)'
 for value_name in VERSION IMAGE_PREFIX FRONTEND_VERSION FRONTEND_VERSIONS SANDBOX_HOST_VERSION; do
   value=${!value_name}
   [[ $value != *$'\n'* && $value != *$'\r'* ]] \

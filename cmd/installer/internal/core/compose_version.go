@@ -76,3 +76,11 @@ func checkComposeVersion(version string) error {
 	}
 	return nil
 }
+
+// composeFileUsesKVM reports whether the effective Compose file list includes
+// the KVM overlay. The `ports: !reset []` override lives in that overlay, so
+// its minimum Compose version is only enforced when the overlay is selected; a
+// pure Docker deployment works on older plugins.
+func composeFileUsesKVM(composeFiles string) bool {
+	return strings.Contains(composeFiles, "docker-compose.kvm.yml")
+}

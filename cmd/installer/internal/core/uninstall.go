@@ -26,7 +26,7 @@ func (s Service) uninstall(ctx context.Context, options Options) (Result, error)
 			return Result{}, err
 		}
 	}
-	if err := s.checkCompose(ctx); err != nil {
+	if _, err := s.checkCompose(ctx); err != nil {
 		return Result{}, err
 	}
 	s.report(EventStep, "Stopping agent-compose")

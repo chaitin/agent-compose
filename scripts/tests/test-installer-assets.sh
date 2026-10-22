@@ -117,6 +117,13 @@ if VERSION=v9.8.7 IMAGE_PREFIX=registry.example \
 fi
 [[ ! -e $invalid_versions ]] || fail 'invalid frontend versions left an output directory'
 
+missing_sandbox_host="$TEST_ROOT/missing-sandbox-host"
+if VERSION=v9.8.7 IMAGE_PREFIX=registry.example \
+  "$BUILDER" "$missing_sandbox_host" >/dev/null 2>&1; then
+  fail 'builder accepted a missing AGENT_COMPOSE_SANDBOX_HOST_VERSION'
+fi
+[[ ! -e $missing_sandbox_host ]] || fail 'missing sandbox-host version left an output directory'
+
 for invalid_list in ',v1' 'v1,' 'v1,,v2'; do
   invalid_output="$TEST_ROOT/invalid-list-${invalid_list//,/_}"
   if VERSION=v9.8.7 IMAGE_PREFIX=registry.example \

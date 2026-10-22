@@ -274,7 +274,7 @@ func TestIntegrationFailedInitialStartRetainsFilesWhenCleanupFails(t *testing.T)
 	installDir := filepath.Join(root, "install")
 	runner := &fakeRunner{failures: []string{
 		"docker compose up -d",
-		"docker compose stop agent-compose",
+		"docker compose down --remove-orphans",
 	}}
 	options := DefaultOptions()
 	options.InstallDir = installDir
@@ -310,9 +310,43 @@ func TestIntegrationFailedInitialStartRollsBackAfterCleanup(t *testing.T) {
 	if _, err := os.Stat(installDir); !os.IsNotExist(err) {
 		t.Fatalf("failed installation was not rolled back: %v", err)
 	}
-	wantStop := installDir + "|docker compose stop agent-compose"
-	if !slices.Contains(runner.calls, wantStop) {
+	wantDown := installDir + "|docker compose down --remove-orphans"
+	if !slices.Contains(runner.calls, wantDown) {
 		t.Fatalf("cleanup command missing: %#v", runner.calls)
+	}
+}
+
+func TestIntegrationPureDockerAcceptsOldCompose(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	runner := &fakeRunner{composeVersion: "v2.20.0"}
+	options := DefaultOptions()
+	options.InstallDir = installDir
+	options.BundleDir = makeTestBundle(t, "v1")
+	options.KVMPath = filepath.Join(root, "missing-kvm")
+	options.NoStart = true
+	result, err := (Service{Runner: runner}).Apply(context.Background(), OperationInstall, options)
+	if err != nil {
+		t.Fatalf("pure Docker install with old compose = %v", err)
+	}
+	if result.ComposeFiles != "docker-compose.yml" {
+		t.Fatalf("ComposeFiles = %q, want docker-compose.yml", result.ComposeFiles)
+	}
+}
+
+func TestIntegrationKVMOverlayRequiresComposeVersion(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	kvmPath := filepath.Join(root, "kvm-device")
+	writeTestFile(t, kvmPath, "kvm", 0o600)
+	runner := &fakeRunner{composeVersion: "v2.20.0"}
+	options := DefaultOptions()
+	options.InstallDir = installDir
+	options.BundleDir = makeTestBundle(t, "v1")
+	options.KVMPath = kvmPath
+	options.NoStart = true
+	if _, err := (Service{Runner: runner}).Apply(context.Background(), OperationInstall, options); err == nil || !strings.Contains(err.Error(), "2.24.4 or later is required") {
+		t.Fatalf("KVM overlay install with old compose = %v, want version error", err)
 	}
 }
 
