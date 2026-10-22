@@ -35,7 +35,7 @@ func NewRemoteSandboxRuntime(driver string, connector *SandboxHostConnector) San
 
 // fromGRPCError reconstructs driver-boundary errors that were encoded as gRPC
 // status codes by sandboxHostStatus. The daemon's error classification relies on
-// sentinel matching, so the two cases with sentinels are restored here.
+// sentinel matching, so the sentinel-backed cases are restored here.
 func fromGRPCError(err error) error {
 	if err == nil {
 		return nil
@@ -45,6 +45,10 @@ func fromGRPCError(err error) error {
 		return fmt.Errorf("%w: %s", ErrRuntimeInteractionUnsupported, status.Convert(err).Message())
 	case codes.Aborted:
 		return fmt.Errorf("%w: %s", ErrExecTerminationUnconfirmed, status.Convert(err).Message())
+	case codes.Canceled:
+		return context.Canceled
+	case codes.DeadlineExceeded:
+		return context.DeadlineExceeded
 	default:
 		return err
 	}
@@ -273,7 +277,7 @@ func (r *remoteSandboxRuntime) OpenInteraction(ctx context.Context, sandbox *San
 	}); err != nil {
 		return nil, fromGRPCError(err)
 	}
-	return newRemoteInteraction(stream), nil
+	return newRemoteInteraction(ctx, stream), nil
 }
 
 // remoteInteraction adapts the sandbox-host interaction bidirectional stream to
@@ -281,6 +285,7 @@ func (r *remoteSandboxRuntime) OpenInteraction(ctx context.Context, sandbox *San
 // fans output frames out to Recv while stashing the terminal result for Wait.
 type remoteInteraction struct {
 	stream    sandboxhost.SandboxHost_OpenInteractionClient
+	ctx       context.Context
 	output    chan RuntimeOutputFrame
 	result    RuntimeResult
 	resultErr error
@@ -288,9 +293,10 @@ type remoteInteraction struct {
 	sendMu    sync.Mutex
 }
 
-func newRemoteInteraction(stream sandboxhost.SandboxHost_OpenInteractionClient) *remoteInteraction {
+func newRemoteInteraction(ctx context.Context, stream sandboxhost.SandboxHost_OpenInteractionClient) *remoteInteraction {
 	ri := &remoteInteraction{
 		stream: stream,
+		ctx:    ctx,
 		output: make(chan RuntimeOutputFrame, 16),
 		done:   make(chan struct{}),
 	}
@@ -312,7 +318,16 @@ func (ri *remoteInteraction) pump() {
 		}
 		switch payload := msg.GetPayload().(type) {
 		case *sandboxhost.InteractionMessage_Output:
-			ri.output <- unmarshalRuntimeOutputFrame(payload.Output)
+			// A consumer that stops reading (for example, a frontend that
+			// disconnects and never calls Recv again) must not strand this pump
+			// on a full output buffer: once ctx is cancelled, drop the frame and
+			// exit instead of blocking forever.
+			select {
+			case ri.output <- unmarshalRuntimeOutputFrame(payload.Output):
+			case <-ri.ctx.Done():
+				ri.resultErr = ri.ctx.Err()
+				return
+			}
 		case *sandboxhost.InteractionMessage_Result:
 			if payload.Result != nil {
 				ri.result = *unmarshalRuntimeResult(payload.Result)

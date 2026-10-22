@@ -8,7 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/chaitin/agent-compose/pkg/driver/sandboxhost"
 	"google.golang.org/grpc"
@@ -429,12 +431,24 @@ func TestSandboxHostStatusAndFromGRPCError(t *testing.T) {
 	if code := status.Code(sandboxHostStatus(errors.New("boom"))); code != codes.Internal {
 		t.Fatalf("generic code = %v, want Internal", code)
 	}
+	if code := status.Code(sandboxHostStatus(context.Canceled)); code != codes.Canceled {
+		t.Fatalf("canceled code = %v, want Canceled", code)
+	}
+	if code := status.Code(sandboxHostStatus(context.DeadlineExceeded)); code != codes.DeadlineExceeded {
+		t.Fatalf("deadline code = %v, want DeadlineExceeded", code)
+	}
 
 	if !errors.Is(fromGRPCError(status.Error(codes.Unimplemented, "no")), ErrRuntimeInteractionUnsupported) {
 		t.Fatalf("fromGRPCError(Unimplemented) must map to interaction unsupported")
 	}
 	if !errors.Is(fromGRPCError(status.Error(codes.Aborted, "no")), ErrExecTerminationUnconfirmed) {
 		t.Fatalf("fromGRPCError(Aborted) must map to exec termination")
+	}
+	if !errors.Is(fromGRPCError(status.Error(codes.Canceled, "canceled")), context.Canceled) {
+		t.Fatalf("fromGRPCError(Canceled) must map to context.Canceled")
+	}
+	if !errors.Is(fromGRPCError(status.Error(codes.DeadlineExceeded, "deadline")), context.DeadlineExceeded) {
+		t.Fatalf("fromGRPCError(DeadlineExceeded) must map to context.DeadlineExceeded")
 	}
 	if err := fromGRPCError(status.Error(codes.Internal, "boom")); status.Code(err) != codes.Internal {
 		t.Fatalf("fromGRPCError(Internal) must pass through, got %v", err)
@@ -467,4 +481,67 @@ func envVarsEqual(a, b []SandboxEnvVar) bool {
 		}
 	}
 	return true
+}
+
+// fakeInteractionStream is a minimal
+// grpc.BidiStreamingClient[InteractionMessage, InteractionMessage] whose Recv
+// drains a caller-supplied channel and counts how many frames the pump has
+// consumed, so a test can deterministically reach the point where the output
+// buffer is full and the pump is blocked on send.
+type fakeInteractionStream struct {
+	grpc.ClientStream
+	recvCh chan *sandboxhost.InteractionMessage
+	recv   atomic.Int32
+}
+
+func (f *fakeInteractionStream) Recv() (*sandboxhost.InteractionMessage, error) {
+	msg, ok := <-f.recvCh
+	if !ok {
+		return nil, io.EOF
+	}
+	f.recv.Add(1)
+	return msg, nil
+}
+
+func (f *fakeInteractionStream) Send(*sandboxhost.InteractionMessage) error { return nil }
+
+func (f *fakeInteractionStream) CloseSend() error { return nil }
+
+func TestRemoteInteractionPumpStopsOnCancelledContext(t *testing.T) {
+	const frameCount = 32
+	recvCh := make(chan *sandboxhost.InteractionMessage, frameCount)
+	for i := 0; i < frameCount; i++ {
+		recvCh <- &sandboxhost.InteractionMessage{
+			Payload: &sandboxhost.InteractionMessage_Output{
+				Output: &sandboxhost.RuntimeOutputFrame{Type: string(RuntimeOutputStdout), Data: []byte("x")},
+			},
+		}
+	}
+	stream := &fakeInteractionStream{recvCh: recvCh}
+	ctx, cancel := context.WithCancel(context.Background())
+	interaction := newRemoteInteraction(ctx, stream)
+
+	// The output buffer holds 16 frames. Wait until the pump has consumed more
+	// than that, so it is blocked sending into a full buffer that no one is
+	// reading (a consumer that stopped calling Recv).
+	deadline := time.Now().Add(5 * time.Second)
+	for stream.recv.Load() <= 16 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if stream.recv.Load() <= 16 {
+		t.Fatalf("pump did not fill the output buffer, consumed = %d", stream.recv.Load())
+	}
+
+	cancel()
+
+	waited := make(chan struct{})
+	go func() {
+		_, _ = interaction.Wait()
+		close(waited)
+	}()
+	select {
+	case <-waited:
+	case <-time.After(5 * time.Second):
+		t.Fatal("pump did not exit after context cancellation")
+	}
 }
