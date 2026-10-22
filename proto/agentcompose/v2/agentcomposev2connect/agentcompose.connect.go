@@ -78,6 +78,12 @@ const (
 	// ProjectServiceWatchProjectProcedure is the fully-qualified name of the ProjectService's
 	// WatchProject RPC.
 	ProjectServiceWatchProjectProcedure = "/agentcompose.v2.ProjectService/WatchProject"
+	// ProjectServiceGetProjectOctoBusServerTokenProcedure is the fully-qualified name of the
+	// ProjectService's GetProjectOctoBusServerToken RPC.
+	ProjectServiceGetProjectOctoBusServerTokenProcedure = "/agentcompose.v2.ProjectService/GetProjectOctoBusServerToken"
+	// ProjectServiceUpdateProjectOctoBusServerTokenProcedure is the fully-qualified name of the
+	// ProjectService's UpdateProjectOctoBusServerToken RPC.
+	ProjectServiceUpdateProjectOctoBusServerTokenProcedure = "/agentcompose.v2.ProjectService/UpdateProjectOctoBusServerToken"
 	// ProjectServiceGetSchedulerProcedure is the fully-qualified name of the ProjectService's
 	// GetScheduler RPC.
 	ProjectServiceGetSchedulerProcedure = "/agentcompose.v2.ProjectService/GetScheduler"
@@ -310,6 +316,8 @@ type ProjectServiceClient interface {
 	ListProjects(context.Context, *connect.Request[v2.ListProjectsRequest]) (*connect.Response[v2.ListProjectsResponse], error)
 	RemoveProject(context.Context, *connect.Request[v2.RemoveProjectRequest]) (*connect.Response[v2.RemoveProjectResponse], error)
 	WatchProject(context.Context, *connect.Request[v2.WatchProjectRequest]) (*connect.ServerStreamForClient[v2.WatchProjectResponse], error)
+	GetProjectOctoBusServerToken(context.Context, *connect.Request[v2.GetProjectOctoBusServerTokenRequest]) (*connect.Response[v2.GetProjectOctoBusServerTokenResponse], error)
+	UpdateProjectOctoBusServerToken(context.Context, *connect.Request[v2.UpdateProjectOctoBusServerTokenRequest]) (*connect.Response[v2.UpdateProjectOctoBusServerTokenResponse], error)
 	GetScheduler(context.Context, *connect.Request[v2.GetSchedulerRequest]) (*connect.Response[v2.GetSchedulerResponse], error)
 	ListSchedulers(context.Context, *connect.Request[v2.ListSchedulersRequest]) (*connect.Response[v2.ListSchedulersResponse], error)
 	ListSchedulerEvents(context.Context, *connect.Request[v2.ListSchedulerEventsRequest]) (*connect.Response[v2.ListSchedulerEventsResponse], error)
@@ -387,6 +395,18 @@ func NewProjectServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+ProjectServiceWatchProjectProcedure,
 			connect.WithSchema(projectServiceMethods.ByName("WatchProject")),
+			connect.WithClientOptions(opts...),
+		),
+		getProjectOctoBusServerToken: connect.NewClient[v2.GetProjectOctoBusServerTokenRequest, v2.GetProjectOctoBusServerTokenResponse](
+			httpClient,
+			baseURL+ProjectServiceGetProjectOctoBusServerTokenProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("GetProjectOctoBusServerToken")),
+			connect.WithClientOptions(opts...),
+		),
+		updateProjectOctoBusServerToken: connect.NewClient[v2.UpdateProjectOctoBusServerTokenRequest, v2.UpdateProjectOctoBusServerTokenResponse](
+			httpClient,
+			baseURL+ProjectServiceUpdateProjectOctoBusServerTokenProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("UpdateProjectOctoBusServerToken")),
 			connect.WithClientOptions(opts...),
 		),
 		getScheduler: connect.NewClient[v2.GetSchedulerRequest, v2.GetSchedulerResponse](
@@ -490,29 +510,31 @@ func NewProjectServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // projectServiceClient implements ProjectServiceClient.
 type projectServiceClient struct {
-	validateProject              *connect.Client[v2.ValidateProjectRequest, v2.ValidateProjectResponse]
-	applyProject                 *connect.Client[v2.ApplyProjectRequest, v2.ApplyProjectResponse]
-	patchProject                 *connect.Client[v2.PatchProjectRequest, v2.ApplyProjectResponse]
-	getProject                   *connect.Client[v2.GetProjectRequest, v2.GetProjectResponse]
-	listProjects                 *connect.Client[v2.ListProjectsRequest, v2.ListProjectsResponse]
-	removeProject                *connect.Client[v2.RemoveProjectRequest, v2.RemoveProjectResponse]
-	watchProject                 *connect.Client[v2.WatchProjectRequest, v2.WatchProjectResponse]
-	getScheduler                 *connect.Client[v2.GetSchedulerRequest, v2.GetSchedulerResponse]
-	listSchedulers               *connect.Client[v2.ListSchedulersRequest, v2.ListSchedulersResponse]
-	listSchedulerEvents          *connect.Client[v2.ListSchedulerEventsRequest, v2.ListSchedulerEventsResponse]
-	listProjectSchedulerEvents   *connect.Client[v2.ListProjectSchedulerEventsRequest, v2.ListProjectSchedulerEventsResponse]
-	streamProjectSchedulerEvents *connect.Client[v2.StreamProjectSchedulerEventsRequest, v2.StreamProjectSchedulerEventsResponse]
-	invokeScheduler              *connect.Client[v2.InvokeSchedulerRequest, v2.InvokeSchedulerResponse]
-	runScheduler                 *connect.Client[v2.RunSchedulerRequest, v2.RunSchedulerResponse]
-	startSchedulerRun            *connect.Client[v2.StartSchedulerRunRequest, v2.StartSchedulerRunResponse]
-	getSchedulerRun              *connect.Client[v2.GetSchedulerRunRequest, v2.GetSchedulerRunResponse]
-	listSchedulerRuns            *connect.Client[v2.ListSchedulerRunsRequest, v2.ListSchedulerRunsResponse]
-	batchGetLatestSchedulerRuns  *connect.Client[v2.BatchGetLatestSchedulerRunsRequest, v2.BatchGetLatestSchedulerRunsResponse]
-	streamSchedulerRuns          *connect.Client[v2.StreamSchedulerRunsRequest, v2.StreamSchedulerRunsResponse]
-	pruneSchedulerRuns           *connect.Client[v2.PruneSchedulerRunsRequest, v2.PruneSchedulerRunsResponse]
-	stopSchedulerRun             *connect.Client[v2.StopSchedulerRunRequest, v2.StopSchedulerRunResponse]
-	setSchedulerEnabled          *connect.Client[v2.SetSchedulerEnabledRequest, v2.SetSchedulerEnabledResponse]
-	setSchedulerTriggerEnabled   *connect.Client[v2.SetSchedulerTriggerEnabledRequest, v2.SetSchedulerTriggerEnabledResponse]
+	validateProject                 *connect.Client[v2.ValidateProjectRequest, v2.ValidateProjectResponse]
+	applyProject                    *connect.Client[v2.ApplyProjectRequest, v2.ApplyProjectResponse]
+	patchProject                    *connect.Client[v2.PatchProjectRequest, v2.ApplyProjectResponse]
+	getProject                      *connect.Client[v2.GetProjectRequest, v2.GetProjectResponse]
+	listProjects                    *connect.Client[v2.ListProjectsRequest, v2.ListProjectsResponse]
+	removeProject                   *connect.Client[v2.RemoveProjectRequest, v2.RemoveProjectResponse]
+	watchProject                    *connect.Client[v2.WatchProjectRequest, v2.WatchProjectResponse]
+	getProjectOctoBusServerToken    *connect.Client[v2.GetProjectOctoBusServerTokenRequest, v2.GetProjectOctoBusServerTokenResponse]
+	updateProjectOctoBusServerToken *connect.Client[v2.UpdateProjectOctoBusServerTokenRequest, v2.UpdateProjectOctoBusServerTokenResponse]
+	getScheduler                    *connect.Client[v2.GetSchedulerRequest, v2.GetSchedulerResponse]
+	listSchedulers                  *connect.Client[v2.ListSchedulersRequest, v2.ListSchedulersResponse]
+	listSchedulerEvents             *connect.Client[v2.ListSchedulerEventsRequest, v2.ListSchedulerEventsResponse]
+	listProjectSchedulerEvents      *connect.Client[v2.ListProjectSchedulerEventsRequest, v2.ListProjectSchedulerEventsResponse]
+	streamProjectSchedulerEvents    *connect.Client[v2.StreamProjectSchedulerEventsRequest, v2.StreamProjectSchedulerEventsResponse]
+	invokeScheduler                 *connect.Client[v2.InvokeSchedulerRequest, v2.InvokeSchedulerResponse]
+	runScheduler                    *connect.Client[v2.RunSchedulerRequest, v2.RunSchedulerResponse]
+	startSchedulerRun               *connect.Client[v2.StartSchedulerRunRequest, v2.StartSchedulerRunResponse]
+	getSchedulerRun                 *connect.Client[v2.GetSchedulerRunRequest, v2.GetSchedulerRunResponse]
+	listSchedulerRuns               *connect.Client[v2.ListSchedulerRunsRequest, v2.ListSchedulerRunsResponse]
+	batchGetLatestSchedulerRuns     *connect.Client[v2.BatchGetLatestSchedulerRunsRequest, v2.BatchGetLatestSchedulerRunsResponse]
+	streamSchedulerRuns             *connect.Client[v2.StreamSchedulerRunsRequest, v2.StreamSchedulerRunsResponse]
+	pruneSchedulerRuns              *connect.Client[v2.PruneSchedulerRunsRequest, v2.PruneSchedulerRunsResponse]
+	stopSchedulerRun                *connect.Client[v2.StopSchedulerRunRequest, v2.StopSchedulerRunResponse]
+	setSchedulerEnabled             *connect.Client[v2.SetSchedulerEnabledRequest, v2.SetSchedulerEnabledResponse]
+	setSchedulerTriggerEnabled      *connect.Client[v2.SetSchedulerTriggerEnabledRequest, v2.SetSchedulerTriggerEnabledResponse]
 }
 
 // ValidateProject calls agentcompose.v2.ProjectService.ValidateProject.
@@ -548,6 +570,17 @@ func (c *projectServiceClient) RemoveProject(ctx context.Context, req *connect.R
 // WatchProject calls agentcompose.v2.ProjectService.WatchProject.
 func (c *projectServiceClient) WatchProject(ctx context.Context, req *connect.Request[v2.WatchProjectRequest]) (*connect.ServerStreamForClient[v2.WatchProjectResponse], error) {
 	return c.watchProject.CallServerStream(ctx, req)
+}
+
+// GetProjectOctoBusServerToken calls agentcompose.v2.ProjectService.GetProjectOctoBusServerToken.
+func (c *projectServiceClient) GetProjectOctoBusServerToken(ctx context.Context, req *connect.Request[v2.GetProjectOctoBusServerTokenRequest]) (*connect.Response[v2.GetProjectOctoBusServerTokenResponse], error) {
+	return c.getProjectOctoBusServerToken.CallUnary(ctx, req)
+}
+
+// UpdateProjectOctoBusServerToken calls
+// agentcompose.v2.ProjectService.UpdateProjectOctoBusServerToken.
+func (c *projectServiceClient) UpdateProjectOctoBusServerToken(ctx context.Context, req *connect.Request[v2.UpdateProjectOctoBusServerTokenRequest]) (*connect.Response[v2.UpdateProjectOctoBusServerTokenResponse], error) {
+	return c.updateProjectOctoBusServerToken.CallUnary(ctx, req)
 }
 
 // GetScheduler calls agentcompose.v2.ProjectService.GetScheduler.
@@ -639,6 +672,8 @@ type ProjectServiceHandler interface {
 	ListProjects(context.Context, *connect.Request[v2.ListProjectsRequest]) (*connect.Response[v2.ListProjectsResponse], error)
 	RemoveProject(context.Context, *connect.Request[v2.RemoveProjectRequest]) (*connect.Response[v2.RemoveProjectResponse], error)
 	WatchProject(context.Context, *connect.Request[v2.WatchProjectRequest], *connect.ServerStream[v2.WatchProjectResponse]) error
+	GetProjectOctoBusServerToken(context.Context, *connect.Request[v2.GetProjectOctoBusServerTokenRequest]) (*connect.Response[v2.GetProjectOctoBusServerTokenResponse], error)
+	UpdateProjectOctoBusServerToken(context.Context, *connect.Request[v2.UpdateProjectOctoBusServerTokenRequest]) (*connect.Response[v2.UpdateProjectOctoBusServerTokenResponse], error)
 	GetScheduler(context.Context, *connect.Request[v2.GetSchedulerRequest]) (*connect.Response[v2.GetSchedulerResponse], error)
 	ListSchedulers(context.Context, *connect.Request[v2.ListSchedulersRequest]) (*connect.Response[v2.ListSchedulersResponse], error)
 	ListSchedulerEvents(context.Context, *connect.Request[v2.ListSchedulerEventsRequest]) (*connect.Response[v2.ListSchedulerEventsResponse], error)
@@ -712,6 +747,18 @@ func NewProjectServiceHandler(svc ProjectServiceHandler, opts ...connect.Handler
 		ProjectServiceWatchProjectProcedure,
 		svc.WatchProject,
 		connect.WithSchema(projectServiceMethods.ByName("WatchProject")),
+		connect.WithHandlerOptions(opts...),
+	)
+	projectServiceGetProjectOctoBusServerTokenHandler := connect.NewUnaryHandler(
+		ProjectServiceGetProjectOctoBusServerTokenProcedure,
+		svc.GetProjectOctoBusServerToken,
+		connect.WithSchema(projectServiceMethods.ByName("GetProjectOctoBusServerToken")),
+		connect.WithHandlerOptions(opts...),
+	)
+	projectServiceUpdateProjectOctoBusServerTokenHandler := connect.NewUnaryHandler(
+		ProjectServiceUpdateProjectOctoBusServerTokenProcedure,
+		svc.UpdateProjectOctoBusServerToken,
+		connect.WithSchema(projectServiceMethods.ByName("UpdateProjectOctoBusServerToken")),
 		connect.WithHandlerOptions(opts...),
 	)
 	projectServiceGetSchedulerHandler := connect.NewUnaryHandler(
@@ -826,6 +873,10 @@ func NewProjectServiceHandler(svc ProjectServiceHandler, opts ...connect.Handler
 			projectServiceRemoveProjectHandler.ServeHTTP(w, r)
 		case ProjectServiceWatchProjectProcedure:
 			projectServiceWatchProjectHandler.ServeHTTP(w, r)
+		case ProjectServiceGetProjectOctoBusServerTokenProcedure:
+			projectServiceGetProjectOctoBusServerTokenHandler.ServeHTTP(w, r)
+		case ProjectServiceUpdateProjectOctoBusServerTokenProcedure:
+			projectServiceUpdateProjectOctoBusServerTokenHandler.ServeHTTP(w, r)
 		case ProjectServiceGetSchedulerProcedure:
 			projectServiceGetSchedulerHandler.ServeHTTP(w, r)
 		case ProjectServiceListSchedulersProcedure:
@@ -893,6 +944,14 @@ func (UnimplementedProjectServiceHandler) RemoveProject(context.Context, *connec
 
 func (UnimplementedProjectServiceHandler) WatchProject(context.Context, *connect.Request[v2.WatchProjectRequest], *connect.ServerStream[v2.WatchProjectResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.WatchProject is not implemented"))
+}
+
+func (UnimplementedProjectServiceHandler) GetProjectOctoBusServerToken(context.Context, *connect.Request[v2.GetProjectOctoBusServerTokenRequest]) (*connect.Response[v2.GetProjectOctoBusServerTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.GetProjectOctoBusServerToken is not implemented"))
+}
+
+func (UnimplementedProjectServiceHandler) UpdateProjectOctoBusServerToken(context.Context, *connect.Request[v2.UpdateProjectOctoBusServerTokenRequest]) (*connect.Response[v2.UpdateProjectOctoBusServerTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.UpdateProjectOctoBusServerToken is not implemented"))
 }
 
 func (UnimplementedProjectServiceHandler) GetScheduler(context.Context, *connect.Request[v2.GetSchedulerRequest]) (*connect.Response[v2.GetSchedulerResponse], error) {

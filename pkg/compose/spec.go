@@ -28,6 +28,11 @@ type ProjectSpec struct {
 type OctoBusServerSpec struct {
 	URL   string `yaml:"url,omitempty" json:"url,omitempty"`
 	Token string `yaml:"token,omitempty" json:"token,omitempty"`
+	// TokenSource selects where the server's bearer token is resolved from.
+	// Empty keeps the inline `token` field (versioned in the project spec);
+	// OctoBusTokenSourceDaemon resolves it from the daemon's per-project
+	// credential store so token rotation does not change the project version.
+	TokenSource string `yaml:"token_source,omitempty" json:"token_source,omitempty"`
 }
 
 // EnvFileSpec lists dotenv files used while loading a project configuration.
@@ -584,8 +589,9 @@ func validateOctoBusMap(node *yaml.Node, path string) error {
 
 func validateOctoBusServer(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
-		"url":   validateScalar,
-		"token": validateScalar,
+		"url":          validateScalar,
+		"token":        validateScalar,
+		"token_source": validateScalar,
 	})
 }
 

@@ -494,6 +494,16 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 		t.Fatalf("GetCapabilityGateway gateway=%#v err=%v", gateway, err)
 	}
 
+	if err := store.SaveProjectOctoBusServerToken(ctx, "project-1", "internal", "octobus-secret"); err != nil {
+		t.Fatalf("SaveProjectOctoBusServerToken returned error: %v", err)
+	}
+	if token, err := store.GetProjectOctoBusServerToken(ctx, "project-1", "internal"); err != nil || token != "octobus-secret" {
+		t.Fatalf("GetProjectOctoBusServerToken token=%q err=%v", token, err)
+	}
+	if token, err := store.GetProjectOctoBusServerToken(ctx, "project-1", "missing"); err != nil || token != "" {
+		t.Fatalf("GetProjectOctoBusServerToken missing token=%q err=%v", token, err)
+	}
+
 	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{{Name: "A", Value: "1"}, {Name: "SECRET", Value: "2", Secret: true}}); err != nil {
 		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)
 	}
@@ -823,10 +833,11 @@ func assertProjectSchema(t *testing.T, store *ConfigStore) {
 		"project_run": {"run_id", "project_id", "project_name", "project_revision", "agent_name", "agent_id", "source", "scheduler_id", "scheduler_run_id", "trigger_id", "status",
 			"sandbox_id", "exit_code", "error", "prompt", "output", "result_json", "logs_path", "artifacts_dir", "cleanup_error", "driver", "image_ref", "started_at",
 			"completed_at", "duration_ms", "created_at", "updated_at"},
-		"project_run_label": {"run_id", "key", "value"},
-		"scheduler_trigger": {"scheduler_id", "trigger_id", "kind", "spec_json"},
-		"scheduler_run":     {"scheduler_id", "run_id", "status", "started_at"},
-		"scheduler_event":   {"scheduler_id", "scheduler_run_id", "event_id", "type"},
+		"project_run_label":            {"run_id", "key", "value"},
+		"project_octobus_server_token": {"project_id", "server_name", "token", "updated_at"},
+		"scheduler_trigger":            {"scheduler_id", "trigger_id", "kind", "spec_json"},
+		"scheduler_run":                {"scheduler_id", "run_id", "status", "started_at"},
+		"scheduler_event":              {"scheduler_id", "scheduler_run_id", "event_id", "type"},
 	} {
 		assertTableColumns(t, store, table, columns...)
 	}

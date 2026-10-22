@@ -94,3 +94,45 @@ func projectCapabilityDefinition(url, token string) domain.AgentDefinition {
 		ConfigJSON: `{"octobus_servers":{"internal":{"url":"` + url + `","token":"` + token + `"}}}`,
 	}
 }
+
+type mutableCapabilityStore struct {
+	mutableCapabilityAgentStore
+	token string
+	err   error
+}
+
+func (s *mutableCapabilityStore) GetProjectOctoBusServerToken(context.Context, string, string) (string, error) {
+	return s.token, s.err
+}
+
+func projectCapabilityDefinitionWithTokenSource(url string) domain.AgentDefinition {
+	return domain.AgentDefinition{
+		ID:         "agent-1",
+		ProjectID:  "project-1",
+		ConfigJSON: `{"octobus_servers":{"internal":{"url":"` + url + `","token_source":"daemon"}}}`,
+	}
+}
+
+func TestProjectOctoBusTargetResolverResolvesDaemonManagedToken(t *testing.T) {
+	binding := capproxy.SandboxBinding{ProjectID: "project-1", AgentID: "agent-1"}
+
+	store := &mutableCapabilityStore{token: "daemon-secret"}
+	store.definition = projectCapabilityDefinitionWithTokenSource("https://internal.example")
+	resolver := NewProjectOctoBusTargetResolver(store)
+
+	target, err := resolver.ResolveCapabilityTarget(context.Background(), binding, "internal/dev")
+	if err != nil {
+		t.Fatalf("resolve returned error: %v", err)
+	}
+	if target.Token != "daemon-secret" || target.Addr != "https://internal.example" {
+		t.Fatalf("target = %#v, want daemon-resolved token", target)
+	}
+
+	// A store that only implements AgentDefinitionStore cannot resolve a
+	// daemon-managed token and must fail Unavailable.
+	plainStore := &mutableCapabilityAgentStore{definition: projectCapabilityDefinitionWithTokenSource("https://internal.example")}
+	_, err = NewProjectOctoBusTargetResolver(plainStore).ResolveCapabilityTarget(context.Background(), binding, "internal/dev")
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("missing token store status = %v, want %v", status.Code(err), codes.Unavailable)
+	}
+}

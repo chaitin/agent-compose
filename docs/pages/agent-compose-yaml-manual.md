@@ -480,10 +480,13 @@ octobus_servers:
 | --- | --- | --- | --- |
 | `url` | string | Yes | Absolute `http` or `https` URL for the OctoBus server. User information and URL fragments are rejected. Supports `${NAME}` interpolation. |
 | `token` | string | No | Bearer token used by the daemon when connecting to this server. Supports `${NAME}` interpolation; an empty value configures no authorization token. |
+| `token_source` | string | No | `daemon` resolves the bearer token from the daemon's per-project credential store so rotating it with `UpdateProjectOctoBusServerToken` never changes the project revision. Mutually exclusive with `token`. |
 
 The map key is the server name and must use the stable identifier format. Agents select these servers by qualifying an existing `capset_ids` entry as `<server>/<capset>`, for example `internal/code-review`. Defining a server does not grant access to it by itself.
 
 OctoBus tokens are inherently sensitive. Keep them in environment or dotenv configuration and reference them with `${NAME}`. The daemon retains the resolved token so it can proxy requests, but redacts it from normalized user-facing output and never injects it into the sandbox. Avoid committing literal tokens to compose files.
+
+A server may instead declare `token_source: daemon` and omit `token`. The bearer value then lives in the daemon's per-project credential store rather than the project spec, so rotating it via the `UpdateProjectOctoBusServerToken` RPC takes effect immediately without creating a new project revision. `token` and `token_source` are mutually exclusive.
 
 The redacted `********` value in project API or normalized output is not the credential itself. `ApplyProject` keeps its existing complete-replacement behavior and does not interpret this marker as “preserve”; compose and CLI re-apply flows must still resolve and submit the real secret from the original environment-backed source.
 

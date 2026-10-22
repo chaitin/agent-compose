@@ -41,6 +41,14 @@ type ProjectStore interface {
 	GetProjectRevision(context.Context, string, int64) (domain.ProjectRevisionRecord, error)
 }
 
+// ProjectOctoBusTokenStore owns the per-project OctoBus server bearer tokens
+// held outside the versioned project spec. The value is read and written by
+// the ProjectHandler's token RPCs and never returned in full.
+type ProjectOctoBusTokenStore interface {
+	GetProjectOctoBusServerToken(context.Context, string, string) (string, error)
+	SaveProjectOctoBusServerToken(context.Context, string, string, string) error
+}
+
 type ProjectSchedulerStore interface {
 	GetScheduler(context.Context, string) (domain.Scheduler, error)
 	ListSchedulerEvents(context.Context, string, int) ([]domain.SchedulerEvent, error)
@@ -186,6 +194,60 @@ func (h *ProjectHandler) RemoveProject(ctx context.Context, req *connect.Request
 
 func (h *ProjectHandler) WatchProject(ctx context.Context, req *connect.Request[agentcomposev2.WatchProjectRequest], stream *connect.ServerStream[agentcomposev2.WatchProjectResponse]) error {
 	return h.delegate.WatchProject(ctx, req, stream)
+}
+
+func (h *ProjectHandler) GetProjectOctoBusServerToken(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectOctoBusServerTokenRequest]) (*connect.Response[agentcomposev2.GetProjectOctoBusServerTokenResponse], error) {
+	store, project, serverName, err := h.resolveProjectOctoBusTokenServer(ctx, req.Msg.GetProject(), req.Msg.GetServerName())
+	if err != nil {
+		return nil, projectConnectError(err)
+	}
+	token, err := store.GetProjectOctoBusServerToken(ctx, project.ID, serverName)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&agentcomposev2.GetProjectOctoBusServerTokenResponse{TokenSet: strings.TrimSpace(token) != ""}), nil
+}
+
+func (h *ProjectHandler) UpdateProjectOctoBusServerToken(ctx context.Context, req *connect.Request[agentcomposev2.UpdateProjectOctoBusServerTokenRequest]) (*connect.Response[agentcomposev2.UpdateProjectOctoBusServerTokenResponse], error) {
+	store, project, serverName, err := h.resolveProjectOctoBusTokenServer(ctx, req.Msg.GetProject(), req.Msg.GetServerName())
+	if err != nil {
+		return nil, projectConnectError(err)
+	}
+	token, err := store.GetProjectOctoBusServerToken(ctx, project.ID, serverName)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	if req.Msg.Token != nil {
+		token = req.Msg.GetToken()
+	}
+	if err := store.SaveProjectOctoBusServerToken(ctx, project.ID, serverName, token); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&agentcomposev2.UpdateProjectOctoBusServerTokenResponse{TokenSet: strings.TrimSpace(token) != ""}), nil
+}
+
+// resolveProjectOctoBusTokenServer resolves the project, validates the server
+// name, and asserts the token store capability. It does not require the server
+// to be declared in the current revision: an unused row is inert because the
+// runtime resolver only reads the store for a server whose spec declares
+// token_source=daemon.
+func (h *ProjectHandler) resolveProjectOctoBusTokenServer(ctx context.Context, ref *agentcomposev2.ProjectRef, rawServerName string) (ProjectOctoBusTokenStore, domain.ProjectRecord, string, error) {
+	if h.store == nil {
+		return nil, domain.ProjectRecord{}, "", fmt.Errorf("config store is required")
+	}
+	project, err := h.resolveProjectRef(ctx, ref)
+	if err != nil {
+		return nil, domain.ProjectRecord{}, "", err
+	}
+	store, ok := h.store.(ProjectOctoBusTokenStore)
+	if !ok {
+		return nil, domain.ProjectRecord{}, "", fmt.Errorf("project octobus server token store is required")
+	}
+	serverName := strings.TrimSpace(rawServerName)
+	if serverName == "" {
+		return nil, domain.ProjectRecord{}, "", domain.ClassifyError(domain.ErrRequired, "server name is required", nil)
+	}
+	return store, project, serverName, nil
 }
 
 func (h *ProjectHandler) GetScheduler(ctx context.Context, req *connect.Request[agentcomposev2.GetSchedulerRequest]) (*connect.Response[agentcomposev2.GetSchedulerResponse], error) {

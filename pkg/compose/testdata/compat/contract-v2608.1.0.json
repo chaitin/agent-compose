@@ -668,6 +668,11 @@
       "optional": true
     },
     {
+      "path": "octobus_servers.*.token_source",
+      "go_type": "string",
+      "optional": true
+    },
+    {
       "path": "octobus_servers.*.url",
       "go_type": "string",
       "optional": true

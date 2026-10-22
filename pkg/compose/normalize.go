@@ -122,6 +122,10 @@ type NormalizedMCPServerSpec struct {
 type NormalizedOctoBusServerSpec struct {
 	URL   string `yaml:"url" json:"url"`
 	Token string `yaml:"token,omitempty" json:"token,omitempty"`
+	// TokenSource is OctoBusTokenSourceDaemon when the token is resolved from
+	// the daemon credential store instead of the inline Token field. Empty
+	// keeps the inline-token behavior.
+	TokenSource string `yaml:"token_source,omitempty" json:"token_source,omitempty"`
 }
 
 type NormalizedSkillSpec struct {

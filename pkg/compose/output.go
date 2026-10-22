@@ -83,9 +83,10 @@ type orderedMCPServerSpec struct {
 }
 
 type orderedOctoBusServerSpec struct {
-	Name  string `yaml:"name" json:"name"`
-	URL   string `yaml:"url" json:"url"`
-	Token string `yaml:"token,omitempty" json:"token,omitempty"`
+	Name        string `yaml:"name" json:"name"`
+	URL         string `yaml:"url" json:"url"`
+	Token       string `yaml:"token,omitempty" json:"token,omitempty"`
+	TokenSource string `yaml:"token_source,omitempty" json:"token_source,omitempty"`
 }
 
 type orderedVolumeSpec struct {

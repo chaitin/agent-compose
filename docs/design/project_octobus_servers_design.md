@@ -81,6 +81,12 @@ workspace 和 skill 配置命名保持一致。
 - `token` 字段本身具有敏感凭据语义，不增加 `secret` 子字段；
 - token 不得进入 guest env、sandbox tag、capability guide 或日志。
 
+`token_source` 是可选字符串，`daemon` 表示 token 值存放在 daemon 的项目级凭据库
+（`project_octobus_server_token` 表，key 为 `(project_id, server_name)`），由
+`UpdateProjectOctoBusServerToken` RPC 就地读写，不进入 project spec / revision /
+hash。`token` 与 `token_source` 互斥；`token_source` 为空时保持内联 `token`
+语义，完全向后兼容。
+
 ### 2.2 Compose 类型
 
 建议在 `pkg/compose` 增加：
@@ -92,8 +98,9 @@ type ProjectSpec struct {
 }
 
 type OctoBusServerSpec struct {
-    URL   string `yaml:"url,omitempty" json:"url,omitempty"`
-    Token string `yaml:"token,omitempty" json:"token,omitempty"`
+    URL         string `yaml:"url,omitempty" json:"url,omitempty"`
+    Token       string `yaml:"token,omitempty" json:"token,omitempty"`
+    TokenSource string `yaml:"token_source,omitempty" json:"token_source,omitempty"`
 }
 ```
 
@@ -224,15 +231,16 @@ normalize agent 时，在现有 `NormalizeCapsetIDs` 基础上增加 project ser
 normalized `octobus_servers` 与 `mcp_servers` 一样进入 project canonical spec、
 spec hash 和 revision JSON。因此：
 
-- server URL 或 token 变化会形成新的 project revision；
+- server URL 或内联 `token` 变化会形成新的 project revision；
+- `token_source: daemon` 的 token 值不进入 spec/revision/hash，轮换该值不产生
+  新 revision，只有 `token_source` 字段本身参与 hash；
 - inspect/diff 能反映 server 配置变化；
 - project run 仍记录其创建时的 project revision；
 - 旧 revision 可以按缺少该字段的兼容默认解码。
 
-token 会像当前 compose 中其他已经解析的凭据一样进入 daemon 持久化的非脱敏
+内联 token 会像当前 compose 中其他已经解析的凭据一样进入 daemon 持久化的非脱敏
 revision JSON。所有面向用户的 project/proto/YAML/JSON 输出必须对
-`octobus_servers.*.token` 脱敏或省略。`token` 的直接字符串格式不表示它可以
-安全输出。
+`octobus_servers.*.token` 脱敏或省略。`token_source` 不是秘密，可以明文输出。
 
 建议 canonical output 规则为：
 
@@ -572,8 +580,11 @@ capset declaration 解析 target 的小接口，而不是让 capproxy 直接依�
 ## 14. 最终决策摘要
 
 - 新增顶层 `octobus_servers` map；
-- server 字段只有 `url` 和可选字符串 `token`；
+- server 字段有 `url`、可选字符串 `token` 和可选 `token_source`；
 - token 支持 `${ENV}`，不增加 `secret` 字段；
+- `token_source: daemon` 把 token 值存进 daemon 项目级凭据库
+  `project_octobus_server_token`，由 `Get/UpdateProjectOctoBusServerToken` RPC
+  就地读写，轮换不产生新 revision；`token` 与 `token_source` 互斥；
 - agent 继续使用 `capset_ids`；
 - 无 `/` 的 capset 永远使用 daemon 全局 OctoBus；
 - 有一个 `/` 的 capset 使用前半部分选择 project server，后半部分必须是合法的

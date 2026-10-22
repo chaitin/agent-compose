@@ -20,6 +20,12 @@ type ProjectOctoBusTargetResolver struct {
 	agents AgentDefinitionStore
 }
 
+// ProjectOctoBusTokenSource supplies a project server's daemon-managed bearer
+// token. Implementations return an empty string when no token is set.
+type ProjectOctoBusTokenSource interface {
+	GetProjectOctoBusServerToken(context.Context, string, string) (string, error)
+}
+
 type ResolvedProjectOctoBusServer struct {
 	Server   compose.NormalizedOctoBusServerSpec
 	CapsetID string
@@ -85,6 +91,20 @@ func (r *ProjectOctoBusTargetResolver) ResolveOctoBusServer(ctx context.Context,
 	}
 	if strings.TrimSpace(server.URL) == "" {
 		return ResolvedProjectOctoBusServer{}, status.Error(codes.FailedPrecondition, fmt.Sprintf("octobus server %q has no URL", parsed.ServerName))
+	}
+	if server.TokenSource == compose.OctoBusTokenSourceDaemon {
+		tokenStore, ok := r.agents.(ProjectOctoBusTokenSource)
+		if !ok {
+			return ResolvedProjectOctoBusServer{}, status.Error(codes.Unavailable, "project octobus token store is not configured")
+		}
+		token, err := tokenStore.GetProjectOctoBusServerToken(ctx, projectID, parsed.ServerName)
+		if err != nil {
+			return ResolvedProjectOctoBusServer{}, &capabilityResolutionError{
+				status: status.New(codes.Unavailable, "load project octobus server token"),
+				cause:  err,
+			}
+		}
+		server.Token = token
 	}
 	return ResolvedProjectOctoBusServer{Server: server, CapsetID: parsed.CapsetID}, nil
 }

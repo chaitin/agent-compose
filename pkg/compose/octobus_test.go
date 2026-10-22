@@ -62,6 +62,8 @@ func TestNormalizeRejectsInvalidOctoBusConfiguration(t *testing.T) {
 		{name: "backtick in capset", raw: "agents:\n  coder:\n    capset_ids: [\"internal/`dev`\"]\n", wantField: "agents.coder.capset_ids[0]"},
 		{name: "missing token environment", raw: "octobus_servers:\n  internal:\n    url: https://example.test\n    token: ${MISSING_TOKEN}\n", wantField: "octobus_servers.internal.token"},
 		{name: "redacted token placeholder", raw: "octobus_servers:\n  internal:\n    url: https://example.test\n    token: '********'\n", wantField: "redacted token placeholder cannot be used as a credential"},
+		{name: "invalid token_source", raw: "octobus_servers:\n  internal:\n    url: https://example.test\n    token_source: adp\n", wantField: "octobus_servers.internal.token_source"},
+		{name: "token and token_source together", raw: "octobus_servers:\n  internal:\n    url: https://example.test\n    token: t\n    token_source: daemon\n", wantField: "octobus_servers.internal.token_source"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,6 +73,41 @@ func TestNormalizeRejectsInvalidOctoBusConfiguration(t *testing.T) {
 				t.Fatalf("Normalize error = %v, want field %s", err, tt.wantField)
 			}
 		})
+	}
+}
+
+func TestNormalizeOctoBusTokenSourceDaemon(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: octobus-daemon-token
+octobus_servers:
+  internal:
+    url: https://internal.example
+    token_source: daemon
+agents:
+  coder:
+    capset_ids: [internal/dev]
+`)
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	server := normalized.OctoBusServers["internal"]
+	if server.Token != "" {
+		t.Fatalf("daemon-managed token must not be normalized into the spec, got %q", server.Token)
+	}
+	if server.TokenSource != OctoBusTokenSourceDaemon {
+		t.Fatalf("token_source = %q, want %q", server.TokenSource, OctoBusTokenSourceDaemon)
+	}
+	canonical, err := normalized.MarshalCanonicalJSON(false)
+	if err != nil {
+		t.Fatalf("MarshalCanonicalJSON returned error: %v", err)
+	}
+	text := string(canonical)
+	if !strings.Contains(text, `"token_source":"daemon"`) {
+		t.Fatalf("canonical json missing token_source: %s", text)
+	}
+	if strings.Contains(text, `"token":`) {
+		t.Fatalf("canonical json should not carry a token value for a daemon-managed server: %s", text)
 	}
 }
 

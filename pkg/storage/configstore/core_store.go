@@ -50,20 +50,22 @@ type ConfigStore struct {
 	*llmStore
 	*credentialStore
 	*capabilityGatewayStore
+	*projectOctoBusTokenStore
 	*volumeStore
 }
 
 func FromDB(db *sql.DB) *ConfigStore {
 	return &ConfigStore{
-		db:                     db,
-		coreStore:              &coreStore{db: db},
-		schedulerStore:         &schedulerStore{db: db},
-		eventStore:             &eventStore{db: db},
-		projectStore:           &projectStore{db: db},
-		llmStore:               &llmStore{db: db},
-		credentialStore:        &credentialStore{db: db},
-		capabilityGatewayStore: &capabilityGatewayStore{db: db},
-		volumeStore:            &volumeStore{db: db},
+		db:                       db,
+		coreStore:                &coreStore{db: db},
+		schedulerStore:           &schedulerStore{db: db},
+		eventStore:               &eventStore{db: db},
+		projectStore:             &projectStore{db: db},
+		llmStore:                 &llmStore{db: db},
+		credentialStore:          &credentialStore{db: db},
+		capabilityGatewayStore:   &capabilityGatewayStore{db: db},
+		projectOctoBusTokenStore: &projectOctoBusTokenStore{db: db},
+		volumeStore:              &volumeStore{db: db},
 	}
 }
 

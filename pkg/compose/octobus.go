@@ -1,6 +1,7 @@
 package compose
 
 import (
+	"fmt"
 	"net/url"
 	"slices"
 	"strconv"
@@ -61,18 +62,44 @@ func normalizeOctoBusServer(path string, value OctoBusServerSpec, options Normal
 	if parsed.Fragment != "" {
 		return NormalizedOctoBusServerSpec{}, &ValidationError{Path: path + ".url", Message: "url must not include a fragment"}
 	}
-	token, err := interpolateEnvValue(path+".token", strings.TrimSpace(value.Token), options)
+	tokenSource, err := normalizeOctoBusTokenSource(path, value)
 	if err != nil {
 		return NormalizedOctoBusServerSpec{}, err
 	}
-	token = strings.TrimSpace(token)
-	if token == redactedOctoBusToken {
-		return NormalizedOctoBusServerSpec{}, &ValidationError{
-			Path:    path + ".token",
-			Message: "redacted token placeholder cannot be used as a credential",
+	token := ""
+	if tokenSource == "" {
+		token, err = interpolateEnvValue(path+".token", strings.TrimSpace(value.Token), options)
+		if err != nil {
+			return NormalizedOctoBusServerSpec{}, err
+		}
+		token = strings.TrimSpace(token)
+		if token == redactedOctoBusToken {
+			return NormalizedOctoBusServerSpec{}, &ValidationError{
+				Path:    path + ".token",
+				Message: "redacted token placeholder cannot be used as a credential",
+			}
 		}
 	}
-	return NormalizedOctoBusServerSpec{URL: rawURL, Token: token}, nil
+	return NormalizedOctoBusServerSpec{URL: rawURL, Token: token, TokenSource: tokenSource}, nil
+}
+
+// OctoBusTokenSourceDaemon marks a project OctoBus server whose token is
+// resolved from the daemon's per-project credential store instead of the
+// inline `token` field. Rotating such a token does not change the project spec
+// or revision.
+const OctoBusTokenSourceDaemon = "daemon"
+
+// normalizeOctoBusTokenSource validates token_source and enforces that a
+// daemon-managed token is not also declared inline.
+func normalizeOctoBusTokenSource(path string, value OctoBusServerSpec) (string, error) {
+	source := strings.ToLower(strings.TrimSpace(value.TokenSource))
+	if source != "" && source != OctoBusTokenSourceDaemon {
+		return "", &ValidationError{Path: path + ".token_source", Message: fmt.Sprintf("token_source must be %q or empty", OctoBusTokenSourceDaemon)}
+	}
+	if source != "" && strings.TrimSpace(value.Token) != "" {
+		return "", &ValidationError{Path: path + ".token_source", Message: "declare either token or token_source, not both"}
+	}
+	return source, nil
 }
 
 func validateAgentCapsetReferences(path string, values []string, servers map[string]NormalizedOctoBusServerSpec) error {
@@ -111,7 +138,7 @@ func orderedOctoBusServers(values map[string]NormalizedOctoBusServerSpec, redact
 		if redactSecrets && token != "" {
 			token = redactedOctoBusToken
 		}
-		ordered = append(ordered, orderedOctoBusServerSpec{Name: key, URL: value.URL, Token: token})
+		ordered = append(ordered, orderedOctoBusServerSpec{Name: key, URL: value.URL, Token: token, TokenSource: value.TokenSource})
 	}
 	return ordered
 }
@@ -122,7 +149,7 @@ func octoBusMapFromOrdered(values []orderedOctoBusServerSpec) map[string]Normali
 	}
 	result := make(map[string]NormalizedOctoBusServerSpec, len(values))
 	for _, value := range values {
-		result[value.Name] = NormalizedOctoBusServerSpec{URL: value.URL, Token: value.Token}
+		result[value.Name] = NormalizedOctoBusServerSpec{URL: value.URL, Token: value.Token, TokenSource: value.TokenSource}
 	}
 	return result
 }

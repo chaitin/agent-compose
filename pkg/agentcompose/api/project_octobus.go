@@ -19,7 +19,7 @@ func OctoBusServerSpecsToProto(values map[string]compose.NormalizedOctoBusServer
 	items := make([]*agentcomposev2.OctoBusServerSpec, 0, len(keys))
 	for _, key := range keys {
 		value := values[key]
-		items = append(items, &agentcomposev2.OctoBusServerSpec{Name: key, Url: value.URL, Token: value.Token})
+		items = append(items, &agentcomposev2.OctoBusServerSpec{Name: key, Url: value.URL, Token: value.Token, TokenSource: value.TokenSource})
 	}
 	return items
 }
@@ -37,6 +37,9 @@ func OctoBusServerYAMLMap(servers []*agentcomposev2.OctoBusServerSpec) (map[stri
 		raw := map[string]any{"url": server.GetUrl()}
 		if server.GetToken() != "" {
 			raw["token"] = server.GetToken()
+		}
+		if server.GetTokenSource() != "" {
+			raw["token_source"] = server.GetTokenSource()
 		}
 		values[name] = raw
 	}

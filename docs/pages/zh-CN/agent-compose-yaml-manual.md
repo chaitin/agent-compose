@@ -476,10 +476,13 @@ octobus_servers:
 | --- | --- | --- | --- |
 | `url` | string | 是 | OctoBus Server 的绝对 `http` 或 `https` URL；不允许包含用户信息或 fragment。支持 `${NAME}` 插值。 |
 | `token` | string | 否 | daemon 连接该 Server 时使用的 Bearer token。支持 `${NAME}` 插值；空值表示不配置鉴权 token。 |
+| `token_source` | string | 否 | `daemon` 从 daemon 的项目级凭据库解析 Bearer token，因此通过 `UpdateProjectOctoBusServerToken` 轮换它不会改变项目 revision。与 `token` 互斥。 |
 
 map key 是 Server 名称，必须符合稳定标识符格式。Agent 通过 `<server>/<capset>` 形式限定现有 `capset_ids` 条目来选择 Server，例如 `internal/code-review`。仅声明 Server 不会自动向 Agent 授权。
 
 OctoBus token 天然属于敏感信息。应把它保存在环境变量或 dotenv 配置中，并通过 `${NAME}` 引用。daemon 会保留解析后的 token 以代理请求，但会在面向用户的规范化输出中将其脱敏，也不会把它注入 sandbox。不要把字面 token 提交到 compose 文件中。
+
+Server 也可以声明 `token_source: daemon` 并省略 `token`。此时 Bearer 值存放在 daemon 的项目级凭据库中，而不是项目 spec 里，因此通过 `UpdateProjectOctoBusServerToken` RPC 轮换它会立即生效，且不会产生新的项目 revision。`token` 与 `token_source` 互斥。
 
 项目 API 或规范化输出中的脱敏值 `********` 并不是凭据本身。`ApplyProject` 保持原有的完整替换语义，不会把该 marker 解释为“保留”；compose 和 CLI 的 re-apply 流程仍必须从原始、以环境变量为凭据来源的配置中解析并提交真实 secret。
 
