@@ -29,6 +29,7 @@ type RunSupervisor struct {
 type runSupervisorController interface {
 	StartProjectRun(context.Context, runs.RunAgentRequest) (runs.StartedProjectRun, error)
 	RunProjectCommandAttachRegistered(context.Context, context.Context, runs.RunAttachReceiver, runs.RunAttachSender, func(string, <-chan struct{})) error
+	ReattachDetachedRun(context.Context, domain.ProjectRunRecord) (domain.ProjectRunRecord, error)
 	StopInteractiveRun(context.Context, string, string) (bool, error)
 }
 
@@ -61,6 +62,14 @@ func (s *RunSupervisor) detachedRunContext(request context.Context) context.Cont
 	return domain.NewContextWithRequestMetadata(s.root, domain.RequestMetadataFromContext(request))
 }
 
+// clientlessRunContext is the context of a run that outlives its client:
+// like detachedRunContext, but it also survives daemon shutdown and carries
+// the shutdown signal instead, so a task behind the guest supervisor is only
+// disconnected while everything else in the run still stops with the daemon.
+func (s *RunSupervisor) clientlessRunContext(request context.Context) context.Context {
+	return runs.WithDaemonShutdown(context.WithoutCancel(s.detachedRunContext(request)), s.root.Done())
+}
+
 func (s *RunSupervisor) StartRun(ctx context.Context, req runs.RunAgentRequest) (domain.ProjectRunRecord, error) {
 	if req.Interactive {
 		return s.startInteractiveRun(ctx, req)
@@ -72,8 +81,18 @@ func (s *RunSupervisor) StartRun(ctx context.Context, req runs.RunAgentRequest) 
 	if runs.StatusIsTerminal(started.Run.Status) {
 		return started.Run, nil
 	}
-	execCtx, cancel := context.WithCancelCause(s.root)
-	s.register(started.Run.RunID, cancel)
+	// A run that is already running — in flight here or a detached run that
+	// survived a daemon restart — must not be started a second time when the
+	// caller retries with the same idempotency key.
+	if started.Run.Status == domain.ProjectRunStatusRunning {
+		return started.Run, nil
+	}
+	execCtx, cancel := context.WithCancelCause(runs.WithDaemonShutdown(context.WithoutCancel(s.root), s.root.Done()))
+	if !s.register(started.Run.RunID, cancel) {
+		// Another request already started this run.
+		cancel(nil)
+		return started.Run, nil
+	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -83,8 +102,32 @@ func (s *RunSupervisor) StartRun(ctx context.Context, req runs.RunAgentRequest) 
 	return started.Run, nil
 }
 
+// ReattachRun follows a detached run left running by an earlier daemon until
+// it ends. Like StartRun, the run is registered so StopRun can reach it and is
+// counted in wg so Shutdown waits for the follower to disconnect. onFailure is
+// called when the re-attach returns an error, e.g. the sandbox or runtime
+// could not be loaded, so the caller can still finalize the run.
+func (s *RunSupervisor) ReattachRun(run domain.ProjectRunRecord, onFailure func(error)) {
+	execCtx, cancel := context.WithCancelCause(runs.WithDaemonShutdown(context.WithoutCancel(s.root), s.root.Done()))
+	if !s.register(run.RunID, cancel) {
+		// Already followed by another request or re-attach: do not start a
+		// second follower or overwrite the existing registration's cancel.
+		cancel(nil)
+		return
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		defer s.unregister(run.RunID)
+		defer cancel(nil)
+		if _, err := s.controller.ReattachDetachedRun(execCtx, run); err != nil && onFailure != nil {
+			onFailure(err)
+		}
+	}()
+}
+
 func (s *RunSupervisor) startInteractiveRun(ctx context.Context, req runs.RunAgentRequest) (domain.ProjectRunRecord, error) {
-	execCtx, cancel := context.WithCancelCause(s.detachedRunContext(ctx))
+	execCtx, cancel := context.WithCancelCause(s.clientlessRunContext(ctx))
 	type interactiveRunStarted struct {
 		runID         string
 		inputReleased <-chan struct{}
@@ -104,15 +147,24 @@ func (s *RunSupervisor) startInteractiveRun(ctx context.Context, req runs.RunAge
 		defer s.wg.Done()
 		defer cancel(nil)
 		var runID string
+		var startedID string
 		err := s.controller.RunProjectCommandAttachRegistered(execCtx, execCtx, receive, func(runs.RunAttachOutput) error { return nil }, func(id string, inputReleased <-chan struct{}) {
-			runID = id
-			s.register(id, cancel)
+			startedID = id
+			if s.register(id, cancel) {
+				runID = id
+			}
 			started <- interactiveRunStarted{runID: id, inputReleased: inputReleased}
 		})
 		if runID != "" {
 			s.unregister(runID)
 		}
-		failed <- err
+		// Only a failure before onStarted is a start failure the caller must
+		// see as an error. Once onStarted fired (even for an already-running
+		// run), the started channel carries the result and a nil error must not
+		// race it and surface an empty run.
+		if startedID == "" {
+			failed <- err
+		}
 	}()
 	select {
 	case run := <-started:
@@ -137,8 +189,14 @@ func (s *RunSupervisor) Run(ctx context.Context, req runs.RunAgentRequest, strea
 	if runs.StatusIsTerminal(started.Run.Status) {
 		return started.Run, nil, nil
 	}
-	execCtx, cancel := context.WithCancelCause(ctx)
-	s.register(started.Run.RunID, cancel)
+	if started.Run.Status == domain.ProjectRunStatusRunning {
+		return started.Run, nil, nil
+	}
+	execCtx, cancel := context.WithCancelCause(runs.WithDaemonShutdown(ctx, s.root.Done()))
+	if !s.register(started.Run.RunID, cancel) {
+		cancel(nil)
+		return started.Run, nil, nil
+	}
 	s.wg.Add(1)
 	defer s.wg.Done()
 	defer s.unregister(started.Run.RunID)
@@ -163,15 +221,16 @@ func (s *RunSupervisor) Attach(ctx context.Context, receive runs.RunAttachReceiv
 	}
 	parent := ctx
 	if first.DisconnectPolicy == runs.AttachDisconnectDetach && first.RunID == "" {
-		parent = s.detachedRunContext(ctx)
+		parent = s.clientlessRunContext(ctx)
 	}
 	execCtx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
 	var runID string
 	err = s.controller.RunProjectCommandAttachRegistered(execCtx, ctx, receiveWithFirst, send, func(startedRunID string, _ <-chan struct{}) {
-		runID = startedRunID
-		s.register(runID, cancel)
-		s.wg.Add(1)
+		if s.register(startedRunID, cancel) {
+			runID = startedRunID
+			s.wg.Add(1)
+		}
 	})
 	if runID != "" {
 		s.wg.Done()
@@ -250,10 +309,18 @@ func (s *RunSupervisor) AbandonRunCompletion(ctx context.Context, runID, reason 
 	return s.completions.AbandonCompletion(ctx, runID, reason)
 }
 
-func (s *RunSupervisor) register(runID string, cancel context.CancelCauseFunc) {
+// register records an in-flight run so StopRun can reach it. It reports false
+// when the run was already registered: the caller must not start a second
+// execution for that run, because a retry with the same idempotency key
+// resolves to the same run, not a second execution.
+func (s *RunSupervisor) register(runID string, cancel context.CancelCauseFunc) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.active[runID]; ok {
+		return false
+	}
 	s.active[runID] = &activeRun{cancel: cancel}
+	return true
 }
 
 func (s *RunSupervisor) unregister(runID string) {

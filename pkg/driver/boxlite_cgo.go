@@ -591,6 +591,39 @@ func (r *cgoSandboxRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox,
 	return nil
 }
 
+// TerminateProcessTree ends every guest process tagged with marker, without
+// holding an exec handle. It implements ProcessTreeTerminator. A box that is
+// no longer running has nothing to terminate, so it is a success (and must not
+// be auto-started just to run the cleanup control).
+func (r *cgoSandboxRuntime) TerminateProcessTree(ctx context.Context, sandbox *Sandbox, vmState VMState, marker string) error {
+	if strings.TrimSpace(marker) == "" {
+		return fmt.Errorf("process tree marker is required")
+	}
+	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
+	if sandbox != nil {
+		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
+	}
+	if lookup == "" {
+		return nil
+	}
+	box, err := r.getBox(ctx, lookup)
+	if err != nil {
+		if isBoxNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	defer box.free()
+	info, err := r.boxInfo(ctx, box)
+	if err != nil {
+		return err
+	}
+	if !info.State.Running {
+		return nil
+	}
+	return r.terminateMarkedBoxExec(ctx, box, marker)
+}
+
 func (r *cgoSandboxRuntime) Exec(ctx context.Context, sandbox *Sandbox, vmState VMState, spec ExecSpec) (ExecResult, error) {
 	return r.execWithStream(ctx, sandbox, vmState, spec, nil)
 }
@@ -1439,7 +1472,10 @@ func (r *cgoSandboxRuntime) executeBoxCommand(ctx context.Context, box *cgoBoxHa
 	}
 	marker := ""
 	if markTree {
-		marker = newExecMarker()
+		marker = spec.Marker
+		if marker == "" {
+			marker = newExecMarker()
+		}
 		spec.Env = execEnvMapWithMarker(spec.Env, marker)
 	}
 	runtimeHandle, err := r.runtimeHandle()
@@ -1518,7 +1554,7 @@ func (r *cgoSandboxRuntime) executeBoxCommand(ctx context.Context, box *cgoBoxHa
 	exitCode, err := r.waitForExecCompletion(ctx, runtimeHandle, awaiter)
 	if err != nil && ctx.Err() != nil {
 		var treeErr error
-		if marker != "" {
+		if marker != "" && !spec.KillOnlyOnCancel {
 			treeErr = r.terminateMarkedBoxExec(ctx, box, marker)
 		}
 		terminationErr := errors.Join(treeErr, r.killExecution(ctx, runtimeHandle, execution))

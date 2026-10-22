@@ -555,7 +555,10 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 		return ExecResult{}, fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
 	}
 
-	execMarker := newDockerExecMarker()
+	execMarker := spec.Marker
+	if execMarker == "" {
+		execMarker = newDockerExecMarker()
+	}
 	execResp, err := dockerClient.ContainerExecCreate(ctx, containerInfo.ID, containerapi.ExecOptions{
 		AttachStdout: true,
 		AttachStderr: true,
@@ -568,7 +571,7 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 	}
 	attachResp, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, containerapi.ExecAttachOptions{})
 	if err != nil {
-		terminationErr := r.terminateDockerExec(ctx, dockerClient, dockerExecTarget{ContainerID: containerInfo.ID, ExecID: execResp.ID, Marker: execMarker})
+		terminationErr := r.terminateDockerExecOnFailure(ctx, dockerClient, spec, dockerExecTarget{ContainerID: containerInfo.ID, ExecID: execResp.ID, Marker: execMarker})
 		attachErr := fmt.Errorf("attach docker exec for sandbox %s: %w", sandbox.Summary.ID, err)
 		if ctx.Err() != nil {
 			attachErr = ctx.Err()
@@ -592,19 +595,19 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 	collector.finish()
 	if ctx.Err() != nil {
 		attachResp.Close()
-		terminationErr := r.terminateDockerExec(ctx, dockerClient, dockerExecTarget{ContainerID: containerInfo.ID, ExecID: execResp.ID, Marker: execMarker})
+		terminationErr := r.terminateDockerExecOnFailure(ctx, dockerClient, spec, dockerExecTarget{ContainerID: containerInfo.ID, ExecID: execResp.ID, Marker: execMarker})
 		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, ctx.Err(), terminationErr)
 	}
 	if copyErr != nil && !isDockerStreamClosed(copyErr) {
 		attachResp.Close()
-		terminationErr := r.terminateDockerExec(ctx, dockerClient, dockerExecTarget{ContainerID: containerInfo.ID, ExecID: execResp.ID, Marker: execMarker})
+		terminationErr := r.terminateDockerExecOnFailure(ctx, dockerClient, spec, dockerExecTarget{ContainerID: containerInfo.ID, ExecID: execResp.ID, Marker: execMarker})
 		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, copyErr, terminationErr)
 	}
 
 	execInfo, err := r.waitForExecExit(ctx, dockerClient, execResp.ID)
 	if err != nil {
 		attachResp.Close()
-		terminationErr := r.terminateDockerExec(ctx, dockerClient, dockerExecTarget{ContainerID: containerInfo.ID, ExecID: execResp.ID, Marker: execMarker})
+		terminationErr := r.terminateDockerExecOnFailure(ctx, dockerClient, spec, dockerExecTarget{ContainerID: containerInfo.ID, ExecID: execResp.ID, Marker: execMarker})
 		return ExecResult{}, execTerminationResultError(RuntimeDriverDocker, execResp.ID, err, terminationErr)
 	}
 	result := ExecResult{
@@ -616,6 +619,27 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 	}
 	result.Success = result.ExitCode == 0
 	return result, nil
+}
+
+// TerminateProcessTree ends every guest process tagged with marker, without
+// holding an exec handle. It implements ProcessTreeTerminator.
+func (r *dockerRuntime) TerminateProcessTree(ctx context.Context, sandbox *Sandbox, vmState VMState, marker string) error {
+	if strings.TrimSpace(marker) == "" {
+		return fmt.Errorf("process tree marker is required")
+	}
+	dockerClient, err := r.newClient()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dockerClient.Close() }()
+	containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState)
+	if err != nil {
+		return err
+	}
+	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
+		return fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
+	}
+	return r.terminateDockerProcessTree(ctx, dockerClient, containerInfo.ID, marker)
 }
 
 func (i *dockerCommandInteraction) Send(frame RuntimeInputFrame) error {

@@ -238,3 +238,64 @@ func createCompletionTestRun(t *testing.T, store *configstore.ConfigStore, run d
 	}
 	return created
 }
+
+// A second completion writer that read the run while it was still running
+// can reach staging only after the first writer's result was finalized (a
+// detached run re-attached at startup while the manager finishes the result
+// staged before the restart). Its stage must not land, or finalizing it would
+// overwrite the first result.
+func TestCompletionStageDoesNotReopenAFinalizedRun(t *testing.T) {
+	ctx := context.Background()
+	store := newCompletionTestStore(t)
+	run := createCompletionTestRun(t, store, domain.ProjectRunRecord{
+		RunID: "finalized-run", ProjectID: "project-1", AgentName: "worker", AgentID: "agent-1",
+		Status: domain.ProjectRunStatusRunning, CleanupPolicy: domain.ProjectRunCleanupKeepRunning,
+	})
+	manager := runs.NewCompletionManager(runs.CompletionManagerDeps{Store: store, Sandboxes: completionSandboxStoreFake{}, Lifecycle: &completionStopperFake{}})
+	if _, err := manager.Complete(ctx, runs.TransitionRequest{RunID: run.RunID, Status: domain.ProjectRunStatusSucceeded, Output: "first"}); err != nil {
+		t.Fatalf("first Complete: %v", err)
+	}
+	pending, err := manager.Pending(ctx, run.RunID)
+	if err != nil || pending {
+		t.Fatalf("Pending after finalize = %v, %v; want false", pending, err)
+	}
+
+	_, created, err := store.StageProjectRunCompletion(ctx, domain.ProjectRunCompletionRecord{
+		RunID: run.RunID, TargetStatus: domain.ProjectRunStatusFailed, TransitionJSON: `{"run_id":"finalized-run","status":"failed","error":"late writer"}`,
+	}, nil)
+	if err != nil {
+		t.Fatalf("late stage: %v", err)
+	}
+	if created {
+		t.Fatal("a completion was staged for a run that is already terminal")
+	}
+	if _, err := store.GetProjectRunCompletion(ctx, run.RunID); err == nil {
+		t.Fatal("late stage left a completion row behind")
+	}
+	got, err := store.GetProjectRun(ctx, run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.ProjectRunStatusSucceeded || got.Output != "first" {
+		t.Fatalf("run = %s %q, want the first writer's succeeded result", got.Status, got.Output)
+	}
+}
+
+func TestCompletionManagerPendingReportsStagedRuns(t *testing.T) {
+	ctx := context.Background()
+	store := newCompletionTestStore(t)
+	run := createCompletionTestRun(t, store, domain.ProjectRunRecord{
+		RunID: "staged-run", ProjectID: "project-1", AgentName: "worker", AgentID: "agent-1",
+		Status: domain.ProjectRunStatusRunning, CleanupPolicy: domain.ProjectRunCleanupKeepRunning,
+	})
+	manager := runs.NewCompletionManager(runs.CompletionManagerDeps{Store: store, Sandboxes: completionSandboxStoreFake{}, Lifecycle: &completionStopperFake{}})
+	if pending, err := manager.Pending(ctx, run.RunID); err != nil || pending {
+		t.Fatalf("Pending before staging = %v, %v; want false", pending, err)
+	}
+	if err := manager.StageInterrupted(ctx, run, "interrupted"); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := manager.Pending(ctx, run.RunID); err != nil || !pending {
+		t.Fatalf("Pending after staging = %v, %v; want true", pending, err)
+	}
+}

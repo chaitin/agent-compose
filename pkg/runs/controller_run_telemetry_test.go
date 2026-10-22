@@ -110,6 +110,11 @@ type childSpanRuntime struct {
 }
 
 func (r *childSpanRuntime) ExecStream(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, spec domain.ExecSpec, writer domain.ExecStreamWriter) (domain.ExecResult, error) {
+	// The detach capability probe is a one-shot lookup, not the run's exec, so
+	// it must not consume the run-span assertion slot.
+	if spec.Command == "agent-compose-runtime" && len(spec.Args) > 0 && spec.Args[0] == "capabilities" {
+		return r.fakeControllerRuntime.ExecStream(ctx, session, vmState, spec, writer)
+	}
 	r.received <- trace.SpanContextFromContext(ctx)
 	_, span := r.recorder.Start(ctx, telemetry.SpanSandboxExec)
 	telemetry.EndSpan(span, nil)

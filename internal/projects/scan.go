@@ -103,21 +103,26 @@ func ScanProjectRun(scan func(dest ...any) error) (domain.ProjectRunRecord, erro
 	var item domain.ProjectRunRecord
 	var schedulerRunID sql.NullString
 	var sandboxCreated int
+	var detach int
 	var startedAtRaw any
 	var completedAtRaw any
+	var deadlineRaw any
 	var createdAtRaw any
 	var updatedAtRaw any
 	if err := scan(
 		&item.RunID, &item.ProjectID, &item.ProjectName, &item.ProjectRevision, &item.AgentName, &item.AgentID, &item.Source, &item.SchedulerID, &schedulerRunID, &item.TriggerID, &item.Status,
 		&item.SandboxID, &item.ExitCode, &item.Error, &item.ErrorStack, &item.Prompt, &item.Output, &item.ResultJSON, &item.LogsPath, &item.ArtifactsDir, &item.CleanupError, &item.CleanupPolicy, &sandboxCreated, &item.Driver, &item.ImageRef,
 		&startedAtRaw, &completedAtRaw, &item.DurationMs, &createdAtRaw, &updatedAtRaw,
+		&item.ExecutionID, &detach, &deadlineRaw, &item.DetachKind,
 	); err != nil {
 		return domain.ProjectRunRecord{}, fmt.Errorf("scan project run: %w", err)
 	}
 	item.StartedAt = storedtime.ParseStoredUnixTimeAuto(AsInt64Time(startedAtRaw))
 	item.SchedulerRunID = schedulerRunID.String
 	item.SandboxCreated = sandboxCreated != 0
+	item.Detach = detach != 0
 	item.CompletedAt = storedtime.ParseStoredUnixTimeAuto(AsInt64Time(completedAtRaw))
+	item.Deadline = storedtime.ParseStoredUnixTimeAuto(AsInt64Time(deadlineRaw))
 	item.CreatedAt = storedtime.ParseStoredTime(createdAtRaw)
 	item.UpdatedAt = storedtime.ParseStoredTime(updatedAtRaw)
 	return item, nil
@@ -175,5 +180,5 @@ func ParseInt64String(value string) (int64, bool) {
 func SelectProjectRunSQL() string {
 	return `SELECT run_id, project_id, project_name, project_revision, agent_name, agent_id, source, scheduler_id, scheduler_run_id, trigger_id, status,
 		sandbox_id, exit_code, error, error_stack, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, cleanup_policy, sandbox_created, driver, image_ref,
-		started_at, completed_at, duration_ms, created_at, updated_at FROM project_run`
+		started_at, completed_at, duration_ms, created_at, updated_at, execution_id, detach, deadline, detach_kind FROM project_run`
 }

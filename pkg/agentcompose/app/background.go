@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/agentcompose/adapters"
 	"github.com/chaitin/agent-compose/pkg/capproxy"
 	"github.com/chaitin/agent-compose/pkg/events"
+	"github.com/chaitin/agent-compose/pkg/llms/runtimefacade"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
@@ -40,6 +42,14 @@ type backgroundManagersDeps struct {
 	CapProxy    *capproxy.Server
 	CapTokens   *adapters.CapabilitySandboxResolver
 	Completions *runs.CompletionManager
+	Reattacher  detachedRunReattacher
+}
+
+// detachedRunReattacher follows a detached run left running by an earlier
+// daemon. RunSupervisor implements it so a re-attached run can be stopped and
+// is waited for on shutdown, like any run this daemon started.
+type detachedRunReattacher interface {
+	ReattachRun(run domain.ProjectRunRecord, onFailure func(error))
 }
 
 func startBackgroundManagers(ctx context.Context, deps backgroundManagersDeps) error {
@@ -60,7 +70,13 @@ func startBackgroundManagers(ctx context.Context, deps backgroundManagersDeps) e
 	if err := deps.Completions.Start(ctx); err != nil {
 		return err
 	}
-	if err := reconcilePersistedProjectRuns(reconcileCtx, deps.ConfigDB, deps.Completions, startedAt); err != nil {
+	if err := reconcilePersistedProjectRuns(reconcileCtx, projectRunReconcileContext{
+		ConfigDB:    deps.ConfigDB,
+		Completions: deps.Completions,
+		Reattacher:  deps.Reattacher,
+		RootCtx:     ctx,
+		StartedAt:   startedAt,
+	}); err != nil {
 		slog.Warn("failed to reconcile persisted project runs", "error", err)
 	}
 	deps.Schedulers.Start()
@@ -123,20 +139,21 @@ func reconcilePendingSandboxState(ctx context.Context, store *sandboxstore.Store
 	return store.GetSandbox(ctx, session.Summary.ID)
 }
 
-// projectRunReconcileContext bundles the store/manager and startup timestamp
-// reconcilePersistedProjectRunsWithStatus needs, shared across every status
-// it's called with.
+// projectRunReconcileContext bundles the store/manager, startup timestamp, and
+// the daemon root context reconcilePersistedProjectRuns needs to re-attach
+// detached runs that may outlive the startup reconciliation window.
 type projectRunReconcileContext struct {
 	ConfigDB    *configstore.ConfigStore
 	Completions *runs.CompletionManager
+	Reattacher  detachedRunReattacher
+	RootCtx     context.Context
 	StartedAt   time.Time
 }
 
-func reconcilePersistedProjectRuns(ctx context.Context, configDB *configstore.ConfigStore, completions *runs.CompletionManager, startedAt time.Time) error {
-	if configDB == nil {
+func reconcilePersistedProjectRuns(ctx context.Context, reconcile projectRunReconcileContext) error {
+	if reconcile.ConfigDB == nil {
 		return nil
 	}
-	reconcile := projectRunReconcileContext{ConfigDB: configDB, Completions: completions, StartedAt: startedAt}
 	for _, status := range []string{domain.ProjectRunStatusPending, domain.ProjectRunStatusRunning} {
 		if err := reconcilePersistedProjectRunsWithStatus(ctx, reconcile, status); err != nil {
 			return err
@@ -169,6 +186,38 @@ func reconcilePersistedProjectRunsWithStatus(ctx context.Context, reconcile proj
 		offset += len(result.Runs)
 	}
 	for _, run := range staleRuns {
+		if run.Detach && reconcile.Reattacher != nil {
+			// A run whose result was already staged before the restart is
+			// finishing, not running: the completion manager finalizes it with
+			// that result. Re-attaching would race it with a second result.
+			if pending, err := reconcile.Completions.Pending(ctx, run.RunID); err != nil {
+				slog.Warn("failed to check staged completion of detached project run", "run_id", run.RunID, "error", err)
+			} else if pending {
+				continue
+			}
+			// A detached run survives the daemon that started it: re-attach to
+			// its guest journal and complete it when the task exits instead of
+			// declaring it interrupted. The follower outlives this startup
+			// reconciliation, so a failure is finalized on the root context.
+			run := run
+			reconcile.Reattacher.ReattachRun(run, func(err error) {
+				slog.Warn("failed to re-attach detached project run", "run_id", run.RunID, "error", err)
+				message := fmt.Sprintf("%s: re-attach failed: %v", staleProjectRunError, err)
+				if stageErr := reconcile.Completions.StageInterrupted(context.WithoutCancel(reconcile.RootCtx), run, message); stageErr != nil {
+					// The run is still running with no follower; a later
+					// re-attach or reconciliation finalizes it. Its credentials
+					// must survive until then.
+					slog.Warn("failed to stage project run completion after re-attach failure", "run_id", run.RunID, "error", stageErr)
+				} else if run.DetachKind == domain.DetachKindAgent || run.DetachKind == domain.DetachKindInteractivePrompt {
+					// The run is finalized as interrupted, so the per-run facade
+					// tokens kept for the re-attach are no longer needed.
+					if delErr := reconcile.ConfigDB.DeleteLLMFacadeTokensForRun(context.WithoutCancel(reconcile.RootCtx), run.RunID, runtimefacade.TokenSourceAgent); delErr != nil {
+						slog.Warn("failed to delete retained facade tokens after re-attach failure", "run_id", run.RunID, "error", delErr)
+					}
+				}
+			})
+			continue
+		}
 		if err := reconcile.Completions.StageInterrupted(ctx, run, staleProjectRunError); err != nil {
 			slog.Warn("failed to stage stale project run completion", "run_id", run.RunID, "error", err)
 		}

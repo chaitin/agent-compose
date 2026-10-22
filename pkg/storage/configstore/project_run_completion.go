@@ -26,6 +26,17 @@ func (s *projectStore) StageProjectRunCompletion(ctx context.Context, completion
 		return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("begin stage project run completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// A run that already reached a terminal state is not staged again: a
+	// second writer that read the run while it was still active (e.g. a
+	// re-attach racing the completion of the first writer's row) would
+	// otherwise finalize over the first writer's result.
+	var currentStatus string
+	if err := tx.QueryRowContext(ctx, `SELECT status FROM project_run WHERE run_id = ?`, completion.RunID).Scan(&currentStatus); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("load project run %s for completion: %w", completion.RunID, err)
+	}
+	if projectRunStatusTerminal(currentStatus) {
+		return domain.ProjectRunCompletionRecord{RunID: completion.RunID}, false, nil
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO project_run_completion(
 		run_id, target_status, transition_json, cleanup_action, attempt, last_error, next_attempt_at, created_at, updated_at
 	) VALUES(?, ?, ?, ?, 0, '', 0, ?, ?) ON CONFLICT(run_id) DO NOTHING`,
@@ -56,6 +67,15 @@ func (s *projectStore) StageProjectRunCompletion(ctx context.Context, completion
 		return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("commit staged project run completion: %w", err)
 	}
 	return stored, created, nil
+}
+
+func projectRunStatusTerminal(status string) bool {
+	switch strings.TrimSpace(status) {
+	case domain.ProjectRunStatusSucceeded, domain.ProjectRunStatusFailed, domain.ProjectRunStatusCanceled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *projectStore) GetProjectRunCompletion(ctx context.Context, runID string) (domain.ProjectRunCompletionRecord, error) {

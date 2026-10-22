@@ -17,3 +17,7 @@ export { providerStatePath, readStoredThread, writeStoredThread } from "./sessio
 export { runStreamCommand } from "./stream.js";
 export { appendDelta, TranscriptWriter } from "./transcript.js";
 export type { AgentResult, Provider, RunnerOptions, StoredThread } from "./types.js";
+export { attachExecution, capabilities, startDetached, stopExecution } from "./detach/command.js";
+export { runSupervisor } from "./detach/supervisor.js";
+export { JournalWriter, parseJournalLine, readJournalFrom } from "./detach/journal.js";
+export type { AttachRecord, Capabilities, ExitRecord, JournalRecord, ReadyRecord, StopRecord } from "./detach/contract.js";

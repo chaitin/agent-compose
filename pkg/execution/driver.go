@@ -108,10 +108,12 @@ func ToDriverProxyState(state domain.ProxyState) driverpkg.ProxyState {
 
 func ToDriverExecSpec(spec domain.ExecSpec) driverpkg.ExecSpec {
 	return driverpkg.ExecSpec{
-		Command: spec.Command,
-		Args:    append([]string(nil), spec.Args...),
-		Env:     spec.Env,
-		Cwd:     spec.Cwd,
+		Command:          spec.Command,
+		Args:             append([]string(nil), spec.Args...),
+		Env:              spec.Env,
+		Cwd:              spec.Cwd,
+		Marker:           spec.Marker,
+		KillOnlyOnCancel: spec.KillOnlyOnCancel,
 	}
 }
 

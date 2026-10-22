@@ -73,15 +73,19 @@ func TestRunSupervisorDetachedRunsKeepRequestMetadata(t *testing.T) {
 			}
 
 			// Carrying the headers must not change the run's lifetime: it still
-			// belongs to the daemon root, so root cancellation stops it.
+			// belongs to the daemon root, so root cancellation reaches it, as
+			// the shutdown signal a detached task disconnects on (the rest of
+			// the run stops on it).
 			cancelRoot()
 			select {
-			case <-controller.canceled:
+			case <-controller.shutdown:
 			case <-time.After(time.Second):
 				t.Fatal("daemon root cancellation did not reach the detached run")
 			}
-			// An interactive start waits for the run to release its input, which
-			// this stub never does; ending the request lets both starts return.
+			// The run itself outlives the shutdown signal; let it end. An
+			// interactive start also waits for the run to release its input,
+			// which this stub never does; ending the request lets it return.
+			close(controller.finish)
 			cancelRequest()
 			select {
 			case <-done:
@@ -127,6 +131,7 @@ type runSupervisorExecution struct {
 type runSupervisorHeaderController struct {
 	executions chan runSupervisorExecution
 	canceled   chan struct{}
+	shutdown   chan struct{}
 	finish     chan struct{}
 }
 
@@ -134,8 +139,13 @@ func newRunSupervisorHeaderController() *runSupervisorHeaderController {
 	return &runSupervisorHeaderController{
 		executions: make(chan runSupervisorExecution, 1),
 		canceled:   make(chan struct{}),
+		shutdown:   make(chan struct{}),
 		finish:     make(chan struct{}),
 	}
+}
+
+func (*runSupervisorHeaderController) ReattachDetachedRun(context.Context, domain.ProjectRunRecord) (domain.ProjectRunRecord, error) {
+	return domain.ProjectRunRecord{}, errors.New("unexpected ReattachDetachedRun call")
 }
 
 func (*runSupervisorHeaderController) StartProjectRun(context.Context, runs.RunAgentRequest) (runs.StartedProjectRun, error) {
@@ -157,12 +167,21 @@ func (c *runSupervisorHeaderController) RunProjectCommandAttachRegistered(
 		metadata:       domain.RequestMetadataFromContext(execCtx),
 		transportValue: execCtx.Value(runSupervisorTransportValueKey{}),
 	}
-	select {
-	case <-execCtx.Done():
-		close(c.canceled)
-		return context.Cause(execCtx)
-	case <-c.finish:
-		return nil
+	var shutdown <-chan struct{}
+	if signal, ok := runs.DaemonShutdown(execCtx); ok {
+		shutdown = signal
+	}
+	for {
+		select {
+		case <-shutdown:
+			close(c.shutdown)
+			shutdown = nil
+		case <-execCtx.Done():
+			close(c.canceled)
+			return context.Cause(execCtx)
+		case <-c.finish:
+			return nil
+		}
 	}
 }
 

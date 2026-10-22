@@ -28,3 +28,18 @@ func TestMarkedExecTerminationCommandPassesMarkerAndEnvName(t *testing.T) {
 		t.Fatalf("command arguments = %#v, want marker then env name", command[3:])
 	}
 }
+
+func TestMarkedExecLeaderTerminationCommandPassesMarkerAndEnvName(t *testing.T) {
+	command := markedExecLeaderTerminationCommand(guestExecMarkerEnv, "exec-1")
+	if len(command) != 6 || command[0] != "sh" || command[1] != "-c" || command[2] != markedExecLeaderTerminationScript {
+		t.Fatalf("command = %#v", command)
+	}
+	if command[4] != "exec-1" || command[5] != guestExecMarkerEnv {
+		t.Fatalf("command arguments = %#v, want marker then env name", command[3:])
+	}
+	// The leader script must target only the root of the marker tree, never the
+	// whole tree: it must not reuse the full-tree termination script.
+	if markedExecLeaderTerminationScript == markedExecTerminationScript {
+		t.Fatal("leader termination script must differ from the full-tree script")
+	}
+}

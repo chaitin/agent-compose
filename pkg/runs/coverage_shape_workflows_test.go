@@ -2680,6 +2680,14 @@ type fakeControllerStore struct {
 	schedulerDefinitions map[string]domain.Scheduler
 	bindings             map[string]domain.SchedulerBinding
 	events               []domain.ProjectRunEventRecord
+	deletedFacadeTokens  []string
+}
+
+// DeleteLLMFacadeTokensForRun records the per-run facade tokens retired after a
+// re-attach is abandoned.
+func (s *fakeControllerStore) DeleteLLMFacadeTokensForRun(_ context.Context, runID, source string) error {
+	s.deletedFacadeTokens = append(s.deletedFacadeTokens, runID+"|"+source)
+	return nil
 }
 
 func (s *fakeControllerStore) GetProject(context.Context, string) (domain.ProjectRecord, error) {

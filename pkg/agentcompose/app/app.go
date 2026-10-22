@@ -288,6 +288,7 @@ func StartBackground(di do.Injector) error {
 		CapProxy:    do.MustInvoke[*capproxy.Server](di),
 		CapTokens:   do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 		Completions: do.MustInvoke[*runs.CompletionManager](di),
+		Reattacher:  do.MustInvoke[*RunSupervisor](di),
 	}); err != nil {
 		return err
 	}

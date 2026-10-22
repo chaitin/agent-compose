@@ -2,6 +2,7 @@ package runs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -32,7 +33,7 @@ type projectRunCommandExecution struct {
 func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectRunCommandExecution) (TransitionRequest, error) {
 	run, sandbox, req, commandText, sink := exec.Run, exec.Sandbox, exec.Request, exec.CommandText, exec.Sink
 	artifactsDir := projectRunCommandArtifactsDir(run, sandbox)
-	logsPath := filepath.Join(artifactsDir, "transcript.txt")
+	logsPath := projectRunCommandTranscriptPath(run, sandbox)
 	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
 	if c.store == nil || c.runtime == nil {
 		err := fmt.Errorf("command runtime dependencies are required")
@@ -103,17 +104,67 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectR
 			sendErr = sink.SendChunk(run.RunID, filtered, time.Now().UTC())
 		}
 	}
-	execCtx, cancel := execution.ExecContext(ctx, 0)
+	execCtx, cancel := runExecContext(ctx)
 	defer cancel()
-	spec := execution.BuildRuntimeCommandExecSpec(execCtx, c.config, sandbox, guestRequestPath, c.config.GuestHomePath)
-	spec.Env["AGENT_COMPOSE_RUN_ID"] = run.RunID
-	spec.Env["AGENT_COMPOSE_PROJECT_ID"] = run.ProjectID
-	result, execErr := runtime.ExecStream(execCtx, sandbox, vmState, spec, writer)
+	var result domain.ExecResult
+	var execErr error
+	if c.detachSupported(execCtx, runtime, sandbox, vmState) {
+		result, execErr = c.executeDetachedProjectRunCommand(execCtx, detachedRunCommand{
+			Runtime:          runtime,
+			Sandbox:          sandbox,
+			VMState:          vmState,
+			Run:              run,
+			GuestRequestPath: guestRequestPath,
+			Writer:           writer,
+		})
+	} else {
+		spec := execution.BuildRuntimeCommandExecSpec(execCtx, c.config, sandbox, guestRequestPath, c.config.GuestHomePath)
+		spec.Env["AGENT_COMPOSE_RUN_ID"] = run.RunID
+		spec.Env["AGENT_COMPOSE_PROJECT_ID"] = run.ProjectID
+		result, execErr = runtime.ExecStream(execCtx, sandbox, vmState, spec, writer)
+	}
 	if pullErr := execution.SyncGuestDirToHost(ctx, guestArtifactsDir, artifactsDir, guestDirReaderFor(runtime, sandbox, vmState)); pullErr != nil {
 		execErr = errors.Join(execErr, fmt.Errorf("pull command artifacts: %w", pullErr))
 	}
-	if sendErr != nil {
-		sendErr = errors.Join(sendErr, execErr)
+	return finishProjectRunCommand(projectRunCommandOutcome{
+		Run:          run,
+		Sandbox:      sandbox,
+		CommandText:  commandText,
+		ArtifactsDir: artifactsDir,
+		LogsPath:     logsPath,
+		Result:       result,
+		ExecErr:      execErr,
+		SendErr:      sendErr,
+	})
+}
+
+// projectRunCommandOutcome is what a command exec produced, fresh or
+// re-attached, before it is turned into a run transition.
+type projectRunCommandOutcome struct {
+	Run          domain.ProjectRunRecord
+	Sandbox      *domain.Sandbox
+	CommandText  string
+	ArtifactsDir string
+	LogsPath     string
+	Result       domain.ExecResult
+	ExecErr      error
+	SendErr      error
+	// ResultFileFallback makes a missing result payload fall back to the
+	// command-result.json the guest wrote into ArtifactsDir. A re-attach only
+	// sees journal records past its cursor, which may already be past the
+	// payload line when the daemon stopped between the payload and the exit.
+	ResultFileFallback bool
+}
+
+// finishProjectRunCommand parses the runtime's command result payload, mirrors
+// its artifacts, and builds the run transition. The fresh and re-attach paths
+// both go through it so a re-attached run is judged the same way: a non-zero
+// exit code fails the run, and Output/ResultJSON come from the parsed payload.
+func finishProjectRunCommand(outcome projectRunCommandOutcome) (TransitionRequest, error) {
+	run, sandbox, result, execErr := outcome.Run, outcome.Sandbox, outcome.Result, outcome.ExecErr
+	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: outcome.LogsPath}
+	if outcome.SendErr != nil {
+		sendErr := errors.Join(outcome.SendErr, execErr)
 		transition.ExitCode = 1
 		transition.Error = fmt.Sprintf("command execution failed: %v", sendErr)
 		return transition, sendErr
@@ -124,24 +175,58 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectR
 		if strings.TrimSpace(result.Output) == "" {
 			result.Output = firstNonEmpty(result.Stderr, result.Stdout, execErr.Error())
 		}
-		transition = transitionFromCommandResult(run, sandbox, commandOutcome{Command: commandText, Result: result, Err: execErr})
-		transition.LogsPath = logsPath
+		transition = transitionFromCommandResult(run, sandbox, commandOutcome{Command: outcome.CommandText, Result: result, Err: execErr})
+		transition.LogsPath = outcome.LogsPath
 		return transition, execErr
 	}
 	commandResult, err := execution.ParseCommandExecResult(result)
+	if err != nil && outcome.ResultFileFallback {
+		if fromFile, ok := readProjectRunCommandResultFile(outcome.ArtifactsDir); ok {
+			commandResult, err = fromFile, nil
+		}
+	}
 	if err != nil {
 		transition.ExitCode = execution.FirstNonZeroInt(transition.ExitCode, 1)
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
 		return transition, err
 	}
-	if err := execution.MirrorRuntimeCommandArtifacts(artifactsDir, commandResult); err != nil {
+	if err := execution.MirrorRuntimeCommandArtifacts(outcome.ArtifactsDir, commandResult); err != nil {
 		transition.ExitCode = execution.FirstNonZeroInt(commandResult.ExitCode, 1)
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
 		return transition, err
 	}
-	transition = transitionFromCommandResult(run, sandbox, commandOutcome{Command: commandText, Result: execution.RuntimeCommandResultToExecResult(commandResult)})
-	transition.LogsPath = logsPath
+	transition = transitionFromCommandResult(run, sandbox, commandOutcome{Command: outcome.CommandText, Result: execution.RuntimeCommandResultToExecResult(commandResult)})
+	transition.LogsPath = outcome.LogsPath
 	return transition, nil
+}
+
+// readProjectRunCommandResultFile reads the command-result.json the guest
+// runtime writes next to its artifacts before printing the result payload.
+func readProjectRunCommandResultFile(artifactsDir string) (domain.RuntimeCommandResult, bool) {
+	data, err := os.ReadFile(filepath.Join(artifactsDir, "command-result.json"))
+	if err != nil {
+		return domain.RuntimeCommandResult{}, false
+	}
+	var result domain.RuntimeCommandResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		return domain.RuntimeCommandResult{}, false
+	}
+	return result, true
+}
+
+// readProjectRunCommandText recovers the command a run was started with from
+// the request file the fresh path wrote into its artifacts dir. A re-attached
+// run has no request in memory, only this file.
+func readProjectRunCommandText(artifactsDir string) string {
+	data, err := os.ReadFile(filepath.Join(artifactsDir, "command-request.json"))
+	if err != nil {
+		return ""
+	}
+	var request execution.RuntimeCommandRequest
+	if err := json.Unmarshal(data, &request); err != nil {
+		return ""
+	}
+	return request.Script
 }
 
 func execEnvMap(items []*agentcomposev2.EnvVarSpec) map[string]string {
