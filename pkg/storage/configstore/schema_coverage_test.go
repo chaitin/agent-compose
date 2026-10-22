@@ -838,7 +838,7 @@ func assertProjectSchema(t *testing.T, store *ConfigStore) {
 			"created_at", "updated_at"},
 		"project_run": {"run_id", "project_id", "project_name", "project_revision", "agent_name", "agent_id", "source", "scheduler_id", "scheduler_run_id", "trigger_id", "status",
 			"sandbox_id", "exit_code", "error", "prompt", "output", "result_json", "logs_path", "artifacts_dir", "cleanup_error", "driver", "image_ref", "started_at",
-			"completed_at", "duration_ms", "created_at", "updated_at"},
+			"completed_at", "duration_ms", "created_at", "updated_at", "execution_id", "detach", "deadline", "detach_kind"},
 		"project_run_label":            {"run_id", "key", "value"},
 		"project_octobus_server_token": {"project_id", "server_name", "token", "updated_at"},
 		"scheduler_trigger":            {"scheduler_id", "trigger_id", "kind", "spec_json"},

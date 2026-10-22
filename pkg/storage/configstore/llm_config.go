@@ -268,6 +268,21 @@ func (s *llmStore) DeleteLLMFacadeTokenHash(ctx context.Context, tokenHash strin
 	return nil
 }
 
+// DeleteLLMFacadeTokensForRun removes the facade tokens issued to one run
+// from one source. A detached agent run keeps its per-run token across a
+// daemon restart, when the raw token is no longer in memory, so the daemon
+// that finishes the run retires it by run id instead.
+func (s *llmStore) DeleteLLMFacadeTokensForRun(ctx context.Context, runID, source string) error {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_facade_token WHERE run_id = ? AND source = ?`, runID, strings.TrimSpace(source)); err != nil {
+		return fmt.Errorf("delete llm facade tokens for run: %w", err)
+	}
+	return nil
+}
+
 func (s *llmStore) GetLLMFacadeToken(ctx context.Context, rawToken string) (llms.FacadeToken, error) {
 	hash, fingerprint := llms.HashFacadeToken(rawToken)
 	row := s.db.QueryRowContext(ctx, `SELECT `+llms.FacadeTokenColumns+` FROM llm_facade_token WHERE token_hash = ?`, hash)

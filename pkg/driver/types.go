@@ -132,6 +132,16 @@ type ExecSpec struct {
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Cwd     string            `json:"cwd,omitempty"`
+	// Marker, when set, tags the exec's process tree with this value instead
+	// of a driver-generated one. The daemon uses a run's execution id as the
+	// marker for a detached task so it can later terminate that exact tree via
+	// ProcessTreeTerminator, independent of any exec handle.
+	Marker string `json:"marker,omitempty"`
+	// KillOnlyOnCancel reports that this exec is a single attach process whose
+	// process tree is not the task's. On context cancellation the driver must
+	// kill the exec directly and skip the whole-tree termination cleanup (which
+	// otherwise adds a bounded SIGTERM→SIGKILL escalation on VM drivers).
+	KillOnlyOnCancel bool `json:"kill_only_on_cancel,omitempty"`
 }
 
 type ExecResult struct {
@@ -195,6 +205,14 @@ type SandboxRuntime interface {
 	RemoveSandbox(context.Context, *Sandbox, VMState) error
 	Exec(context.Context, *Sandbox, VMState, ExecSpec) (ExecResult, error)
 	ExecStream(context.Context, *Sandbox, VMState, ExecSpec, ExecStreamWriter) (ExecResult, error)
+}
+
+// ProcessTreeTerminator is an optional SandboxRuntime capability that
+// terminates every guest process tagged with a marker, without holding any
+// exec handle. The daemon uses it as a fallback when a detached task's
+// supervisor died and no exec can deliver the stop request to it.
+type ProcessTreeTerminator interface {
+	TerminateProcessTree(context.Context, *Sandbox, VMState, string) error
 }
 
 // sandboxEnvMap merges guest environment from two sources with different trust.

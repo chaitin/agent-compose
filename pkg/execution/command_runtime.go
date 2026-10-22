@@ -105,6 +105,22 @@ func BuildRuntimeCommandExecSpec(ctx context.Context, config *appconfig.Config, 
 	}
 }
 
+// RuntimeCommandCLIArgs returns the guest CLI invocation (`exec` subcommand)
+// that runs a command request. The detach supervisor re-enters the CLI with
+// these args, so the daemon can run the same task behind it without the outer
+// shell wrapper. It is intentionally separate from BuildRuntimeCommandExecSpec,
+// whose shell wrapper keeps the legacy `agent-compose-runtime exec ...` form.
+func RuntimeCommandCLIArgs(config *appconfig.Config, guestRequestPath, home string) []string {
+	appconfig.ApplyDefaultGuestPaths(config)
+	return []string{
+		"exec",
+		"--request-file", guestRequestPath,
+		"--state-root", config.GuestStateRoot,
+		"--workspace", config.GuestWorkspacePath,
+		"--home", home,
+	}
+}
+
 func RuntimeCommandResultToExecResult(result domain.RuntimeCommandResult) domain.ExecResult {
 	return domain.ExecResult{
 		Stdout:   result.Stdout,

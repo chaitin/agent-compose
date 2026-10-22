@@ -15,6 +15,13 @@ func projectRunCommandArtifactsDir(run domain.ProjectRunRecord, sandbox *domain.
 	return filepath.Join(execution.HostSandboxDir(sandbox), "state", "runs", run.RunID)
 }
 
+// projectRunCommandTranscriptPath is the single source of truth for where a
+// project-run command's streamed output lives, shared by the live execution and
+// the re-attach path so a restart appends to the same file.
+func projectRunCommandTranscriptPath(run domain.ProjectRunRecord, sandbox *domain.Sandbox) string {
+	return filepath.Join(projectRunCommandArtifactsDir(run, sandbox), "transcript.txt")
+}
+
 func (c *Controller) publishRunLogChunk(runID string, chunk domain.ExecChunk, offset uint64) {
 	if c == nil {
 		return

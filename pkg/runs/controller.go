@@ -126,6 +126,7 @@ type Controller struct {
 	completion          *CompletionManager
 	interactiveSessions *InteractiveSessionManager
 	recorder            *telemetry.Recorder
+	detachCache         *detachCapabilityCache
 }
 
 type llmFacadeTokenDeleter interface {
@@ -192,6 +193,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		completion:          deps.Completion,
 		interactiveSessions: interactiveSessions,
 		recorder:            deps.Recorder,
+		detachCache:         &detachCapabilityCache{},
 	}
 }
 
@@ -338,6 +340,25 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	started, err := c.StartProjectRun(ctx, req)
 	if err != nil {
 		return err
+	}
+	if started.Run.Status == domain.ProjectRunStatusRunning {
+		// The run is already running (a retry with the same idempotency key
+		// after it detached and survived a restart): tell the caller which run
+		// it is and close, without opening a second interactive session. The
+		// onStarted callback still fires with an already-released input so
+		// startInteractiveRun can return the run it resolved to.
+		if onStarted != nil {
+			released := make(chan struct{})
+			close(released)
+			onStarted(started.Run.RunID, released)
+		}
+		return send(RunAttachOutput{
+			Kind:      RunAttachOutputStarted,
+			CreatedAt: time.Now().UTC(),
+			Run:       started.Run,
+			SandboxID: started.Run.SandboxID,
+			Warnings:  append([]string(nil), started.Warnings...),
+		})
 	}
 	session, releaseInput, err := c.interactiveSessions.CreateAttached(started.Run.RunID)
 	if err != nil {
@@ -557,20 +578,24 @@ func (c *Controller) executeStartedProjectRun(ctx context.Context, started start
 	warnings := started.Warnings
 	commandText := strings.TrimSpace(req.Command)
 	transitionCtx := context.WithoutCancel(ctx)
-	prepared, err := c.prepareProjectRun(ctx, run, req.Env)
+	// Only a detached command may outlive the daemon. Sandbox preparation and
+	// agent runs stop on shutdown, as they did before detach existed.
+	prepCtx, cancelPrep := cancelOnDaemonShutdown(ctx)
+	defer cancelPrep()
+	prepared, err := c.prepareProjectRun(prepCtx, run, req.Env)
 	if err != nil {
 		transition := TransitionRequest{
 			RunID: run.RunID,
 			Error: fmt.Sprintf("workspace preparation failed: %v", err),
 		}
-		run, markErr := c.completeProjectRunError(transitionCtx, ctx, transition, err)
+		run, markErr := c.completeProjectRunError(transitionCtx, prepCtx, transition, err)
 		if markErr != nil {
 			return domain.ProjectRunRecord{}, nil, markErr
 		}
 		run = withRunWarnings(run, warnings)
 		return run, err, nil
 	}
-	sandboxResult, err := c.ensureProjectRunSandbox(ctx, run, prepared, req)
+	sandboxResult, err := c.ensureProjectRunSandbox(prepCtx, run, prepared, req)
 	if err != nil {
 		transition := TransitionRequest{
 			RunID: run.RunID,
@@ -579,7 +604,7 @@ func (c *Controller) executeStartedProjectRun(ctx context.Context, started start
 		if sandboxResult.Sandbox != nil {
 			transition.SandboxID = sandboxResult.Sandbox.Summary.ID
 		}
-		run, markErr := c.completeProjectRunError(transitionCtx, ctx, transition, err)
+		run, markErr := c.completeProjectRunError(transitionCtx, prepCtx, transition, err)
 		if markErr != nil {
 			return domain.ProjectRunRecord{}, nil, markErr
 		}
@@ -590,9 +615,9 @@ func (c *Controller) executeStartedProjectRun(ctx context.Context, started start
 	if sandboxResult.Sandbox != nil {
 		span.SetAttributes(telemetry.AttrSandboxID.String(sandboxResult.Sandbox.Summary.ID))
 	}
-	if err := ctx.Err(); err != nil {
+	if err := prepCtx.Err(); err != nil {
 		stopReason := err.Error()
-		if cause := context.Cause(ctx); cause != nil {
+		if cause := context.Cause(prepCtx); cause != nil {
 			stopReason = cause.Error()
 		}
 		run, markErr := c.completeProjectRun(transitionCtx, TransitionRequest{
@@ -629,7 +654,7 @@ func (c *Controller) executeStartedProjectRun(ctx context.Context, started start
 	if commandText != "" {
 		return c.completeProjectRunCommand(ctx, sandboxed, commandText)
 	}
-	return c.completeProjectRunAgent(ctx, sandboxed)
+	return c.completeProjectRunAgent(ctx, prepCtx, sandboxed)
 }
 
 // sandboxedProjectRun bundles the run-scoped state shared by the command and
@@ -655,6 +680,11 @@ func (c *Controller) completeProjectRunCommand(ctx context.Context, sandboxed sa
 		CommandText: commandText,
 		Sink:        sandboxed.Stream,
 	})
+	if errors.Is(execErr, ErrRunDisconnected) {
+		// The daemon is shutting down but the detached task keeps running. Leave
+		// the run running for a later reconciliation to re-attach.
+		return withRunWarnings(run, warnings), nil, nil
+	}
 	if execErr != nil || transition.ExitCode != 0 {
 		run, err := c.completeProjectRunError(sandboxed.TransitionCtx, ctx, transition, execErr)
 		if err != nil {
@@ -670,7 +700,12 @@ func (c *Controller) completeProjectRunCommand(ctx context.Context, sandboxed sa
 	return withRunWarnings(run, warnings), nil, nil
 }
 
-func (c *Controller) completeProjectRunAgent(ctx context.Context, sandboxed sandboxedProjectRun) (domain.ProjectRunRecord, error, error) {
+// completeProjectRunAgent runs the agent turn. runCtx survives daemon
+// shutdown; prepCtx is cancelled by it. A guest that supports detach runs the
+// agent behind the supervisor under runCtx, so a shutdown only disconnects
+// it; otherwise the agent runs under prepCtx and stops with the daemon.
+func (c *Controller) completeProjectRunAgent(runCtx, prepCtx context.Context, sandboxed sandboxedProjectRun) (domain.ProjectRunRecord, error, error) {
+	ctx := prepCtx
 	run, warnings, req := sandboxed.Run, sandboxed.Warnings, sandboxed.Request
 	agentConfig, err := c.projectRunAgentConfig(ctx, run)
 	if err != nil {
@@ -700,7 +735,14 @@ func (c *Controller) completeProjectRunAgent(ctx context.Context, sandboxed sand
 		}
 		return withRunWarnings(run, warnings), err, nil
 	}
-	cell, _, assistantEvent, execErr := c.executor.ExecuteAgentRequest(ctx, sandboxed.Sandbox, execution.ExecuteAgentRequest{
+	execCtx := ctx
+	detach := c.agentRunDetach(runCtx, sandboxed)
+	if detach != nil {
+		var cancel context.CancelFunc
+		execCtx, cancel = runExecContext(runCtx)
+		defer cancel()
+	}
+	cell, _, assistantEvent, execErr := c.executor.ExecuteAgentRequest(execCtx, sandboxed.Sandbox, execution.ExecuteAgentRequest{
 		Agent:             agentConfig.Provider,
 		AgentDefinitionID: run.AgentID,
 		Model:             agentConfig.Model,
@@ -714,20 +756,67 @@ func (c *Controller) completeProjectRunAgent(ctx context.Context, sandboxed sand
 			Sink:        sandboxed.Stream,
 			Hub:         c.runLogs,
 		}),
+		Detach: detach,
 	})
-	transition := TransitionFromAgentCell(run, sandboxed.Sandbox, cell, assistantEvent.Message, execErr)
-	transition.TerminalEvents = projectAgentTerminalEvents(run, cell, assistantEvent, execErr)
-	if execErr != nil || !cell.Success {
-		run, err = c.completeProjectRunError(sandboxed.TransitionCtx, ctx, transition, execErr)
-		if err != nil {
-			return domain.ProjectRunRecord{}, nil, err
-		}
-		return withRunWarnings(run, warnings), execErr, nil
+	if errors.Is(execErr, ErrRunDisconnected) {
+		// The daemon is shutting down but the detached agent keeps running.
+		// Leave the run running for a later reconciliation to re-attach.
+		return withRunWarnings(run, warnings), nil, nil
 	}
-	transition.Status = domain.ProjectRunStatusSucceeded
-	run, err = c.completeProjectRun(sandboxed.TransitionCtx, transition)
+	run, err = c.finishProjectRunAgent(sandboxed.TransitionCtx, execCtx, agentRunOutcome{
+		Run: run, Sandbox: sandboxed.Sandbox, Cell: cell, Assistant: assistantEvent, ExecErr: execErr,
+	})
 	if err != nil {
 		return domain.ProjectRunRecord{}, nil, err
 	}
-	return withRunWarnings(run, warnings), nil, nil
+	return withRunWarnings(run, warnings), execErr, nil
+}
+
+// agentRunOutcome is what an agent turn produced, fresh or re-attached.
+type agentRunOutcome struct {
+	Run       domain.ProjectRunRecord
+	Sandbox   *domain.Sandbox
+	Cell      domain.NotebookCell
+	Assistant domain.SandboxEvent
+	ExecErr   error
+}
+
+// finishProjectRunAgent records the run's terminal state from its agent cell.
+func (c *Controller) finishProjectRunAgent(transitionCtx, runCtx context.Context, outcome agentRunOutcome) (domain.ProjectRunRecord, error) {
+	transition := TransitionFromAgentCell(outcome.Run, outcome.Sandbox, outcome.Cell, outcome.Assistant.Message, outcome.ExecErr)
+	transition.TerminalEvents = projectAgentTerminalEvents(outcome.Run, outcome.Cell, outcome.Assistant, outcome.ExecErr)
+	if outcome.ExecErr != nil || !outcome.Cell.Success {
+		return c.completeProjectRunError(transitionCtx, runCtx, transition, outcome.ExecErr)
+	}
+	transition.Status = domain.ProjectRunStatusSucceeded
+	return c.completeProjectRun(transitionCtx, transition)
+}
+
+// agentRunDetach decides whether an agent run goes behind the guest
+// supervisor and, if so, how its execution is recorded on the run. nil keeps
+// the direct exec (old guest, or no runtime).
+func (c *Controller) agentRunDetach(ctx context.Context, sandboxed sandboxedProjectRun) *execution.AgentDetach {
+	sandbox := sandboxed.Sandbox
+	if c.runtime == nil || sandbox == nil {
+		return nil
+	}
+	runtime, err := c.runtime(sandbox)
+	if err != nil {
+		return nil
+	}
+	vmState, err := c.store.GetVMState(sandbox.Summary.ID)
+	if err != nil {
+		return nil
+	}
+	if !c.detachSupported(ctx, runtime, sandbox, vmState) {
+		return nil
+	}
+	run := sandboxed.Run
+	executionID := newDetachExecutionID(run)
+	return &execution.AgentDetach{
+		ExecutionID: executionID,
+		OnStart: func(deadline time.Time) error {
+			return c.persistDetachedRunFields(sandboxed.TransitionCtx, run, executionID, domain.DetachKindAgent, deadline)
+		},
+	}
 }

@@ -75,9 +75,11 @@ attachment 应支持从事件序号继续订阅。初期可复用现有 `ListRun
 | human message | wrapper stream 支持时 | wrapper stream 支持时 | wrapper stream 支持时 |
 | stdin / EOF | 按 driver interaction capability | 按 driver interaction capability | 按 driver interaction capability |
 | signal / resize | 按 driver interaction capability | 按 driver interaction capability | 按 driver interaction capability |
-| daemon 重启后恢复 runtime interaction | 不支持 | 不支持 | 不支持 |
+| daemon 重启后恢复 runtime interaction | 支持（见下） | 不支持（VM 随 daemon 容器重建丢失，需要 sandbox-host） | 不支持（同左） |
 
-session manager 当前是进程内资源。daemon 重启后，持久化 run 记录可能仍为 running，但 runtime 的 stdin、输出流和进程控制句柄无法从数据库重建；按 `run_id` attach 必须返回 session not found，而不能创建新的 runtime 或假装恢复。未来只有 driver 提供稳定的 operation lookup/reattach 原语后，才可增加持久化 session ownership 和启动恢复。
+session manager 是进程内资源。daemon 重启后能恢复的只有走 guest 侧 detach 的交互运行：guest runtime 支持 detach、断开策略为 detach、非 TTY（见 `daemon-upgrade-sandbox-survival.zh-CN.md` 3.3「覆盖的 run」）。daemon 启动对账时为这类 run 重建 session，客户端可以再按 `run_id` attach；输入经 guest 内的 supervisor 送达任务。重建的 session 只向新客户端推送重启之后的输出，重启前的输出在 run 日志里，不重放给客户端。其余交互运行在 daemon 重启后，按 `run_id` attach 仍返回 session not found。
+
+这条路径不依赖 driver 的 reattach 原语：任务 detach 到 guest 内（supervisor + journal + `attach --execution-id`），daemon 重启后用新 exec 按 journal offset 重新 attach。daemon 侧的续读游标是 journal offset；客户端侧的事件序号仍是进程内的，重启后从新 session 重新开始。
 
 历史输出恢复复用 `ListRunEvents` 和 `FollowRunLogs`；`AttachAgentRun` 的 session 输出订阅只负责连接后的实时数据。客户端应先读取持久事件/日志，再 attach 实时流，并依据事件/frame ID 去重。
 

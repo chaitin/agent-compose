@@ -42,6 +42,11 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 	mode := attach.Mode
 	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
 	transitionCtx := context.WithoutCancel(ctx)
+	// Only a detached interactive task may outlive the daemon; preparation and
+	// a direct interaction stop with it, as before detach existed.
+	runContext := ctx
+	ctx, cancelPrep := cancelOnDaemonShutdown(ctx)
+	defer cancelPrep()
 	prepared, err := c.prepareProjectRun(ctx, run, req.Env)
 	if err != nil {
 		run, markErr := c.completeProjectRunError(transitionCtx, ctx, TransitionRequest{
@@ -71,11 +76,17 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 	run = withRunWarnings(run, warnings)
 	var transition TransitionRequest
 	runCtx := interactionRunContext{Coordinator: coordinator, Run: run, Sandbox: sandboxResult.Sandbox, Request: req}
+	runCtx.Detach = c.interactiveRunDetach(runContext, runCtx, start, mode)
 	switch mode {
 	case RunAttachModePrompt:
 		transition, execErr = c.runPromptInteraction(ctx, runCtx, start, receive, send)
 	default:
 		transition, execErr = c.runCommandInteraction(ctx, runCtx, start, receive, send)
+	}
+	if errors.Is(execErr, ErrRunDisconnected) {
+		// The daemon is shutting down but the detached interactive task keeps
+		// running. Leave the run running for a later reconciliation.
+		return withRunWarnings(run, warnings), nil, nil
 	}
 	if execErr != nil || transition.ExitCode != 0 {
 		run, err = c.completeProjectRunError(transitionCtx, ctx, transition, execErr)
@@ -105,6 +116,9 @@ type interactionRunContext struct {
 	Run         domain.ProjectRunRecord
 	Sandbox     *domain.Sandbox
 	Request     RunAgentRequest
+	// Detach, when set, runs the interactive task behind the guest
+	// supervisor so it can outlive a daemon restart.
+	Detach *interactiveDetach
 }
 
 // commandInteractionSession is the runtime interaction session
@@ -163,7 +177,18 @@ func (c *Controller) openCommandInteraction(ctx context.Context, runCtx interact
 		Rows:        start.Rows,
 		Cols:        start.Cols,
 	}
-	interaction, err := interactionRuntime.OpenInteraction(ctx, sandbox, vmState, spec)
+	var interaction driverpkg.RuntimeInteraction
+	if runCtx.Detach != nil {
+		if err := writeInteractiveCommandText(artifactsDir, commandText); err != nil {
+			return commandInteractionSession{}, err
+		}
+		interaction, err = c.startInteractiveDetached(runCtx, interactiveDetachStart{
+			Runtime: runtime, Interaction: interactionRuntime, VMState: vmState, ArtifactsDir: artifactsDir,
+			TaskArgs: []string{"bash", "-lc", commandText}, RawCommand: true, Env: execEnvMap(req.Env), Origin: "run_attach",
+		})
+	} else {
+		interaction, err = interactionRuntime.OpenInteraction(ctx, sandbox, vmState, spec)
+	}
 	if err != nil {
 		return commandInteractionSession{}, err
 	}
@@ -183,13 +208,30 @@ func (c *Controller) runCommandInteraction(ctx context.Context, runCtx interacti
 		logsPath := filepath.Join(projectRunCommandArtifactsDir(run, sandbox), "transcript.txt")
 		return TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath, ExitCode: 1, Error: fmt.Sprintf("command execution failed: %v", err)}, err
 	}
-	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID}
-	run = session.Run
-	logsPath := session.LogsPath
-	transition.LogsPath = logsPath
-	interaction := session.Interaction
-	defer func() { _ = interaction.CloseSend() }()
-	go pumpRunAttachInput(receive, interaction)
+	defer func() { _ = session.Interaction.CloseSend() }()
+	go pumpRunAttachInput(receive, session.Interaction)
+	return c.receiveCommandInteractionFrames(commandInteractionReceive{
+		Run: session.Run, Sandbox: sandbox, LogsPath: session.LogsPath, Command: commandText, Interaction: session.Interaction, TTY: start.TTY,
+	}, send)
+}
+
+// commandInteractionReceive is the open command interaction and what its
+// output is recorded against.
+type commandInteractionReceive struct {
+	Run         domain.ProjectRunRecord
+	Sandbox     *domain.Sandbox
+	LogsPath    string
+	Command     string
+	Interaction driverpkg.RuntimeInteraction
+	TTY         bool
+}
+
+// receiveCommandInteractionFrames records and forwards a command
+// interaction's output until it ends, and returns the run transition.
+func (c *Controller) receiveCommandInteractionFrames(in commandInteractionReceive, send RunAttachSender) (TransitionRequest, error) {
+	run, sandbox, logsPath, commandText, interaction := in.Run, in.Sandbox, in.LogsPath, in.Command, in.Interaction
+	start := struct{ TTY bool }{TTY: in.TTY}
+	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
 	accumulator := execution.ExecStreamAccumulator{}
 	for {
 		frame, err := interaction.Recv()

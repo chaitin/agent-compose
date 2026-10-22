@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/chaitin/agent-compose/internal/projects"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -54,5 +55,47 @@ func TestRunCommandInteractionMissingDependenciesPreservesLogsPath(t *testing.T)
 	}
 	if transition.Error == "" {
 		t.Fatalf("transition.Error is empty, want a message")
+	}
+}
+
+func TestRunProjectCommandAttachRegisteredNotifiesRunningRun(t *testing.T) {
+	// An attach retry whose idempotency key resolves to an already-running run
+	// must send a started frame carrying the run id instead of closing the
+	// stream silently and opening a second session.
+	controller, configDB, _ := newTestRunAttachController(t, nil)
+	runID, err := projects.StableProjectRunID("project-1", "worker", domain.ProjectRunSourceManual, "req-1")
+	if err != nil {
+		t.Fatalf("StableProjectRunID: %v", err)
+	}
+	configDB.runs[runID] = domain.ProjectRunRecord{
+		RunID:     runID,
+		ProjectID: "project-1",
+		AgentName: "worker",
+		Source:    domain.ProjectRunSourceManual,
+		Status:    domain.ProjectRunStatusRunning,
+		SandboxID: "sandbox-1",
+	}
+
+	var sent []RunAttachOutput
+	err = controller.RunProjectCommandAttachRegistered(
+		context.Background(), context.Background(),
+		func() (RunAttachInput, error) {
+			return RunAttachInput{
+				Kind:    RunAttachInputStart,
+				Mode:    RunAttachModePrompt,
+				Request: RunAgentRequest{ProjectID: "project-1", AgentName: "worker", Source: domain.ProjectRunSourceManual, ClientRequestID: "req-1", Prompt: "already running"},
+			}, nil
+		},
+		func(output RunAttachOutput) error { sent = append(sent, output); return nil },
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("RunProjectCommandAttachRegistered() error = %v", err)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent %d frames, want exactly one started frame", len(sent))
+	}
+	if sent[0].Kind != RunAttachOutputStarted || sent[0].Run.RunID != runID || sent[0].SandboxID != "sandbox-1" {
+		t.Fatalf("sent[0] = %#v, want a started frame for %s sandbox-1", sent[0], runID)
 	}
 }

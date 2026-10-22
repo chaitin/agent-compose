@@ -591,6 +591,15 @@ type ExecSpec struct {
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	Cwd     string            `json:"cwd,omitempty"`
+	// Marker, when set, is passed through to the runtime driver so the exec's
+	// process tree is tagged with it instead of a driver-generated marker. The
+	// daemon uses a run's execution id here so it can terminate the detached
+	// task tree by marker after its supervisor died.
+	Marker string `json:"marker,omitempty"`
+	// KillOnlyOnCancel reports that this exec is a single attach process whose
+	// tree is not the task's: on context cancellation the driver kills it
+	// directly without the whole-tree termination cleanup.
+	KillOnlyOnCancel bool `json:"kill_only_on_cancel,omitempty"`
 }
 
 type AgentRunResult struct {

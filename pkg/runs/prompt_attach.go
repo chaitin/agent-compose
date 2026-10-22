@@ -140,7 +140,9 @@ func (c *Controller) runPromptInteraction(ctx context.Context, runCtx interactio
 	}
 	if token := prepared.ManagedEnv["AGENT_COMPOSE_SANDBOX_TOKEN"]; token != "" {
 		defer func() {
-			if !errors.Is(returnErr, domain.ErrExecTerminationUnconfirmed) && !errors.Is(returnErr, driverpkg.ErrExecTerminationUnconfirmed) {
+			// A disconnected detached session keeps running with its token; the
+			// daemon that finishes it retires it.
+			if !errors.Is(returnErr, domain.ErrExecTerminationUnconfirmed) && !errors.Is(returnErr, driverpkg.ErrExecTerminationUnconfirmed) && !errors.Is(returnErr, ErrRunDisconnected) {
 				c.deletePromptAttachLLMFacadeToken(context.WithoutCancel(ctx), token)
 			}
 		}()
@@ -174,8 +176,24 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 		AttachStdin: true,
 		TTY:         false,
 	}
-	interaction, err := prepared.InteractionRuntime.OpenInteraction(ctx, sandbox, prepared.VMState, spec)
+	var interaction driverpkg.RuntimeInteraction
+	var err error
+	if runCtx.Detach != nil {
+		runtime, runtimeErr := c.runtime(sandbox)
+		if runtimeErr != nil {
+			return transition, runtimeErr
+		}
+		interaction, err = c.startInteractiveDetached(runCtx, interactiveDetachStart{
+			Runtime: runtime, Interaction: prepared.InteractionRuntime, VMState: prepared.VMState,
+			ArtifactsDir: projectRunCommandArtifactsDir(run, sandbox), TaskArgs: []string{"stream"}, Env: prepared.Env, Origin: "run_prompt_attach",
+		})
+	} else {
+		interaction, err = prepared.InteractionRuntime.OpenInteraction(ctx, sandbox, prepared.VMState, spec)
+	}
 	if err != nil {
+		if errors.Is(err, ErrRunDisconnected) {
+			return transition, err
+		}
 		transition.ExitCode = 1
 		transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 		return transition, err

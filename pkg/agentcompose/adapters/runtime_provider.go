@@ -384,6 +384,18 @@ func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *domain.Sa
 	return execution.FromDriverExecResult(result), classifyExecTerminationError(err)
 }
 
+// TerminateProcessTree forwards a marker-based process-tree termination to the
+// wrapped driver when it supports it, converting the domain sandbox/VM state to
+// the driver boundary. It returns nil for drivers without the capability so the
+// detached-execution fallback stays a best effort.
+func (r driverRuntimeAdapter) TerminateProcessTree(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, marker string) error {
+	terminator, ok := r.runtime.(driverpkg.ProcessTreeTerminator)
+	if !ok {
+		return nil
+	}
+	return terminator.TerminateProcessTree(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), marker)
+}
+
 func classifyExecTerminationError(err error) error {
 	if errors.Is(err, driverpkg.ErrExecTerminationUnconfirmed) {
 		return domain.ClassifyError(domain.ErrExecTerminationUnconfirmed, "", err)

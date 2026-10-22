@@ -538,7 +538,10 @@ func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmStat
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
 		},
 		func() (ExecResult, error) {
-			marker := newExecMarker()
+			marker := spec.Marker
+			if marker == "" {
+				marker = newExecMarker()
+			}
 			spec.Env = execEnvMapWithMarker(spec.Env, marker)
 			output, err := sandbox.Exec(ctx, spec.Command, spec.Args, r.execOptions(ctx, spec)...)
 			if err != nil {
@@ -578,9 +581,15 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
 		},
 		func() (ExecResult, error) {
-			marker := newExecMarker()
+			marker := spec.Marker
+			if marker == "" {
+				marker = newExecMarker()
+			}
 			spec.Env = execEnvMapWithMarker(spec.Env, marker)
-			terminateTree := microsandboxMarkedExecTerminator(sandbox, marker)
+			var terminateTree func(context.Context) error
+			if !spec.KillOnlyOnCancel {
+				terminateTree = microsandboxMarkedExecTerminator(sandbox, marker)
+			}
 			handle, err := sandbox.ExecStream(ctx, spec.Command, spec.Args, r.execOptions(ctx, spec)...)
 			if err != nil {
 				return ExecResult{}, err
@@ -986,6 +995,29 @@ func (r *microsandboxRuntime) IsSandboxAlive(ctx context.Context, session *Sandb
 	}
 	r.releaseSandboxHandle(name, sandbox)
 	return true, nil
+}
+
+// TerminateProcessTree ends every guest process tagged with marker, without
+// holding an exec handle. It implements ProcessTreeTerminator. A sandbox that
+// is no longer running has nothing to terminate, so it is a success.
+func (r *microsandboxRuntime) TerminateProcessTree(ctx context.Context, session *Sandbox, vmState VMState, marker string) error {
+	if strings.TrimSpace(marker) == "" {
+		return fmt.Errorf("process tree marker is required")
+	}
+	alive, err := r.IsSandboxAlive(ctx, session, vmState)
+	if err != nil {
+		return err
+	}
+	if !alive {
+		return nil
+	}
+	name := r.sandboxName(session, vmState)
+	sandbox, err := r.connectSandbox(ctx, session, vmState, false)
+	if err != nil {
+		return err
+	}
+	defer r.releaseSandboxHandle(name, sandbox)
+	return microsandboxMarkedExecTerminator(sandbox, marker)(ctx)
 }
 
 func (r *microsandboxRuntime) getOrCreateSandbox(ctx context.Context, session *Sandbox, vmState VMState, proxyState ProxyState) (*microsandbox.Sandbox, bool, bool, error) {

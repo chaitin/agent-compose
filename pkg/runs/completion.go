@@ -181,6 +181,19 @@ func (m *CompletionManager) StageInterrupted(ctx context.Context, run domain.Pro
 	return err
 }
 
+// Pending reports whether runID has a staged completion still to finish: its
+// result is already decided and the manager will finalize it.
+func (m *CompletionManager) Pending(ctx context.Context, runID string) (bool, error) {
+	if m == nil || m.store == nil {
+		return false, nil
+	}
+	_, err := m.store.GetProjectRunCompletion(ctx, runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 func (m *CompletionManager) PendingForSandbox(ctx context.Context, sandboxID string) (string, bool, error) {
 	return m.store.ProjectRunCompletionForSandbox(ctx, sandboxID)
 }

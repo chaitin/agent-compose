@@ -34,6 +34,26 @@ type ExecuteAgentRequest struct {
 	Timeout           time.Duration
 	OutputSchemaJSON  string
 	Stream            AgentExecutionStream
+	// Detach runs the agent behind the guest supervisor so it can outlive a
+	// daemon restart. nil keeps the direct exec.
+	Detach *AgentDetach
+}
+
+// AgentDetach is the detached-execution part of an agent request.
+type AgentDetach struct {
+	ExecutionID string
+	// OnStart records the execution on the run before the task starts, with
+	// the absolute deadline the run's timeout ends at (zero for none).
+	OnStart func(deadline time.Time) error
+}
+
+// ResumeAgentRequest re-attaches to a detached agent run started by an
+// earlier daemon and finishes its cell.
+type ResumeAgentRequest struct {
+	RunID       string
+	CellID      string
+	ExecutionID string
+	Stream      AgentExecutionStream
 }
 
 func NormalizeCellType(cellType string) (string, error) {

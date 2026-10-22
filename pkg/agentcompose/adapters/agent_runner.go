@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/llms"
 	"github.com/chaitin/agent-compose/pkg/llms/runtimefacade"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/skills"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
@@ -70,6 +72,19 @@ type AgentRunRequest struct {
 	RunID             string
 	Message           string
 	OutputSchemaJSON  string
+	// Detach runs the agent behind the guest supervisor; nil keeps the
+	// direct exec.
+	Detach *AgentRunDetach
+}
+
+// AgentRunDetach is the detached-execution part of an agent run.
+type AgentRunDetach struct {
+	ExecutionID string
+	// CursorPath is the host file recording the journal offset already
+	// delivered, so a later daemon resumes without duplicating output.
+	CursorPath string
+	// OnStart records the execution on the run before the task starts.
+	OnStart func(deadline time.Time) error
 }
 
 func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, stream domain.ExecStreamWriter) (domain.ExecResult, domain.AgentRunResult, error) {
@@ -179,9 +194,113 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 	if err := r.prepareAgentMCPConfig(ctx, session, agent, agentDef); err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
-	result, err := runtime.ExecStream(ctx, session, vmState, spec, stream)
+	var result domain.ExecResult
+	if req.Detach != nil {
+		result, err = r.executeDetachedAgent(ctx, detachedAgentExec{
+			Session: session, VMState: vmState, Runtime: runtime, Env: spec.Env, Detach: req.Detach, Stream: stream,
+			TaskArgs: agentPromptArgs(r.config, AgentExecSpecRequest{
+				Agent: agent, Model: runtimeModel, PromptPath: promptPath, SchemaPath: schemaPath, SkillNames: skillNames,
+			}),
+		})
+	} else {
+		result, err = runtime.ExecStream(ctx, session, vmState, spec, stream)
+	}
 	if err != nil {
-		retainFacadeToken = errors.Is(err, domain.ErrExecTerminationUnconfirmed)
+		// A disconnected detached run keeps running in the guest and still
+		// needs its per-run token; the daemon that finishes it retires it.
+		retainFacadeToken = errors.Is(err, domain.ErrExecTerminationUnconfirmed) || errors.Is(err, runs.ErrRunDisconnected)
+		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
+	}
+	parsed, err := execution.ParseAgentExecResult(agent, result)
+	if err != nil {
+		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
+	}
+	if strings.EqualFold(strings.TrimSpace(parsed.StopReason), "cancelled") {
+		return execution.SanitizeAgentExecResult(result), parsed, context.Canceled
+	}
+	return execution.SanitizeAgentExecResult(result), parsed, nil
+}
+
+type detachedAgentExec struct {
+	Session  *domain.Sandbox
+	VMState  domain.VMState
+	Runtime  SandboxRuntime
+	Env      map[string]string
+	TaskArgs []string
+	Detach   *AgentRunDetach
+	Stream   domain.ExecStreamWriter
+}
+
+// executeDetachedAgent starts the agent behind the guest supervisor and
+// follows it. The run is recorded as detached before the task starts.
+func (r *AgentRunner) executeDetachedAgent(ctx context.Context, in detachedAgentExec) (domain.ExecResult, error) {
+	if in.Detach.OnStart != nil {
+		deadline, _ := ctx.Deadline()
+		if err := in.Detach.OnStart(deadline); err != nil {
+			return domain.ExecResult{}, fmt.Errorf("persist detached run fields: %w", err)
+		}
+	}
+	task := r.detachedAgentTask(in)
+	task.TaskTimeout = runs.RemainingTimeout(ctx)
+	return runs.ExecuteDetachedTask(ctx, task)
+}
+
+func (r *AgentRunner) detachedAgentTask(in detachedAgentExec) runs.DetachedTask {
+	cursorPath := in.Detach.CursorPath
+	return runs.DetachedTask{
+		Config:      r.config,
+		Runtime:     in.Runtime,
+		Sandbox:     in.Session,
+		VMState:     in.VMState,
+		ExecutionID: in.Detach.ExecutionID,
+		TaskArgs:    in.TaskArgs,
+		Env:         in.Env,
+		Cursor:      runs.ReadDetachCursorFile(cursorPath),
+		Writer:      in.Stream,
+		PersistCursor: func(offset uint64) error {
+			return runs.WriteDetachCursorFile(cursorPath, offset)
+		},
+	}
+}
+
+// AgentResumeRequest identifies a detached agent run to re-attach to.
+type AgentResumeRequest struct {
+	Session *domain.Sandbox
+	Agent   string
+	RunID   string
+	Detach  *AgentRunDetach
+}
+
+// ResumeAgentRun re-attaches to a detached agent run started by an earlier
+// daemon and parses its result. It replays the whole journal so the result
+// payload is found even when it precedes the delivered cursor; output already
+// delivered is not forwarded again. Once the run is over the per-run facade
+// token that was kept for it is retired.
+func (r *AgentRunner) ResumeAgentRun(ctx context.Context, req AgentResumeRequest, stream domain.ExecStreamWriter) (domain.ExecResult, domain.AgentRunResult, error) {
+	session, agent, runID := req.Session, req.Agent, req.RunID
+	localRunner, localConfig := *r, *r.config
+	appconfig.ApplyDefaultGuestPaths(&localConfig)
+	localRunner.config = &localConfig
+	r = &localRunner
+	vmState, err := r.store.GetVMState(session.Summary.ID)
+	if err != nil {
+		return domain.ExecResult{}, domain.AgentRunResult{}, err
+	}
+	runtime, err := r.runtimes.ForSession(session)
+	if err != nil {
+		return domain.ExecResult{}, domain.AgentRunResult{}, err
+	}
+	env := execution.BuildSandboxExecEnv(ctx, r.config, session, r.config.GuestHomePath)
+	task := r.detachedAgentTask(detachedAgentExec{Session: session, VMState: vmState, Runtime: runtime, Env: env, Detach: req.Detach, Stream: stream})
+	task.ReplayAll = true
+	result, err := runs.FollowDetachedTask(ctx, task)
+	if errors.Is(err, runs.ErrRunDisconnected) {
+		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
+	}
+	if r.configDB != nil && !errors.Is(err, domain.ErrExecTerminationUnconfirmed) {
+		_ = r.configDB.DeleteLLMFacadeTokensForRun(context.WithoutCancel(ctx), runID, runtimefacade.TokenSourceAgent)
+	}
+	if err != nil {
 		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
 	}
 	parsed, err := execution.ParseAgentExecResult(agent, result)
@@ -421,6 +540,34 @@ type AgentExecSpecRequest struct {
 	SkillNames []string
 }
 
+// agentPromptArgs is the `agent-compose-runtime prompt` subcommand and flags
+// for one agent run. The legacy path runs it through a shell; the detached
+// path hands it to the guest supervisor as task args. config must already
+// have its guest path defaults applied.
+func agentPromptArgs(config *appconfig.Config, req AgentExecSpecRequest) []string {
+	model, schemaPath := req.Model, req.SchemaPath
+	args := []string{
+		"prompt",
+		"--provider", req.Agent,
+		"--message-file", req.PromptPath,
+		"--state-root", config.GuestStateRoot,
+		"--workspace", config.GuestWorkspacePath,
+		"--home", config.GuestHomePath,
+	}
+	if strings.TrimSpace(model) != "" {
+		args = append(args, "--model", strings.TrimSpace(model))
+	}
+	if strings.TrimSpace(schemaPath) != "" {
+		args = append(args, "--output-schema-file", schemaPath)
+	}
+	for _, skillName := range req.SkillNames {
+		if strings.TrimSpace(skillName) != "" {
+			args = append(args, "--skill", strings.TrimSpace(skillName))
+		}
+	}
+	return args
+}
+
 func BuildAgentExecSpec(ctx context.Context, config *appconfig.Config, req AgentExecSpecRequest) domain.ExecSpec {
 	session, agent, model := req.Session, req.Agent, req.Model
 	promptPath, schemaPath, skillNames := req.PromptPath, req.SchemaPath, req.SkillNames
@@ -430,23 +577,19 @@ func BuildAgentExecSpec(ctx context.Context, config *appconfig.Config, req Agent
 	agentHome := config.GuestHomePath
 	env := execution.BuildSandboxExecEnv(ctx, config, session, agentHome)
 
-	promptCommand := "agent-compose-runtime prompt" +
-		" --provider " + execution.ShellQuote(agent) +
-		" --message-file " + execution.ShellQuote(promptPath) +
-		" --state-root " + execution.ShellQuote(config.GuestStateRoot) +
-		" --workspace " + execution.ShellQuote(config.GuestWorkspacePath) +
-		" --home " + execution.ShellQuote(agentHome)
-	if strings.TrimSpace(model) != "" {
-		promptCommand += " --model " + execution.ShellQuote(strings.TrimSpace(model))
-	}
-	if strings.TrimSpace(schemaPath) != "" {
-		promptCommand += " --output-schema-file " + execution.ShellQuote(schemaPath)
-	}
-	for _, skillName := range skillNames {
-		if strings.TrimSpace(skillName) != "" {
-			promptCommand += " --skill " + execution.ShellQuote(strings.TrimSpace(skillName))
+	// The args are the subcommand followed by flag/value pairs; only the
+	// values are quoted, as the command line always was.
+	args := agentPromptArgs(config, AgentExecSpecRequest{
+		Agent: agent, Model: model, PromptPath: promptPath, SchemaPath: schemaPath, SkillNames: skillNames,
+	})
+	words := make([]string, 0, len(args))
+	for i, arg := range args {
+		if i > 0 && i%2 == 0 {
+			arg = execution.ShellQuote(arg)
 		}
+		words = append(words, arg)
 	}
+	promptCommand := "agent-compose-runtime " + strings.Join(words, " ")
 	command := strings.Join([]string{
 		"set -e",
 		"cd " + execution.ShellQuote(config.GuestWorkspacePath),
