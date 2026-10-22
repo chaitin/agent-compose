@@ -136,8 +136,12 @@ describe("supervisor stdin socket", () => {
 describe("supervisor stdin socket failure", () => {
   it("kills the task and records an abnormal exit when the socket cannot be served", async () => {
     await withShortStateRoot(async (root) => {
-      const stateRoot = path.join(root, "x".repeat(120));
+      const stateRoot = path.join(root, "state");
       const executionId = "ex-long";
+      // Occupy the stdin socket path with a directory so serving it fails
+      // deterministically on every platform. A too-long path only fails on
+      // macOS: Linux binds over-long unix paths through the abstract namespace.
+      await fs.mkdir(stdinSocketPath(stateRoot, executionId), { recursive: true });
       await expect(runSupervisor({
         stateRoot, executionId, nonce: "n", taskCommand: process.execPath, taskArgs: ["-e", "setInterval(() => {}, 1000)"], pollMs: 10, stdin: true,
       })).rejects.toThrow();
