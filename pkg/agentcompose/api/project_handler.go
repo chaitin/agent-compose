@@ -217,9 +217,14 @@ func (h *ProjectHandler) UpdateProjectOctoBusServerToken(ctx context.Context, re
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if req.Msg.Token != nil {
-		token = req.Msg.GetToken()
+	if req.Msg.Token == nil {
+		// Absent token is a true no-op: read the current value to report
+		// token_set but do not write, so the call neither creates a row where
+		// none existed nor participates in a read-modify-write race with a
+		// concurrent token update.
+		return connect.NewResponse(&agentcomposev2.UpdateProjectOctoBusServerTokenResponse{TokenSet: strings.TrimSpace(token) != ""}), nil
 	}
+	token = req.Msg.GetToken()
 	if err := store.SaveProjectOctoBusServerToken(ctx, project.ID, serverName, token); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}

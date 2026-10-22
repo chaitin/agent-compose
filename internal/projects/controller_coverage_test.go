@@ -125,6 +125,9 @@ func TestControllerRemoveProjectMarksProjectRemovedAndIsIdempotent(t *testing.T)
 	if len(volumeManager.removedProjects) != 1 || volumeManager.removedProjects[0] != "project-1" {
 		t.Fatalf("RemoveProject volume cleanup = %#v", volumeManager.removedProjects)
 	}
+	if len(store.deletedOctoBusTokens) != 1 || store.deletedOctoBusTokens[0] != "project-1" {
+		t.Fatalf("RemoveProject octobus token cleanup = %#v", store.deletedOctoBusTokens)
+	}
 
 	repeated, err := controller.RemoveProject(ctx, RemoveRequest{Project: ProjectRefByID("project-1")})
 	if err != nil {
@@ -339,7 +342,8 @@ func (controllerCoverageSchedulerValidator) Refresh(context.Context) error {
 }
 
 type controllerCoverageStore struct {
-	projects []domain.ProjectRecord
+	projects             []domain.ProjectRecord
+	deletedOctoBusTokens []string
 }
 
 func (s *controllerCoverageStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, error) {
@@ -415,6 +419,11 @@ func (s *controllerCoverageStore) ListProjectAgents(context.Context, string) ([]
 
 func (s *controllerCoverageStore) ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error) {
 	return nil, nil
+}
+
+func (s *controllerCoverageStore) DeleteProjectOctoBusServerToken(_ context.Context, projectID string) error {
+	s.deletedOctoBusTokens = append(s.deletedOctoBusTokens, projectID)
+	return nil
 }
 
 func (s *controllerCoverageStore) GetAgentDefinitionIfExists(context.Context, string, bool) (domain.AgentDefinition, bool, error) {

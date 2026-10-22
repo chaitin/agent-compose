@@ -503,6 +503,12 @@ func testConfigStoreCRUDCoverageWorkflows(t *testing.T) {
 	if token, err := store.GetProjectOctoBusServerToken(ctx, "project-1", "missing"); err != nil || token != "" {
 		t.Fatalf("GetProjectOctoBusServerToken missing token=%q err=%v", token, err)
 	}
+	if err := store.DeleteProjectOctoBusServerToken(ctx, "project-1"); err != nil {
+		t.Fatalf("DeleteProjectOctoBusServerToken returned error: %v", err)
+	}
+	if token, err := store.GetProjectOctoBusServerToken(ctx, "project-1", "internal"); err != nil || token != "" {
+		t.Fatalf("GetProjectOctoBusServerToken after delete token=%q err=%v", token, err)
+	}
 
 	if _, err := store.ReplaceGlobalEnv(ctx, []domain.SandboxEnvVar{{Name: "A", Value: "1"}, {Name: "SECRET", Value: "2", Secret: true}}); err != nil {
 		t.Fatalf("ReplaceGlobalEnv returned error: %v", err)

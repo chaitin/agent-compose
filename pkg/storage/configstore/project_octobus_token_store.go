@@ -53,3 +53,20 @@ func (s *projectOctoBusTokenStore) SaveProjectOctoBusServerToken(ctx context.Con
 	}
 	return nil
 }
+
+// DeleteProjectOctoBusServerToken removes every token row for a project. It is
+// called when a project is removed so bearer credentials do not outlive the
+// project that owns them. The delete is idempotent: deleting a project with no
+// rows succeeds.
+func (s *projectOctoBusTokenStore) DeleteProjectOctoBusServerToken(ctx context.Context, projectID string) error {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return fmt.Errorf("project octobus server token: project id is required")
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM project_octobus_server_token WHERE project_id = ?`,
+		projectID); err != nil {
+		return fmt.Errorf("delete project octobus server tokens: %w", err)
+	}
+	return nil
+}

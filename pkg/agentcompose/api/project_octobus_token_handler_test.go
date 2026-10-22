@@ -14,6 +14,7 @@ import (
 type octobusTokenStore struct {
 	project domain.ProjectRecord
 	tokens  map[string]string
+	saves   int
 }
 
 func (s *octobusTokenStore) key(projectID, serverName string) string {
@@ -48,6 +49,7 @@ func (s *octobusTokenStore) GetProjectOctoBusServerToken(_ context.Context, proj
 }
 
 func (s *octobusTokenStore) SaveProjectOctoBusServerToken(_ context.Context, projectID, serverName, token string) error {
+	s.saves++
 	s.tokens[s.key(projectID, serverName)] = token
 	return nil
 }
@@ -91,6 +93,9 @@ func TestUpdateAndGetProjectOctoBusServerToken(t *testing.T) {
 	}
 	if got := store.tokens["project-1/internal"]; got != "new-token" {
 		t.Fatalf("absent-token update changed stored token to %q", got)
+	}
+	if store.saves != 1 {
+		t.Fatalf("absent-token update wrote to the store %d times, want no write", store.saves-1)
 	}
 	cleared, err := handler.UpdateProjectOctoBusServerToken(ctx, connect.NewRequest(&agentcomposev2.UpdateProjectOctoBusServerTokenRequest{
 		Project: project, ServerName: "internal", Token: strPtr(""),

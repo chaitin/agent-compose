@@ -49,6 +49,13 @@ type CapabilityGatewaySource interface {
 	GetCapabilityGateway(context.Context) (domain.CapabilityGatewaySettings, error)
 }
 
+// projectOctoBusTokenCleaner is an optional ControllerStore capability that
+// removes a project's daemon-managed OctoBus server tokens. Stores that do not
+// implement it simply skip cleanup, so fakes and older backends are unaffected.
+type projectOctoBusTokenCleaner interface {
+	DeleteProjectOctoBusServerToken(context.Context, string) error
+}
+
 type NormalizedProject struct {
 	Spec       *projectdef.NormalizedProjectSpec
 	SpecHash   string
@@ -579,6 +586,11 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 	}
 	if c.volumes != nil {
 		if err := c.volumes.RemoveProjectVolumes(ctx, project.ID); err != nil {
+			return RemoveResult{Project: project, Changes: changes}, err
+		}
+	}
+	if cleaner, ok := c.store.(projectOctoBusTokenCleaner); ok {
+		if err := cleaner.DeleteProjectOctoBusServerToken(ctx, project.ID); err != nil {
 			return RemoveResult{Project: project, Changes: changes}, err
 		}
 	}
