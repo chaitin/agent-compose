@@ -64,11 +64,11 @@ func (r *dockerRuntime) terminateDockerExec(ctx context.Context, dockerClient *c
 // KillOnlyOnCancel kills only the exec leader (the exec shares its marker with
 // the detached tree that must survive); otherwise the whole marker tree is
 // terminated.
-func (r *dockerRuntime) terminateDockerExecOnFailure(ctx context.Context, dockerClient *client.Client, spec ExecSpec, containerID, execID, marker string) error {
+func (r *dockerRuntime) terminateDockerExecOnFailure(ctx context.Context, dockerClient *client.Client, spec ExecSpec, target dockerExecTarget) error {
 	if spec.KillOnlyOnCancel {
-		return r.terminateDockerExecLeader(ctx, dockerClient, containerID, execID, marker)
+		return r.terminateDockerExecLeader(ctx, dockerClient, target.ContainerID, target.ExecID, target.Marker)
 	}
-	return r.terminateDockerExec(ctx, dockerClient, dockerExecTarget{ContainerID: containerID, ExecID: execID, Marker: marker})
+	return r.terminateDockerExec(ctx, dockerClient, target)
 }
 
 // terminateDockerExecLeader kills only the exec's own process (the leader),
