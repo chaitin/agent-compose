@@ -25,6 +25,13 @@ func (i *recordingCapabilitySandboxIndexer) IndexSandbox(sandbox *domain.Sandbox
 	i.trustedHeaders = append(i.trustedHeaders, append([]domain.TrustedHeader(nil), headers...))
 }
 
+func (i *recordingCapabilitySandboxIndexer) TrustedHeadersConflict(sandboxID string, headers []domain.TrustedHeader) bool {
+	if len(i.indexed) == 0 || i.indexed[len(i.indexed)-1].Summary.ID != sandboxID {
+		return false
+	}
+	return !reflect.DeepEqual(i.trustedHeaders[len(i.trustedHeaders)-1], append([]domain.TrustedHeader(nil), headers...))
+}
+
 func (i *recordingCapabilitySandboxIndexer) RevokeSandbox(sandboxID string) {
 	i.revoked = append(i.revoked, sandboxID)
 }

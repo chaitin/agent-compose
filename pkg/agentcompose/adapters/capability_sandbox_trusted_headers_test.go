@@ -74,3 +74,40 @@ func TestCapabilitySandboxTrustedHeadersAreTransient(t *testing.T) {
 		t.Fatalf("resolver rebuild retained trusted headers: %#v", binding.TrustedHeaders)
 	}
 }
+
+func TestCapabilitySandboxTrustedHeadersConflict(t *testing.T) {
+	sandbox := &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:       "sandbox-1",
+			VMStatus: domain.VMStatusRunning,
+			Tags:     []domain.SandboxTag{{Name: capabilities.CapsetTagName, Value: "dev"}},
+		},
+		EnvItems: []domain.SandboxEnvVar{{Name: capabilities.SandboxTokenEnvName, Value: "sandbox-token", Secret: true}},
+	}
+	resolver := NewCapabilitySandboxResolver(trustedHeaderSandboxStore{sandbox: sandbox})
+	alice := []domain.TrustedHeader{{Name: "x-mpi-user-id", Value: "alice"}}
+	bob := []domain.TrustedHeader{{Name: "x-mpi-user-id", Value: "bob"}}
+
+	if resolver.TrustedHeadersConflict("sandbox-1", bob) {
+		t.Fatal("unbound sandbox reported a conflict")
+	}
+	resolver.IndexSandbox(sandbox, alice)
+	if resolver.TrustedHeadersConflict("sandbox-1", alice) {
+		t.Fatal("same identity reported a conflict")
+	}
+	// Headers without the trusted prefix are never bound, so they do not
+	// distinguish identities.
+	if resolver.TrustedHeadersConflict("sandbox-1", append(alice, domain.TrustedHeader{Name: "x-other", Value: "ignored"})) {
+		t.Fatal("untrusted header reported a conflict")
+	}
+	if !resolver.TrustedHeadersConflict("sandbox-1", bob) {
+		t.Fatal("different identity did not report a conflict")
+	}
+	if !resolver.TrustedHeadersConflict("sandbox-1", nil) {
+		t.Fatal("anonymous run did not conflict with a bound identity")
+	}
+	resolver.RevokeSandbox("sandbox-1")
+	if resolver.TrustedHeadersConflict("sandbox-1", bob) {
+		t.Fatal("revoked sandbox reported a conflict")
+	}
+}
