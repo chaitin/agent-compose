@@ -31,8 +31,10 @@ func NewProjectController(di do.Injector) (*projects.Controller, error) {
 	sessionStore := do.MustInvoke[*sandboxstore.Store](di)
 	sandboxDriver := do.MustInvoke[*adapters.SandboxDriver](di)
 	streams := do.MustInvoke[*sessionstream.StreamBroker](di)
+	config := do.MustInvoke[*appconfig.Config](di)
 	return projects.NewController(projects.ControllerDependencies{
-		Config:     do.MustInvoke[*appconfig.Config](di),
+		Config:     config,
+		Admit:      networkPolicyAdmission(do.MustInvoke[*adapters.SandboxEgressProxy](di), config),
 		Store:      do.MustInvoke[*configstore.ConfigStore](di),
 		Sandboxes:  sessionStore,
 		Images:     imageBackends.Auto,
@@ -128,7 +130,7 @@ func (d projectControllerDelegate) ValidateProject(ctx context.Context, req *con
 	}
 	reports, err := d.networkPolicyReports(normalized.Spec)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, networkPolicyConnectError(err)
 	}
 	return connect.NewResponse(&agentcomposev2.ValidateProjectResponse{
 		Valid:           result.Valid,
@@ -161,17 +163,26 @@ func (d projectControllerDelegate) ApplyProject(ctx context.Context, req *connec
 // applyResponse accounts for the declared network policies of the project the
 // daemon just accepted. The reports come from the normalized spec the revision
 // persisted, so the report describes the project as stored rather than the
-// request as submitted. A report that cannot be derived is a server-side failure
-// rather than an omission: the project could not compile a policy for that
-// declaration either.
+// request as submitted. The same declaration was admitted before the apply, so a
+// report that cannot be derived here means the stored spec and the admitted
+// candidate diverged; it is still returned rather than omitted because the
+// project could not honor that declaration either.
 func (d projectControllerDelegate) applyResponse(result projects.ApplyResult) (*agentcomposev2.ApplyProjectResponse, error) {
 	response := applyProjectResponse(result)
 	reports, err := agentNetworkPolicyReports(result.RevisionSpec, d.mediation, d.config)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, networkPolicyConnectError(err)
 	}
 	response.NetworkPolicies = api.NetworkPolicyReportsToProto(reports)
 	return response, nil
+}
+
+// networkPolicyConnectError classifies a report derivation failure. It can only
+// come from the declaration or from how it layers under the daemon-wide policy,
+// both of which the caller can fix, so the answer is InvalidArgument rather than
+// Internal.
+func networkPolicyConnectError(err error) error {
+	return connect.NewError(connect.CodeInvalidArgument, err)
 }
 
 // networkPolicyReports accounts for the declared network policies of a spec the
@@ -279,6 +290,7 @@ func parseProjectRequest(spec *agentcomposev2.ProjectSpec) (*compose.ProjectSpec
 		return nil, []projects.ValidationIssue{{Path: "spec", Message: "project spec is required"}}, nil
 	}
 	raw, protoIssues := api.ProjectSpecYAMLShape(spec)
+	protoIssues = append(protoIssues, api.LegacyNetworkProtocolIssues(spec.GetAgents())...)
 	if len(protoIssues) > 0 {
 		return nil, validationIssuesFromProto(protoIssues), nil
 	}
@@ -365,6 +377,8 @@ func projectConnectError(err error) error {
 		return nil
 	}
 	switch {
+	case errors.Is(err, errNetworkPolicyRejected):
+		return connect.NewError(connect.CodeInvalidArgument, err)
 	case errors.Is(err, projects.ErrRevisionConflict):
 		return connect.NewError(connect.CodeAborted, err)
 	case errors.Is(err, projects.ErrInvalidRequest), errors.Is(err, domain.ErrRequired), errors.Is(err, domain.ErrAmbiguous), errors.Is(err, domain.ErrInvalidArgument):

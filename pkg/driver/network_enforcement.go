@@ -9,7 +9,7 @@ import (
 )
 
 // This file owns the honest strength of sandbox egress enforcement per driver
-// and the gate that keeps a declared default-deny policy from silently
+// and the gate that keeps a declared restricting policy from silently
 // degrading to unrestricted egress: it either reports the degradation or, when
 // the deployment configures it, refuses the sandbox.
 //
@@ -29,6 +29,9 @@ const (
 	// SandboxEgressStrengthAllowList means the driver applies default deny plus
 	// the ordered allowance list, including the engine-owned endpoints.
 	SandboxEgressStrengthAllowList SandboxEgressStrength = "allowlist"
+	// SandboxEgressStrengthDenyList means the driver applies an allow default
+	// plus the ordered denial list, with the engine-owned endpoints ahead of it.
+	SandboxEgressStrengthDenyList SandboxEgressStrength = "denylist"
 	// mechanismForwardProxy names the engine-side mediation: the daemon decides
 	// every connection in its own forward proxy, so the strength does not come
 	// from a driver feature.
@@ -42,8 +45,10 @@ type SandboxNetworkEnforcement struct {
 	Mechanism string
 	// AppliesAllowEntries reports whether declared allowances reach the driver.
 	AppliesAllowEntries bool
+	// AppliesDenyEntries reports whether declared denials reach the driver.
+	AppliesDenyEntries bool
 	// AppliesEngineEndpoints reports whether the engine-owned endpoints stay
-	// reachable under default deny.
+	// reachable when the policy restricts.
 	AppliesEngineEndpoints bool
 	// AppliesDenyDomains reports whether the declared deny domains reach the
 	// driver's DNS resolution path.
@@ -69,6 +74,7 @@ func SandboxNetworkEnforcementFor(driver string) SandboxNetworkEnforcement {
 			Strength:               SandboxEgressStrengthAllowList,
 			Mechanism:              mechanismSDKNetworkPolicy,
 			AppliesAllowEntries:    true,
+			AppliesDenyEntries:     true,
 			AppliesEngineEndpoints: true,
 			AppliesDenyDomains:     true,
 			// The declaration is what the driver asks the SDK to install. A real KVM
@@ -101,7 +107,7 @@ func SandboxNetworkEnforcementFor(driver string) SandboxNetworkEnforcement {
 		// and telemetry over host:port HTTP, and a loopback-only network
 		// namespace cannot reach them. Applying it would produce a
 		// healthy-looking sandbox that can never call its model, so the engine
-		// refuses a declared default-deny instead.
+		// refuses a declared restriction instead.
 		return SandboxNetworkEnforcement{
 			Driver:                 RuntimeDriverDocker,
 			Strength:               SandboxEgressStrengthNone,
@@ -133,9 +139,9 @@ func SandboxNetworkEnforcementFor(driver string) SandboxNetworkEnforcement {
 
 // SandboxEgressForwardProxyEnforcement is the enforcement a sandbox gains from
 // the engine's own forward proxy rather than from its driver. The decision is
-// the engine's and it applies the declared allowances and the engine-owned
-// endpoints, so the strength is an allowlist on every driver whose guest reaches
-// the daemon.
+// the engine's and it applies the declared allowances, denials, and
+// engine-owned endpoints, so the strength is an allowlist or denylist on every
+// driver whose guest reaches the daemon.
 //
 // The limit is the transport: a process that ignores the proxy environment dials
 // the internet directly and is not decided, until transparent capture puts every
@@ -147,13 +153,14 @@ func SandboxEgressForwardProxyEnforcement(driver string) SandboxNetworkEnforceme
 		Strength:                SandboxEgressStrengthAllowList,
 		Mechanism:               mechanismForwardProxy,
 		AppliesAllowEntries:     true,
+		AppliesDenyEntries:      true,
 		AppliesEngineEndpoints:  true,
 		AppliesAllowedAddresses: true,
 		Notes:                   "the engine's forward proxy decides every connection the sandbox routes through it: the declared allowances and the engine-owned endpoints are applied in the daemon, the guest is given the proxy as its egress path, and a change to the declaration reaches a running sandbox because the policy is read per request; a process that ignores the proxy environment is not decided until transparent capture is in place",
 	}
 }
 
-// ErrSandboxNetworkEnforcementUnavailable reports a declared default-deny
+// ErrSandboxNetworkEnforcementUnavailable reports a declared restricting
 // policy the selected driver cannot enforce. It is returned instead of
 // starting a sandbox with unrestricted egress.
 var ErrSandboxNetworkEnforcementUnavailable = errors.New("sandbox network enforcement unavailable")
@@ -168,7 +175,7 @@ func egressPolicyFacts(driver string) RuntimeCapabilityDimensionFacts {
 	facts := RuntimeCapabilityDimensionFacts{
 		Dimension:       dimensionEgressPolicy,
 		Observed:        fmt.Sprintf("strength=%s; %s", enforcement.Strength, enforcement.Notes),
-		DefaultBehavior: "an undeclared network policy is not deny, so egress stays unrestricted (D3); when a sandbox declares default: deny the engine auto-allows its own runtime LLM facade and telemetry endpoints as non-overridable engine-side rules; when the sandbox can reach the daemon the engine enforces the declaration itself in its forward proxy, and the driver's own strength above does not apply; on a driver that cannot apply the declaration and a sandbox that cannot reach the proxy, the sandbox reports the declaration as unenforced and runs, unless the deployment sets EGRESS_UNENFORCEABLE_POLICY=refuse, in which case the sandbox is refused instead",
+		DefaultBehavior: "an undeclared network policy is not deny, so egress stays unrestricted (D3); when a sandbox declares default: deny-all or a deny entry the engine auto-allows its own runtime LLM facade and telemetry endpoints as non-overridable engine-side rules; when the sandbox can reach the daemon the engine enforces the declaration itself in its forward proxy, and the driver's own strength above does not apply; on a driver that cannot apply the declaration and a sandbox that cannot reach the proxy, the sandbox reports the declaration as unenforced and runs, unless the deployment sets EGRESS_UNENFORCEABLE_POLICY=refuse, in which case the sandbox is refused instead",
 	}
 	if enforcement.Strength == SandboxEgressStrengthNone {
 		facts.Mechanism = reasonNotConfigured
@@ -180,9 +187,10 @@ func egressPolicyFacts(driver string) RuntimeCapabilityDimensionFacts {
 }
 
 // RequireSandboxNetworkEnforcement applies the configured policy to a sandbox
-// that declares default-deny egress on a driver that cannot apply any part of
-// it. A nil or permissive policy returns nil: an undeclared policy keeps today's
-// behavior (D3), so this gate never tightens a sandbox that did not ask for it.
+// that declares restricting egress on a driver that cannot apply any part of
+// it. A nil or non-restricting policy returns nil: an undeclared policy keeps
+// today's behavior (D3), so this gate never tightens a sandbox that did not ask
+// for it.
 //
 // A restriction the driver cannot deliver must not become an availability
 // failure, so the default (warn) starts the sandbox and reports that the
@@ -196,7 +204,7 @@ func RequireSandboxNetworkEnforcement(driver, sandboxID string, policy *SandboxN
 	if err := policy.Validate(); err != nil {
 		return fmt.Errorf("sandbox network policy: %w", err)
 	}
-	if !policy.DenyByDefault() {
+	if !policy.Restricts() {
 		return nil
 	}
 	driverEnforcement := SandboxNetworkEnforcementFor(driver)
@@ -210,9 +218,27 @@ func RequireSandboxNetworkEnforcement(driver, sandboxID string, policy *SandboxN
 		// The mechanism applies the declaration, but possibly not every part of
 		// it. A part it does not apply is a sandbox running as if the declaration
 		// said less than it did, which is the failure this gate exists to prevent.
+		//
+		// A mediated sandbox can have a driver mechanism that applies the
+		// destinations but not allowed_ips. The proxy still applies the address
+		// constraint to traffic it sees, but a process that bypasses the proxy is
+		// only subject to the driver's narrower rule, so the declaration is not
+		// fully enforced. Report that separately from the no-mediation case below:
+		// naming the proxy as the mechanism that lacks the addresses would be
+		// false, and silently treating the proxy as complete would hide the gap.
+		if constrained := policy.AddressConstrainedAllowances(); constrained > 0 && policy.MediatedByForwardProxy &&
+			driverEnforcement.Strength != SandboxEgressStrengthNone && !driverEnforcement.AppliesAllowedAddresses {
+			return reportUndeclaredEnforcement(mode, sandboxID, enforcement, egressGapPartial,
+				fmt.Sprintf("%d declared allowance(s) constrain the addresses a name may resolve to; %s applies them to proxied traffic, but the %s driver mechanism (%s) does not apply allowed_ips to traffic that bypasses the proxy",
+					constrained, enforcement.Mechanism, driverEnforcement.Driver, driverEnforcement.Mechanism))
+		}
 		if constrained := policy.AddressConstrainedAllowances(); constrained > 0 && !enforcement.AppliesAllowedAddresses {
 			return reportUndeclaredEnforcement(mode, sandboxID, enforcement, egressGapPartial,
 				fmt.Sprintf("%d declared allowance(s) constrain the addresses a name may resolve to, and %s applies the destinations without them", constrained, enforcement.Mechanism))
+		}
+		if denied := len(policy.Deny); denied > 0 && !enforcement.AppliesDenyEntries {
+			return reportUndeclaredEnforcement(mode, sandboxID, enforcement, egressGapPartial,
+				fmt.Sprintf("%d declared denial(s) are not applied by %s", denied, enforcement.Mechanism))
 		}
 		// A mediated sandbox can still have its deny domains applied by the
 		// driver's own in-guest filter, so the gap exists only when neither
@@ -251,12 +277,12 @@ const (
 // the decision a deployment configured is the decision it can see.
 func reportUndeclaredEnforcement(mode config.EgressUnenforceablePolicy, sandboxID string, enforcement SandboxNetworkEnforcement, gap egressGap, reason string) error {
 	if mode == config.EgressUnenforceableRefuse {
-		return fmt.Errorf("%w: driver %q cannot enforce the declared default-deny network policy; refusing to start the sandbox with %s (%s)", ErrSandboxNetworkEnforcementUnavailable, enforcement.Driver, gap, reason)
+		return fmt.Errorf("%w: driver %q cannot enforce the declared restricting network policy; refusing to start the sandbox with %s (%s)", ErrSandboxNetworkEnforcementUnavailable, enforcement.Driver, gap, reason)
 	}
 	slog.Warn("declared network policy is not enforced",
 		"sandbox_id", sandboxID,
 		"driver", enforcement.Driver,
-		"declared_default", "deny",
+		"declared_default", "deny-all",
 		"egress", string(gap),
 		"reason", reason,
 	)

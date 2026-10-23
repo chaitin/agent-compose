@@ -1034,6 +1034,28 @@ The following commands or capabilities are not published as stable CLI features 
 - When operating against a remote daemon, pass `--host` explicitly and verify the target project name and config path.
 - Use `--json` in scripts and automation; do not parse table layouts.
 
+## Daemon-wide Network Policy
+
+Set `EGRESS_GLOBAL_POLICY_FILE` in the daemon environment to a YAML file that declares an outer outbound network policy for every sandbox. The file has the same `default`, `allow`, and `deny` body as an agent's `policy.network` block, without the `network:` wrapper. It must state `default` explicitly (`allow-all` or `deny-all`); omitting it fails startup instead of inheriting the compose "omitted means allow-all" rule. The daemon reads it once at startup; an unreadable file, an unknown field, a missing `default`, or an invalid value fails startup.
+
+```dotenv
+EGRESS_GLOBAL_POLICY_FILE=/data/work/global-network-policy.yaml
+```
+
+```yaml
+default: deny-all
+allow:
+  - host: "*.example.com"
+    ports: [443, 80]
+  - host: 10.0.0.0/8
+    port: 5432
+deny:
+  - host: metadata.example.com
+    port: 80
+```
+
+The daemon policy applies even to agents that declare no policy. An agent declaration can narrow it but cannot widen it: two allowlists are intersected and an agent allowance outside the daemon allowlist is refused; daemon denials always remain. The effective policy reaches the driver boundary and the forward proxy. The startup log and admission reports include the loaded file path and SHA-256, and reports attach `[daemon]`/`[agent]` provenance to every effective entry. Changing the file requires a daemon restart; the report keeps naming the bytes that were loaded. See [the Agent Compose YAML manual](agent-compose-yaml-manual.html) for the composition rules.
+
 ## Native Agent Telemetry
 
 Configure the daemon environment (the deployed `.env` file), then restart the

@@ -42,6 +42,15 @@ func TestE2ECLISchedulerPublicContractWorkflow(t *testing.T) {
 	TestIntegrationCLIInspectProjectAgentRunSandboxSessionJSON(t)
 }
 
+func TestE2ECLINetworkPolicyReportPublicContractWorkflow(t *testing.T) {
+	TestWriteComposeNetworkPolicyReportSeparatesDeclaredFromEnforced(t)
+	TestWriteComposeDeclaredNetworkPolicyNotesIgnoresAgentsWithoutAPolicy(t)
+	TestComposeNetworkPolicyWarningsNameTheAgent(t)
+	TestWriteComposeNetworkPolicyReportIsSilentWithoutDeclarations(t)
+	TestWriteComposeNetworkPolicyReportShowsMechanismsSourcesAndLimits(t)
+	TestComposeNetworkPolicyJSONCarriesReportAuditFields(t)
+}
+
 func TestE2ECLICacheAndVolumePublicContractWorkflow(t *testing.T) {
 	TestIntegrationCLIVolumeCommands(t)
 	TestIntegrationCLICacheListTextJSONAndFilters(t)

@@ -36,7 +36,8 @@ import (
 type microsandboxNetworkPlan struct {
 	// DefaultEgress is the SDK PolicyAction value for unmatched egress.
 	DefaultEgress string
-	// Rules are the ordered allow rules an enforcing driver applies.
+	// Rules are the ordered allow and deny rules an enforcing driver applies.
+	// Engine endpoints come first, then denials, then allowances.
 	Rules []microsandboxNetworkRule
 	// DenyDomains are exact domains the in-VM DNS proxy refuses to resolve.
 	DenyDomains []string
@@ -66,10 +67,11 @@ const (
 
 // planMicrosandboxNetwork maps a policy onto the Microsandbox network model. A
 // nil policy renders the undeclared behavior: egress allowed, no rules, and
-// rebindProtection verbatim. A declared allow-all policy renders the same,
-// because its allow entries are no-ops, while a declared deny policy renders a
-// deny default with the engine-owned endpoints first and the declared
-// allowances after them.
+// rebindProtection verbatim. A declared policy that cannot restrict anything
+// (allow default with no denial) renders the same, because its allow entries are
+// no-ops. A restricting policy renders the engine-owned endpoints first, then
+// the declared denials, then the declared allowances under a deny default, with
+// DefaultEgress reflecting the declared default.
 //
 // The function is pure and returns an error instead of dropping a host pattern
 // it cannot express, so a declaration the mapping cannot honor fails closed.
@@ -85,23 +87,48 @@ func planMicrosandboxNetwork(policy *SandboxNetworkPolicy, rebindProtection bool
 		return microsandboxNetworkPlan{}, err
 	}
 	plan.DenyDomains = append([]string(nil), policy.DenyDomains...)
-	if !policy.DenyByDefault() {
+	if !policy.Restricts() {
 		return plan, nil
 	}
-	plan.DefaultEgress = microsandboxPlanDefaultEgressDeny
-	for _, entry := range policy.permittingEndpoints() {
-		destination, err := microsandboxDestination(entry.Host)
-		if err != nil {
+	if policy.DenyByDefault() {
+		plan.DefaultEgress = microsandboxPlanDefaultEgressDeny
+	}
+	// The SDK evaluates rules in order, so the engine endpoints precede every
+	// declared denial and a denial precedes every allowance. That is the same
+	// precedence the engine decision model applies, and it keeps a project from
+	// cutting off the facade or telemetry endpoint the sandbox needs.
+	for _, entry := range policy.engineEndpoints() {
+		if err := appendMicrosandboxRule(&plan, "allow", entry); err != nil {
 			return microsandboxNetworkPlan{}, err
 		}
-		plan.Rules = append(plan.Rules, microsandboxNetworkRule{
-			Action:      "allow",
-			Destination: destination,
-			Port:        strconv.Itoa(entry.Port),
-			Protocol:    microsandboxProtocol(entry.Protocol),
-		})
+	}
+	for _, entry := range policy.denyingEndpoints() {
+		if err := appendMicrosandboxRule(&plan, "deny", entry); err != nil {
+			return microsandboxNetworkPlan{}, err
+		}
+	}
+	for _, entry := range policy.allowingEndpoints() {
+		if err := appendMicrosandboxRule(&plan, "allow", entry); err != nil {
+			return microsandboxNetworkPlan{}, err
+		}
 	}
 	return plan, nil
+}
+
+// appendMicrosandboxRule renders one endpoint into the plan, refusing a host
+// pattern the SDK cannot express instead of dropping it.
+func appendMicrosandboxRule(plan *microsandboxNetworkPlan, action string, entry egress.Endpoint) error {
+	destination, err := microsandboxDestination(entry.Host)
+	if err != nil {
+		return err
+	}
+	plan.Rules = append(plan.Rules, microsandboxNetworkRule{
+		Action:      action,
+		Destination: destination,
+		Port:        strconv.Itoa(entry.Port),
+		Protocol:    microsandboxProtocol(entry.Protocol),
+	})
+	return nil
 }
 
 // microsandboxDestination renders one entry host as a PolicyRule destination.

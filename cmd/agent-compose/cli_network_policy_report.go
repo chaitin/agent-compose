@@ -22,18 +22,33 @@ type composeNetworkPolicyOutput struct {
 	Restricts bool                        `json:"restricts"`
 	Default   string                      `json:"default"`
 	Allow     []composeNetworkAllowOutput `json:"allow"`
+	Deny      []composeNetworkDenyOutput  `json:"deny"`
 	Mediated  bool                        `json:"mediated"`
 	Enforced  bool                        `json:"enforced"`
 	Strength  string                      `json:"strength"`
 	Mechanism string                      `json:"mechanism"`
-	Unapplied []string                    `json:"unapplied,omitempty"`
-	Warning   string                      `json:"warning,omitempty"`
+	// Mechanisms lists every mechanism that applies part of the declaration.
+	Mechanisms []string `json:"mechanisms,omitempty"`
+	// Limitations states material limits that do not make the declaration
+	// unenforced, such as traffic bypassing the forward proxy.
+	Limitations []string `json:"limitations,omitempty"`
+	// DaemonPolicySource and DaemonPolicySHA256 identify the daemon-wide policy
+	// the effective declaration was computed against.
+	DaemonPolicySource string   `json:"daemon_policy_source,omitempty"`
+	DaemonPolicySHA256 string   `json:"daemon_policy_sha256,omitempty"`
+	Unapplied          []string `json:"unapplied,omitempty"`
+	Warning            string   `json:"warning,omitempty"`
 }
 
 type composeNetworkAllowOutput struct {
-	Endpoint    string   `json:"endpoint"`
-	Inspectable bool     `json:"inspectable"`
-	AllowedIPs  []string `json:"allowed_ips,omitempty"`
+	Endpoint   string   `json:"endpoint"`
+	AllowedIPs []string `json:"allowed_ips,omitempty"`
+	Sources    []string `json:"sources,omitempty"`
+}
+
+type composeNetworkDenyOutput struct {
+	Endpoint string   `json:"endpoint"`
+	Sources  []string `json:"sources,omitempty"`
 }
 
 func composeNetworkPoliciesFromProto(reports []*agentcomposev2.AgentNetworkPolicyReport) []composeNetworkPolicyOutput {
@@ -45,23 +60,35 @@ func composeNetworkPoliciesFromProto(reports []*agentcomposev2.AgentNetworkPolic
 		allow := make([]composeNetworkAllowOutput, 0, len(report.GetAllow()))
 		for _, entry := range report.GetAllow() {
 			allow = append(allow, composeNetworkAllowOutput{
-				Endpoint:    entry.GetEndpoint(),
-				Inspectable: entry.GetInspectable(),
-				AllowedIPs:  append([]string(nil), entry.GetAllowedIps()...),
+				Endpoint:   entry.GetEndpoint(),
+				AllowedIPs: append([]string(nil), entry.GetAllowedIps()...),
+				Sources:    append([]string(nil), entry.GetSources()...),
+			})
+		}
+		deny := make([]composeNetworkDenyOutput, 0, len(report.GetDeny()))
+		for _, entry := range report.GetDeny() {
+			deny = append(deny, composeNetworkDenyOutput{
+				Endpoint: entry.GetEndpoint(),
+				Sources:  append([]string(nil), entry.GetSources()...),
 			})
 		}
 		policies = append(policies, composeNetworkPolicyOutput{
-			Agent:     report.GetAgent(),
-			Driver:    report.GetDriver(),
-			Restricts: report.GetRestricts(),
-			Default:   report.GetDefault(),
-			Allow:     allow,
-			Mediated:  report.GetMediated(),
-			Enforced:  report.GetEnforced(),
-			Strength:  report.GetStrength(),
-			Mechanism: report.GetMechanism(),
-			Unapplied: append([]string(nil), report.GetUnapplied()...),
-			Warning:   report.GetWarning(),
+			Agent:              report.GetAgent(),
+			Driver:             report.GetDriver(),
+			Restricts:          report.GetRestricts(),
+			Default:            report.GetDefault(),
+			Allow:              allow,
+			Deny:               deny,
+			Mediated:           report.GetMediated(),
+			Enforced:           report.GetEnforced(),
+			Strength:           report.GetStrength(),
+			Mechanism:          report.GetMechanism(),
+			Mechanisms:         append([]string(nil), report.GetMechanisms()...),
+			Limitations:        append([]string(nil), report.GetLimitations()...),
+			DaemonPolicySource: report.GetDaemonPolicySource(),
+			DaemonPolicySHA256: report.GetDaemonPolicySha256(),
+			Unapplied:          append([]string(nil), report.GetUnapplied()...),
+			Warning:            report.GetWarning(),
 		})
 	}
 	return policies
@@ -109,6 +136,9 @@ func writeComposeNetworkPolicyReport(out io.Writer, policies []composeNetworkPol
 	if _, err := fmt.Fprintln(out, "Network policy"); err != nil {
 		return err
 	}
+	if err := writeDaemonNetworkPolicyIdentity(out, policies); err != nil {
+		return err
+	}
 	for _, policy := range policies {
 		if err := writeComposeAgentNetworkPolicy(out, policy); err != nil {
 			return err
@@ -121,17 +151,23 @@ func writeComposeAgentNetworkPolicy(out io.Writer, policy composeNetworkPolicyOu
 	if _, err := fmt.Fprintf(out, "  %s (driver %s)\n", policy.Agent, policy.Driver); err != nil {
 		return err
 	}
+	defaultLabel := networkPolicyDefaultLabel(policy.Default)
 	if !policy.Restricts {
 		// An undeclared policy cannot reach here, so this is a declared policy
 		// that refuses nothing: the documented behavior of an allow list without
 		// a deny default.
-		if _, err := fmt.Fprintf(out, "    declared  default %s with %d allowance(s): egress is not restricted, because an allow list only restricts under default: deny\n", policy.Default, len(policy.Allow)); err != nil {
+		if _, err := fmt.Fprintf(out, "    declared  default %s with %d allowance(s): egress is not restricted, because an allow list needs default: deny-all and no denial matches\n", defaultLabel, len(policy.Allow)); err != nil {
 			return err
 		}
 		return writeComposeNetworkAllowances(out, policy.Allow)
 	}
-	if _, err := fmt.Fprintf(out, "    declared  default %s, %d allowance(s)\n", policy.Default, len(policy.Allow)); err != nil {
+	if _, err := fmt.Fprintf(out, "    declared  default %s, %d allowance(s), %d denial(s)\n", defaultLabel, len(policy.Allow), len(policy.Deny)); err != nil {
 		return err
+	}
+	for _, entry := range policy.Deny {
+		if _, err := fmt.Fprintf(out, "      deny  %s%s\n", entry.Endpoint, networkPolicySourcesSuffix(entry.Sources)); err != nil {
+			return err
+		}
 	}
 	if err := writeComposeNetworkAllowances(out, policy.Allow); err != nil {
 		return err
@@ -142,7 +178,10 @@ func writeComposeAgentNetworkPolicy(out io.Writer, policy composeNetworkPolicyOu
 		}
 	} else {
 		mechanism := fmt.Sprintf("%s (%s)", policy.Mechanism, policy.Strength)
-		if policy.Mediated {
+		switch {
+		case len(policy.Mechanisms) > 1:
+			mechanism += fmt.Sprintf("; mechanisms: %s", strings.Join(policy.Mechanisms, ", "))
+		case policy.Mediated:
 			mechanism += ", the engine's forward proxy"
 		}
 		if _, err := fmt.Fprintf(out, "    enforced  %s\n", mechanism); err != nil {
@@ -157,19 +196,48 @@ func writeComposeAgentNetworkPolicy(out io.Writer, policy composeNetworkPolicyOu
 			return err
 		}
 	}
+	for _, limitation := range policy.Limitations {
+		if _, err := fmt.Fprintf(out, "    limit     %s\n", limitation); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// writeDaemonNetworkPolicyIdentity states the daemon policy file and digest
+// once, before the per-agent accounts. Repeating it on every agent would make
+// the report noisy while still leaving the first occurrence easy to miss.
+func writeDaemonNetworkPolicyIdentity(out io.Writer, policies []composeNetworkPolicyOutput) error {
+	for _, policy := range policies {
+		if policy.DaemonPolicySource == "" {
+			continue
+		}
+		identity := "  daemon policy  " + policy.DaemonPolicySource
+		if policy.DaemonPolicySHA256 != "" {
+			identity += " (sha256:" + policy.DaemonPolicySHA256 + ")"
+		}
+		_, err := fmt.Fprintln(out, identity)
+		return err
+	}
+	return nil
+}
+
+func networkPolicySourcesSuffix(sources []string) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(sources, "+") + "]"
 }
 
 func writeComposeNetworkAllowances(out io.Writer, allow []composeNetworkAllowOutput) error {
 	for _, entry := range allow {
-		detail := "not inspectable"
-		if entry.Inspectable {
-			detail = "inspectable"
-		}
 		if len(entry.AllowedIPs) > 0 {
-			detail += ", addresses " + strings.Join(entry.AllowedIPs, " ")
+			if _, err := fmt.Fprintf(out, "      allow %s (addresses %s)%s\n", entry.Endpoint, strings.Join(entry.AllowedIPs, " "), networkPolicySourcesSuffix(entry.Sources)); err != nil {
+				return err
+			}
+			continue
 		}
-		if _, err := fmt.Fprintf(out, "      - %s (%s)\n", entry.Endpoint, detail); err != nil {
+		if _, err := fmt.Fprintf(out, "      allow %s%s\n", entry.Endpoint, networkPolicySourcesSuffix(entry.Sources)); err != nil {
 			return err
 		}
 	}
@@ -225,24 +293,43 @@ func writeComposeDeclaredNetworkPolicyNotes(out io.Writer, spec *compose.Normali
 	return nil
 }
 
+// networkPolicyDefaultLabel renders a policy action using the compose mode
+// vocabulary a reader sees in the YAML. The internal action remains allow or
+// deny; the "-all" suffix is what distinguishes the mode from an allow or deny
+// entry in the same block.
+func networkPolicyDefaultLabel(action string) string {
+	switch action {
+	case string(egress.Deny):
+		return "deny-all"
+	case string(egress.Allow):
+		return "allow-all"
+	default:
+		return action
+	}
+}
+
 func writeDeclaredNetworkPolicy(out io.Writer, agent string, report egress.NetworkPolicyReport) error {
-	if _, err := fmt.Fprintf(out, "  %s  default %s, %d allowance(s)\n", agent, report.Default, len(report.Allow)); err != nil {
+	if _, err := fmt.Fprintf(out, "  %s  default %s, %d allowance(s), %d denial(s)\n", agent, networkPolicyDefaultLabel(string(report.Default)), len(report.Allow), len(report.Deny)); err != nil {
 		return err
 	}
-	if report.Default != egress.Deny && len(report.Allow) > 0 {
-		if _, err := fmt.Fprintln(out, "    egress is not restricted: an allow list only restricts under default: deny"); err != nil {
+	if !report.Restricts && len(report.Allow) > 0 {
+		if _, err := fmt.Fprintln(out, "    egress is not restricted: an allow list alone does not restrict; add default: deny-all or a deny entry"); err != nil {
 			return err
 		}
 	}
 	for _, entry := range report.Allow {
-		detail := "not inspectable"
-		if entry.Inspectable {
-			detail = "inspectable"
-		}
 		if len(entry.AllowedIPs) > 0 {
-			detail += ", addresses " + strings.Join(entry.AllowedIPs, " ")
+			if _, err := fmt.Fprintf(out, "    allow %s (addresses %s)\n", entry.Endpoint, strings.Join(entry.AllowedIPs, " ")); err != nil {
+				return err
+			}
+			continue
 		}
-		if _, err := fmt.Fprintf(out, "    - %s (%s)\n", entry.Endpoint, detail); err != nil {
+		if _, err := fmt.Fprintf(out, "    allow %s\n", entry.Endpoint); err != nil {
+			return err
+		}
+	}
+	for _, entry := range report.Deny {
+		if _, err := fmt.Fprintf(out, "    deny  %s\n", entry.Endpoint); err != nil {
 			return err
 		}
 	}

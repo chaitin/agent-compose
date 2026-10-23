@@ -132,6 +132,12 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	do.ProvideValue(di, ctx)
 	do.Provide(di, NewLogger)
 	config.Setup(di)
+	// Resolve the configuration before any MustInvoke: a rejected setting (for
+	// example an invalid EGRESS_GLOBAL_POLICY_FILE) must surface as a startup
+	// error, not as the panic MustInvoke raises for a provider that failed.
+	if _, err := do.Invoke[*config.Config](di); err != nil {
+		return nil, fmt.Errorf("load daemon configuration: %w", err)
+	}
 	do.Provide(di, NewEcho)
 	health.Setup(di)
 	agentcomposeapp.Register(di)

@@ -52,7 +52,7 @@ func Decide(policy Policy, request Request) Result {
 	// outside instead of only that the default denied it.
 	var constrained *Result
 	for _, rule := range policy.rules {
-		if !rule.matches(request.Name) {
+		if !rule.matches(request) {
 			continue
 		}
 		if rule.Action == Allow {

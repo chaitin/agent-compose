@@ -13,8 +13,8 @@ import (
 
 // SandboxNetworkDeclarationResolver resolves the outbound network policy a
 // sandbox's project agent declared, or nil when it declared none. It is
-// optional: a composition without one cannot know a declaration exists, so the
-// driver-boundary policy stays nil (D3) instead of being invented.
+// optional: a composition without one cannot know an agent declaration exists,
+// so only the daemon-wide policy applies (D3), instead of inventing one.
 type SandboxNetworkDeclarationResolver interface {
 	ResolveNetworkDeclaration(context.Context, *domain.Sandbox) (*egress.NetworkDeclaration, error)
 }
@@ -29,22 +29,35 @@ type driverSandboxNetworkPolicy struct {
 	declarations SandboxNetworkDeclarationResolver
 }
 
-// inputs resolves the declaration a sandbox's project made and the engine-owned
-// endpoints that must stay reachable under it. It is the single place both
-// consumers start from — the driver-boundary policy and the policy the engine's
-// forward proxy decides with — so the two can never disagree about what was
-// declared or which endpoints the engine owns. A nil declaration means the
-// sandbox declared no network policy (D3).
+// inputs resolves the declaration a sandbox's project made, layers it under the
+// daemon-wide policy, and derives the engine-owned endpoints that must stay
+// reachable. It is the single place both consumers start from — the
+// driver-boundary policy and the policy the engine's forward proxy decides with —
+// so the two can never disagree about the effective policy or which endpoints
+// the engine owns. A nil result means neither layer declared a network policy
+// (D3).
 func (d driverSandboxNetworkPolicy) inputs(ctx context.Context, session *domain.Sandbox) (*egress.NetworkDeclaration, []egress.EngineEndpoint, error) {
-	if d.declarations == nil || session == nil {
+	if session == nil {
 		return nil, nil, nil
 	}
-	declaration, err := d.declarations.ResolveNetworkDeclaration(ctx, session)
+	var declaration *egress.NetworkDeclaration
+	if d.declarations != nil {
+		resolved, err := d.declarations.ResolveNetworkDeclaration(ctx, session)
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve sandbox network declaration for %s: %w", session.Summary.ID, err)
+		}
+		declaration = resolved
+	}
+	var global *egress.NetworkDeclaration
+	if d.config != nil {
+		global = d.config.GlobalNetworkPolicy
+	}
+	if declaration == nil && global == nil {
+		return nil, nil, nil
+	}
+	declaration, err := egress.LayerNetworkDeclarations(global, declaration)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve sandbox network declaration for %s: %w", session.Summary.ID, err)
-	}
-	if declaration == nil {
-		return nil, nil, nil
+		return nil, nil, fmt.Errorf("combine the daemon and agent network policies for %s: %w", session.Summary.ID, err)
 	}
 	// The engine-owned endpoints come from the same addresses the engine hands
 	// this sandbox, never a daemon-global or invented endpoint.
@@ -80,10 +93,11 @@ func (d driverSandboxNetworkPolicy) effectivePolicy(ctx context.Context, session
 // not resolve twice: an apply landing between the two reads would attach one
 // declaration to the driver and record another declaration's generation.
 //
-// The driver policy is nil when the sandbox declared no network policy (D3:
-// undeclared is not deny), while a declared policy always yields a non-nil one,
-// permissive ones included, so a caller can tell "undeclared" from "declared
-// allow". The compiled policy is the pass-through policy in the undeclared case.
+// The driver policy is nil when neither the sandbox nor the daemon declared a
+// network policy (D3: undeclared is not deny), while an effective policy always
+// yields a non-nil one, permissive ones included, so a caller can tell
+// "undeclared" from "declared allow". The compiled policy is the pass-through
+// policy in the undeclared case.
 func (d driverSandboxNetworkPolicy) resolve(ctx context.Context, session *domain.Sandbox) (*driverpkg.SandboxNetworkPolicy, egress.Policy, error) {
 	declaration, engineEndpoints, err := d.inputs(ctx, session)
 	if err != nil {

@@ -25,11 +25,12 @@ import (
 // SandboxNetworkPolicy is the driver-boundary network policy for one sandbox.
 //
 // Default is egress.Allow for an undeclared policy (D3): the zero value is not
-// default-deny. Allow holds the declared allowances and EngineEndpoints holds
-// the engine-owned endpoints the engine derives from its own configuration
-// (LLM facade, telemetry). Engine endpoints precede every declared allowance
-// whenever Default is egress.Deny, so no user declaration can deny them, and
-// they are never hardcoded here — the caller supplies them.
+// default-deny. Allow holds the declared allowances, Deny holds the declared
+// refusals, and EngineEndpoints holds the engine-owned endpoints the engine
+// derives from its own configuration (LLM facade, telemetry). Engine endpoints
+// precede every declared rule whenever the policy restricts, so no user
+// declaration can deny them, and they are never hardcoded here — the caller
+// supplies them.
 type SandboxNetworkPolicy struct {
 	Default egress.Action
 	// Allow is the declared allowance list in declaration order. Order does not
@@ -39,8 +40,11 @@ type SandboxNetworkPolicy struct {
 	// survives the seam: a boundary policy that quietly dropped a constraint
 	// would let a driver enforce less than the project declared.
 	Allow []egress.AllowEntry
+	// Deny is the declared refusal list in declaration order. A denial wins over
+	// an allowance that matches the same destination.
+	Deny []egress.DenyEntry
 	// EngineEndpoints are the engine-owned endpoints that must stay reachable
-	// under egress.Deny.
+	// whenever the policy restricts.
 	EngineEndpoints []egress.EngineEndpoint
 	// DenyDomains are exact domain names the driver refuses to resolve. The
 	// compose declaration does not carry them yet, so they are engine-supplied.
@@ -60,12 +64,16 @@ type SandboxNetworkPolicy struct {
 // NewSandboxNetworkPolicy normalizes and validates a boundary policy. It returns
 // an error for a value a driver could not enforce, so a malformed declaration
 // fails closed instead of silently widening access.
-func NewSandboxNetworkPolicy(defaultAction egress.Action, allow []egress.AllowEntry, engineEndpoints []egress.EngineEndpoint, denyDomains []string) (SandboxNetworkPolicy, error) {
+func NewSandboxNetworkPolicy(defaultAction egress.Action, allow []egress.AllowEntry, deny []egress.DenyEntry, engineEndpoints []egress.EngineEndpoint, denyDomains []string) (SandboxNetworkPolicy, error) {
 	normalizedDefault, err := normalizeSandboxNetworkDefault(defaultAction)
 	if err != nil {
 		return SandboxNetworkPolicy{}, err
 	}
 	normalizedAllow, err := normalizeSandboxNetworkEndpoints("allow", allow)
+	if err != nil {
+		return SandboxNetworkPolicy{}, err
+	}
+	normalizedDeny, err := normalizeSandboxNetworkDenyEndpoints("deny", deny)
 	if err != nil {
 		return SandboxNetworkPolicy{}, err
 	}
@@ -80,6 +88,7 @@ func NewSandboxNetworkPolicy(defaultAction egress.Action, allow []egress.AllowEn
 	return SandboxNetworkPolicy{
 		Default:         normalizedDefault,
 		Allow:           normalizedAllow,
+		Deny:            normalizedDeny,
 		EngineEndpoints: normalizedEngine,
 		DenyDomains:     normalizedDenyDomains,
 	}, nil
@@ -95,13 +104,14 @@ func NewSandboxNetworkPolicy(defaultAction egress.Action, allow []egress.AllowEn
 // denied.
 func SandboxNetworkPolicyFromDeclaration(declaration *egress.NetworkDeclaration, engineEndpoints []egress.EngineEndpoint, denyDomains []string) (SandboxNetworkPolicy, error) {
 	if declaration == nil {
-		return NewSandboxNetworkPolicy(egress.Allow, nil, engineEndpoints, denyDomains)
+		return NewSandboxNetworkPolicy(egress.Allow, nil, nil, engineEndpoints, denyDomains)
 	}
 	if err := declaration.Validate(); err != nil {
 		return SandboxNetworkPolicy{}, err
 	}
 	allow := append([]egress.AllowEntry(nil), declaration.Allow...)
-	return NewSandboxNetworkPolicy(declaration.Default, allow, engineEndpoints, denyDomains)
+	deny := append([]egress.DenyEntry(nil), declaration.Deny...)
+	return NewSandboxNetworkPolicy(declaration.Default, allow, deny, engineEndpoints, denyDomains)
 }
 
 // DenyByDefault reports whether the policy refuses unmatched destinations. An
@@ -113,6 +123,14 @@ func (p SandboxNetworkPolicy) DenyByDefault() bool {
 		return true
 	}
 	return normalized == egress.Deny
+}
+
+// Restricts reports whether the policy can refuse any destination: a deny
+// default, or at least one declared denial. An allow default with no denial
+// cannot narrow egress, which is the legacy behavior of an allow list without
+// default: deny-all.
+func (p SandboxNetworkPolicy) Restricts() bool {
+	return p.DenyByDefault() || len(p.Deny) > 0
 }
 
 // AddressConstrainedAllowances counts the declared allowances that constrain
@@ -133,6 +151,9 @@ func (p SandboxNetworkPolicy) Validate() error {
 	if _, err := normalizeSandboxNetworkEndpoints("allow", p.Allow); err != nil {
 		return err
 	}
+	if _, err := normalizeSandboxNetworkDenyEndpoints("deny", p.Deny); err != nil {
+		return err
+	}
 	if _, err := normalizeSandboxNetworkEngineEndpoints(p.EngineEndpoints); err != nil {
 		return err
 	}
@@ -142,17 +163,16 @@ func (p SandboxNetworkPolicy) Validate() error {
 	return nil
 }
 
-// permittingEndpoints returns every destination an enforcing driver must allow,
-// with the engine-owned endpoints first and duplicates removed. The engine
-// endpoints are only meaningful under default deny, which mirrors the
-// declaration compiler: a permissive policy is not misreported as relying on
-// them.
-func (p SandboxNetworkPolicy) permittingEndpoints() []egress.Endpoint {
-	if !p.DenyByDefault() {
+// engineEndpoints returns the engine-owned endpoints a restricting policy must
+// allow before any declared rule. They are meaningful whenever the policy
+// restricts, because a denial could otherwise cut off the facade or telemetry
+// endpoint the sandbox needs.
+func (p SandboxNetworkPolicy) engineEndpoints() []egress.Endpoint {
+	if !p.Restricts() {
 		return nil
 	}
-	entries := make([]egress.Endpoint, 0, len(p.EngineEndpoints)+len(p.Allow))
-	seen := make(map[string]struct{}, cap(entries))
+	entries := make([]egress.Endpoint, 0, len(p.EngineEndpoints))
+	seen := make(map[string]struct{}, len(p.EngineEndpoints))
 	for _, engineEndpoint := range p.EngineEndpoints {
 		name := engineEndpoint.Endpoint.Name()
 		if _, duplicate := seen[name]; duplicate {
@@ -161,14 +181,30 @@ func (p SandboxNetworkPolicy) permittingEndpoints() []egress.Endpoint {
 		seen[name] = struct{}{}
 		entries = append(entries, engineEndpoint.Endpoint)
 	}
+	return entries
+}
+
+// allowingEndpoints returns the declared allowances in declaration order. They
+// only matter under a deny default; under an allow default they cannot narrow
+// anything. Engine endpoints are returned separately so a driver can place them
+// ahead of denials.
+func (p SandboxNetworkPolicy) allowingEndpoints() []egress.Endpoint {
+	if !p.DenyByDefault() {
+		return nil
+	}
+	entries := make([]egress.Endpoint, 0, len(p.Allow))
 	for _, entry := range p.Allow {
-		endpoint := egress.Endpoint{Host: entry.Host, Port: entry.Port, Protocol: entry.Protocol}
-		name := endpoint.Name()
-		if _, duplicate := seen[name]; duplicate {
-			continue
-		}
-		seen[name] = struct{}{}
-		entries = append(entries, endpoint)
+		entries = append(entries, egress.Endpoint{Host: entry.Host, Port: entry.Port, Protocol: entry.Protocol})
+	}
+	return entries
+}
+
+// denyingEndpoints returns the declared refusals in declaration order. A
+// driver maps them ahead of every allowance so a denial wins.
+func (p SandboxNetworkPolicy) denyingEndpoints() []egress.Endpoint {
+	entries := make([]egress.Endpoint, 0, len(p.Deny))
+	for _, entry := range p.Deny {
+		entries = append(entries, egress.Endpoint(entry))
 	}
 	return entries
 }
@@ -210,6 +246,27 @@ func normalizeSandboxNetworkEndpoints(field string, entries []egress.AllowEntry)
 			Protocol:   endpoint.Protocol,
 			AllowedIPs: allowed,
 		})
+	}
+	return normalized, nil
+}
+
+func normalizeSandboxNetworkDenyEndpoints(field string, entries []egress.DenyEntry) ([]egress.DenyEntry, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	normalized := make([]egress.DenyEntry, 0, len(entries))
+	seen := make(map[string]struct{}, len(entries))
+	for index, entry := range entries {
+		endpoint, err := egress.NewEndpoint(entry.Host, entry.Port, entry.Protocol)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
+		}
+		key := endpoint.Name()
+		if _, duplicate := seen[key]; duplicate {
+			return nil, fmt.Errorf("%s[%d]: duplicate entry %q", field, index, key)
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, egress.DenyEntry(endpoint))
 	}
 	return normalized, nil
 }

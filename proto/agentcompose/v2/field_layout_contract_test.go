@@ -36,7 +36,7 @@ func TestV2FreezeFieldLayout(t *testing.T) {
 		"agentcompose.v2.SchedulerRunPruneResidue": {"scheduler_id": 1},
 		"agentcompose.v2.SandboxSpec":              {"stopped_runtime_policy": 1, "network": 2},
 		"agentcompose.v2.SandboxNetworkSpec":       {"default": 1, "allow": 2},
-		"agentcompose.v2.SandboxNetworkAllowSpec":  {"host": 1, "port": 2, "protocol": 3},
+		"agentcompose.v2.SandboxNetworkAllowSpec":  {"host": 1, "port": 2, "protocol": 3, "allowed_ips": 4},
 		"agentcompose.v2.GetEngineCapabilitiesResponse": {
 			"drivers": 1, "providers": 2, "compiled_drivers": 3,
 			"compiled_drivers_note": 4, "captured_at": 5, "observations": 6,

@@ -16,20 +16,37 @@ type AllowEntry struct {
 	AllowedIPs []string
 }
 
+// DenyEntry is one declared refusal: a host (which may be a label-wise
+// pattern), a concrete port, and a protocol. A denial refuses the destination
+// itself; it deliberately has no AllowedIPs field, because constraining a
+// refusal to selected addresses would make one entry mean two different things.
+type DenyEntry struct {
+	Host     string
+	Port     int
+	Protocol Protocol
+}
+
 // NetworkDeclaration is a declared sandbox outbound network policy. It is the
 // declaration layer's representation before compilation; it is not itself a
 // decision model, so the only decision representation in the engine remains
 // Policy.
 type NetworkDeclaration struct {
 	// Default is the action applied when neither an engine-owned endpoint nor
-	// a declared allowance matches. It is only evaluated because a declaration
+	// a declared entry matches. It is only evaluated because a declaration
 	// exists: an absent declaration is not default-deny (D3), and is modeled by
 	// passing a nil declaration to EffectiveNetworkPolicy.
+	//
+	// Deny is allowlist mode; Allow is denylist mode. A Deny entry wins over an
+	// Allow entry in either mode.
 	Default Action
 	// Allow are the declared allowances. Order does not change the outcome
 	// because every entry allows, but it is preserved so a report can echo the
 	// declaration.
 	Allow []AllowEntry
+	// Deny are the declared refusals. Order does not change the outcome because
+	// every entry denies, but it is preserved so a report can echo the
+	// declaration.
+	Deny []DenyEntry
 }
 
 // Validate rejects a declaration the engine cannot compile. It exists so a
@@ -55,13 +72,32 @@ func (d NetworkDeclaration) Validate() error {
 			}
 		}
 	}
+	for i, entry := range d.Deny {
+		if err := ValidateHostPattern(entry.Host); err != nil {
+			return fmt.Errorf("deny[%d]: %w", i, err)
+		}
+		if err := validatePort(entry.Port); err != nil {
+			return fmt.Errorf("deny[%d]: %w", i, err)
+		}
+		if _, err := ParseProtocol(string(entry.Protocol)); err != nil {
+			return fmt.Errorf("deny[%d]: %w", i, err)
+		}
+	}
 	return nil
 }
 
+// Restricts reports whether the declaration refuses any destination. It is true
+// for allowlist mode (default deny) and for any declared denial, but false for a
+// declaration whose default is allow and whose Deny list is empty: such a
+// declaration cannot narrow egress.
+func (d NetworkDeclaration) Restricts() bool {
+	return d.Default == Deny || len(d.Deny) > 0
+}
+
 // CompileNetworkPolicy compiles a declared network policy into the single
-// egress decision model. Engine-owned endpoints are emitted first and only
-// when the default is deny, so no declared allowance can shadow them and a
-// permissive declaration is not misreported as relying on them.
+// egress decision model. Engine-owned endpoints are emitted first whenever the
+// declaration restricts, so no declared denial or allowance can shadow them and
+// a permissive declaration is not misreported as relying on them.
 //
 // This is the documented seam for a future Rego backend: a Rego compiler
 // produces the same Policy from the same validated NetworkDeclaration, so no
@@ -70,13 +106,27 @@ func CompileNetworkPolicy(declaration NetworkDeclaration, engine []EngineEndpoin
 	if err := declaration.Validate(); err != nil {
 		return Policy{}, err
 	}
-	rules := make([]Rule, 0, len(engine)+len(declaration.Allow))
-	if declaration.Default == Deny {
+	rules := make([]Rule, 0, len(engine)+len(declaration.Allow)+len(declaration.Deny))
+	if declaration.Restricts() {
+		// Engine-owned endpoints precede every declared rule, including a
+		// denial: a project must not be able to cut off the facade or telemetry
+		// endpoint the sandbox itself needs, whether the restriction comes from
+		// a deny default or from a denylist entry.
 		engineRules, err := EngineAllowRules(engine)
 		if err != nil {
 			return Policy{}, err
 		}
 		rules = append(rules, engineRules...)
+	}
+	// Denials precede allowances, so a denial wins over an allowance that
+	// matches the same destination in either mode.
+	for _, entry := range declaration.Deny {
+		rules = append(rules, Rule{
+			ID:     "network.deny",
+			Match:  MatchEndpoint,
+			Names:  []string{FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol)},
+			Action: Deny,
+		})
 	}
 	for _, entry := range declaration.Allow {
 		allowed, err := canonicalAllowedIPs(entry.AllowedIPs)

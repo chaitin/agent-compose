@@ -247,7 +247,7 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 	mediated := false
 	if driverSandbox != nil {
 		driverSandbox.NetworkPolicy = policy
-		// A declaration that denies by default is only really enforced where the
+		// A declaration that restricts egress is only really enforced where the
 		// engine is in the traffic path. Routing the guest through the forward
 		// proxy is what puts it there, and the same step records the mediation
 		// on the policy so no driver can believe in one the engine did not wire.
@@ -258,7 +258,7 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 		// credentials no guest could ever present. Whether the engine can mediate
 		// at all is a pure fact about the deployment and this sandbox, so the
 		// report below still knows it before the driver runs.
-		if policy != nil && policy.DenyByDefault() && r.egressProxy.available(session) {
+		if policy != nil && policy.Restricts() && r.egressProxy.available(session) {
 			driverSandbox.ProxyEnv = r.egressProxy.proxyEnvProvider(session)
 			policy.MediatedByForwardProxy = true
 			mediated = true
@@ -282,8 +282,8 @@ func (r driverRuntimeAdapter) egressRuntimePolicy(session *domain.Sandbox, polic
 	switch {
 	case mediated:
 		application = egress.ApplicationMediated
-	case policy != nil && policy.DenyByDefault():
-		// The declaration denies by default and the engine is not in the traffic
+	case policy != nil && policy.Restricts():
+		// The declaration restricts egress and the engine is not in the traffic
 		// path, so whatever the driver does with it is what the runtime gets. A
 		// driver that applies nothing leaves the sandbox unrestricted.
 		if driverpkg.SandboxNetworkEnforcementFor(session.Summary.Driver).Strength == driverpkg.SandboxEgressStrengthNone {

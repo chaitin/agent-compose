@@ -42,14 +42,15 @@ const networkPolicyE2EFixtureHostEnv = "AGENT_COMPOSE_E2E_NETWORK_POLICY_FIXTURE
 //   - a declared allowance is tunnelled and succeeds (200);
 //   - a host the policy does not allow is refused by the engine (403), before
 //     any connection is opened;
-//   - the allowance is a host, port and protocol: the same host on a
-//     control-plane port is refused whatever the policy says;
+//   - the allowance is a host and a port: the same host on a control-plane port
+//     is refused whatever the policy says;
 //   - an address named by the declaration is an entry of its own;
 //   - `allowed_ips` ties a name to the address it may use, so an entry whose
 //     range does not cover the destination is refused;
 //   - the metadata address is refused even when the declaration names it and
 //     covers its range;
-//   - an allow list without `default: deny` restricts nothing;
+//   - an allow list without `default: deny-all` restricts nothing, while a denial
+//     under the allow-all default refuses only the destination it names;
 //   - editing the declaration reaches a sandbox that is already running, because
 //     the proxy re-reads the declaration per request;
 //   - the daemon records the refusals, and each refusal names the engine rule
@@ -167,6 +168,11 @@ func TestE2EDockerNetworkPolicyExecutionMatrix(t *testing.T) {
 	// An allow list under the default allow-all restricts nothing.
 	assertAllowed("allow-list-only", "https://example.com/")
 
+	// A denial restricts under the allow-all default: the denied destination is
+	// refused, while a host the declaration does not name stays reachable.
+	assertRefused("deny-list", "https://example.com/")
+	assertAllowed("deny-list", "https://api.github.com/")
+
 	// Partial allowance: the declared host passes, every other host is refused
 	// before a connection is opened, and the sandbox carries the proxy.
 	assertAllowed("matrix", "https://api.github.com/")
@@ -175,8 +181,8 @@ func TestE2EDockerNetworkPolicyExecutionMatrix(t *testing.T) {
 		t.Fatalf("declared sandbox proxy environment = %q, want 6 variables", proxied)
 	}
 
-	// A URL entry is a host, port and protocol: the same host on the
-	// control-plane port stays refused even though the policy names it.
+	// A URL entry is a host and port: the same host on the control-plane port
+	// stays refused even though the policy names it.
 	assertRefused("port-blocked", "https://api.github.com:6443/")
 
 	// An address named by the declaration is an entry of its own: the address
@@ -380,29 +386,31 @@ type networkPolicyE2EProject struct {
 // observe.
 func (p networkPolicyE2EProject) write(t *testing.T, projectRoot string, liveUpdateAllowsExample bool) {
 	t.Helper()
-	liveUpdateAllow := p.allow("api.github.com", 443, "https", nil)
+	liveUpdateAllow := p.allow("api.github.com", 443, nil)
 	if liveUpdateAllowsExample {
-		liveUpdateAllow += p.allow("example.com", 443, "https", nil)
+		liveUpdateAllow += p.allow("example.com", 443, nil)
 	}
 	project := "name: netpol-e2e\nagents:\n" +
-		p.agent("matrix", "        default: deny\n        allow:\n"+
-			p.allow("api.github.com", 443, "https", nil)) +
+		p.agent("matrix", "        default: deny-all\n        allow:\n"+
+			p.allow("api.github.com", 443, nil)) +
 		p.agent("open", "") +
 		p.agent("allow-list-only", "        default: allow-all\n        allow:\n"+
-			p.allow("api.github.com", 443, "https", nil)) +
-		p.agent("port-blocked", "        default: deny\n        allow:\n"+
-			p.allow("api.github.com", 6443, "https", nil)) +
-		p.agent("address-literal", "        default: deny\n        allow:\n"+
-			p.allow(p.fixtureHost, p.fixturePort, "http", nil)) +
-		p.agent("address-constrained", "        default: deny\n        allow:\n"+
-			p.allow(p.fixtureHost, p.fixturePort, "http", []string{p.fixtureHost + "/32"})) +
-		p.agent("address-out-of-range", "        default: deny\n        allow:\n"+
-			p.allow(p.fixtureHost, p.fixturePort, "http", []string{"203.0.113.0/24"})) +
-		p.agent("name-out-of-range", "        default: deny\n        allow:\n"+
-			p.allow("api.github.com", 443, "https", []string{"203.0.113.0/24"})) +
-		p.agent("metadata-allowed", "        default: deny\n        allow:\n"+
-			p.allow("169.254.169.254", 80, "http", []string{"169.254.0.0/16"})) +
-		p.agent("live-update", "        default: deny\n        allow:\n"+liveUpdateAllow)
+			p.allow("api.github.com", 443, nil)) +
+		p.agent("deny-list", "        default: allow-all\n        deny:\n"+
+			"          - host: example.com\n            port: 443\n") +
+		p.agent("port-blocked", "        default: deny-all\n        allow:\n"+
+			p.allow("api.github.com", 6443, nil)) +
+		p.agent("address-literal", "        default: deny-all\n        allow:\n"+
+			p.allow(p.fixtureHost, p.fixturePort, nil)) +
+		p.agent("address-constrained", "        default: deny-all\n        allow:\n"+
+			p.allow(p.fixtureHost, p.fixturePort, []string{p.fixtureHost + "/32"})) +
+		p.agent("address-out-of-range", "        default: deny-all\n        allow:\n"+
+			p.allow(p.fixtureHost, p.fixturePort, []string{"203.0.113.0/24"})) +
+		p.agent("name-out-of-range", "        default: deny-all\n        allow:\n"+
+			p.allow("api.github.com", 443, []string{"203.0.113.0/24"})) +
+		p.agent("metadata-allowed", "        default: deny-all\n        allow:\n"+
+			p.allow("169.254.169.254", 80, []string{"169.254.0.0/16"})) +
+		p.agent("live-update", "        default: deny-all\n        allow:\n"+liveUpdateAllow)
 	if err := os.WriteFile(filepath.Join(projectRoot, "agent-compose.yml"), []byte(project), 0o644); err != nil {
 		t.Fatalf("write the network policy project: %v", err)
 	}
@@ -423,8 +431,8 @@ func (p networkPolicyE2EProject) agent(name, network string) string {
 
 // allow renders one allow entry, with the address constraint when the row
 // declares one.
-func (p networkPolicyE2EProject) allow(host string, port int, protocol string, allowedIPs []string) string {
-	entry := fmt.Sprintf("          - host: %s\n            port: %d\n            protocol: %s\n", host, port, protocol)
+func (p networkPolicyE2EProject) allow(host string, port int, allowedIPs []string) string {
+	entry := fmt.Sprintf("          - host: %s\n            port: %d\n", host, port)
 	if len(allowedIPs) > 0 {
 		entry += "            allowed_ips:\n"
 		for _, address := range allowedIPs {
@@ -509,13 +517,13 @@ func TestE2EDockerDeclaredPolicyFailsClosedWithoutAReachableProxy(t *testing.T) 
 	if err == nil {
 		t.Fatalf("a declaration the engine cannot enforce started anyway: %s", strings.TrimSpace(output))
 	}
-	if !strings.Contains(output, "cannot enforce the declared default-deny network policy") {
+	if !strings.Contains(output, "cannot enforce the declared restricting network policy") {
 		t.Fatalf("the refusal did not name the unenforceable declaration: %s", strings.TrimSpace(output))
 	}
 	// The refusal has to name the driver whose limit produced it, not just the
 	// declaration: the design doc records that this test pins both, and a
 	// refusal that stopped naming the driver would otherwise pass silently.
-	if !strings.Contains(output, `driver "docker" cannot enforce the declared default-deny network policy`) {
+	if !strings.Contains(output, `driver "docker" cannot enforce the declared restricting network policy`) {
 		t.Fatalf("the refusal did not name the driver that cannot enforce the declaration: %s", strings.TrimSpace(output))
 	}
 	if strings.Contains(output, "SHOULD-NEVER-RUN") {

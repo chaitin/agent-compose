@@ -564,10 +564,10 @@ func TestEgressProxyAppliesADeclaredAddressRange(t *testing.T) {
 	}
 }
 
-// TestEgressProxyRefusesADestinationWithNoIPv4Address pins the transport limit
-// the manual states: an IPv6-only destination is refused because the engine's
-// endpoint identifier cannot express it.
-func TestEgressProxyRefusesADestinationWithNoIPv4Address(t *testing.T) {
+// TestEgressProxyForwardsAnIPv6OnlyDestination pins that the proxy and the
+// canonical endpoint identifier carry IPv6 answers instead of refusing a name
+// that has no IPv4 address.
+func TestEgressProxyForwardsAnIPv6OnlyDestination(t *testing.T) {
 	policies := &proxyTestPolicies{policies: []egress.Policy{egress.NewPolicy(egress.Allow)}}
 	proxyServer, recorder := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
 		options.LookupIP = func(context.Context, string) ([]net.IP, error) {
@@ -585,14 +585,14 @@ func TestEgressProxyRefusesADestinationWithNoIPv4Address(t *testing.T) {
 		t.Fatalf("reading the deny response: %v", err)
 	}
 	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusForbidden {
-		t.Fatalf("CONNECT status = %d, want 403", response.StatusCode)
+	// The test proxy has no dialer, so the upstream attempt fails after the
+	// policy allows the IPv6 destination. A 502 proves the request got past the
+	// policy instead of being refused for lacking an IPv4 answer.
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("CONNECT status = %d, want 502", response.StatusCode)
 	}
-	if rule := response.Header.Get("X-Agent-Compose-Egress-Rule"); rule != EgressRuleBlockedAddress {
-		t.Fatalf("deny rule = %q, want %q", rule, EgressRuleBlockedAddress)
-	}
-	if records := recorder.collected(); len(records) != 1 || records[0].Allowed() {
-		t.Fatalf("records = %+v, want one deny", records)
+	if records := recorder.collected(); len(records) != 1 || !records[0].Allowed() {
+		t.Fatalf("records = %+v, want one allow", records)
 	}
 }
 
@@ -872,5 +872,40 @@ func writeConnect(t *testing.T, connection net.Conn, target, user, secret string
 		"Proxy-Authorization: " + proxyBasicAuth(user, secret) + "\r\n\r\n"
 	if _, err := connection.Write([]byte(request)); err != nil {
 		t.Fatalf("writing CONNECT: %v", err)
+	}
+}
+
+// TestEgressProxyPrefersIPv4ForADualStackDestination pins the compatibility
+// choice: every answer is still recorded for policy matching and IPv6-only
+// names work, but a dual-stack name is dialed over IPv4 when that answer exists
+// so enabling IPv6 does not break a host with no IPv6 route.
+func TestEgressProxyPrefersIPv4ForADualStackDestination(t *testing.T) {
+	policies := &proxyTestPolicies{policies: []egress.Policy{egress.NewPolicy(egress.Allow)}}
+	var dialed string
+	proxyServer, _ := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.LookupIP = func(context.Context, string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("2001:db8::1"), net.ParseIP("203.0.113.10")}, nil
+		}
+		options.Dial = func(_ context.Context, _, address string) (net.Conn, error) {
+			dialed = address
+			return nil, errors.New("no dialer configured for this test")
+		}
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+
+	connection := dialProxy(t, server)
+	defer func() { _ = connection.Close() }()
+	writeConnect(t, connection, "dual.example:443", testSandboxID, testCredential)
+	response, err := http.ReadResponse(bufio.NewReader(connection), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the response: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusBadGateway {
+		t.Fatalf("CONNECT status = %d, want 502 after the policy allowed the destination", response.StatusCode)
+	}
+	if dialed != "203.0.113.10:443" {
+		t.Fatalf("dialed address = %q, want the IPv4 answer", dialed)
 	}
 }

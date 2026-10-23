@@ -18,16 +18,28 @@ type AutoAllowedEndpoint struct {
 
 // DeclaredAllowance is one declared allowance as it appears in a report.
 type DeclaredAllowance struct {
-	// Endpoint is the canonical host:port/protocol pattern.
+	// Endpoint is the canonical host:port/* pattern.
 	Endpoint string
-	// Inspectable is false for an opaque allowance (protocol any/tcp/udp),
-	// which the report must not present as a checked one.
-	Inspectable bool
 	// AllowedIPs lists the canonical CIDR ranges this entry's name may resolve
 	// to. It is empty when the declaration left the addresses unconstrained,
 	// which the report must state rather than imply a constraint that is not
 	// there.
 	AllowedIPs []string
+	// Sources names the declaration layers that contributed this allowance.
+	// The values are "daemon" and "agent"; both are present when the effective
+	// entry came from both layers. It is empty when the caller did not annotate
+	// provenance, which keeps the pure decision-model report independent of
+	// project admission.
+	Sources []string
+}
+
+// DeclaredDenial is one declared refusal as it appears in a report.
+type DeclaredDenial struct {
+	// Endpoint is the canonical host:port/* pattern.
+	Endpoint string
+	// Sources names the declaration layers that contributed this denial, using
+	// the same values as DeclaredAllowance.Sources.
+	Sources []string
 }
 
 // NetworkPolicyReport is the auditable account of one sandbox's declared
@@ -35,17 +47,25 @@ type DeclaredAllowance struct {
 // is derived from the same declaration the decision policy is compiled from, so
 // it cannot describe a policy the engine does not have.
 type NetworkPolicyReport struct {
-	// Declared is false when the sandbox declared no policy. In that case the
-	// engine is unrestricted and there is no exemption to report.
+	// Declared is false when neither the sandbox nor the daemon declared a
+	// policy. In that case the engine is unrestricted and there is no exemption
+	// to report.
 	Declared bool
+	// Restricts reports whether the declaration can refuse a destination: a
+	// deny default or at least one denial. An allow default with no denial does
+	// not restrict anything.
+	Restricts bool
 	// Default is the action applied to traffic no entry matches.
 	Default Action
 	// Allow lists the declared allowances.
 	Allow []DeclaredAllowance
+	// Deny lists the declared refusals.
+	Deny []DeclaredDenial
 	// EngineAutoAllowed lists the engine-owned endpoints that the compiled
-	// policy allows ahead of every declared entry. It is empty unless the
-	// default is deny, because that is the only case where they exist as an
-	// exemption.
+	// policy allows ahead of every declared entry. It is populated whenever the
+	// declaration restricts (an allowlist default or a declared denial), because
+	// that is when the compiler emits the engine's own rules; it is empty when
+	// nothing restricts and the rules would be no-ops.
 	EngineAutoAllowed []AutoAllowedEndpoint
 }
 
@@ -61,21 +81,19 @@ func ReportNetworkPolicy(declaration *NetworkDeclaration, engine []EngineEndpoin
 	if _, err := CompileNetworkPolicy(*declaration, engine); err != nil {
 		return NetworkPolicyReport{}, err
 	}
-	report := NetworkPolicyReport{Declared: true, Default: declaration.Default}
+	report := NetworkPolicyReport{Declared: true, Restricts: declaration.Restricts(), Default: declaration.Default}
 	for _, entry := range declaration.Allow {
-		protocol, err := ParseProtocol(string(entry.Protocol))
-		if err != nil {
-			// CompileNetworkPolicy already rejected this; the guard keeps the
-			// report from claiming inspectability it could not verify.
-			protocol = ProtocolAny
-		}
 		report.Allow = append(report.Allow, DeclaredAllowance{
-			Endpoint:    FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol),
-			Inspectable: protocol.Inspectable(),
-			AllowedIPs:  append([]string(nil), entry.AllowedIPs...),
+			Endpoint:   FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol),
+			AllowedIPs: append([]string(nil), entry.AllowedIPs...),
 		})
 	}
-	if declaration.Default != Deny {
+	for _, entry := range declaration.Deny {
+		report.Deny = append(report.Deny, DeclaredDenial{
+			Endpoint: FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol),
+		})
+	}
+	if !report.Restricts {
 		return report, nil
 	}
 	// EngineAllowRules collapses endpoints that render to the same pattern, so

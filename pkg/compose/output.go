@@ -555,6 +555,7 @@ func cloneNormalizedSandboxSpec(value *NormalizedSandboxSpec) *NormalizedSandbox
 	if value.Network != nil {
 		network := *value.Network
 		network.Allow = cloneNormalizedNetworkAllow(value.Network.Allow)
+		network.Deny = cloneNormalizedNetworkDeny(value.Network.Deny)
 		cloned.Network = &network
 	}
 	return &cloned
@@ -574,6 +575,16 @@ func cloneNormalizedNetworkAllow(values []NormalizedSandboxNetworkAllowSpec) []N
 		cloned[i] = value
 	}
 	return cloned
+}
+
+// cloneNormalizedNetworkDeny copies the denial list. Deny entries are value
+// types, but copying the slice still matters: appending through one view must
+// not reallocate or overwrite the other's backing array.
+func cloneNormalizedNetworkDeny(values []NormalizedSandboxNetworkDenySpec) []NormalizedSandboxNetworkDenySpec {
+	if values == nil {
+		return nil
+	}
+	return append([]NormalizedSandboxNetworkDenySpec(nil), values...)
 }
 
 func compareString(a string, b string) int {

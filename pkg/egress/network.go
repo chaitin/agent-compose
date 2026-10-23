@@ -3,6 +3,7 @@ package egress
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -70,8 +71,8 @@ type Endpoint struct {
 // NewEndpoint validates and normalizes a destination. The host is lowercased
 // because host names are case-insensitive.
 func NewEndpoint(host string, port int, protocol Protocol) (Endpoint, error) {
-	normalizedHost := strings.ToLower(strings.TrimSpace(host))
-	if err := ValidateHostPattern(normalizedHost); err != nil {
+	normalizedHost, err := NormalizeHost(host)
+	if err != nil {
 		return Endpoint{}, err
 	}
 	if err := validatePort(port); err != nil {
@@ -92,7 +93,7 @@ func (e Endpoint) Name() string {
 	if err != nil {
 		protocol = ProtocolAny
 	}
-	return fmt.Sprintf("%s:%d/%s", strings.ToLower(strings.TrimSpace(e.Host)), e.Port, protocol)
+	return formatHostPort(e.Host, e.Port, string(protocol))
 }
 
 // ParseEndpoint decodes a canonical endpoint identifier produced by
@@ -127,20 +128,54 @@ func FormatEndpointPattern(host string, port int, protocol Protocol) string {
 	if normalizedProtocol == ProtocolAny {
 		rendered = "*"
 	}
-	return fmt.Sprintf("%s:%d/%s", strings.ToLower(strings.TrimSpace(host)), port, rendered)
+	return formatHostPort(host, port, rendered)
+}
+
+// NormalizeHost canonicalizes a destination target. It accepts a DNS name or
+// label-wise host pattern, an IPv4 or IPv6 literal, and an IPv4 or IPv6 CIDR.
+// Literals and CIDRs are returned in net package canonical form; names are
+// lowercased. Brackets around an IPv6 literal are accepted on input and are not
+// part of the canonical value.
+func NormalizeHost(value string) (string, error) {
+	normalized := strings.ToLower(strings.Trim(strings.TrimSpace(value), "[]"))
+	if normalized == "" {
+		return "", errors.New("host must not be empty")
+	}
+	if strings.Contains(normalized, "/") {
+		_, network, err := net.ParseCIDR(normalized)
+		if err != nil {
+			return "", fmt.Errorf("host %q must be a host name, IP address, or CIDR range", normalized)
+		}
+		return network.String(), nil
+	}
+	if literal := net.ParseIP(strings.Trim(normalized, "[]")); literal != nil {
+		return literal.String(), nil
+	}
+	if err := ValidateHostPattern(normalized); err != nil {
+		return "", err
+	}
+	return normalized, nil
 }
 
 // ValidateHostPattern rejects a host pattern the engine cannot interpret. A
 // pattern is a sequence of DNS labels separated by ".", where "*" matches
 // exactly one label. There is no substring or cross-label wildcard: "*" is the
 // only metacharacter, so "*.example.com" matches "api.example.com" but neither
-// "example.com" nor "a.b.example.com". IPv4 literals are accepted as ordinary
-// dotted labels; IPv6 literals are rejected because the canonical identifier
-// uses ":" as a separator.
+// "example.com" nor "a.b.example.com". IP literals and CIDR ranges are accepted
+// separately by NormalizeHost.
 func ValidateHostPattern(pattern string) error {
-	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	pattern = strings.ToLower(strings.Trim(strings.TrimSpace(pattern), "[]"))
 	if pattern == "" {
 		return errors.New("host must not be empty")
+	}
+	if strings.Contains(pattern, "/") {
+		if _, _, err := net.ParseCIDR(pattern); err == nil {
+			return nil
+		}
+		return fmt.Errorf("host %q must be a valid CIDR range", pattern)
+	}
+	if net.ParseIP(pattern) != nil {
+		return nil
 	}
 	if len(pattern) > 253 {
 		return fmt.Errorf("host pattern %q is longer than 253 characters", pattern)
@@ -244,8 +279,8 @@ func parseEndpointPattern(value string) (endpointPattern, error) {
 	if err != nil {
 		return endpointPattern{}, err
 	}
-	normalizedHost := strings.ToLower(strings.TrimSpace(host))
-	if err := ValidateHostPattern(normalizedHost); err != nil {
+	normalizedHost, err := NormalizeHost(host)
+	if err != nil {
 		return endpointPattern{}, err
 	}
 	if err := validatePort(port); err != nil {
@@ -254,14 +289,49 @@ func parseEndpointPattern(value string) (endpointPattern, error) {
 	return endpointPattern{host: normalizedHost, port: port, protocol: normalizedProtocol}, nil
 }
 
-func (p endpointPattern) matches(target Endpoint) bool {
+// matches reports whether the pattern names the request's destination. The
+// declared port and protocol are part of that destination, so they are checked
+// once, before either the host match or the resolved-address match: a CIDR
+// allowance for 10.0.0.0/8:443 covers that range only on the declared port, not
+// on any port a request happens to resolve into it.
+func (p endpointPattern) matches(target Endpoint, resolvedIPs []string, action Action) bool {
 	if p.port != target.Port {
 		return false
 	}
 	if p.protocol != ProtocolAny && p.protocol != target.Protocol {
 		return false
 	}
-	return endpointHostMatches(p.host, target.Host)
+	if endpointHostMatches(p.host, target.Host) {
+		return true
+	}
+	return p.matchesResolvedAddresses(resolvedIPs, action)
+}
+
+// matchesResolvedAddresses reports whether the pattern's CIDR host covers the
+// addresses the request resolved to. The caller has already matched the port and
+// protocol, so an address match cannot widen the pattern past the destination it
+// declares. An allowance constrained by a CIDR must cover every answer, because
+// the proxy may dial any of them. A denial only needs one answer inside the
+// range to refuse the destination.
+func (p endpointPattern) matchesResolvedAddresses(addresses []string, action Action) bool {
+	if len(addresses) == 0 {
+		return false
+	}
+	_, network, err := net.ParseCIDR(p.host)
+	if err != nil {
+		return false
+	}
+	matched := 0
+	for _, address := range addresses {
+		literal := net.ParseIP(strings.Trim(strings.TrimSpace(address), "[]"))
+		if literal != nil && network.Contains(literal) {
+			matched++
+		}
+	}
+	if action == Allow {
+		return matched == len(addresses)
+	}
+	return matched > 0
 }
 
 // endpointHostMatches matches a declared host pattern against the host a request
@@ -271,14 +341,26 @@ func (p endpointPattern) matches(target Endpoint) bool {
 // reverse direction — a name that resolves to an address — is constrained by the
 // rule's allowed addresses, not by pattern matching.
 func endpointHostMatches(pattern, host string) bool {
-	normalizedHost := strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
-	if IsIPLiteral(normalizedHost) {
-		return strings.Trim(strings.ToLower(strings.TrimSpace(pattern)), "[]") == normalizedHost
-	}
-	if IsIPLiteral(pattern) {
+	normalizedPattern, err := NormalizeHost(pattern)
+	if err != nil {
 		return false
 	}
-	return HostPatternMatches(pattern, host)
+	normalizedHost, err := NormalizeHost(host)
+	if err != nil {
+		return false
+	}
+	if _, network, err := net.ParseCIDR(normalizedPattern); err == nil {
+		literal := net.ParseIP(normalizedHost)
+		return literal != nil && network.Contains(literal)
+	}
+	if patternIP := net.ParseIP(normalizedPattern); patternIP != nil {
+		hostIP := net.ParseIP(normalizedHost)
+		return hostIP != nil && patternIP.Equal(hostIP)
+	}
+	if net.ParseIP(normalizedHost) != nil {
+		return false
+	}
+	return HostPatternMatches(normalizedPattern, normalizedHost)
 }
 
 func validatePort(port int) error {
@@ -286,6 +368,17 @@ func validatePort(port int) error {
 		return fmt.Errorf("port must be between 1 and 65535, got %d", port)
 	}
 	return nil
+}
+
+// formatHostPort renders the canonical host:port/protocol identifier, wrapping
+// an IPv6 literal or CIDR in brackets so its colons cannot be mistaken for the
+// port separator.
+func formatHostPort(host string, port int, protocol string) string {
+	normalized := strings.ToLower(strings.TrimSpace(host))
+	if strings.Contains(normalized, ":") {
+		normalized = "[" + strings.Trim(normalized, "[]") + "]"
+	}
+	return fmt.Sprintf("%s:%d/%s", normalized, port, protocol)
 }
 
 // splitEndpointName splits "host:port/protocol" from the right, so a host that
@@ -297,11 +390,20 @@ func splitEndpointName(value string) (string, int, string, error) {
 		return "", 0, "", fmt.Errorf("endpoint %q must be formatted as host:port/protocol", trimmed)
 	}
 	hostPort, protocol := trimmed[:slash], trimmed[slash+1:]
-	colon := strings.LastIndex(hostPort, ":")
-	if colon < 0 {
-		return "", 0, "", fmt.Errorf("endpoint %q must be formatted as host:port/protocol", trimmed)
+	var host, rawPort string
+	if strings.HasPrefix(hostPort, "[") {
+		closing := strings.LastIndex(hostPort, "]")
+		if closing < 0 || closing+1 >= len(hostPort) || hostPort[closing+1] != ':' {
+			return "", 0, "", fmt.Errorf("endpoint %q must be formatted as [host]:port/protocol", trimmed)
+		}
+		host, rawPort = hostPort[1:closing], hostPort[closing+2:]
+	} else {
+		colon := strings.LastIndex(hostPort, ":")
+		if colon < 0 {
+			return "", 0, "", fmt.Errorf("endpoint %q must be formatted as host:port/protocol", trimmed)
+		}
+		host, rawPort = hostPort[:colon], hostPort[colon+1:]
 	}
-	host, rawPort := hostPort[:colon], hostPort[colon+1:]
 	if strings.TrimSpace(host) == "" {
 		return "", 0, "", fmt.Errorf("endpoint %q has an empty host", trimmed)
 	}

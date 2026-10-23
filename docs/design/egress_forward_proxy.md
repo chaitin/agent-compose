@@ -6,7 +6,7 @@ A project can declare `policy.network`, but on three of four drivers the engine
 installs no filter at all: Docker's only network knob is the daemon's network
 mode, Kubernetes emits no egress `NetworkPolicy`, and BoxLite's host-side binding
 is unverified. Until now the gap was papered over by refusing to start a sandbox
-that declared `default: deny`, which turned a restriction into an availability
+that declared `default: deny-all`, which turned a restriction into an availability
 failure. The interim behavior is now `warn`: the sandbox runs and the daemon
 reports the declaration as unenforced (`EGRESS_UNENFORCEABLE_POLICY=refuse` keeps
 the fail-closed mode). That makes the gap honest, not smaller. This document
@@ -71,7 +71,7 @@ transparent TCP capture as later milestones rather than the first one.
 
 ## What this unlocks
 
-- `default: deny` runs *and* filters on the default driver, which removes the
+- `default: deny-all` runs *and* filters on the default driver, which removes the
   reason for the refusal path entirely on Docker and makes the execution matrix
   testable without KVM.
 - Policy becomes live: because enforcement reads the current declaration per
@@ -101,8 +101,10 @@ The first slice is implemented and verified on the Docker driver:
   proxy.
 - The engine's own refusals were extended past the address set: the control-plane
   ports `2379`, `2380`, `6443`, `10250`, `10255` are refused under their own rule
-  with the role named, and an IPv6-only destination is refused because the
-  canonical endpoint identifier cannot express it.
+  with the role named. IPv4 and IPv6 answers are both carried through the
+  canonical endpoint identifier and dialed; a CIDR host matches direct addresses
+  and, for a name, is checked against every resolved answer for an allowance and
+  any resolved answer for a denial.
 - `allow[].allowed_ips` was added with it, because a name without an address
   constraint is exactly the indirection the proxy would otherwise make
   trustworthy. The constraint travels in the normalized spec, the proto messages
@@ -137,14 +139,22 @@ fixture on an address the proxy's bypass list does not cover.
 | --- | --- | --- | --- | --- | --- |
 | 1 | no `policy` block | reaches a public host and an arbitrary host address, and carries 0 `*_proxy` variables | pass | pass | not covered |
 | 2 | `default: allow-all` with an allow list | the unlisted public host still reaches 200 | pass | pass | not covered |
-| 3 | `default: deny` + allow `api.github.com:443 https` | allowed host 200, `example.com` refused | pass | pass | not covered |
+| 2a | `default: allow-all` with a denial | the denied host is refused, an unlisted host still reaches 200 | not in this run | not in this run | not covered |
+| 3 | `default: deny-all` + allow `api.github.com:443` | allowed host 200, `example.com` refused | pass | pass | not covered |
 | 4 | the same declaration on port 6443 | refused under the engine's control-plane port rule | pass | pass | not covered |
-| 5 | `default: deny` + allow an address literal | the literal reaches the fixture; an uncovered port on it is refused | pass | pass | not covered |
+| 5 | `default: deny-all` + allow an address literal | the literal reaches the fixture; an uncovered port on it is refused | pass | pass | not covered |
 | 6 | the same entry with `allowed_ips` covering the address | the fixture is allowed | pass | pass | not covered |
 | 7 | the same entry with `allowed_ips` that cannot cover it, by literal and by name | both refused, each naming the range | pass | pass | not covered |
-| 8 | `default: deny` + an allow entry for the metadata address | still refused under the engine's address rule | pass | pass | not covered |
+| 8 | `default: deny-all` + an allow entry for the metadata address | still refused under the engine's address rule | pass | pass | not covered |
 | 9 | an edit that adds an allowance to a running sandbox | the running sandbox observes it per request | pass | pass | not covered |
 | 10 | any refused row | the daemon records the denial and the rule that produced it | pass | pass for the proxy-mediated rows; the SDK mechanism's own refusals are silent | not covered |
+
+The denylist row is part of the execution matrix
+(`TestE2EDockerNetworkPolicyExecutionMatrix`), but the run recorded above predates
+it, so this table does not yet claim it for a real driver. The declaration
+compiles to the same decision model, with denials placed ahead of allowances and
+engine endpoints ahead of both, and is covered by unit tests and by the
+forward-proxy path until that row is executed.
 
 Mechanism per driver:
 
@@ -162,10 +172,10 @@ run:
 | Row | Observed |
 | --- | --- |
 | no declaration | `https://example.com/` 200, the host fixture 200 |
-| `default: deny`, no allowance | the guest cannot resolve the name (`curl` exit 6); no connection is attempted |
-| `default: deny` + allow `example.com:80 http` | 200 |
-| `default: deny` + allow an address literal | the fixture 200; another address, another port, and no allowance all fail immediately (exit 7) |
-| `default: deny` + allow `example.com:443 https` | TCP connects and the TLS handshake fails (`curl` exit 35, twice) |
+| `default: deny-all`, no allowance | the guest cannot resolve the name (`curl` exit 6); no connection is attempted |
+| `default: deny-all` + allow `example.com:80 http` | 200 |
+| `default: deny-all` + allow an address literal | the fixture 200; another address, another port, and no allowance all fail immediately (exit 7) |
+| `default: deny-all` + allow `example.com:443 https` | TCP connects and the TLS handshake fails (`curl` exit 35, twice) |
 | any refused row | the daemon records nothing: these refusals are not decisions the engine makes |
 
 The strict half of the behavior is pinned as well: with

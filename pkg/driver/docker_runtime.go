@@ -209,10 +209,11 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	defer func() { _ = dockerClient.Close() }()
 
 	topology := r.dockerDaemonTopology(ctx, dockerClient)
-	// The topology's own network mode is used verbatim: a declared
-	// default-deny policy never reaches this point, because
+	// The topology's own network mode is used verbatim: an unmediated
+	// restricting policy never reaches this point, because
 	// RequireSandboxNetworkEnforcement above refuses it before any container
-	// exists.
+	// exists. A policy the forward proxy mediates does reach here with the
+	// proxy environment on the sandbox.
 	containerInfo, created, err := r.getOrCreateContainer(ctx, dockerClient, dockerContainerCreateRequest{
 		Sandbox: sandbox, VMState: vmState, ProxyState: proxyState, NetworkMode: topology.networkMode,
 	})

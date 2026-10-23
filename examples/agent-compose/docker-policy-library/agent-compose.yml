@@ -12,14 +12,13 @@ policies:
   # refuses to create the sandbox rather than run it with unrestricted egress,
   # so this policy is a deliberate deployment boundary: use it on a driver whose
   # capability report says strength=allowlist (Microsandbox), or drop
-  # `default: deny` to keep egress unrestricted while still hashing the intent.
+  # `default: deny-all` to keep egress unrestricted while still hashing the intent.
   locked-down:
     network:
-      default: deny
+      default: deny-all
       allow:
         - host: api.github.com
           port: 443
-          protocol: https
 
   # Retain the stopped runtime so the next run resumes the same container.
   # Named for what it does to the stopped runtime: `stopped_runtime_policy:

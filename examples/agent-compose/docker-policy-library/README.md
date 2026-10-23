@@ -23,11 +23,10 @@ name: docker-policy-library
 policies:
   locked-down:
     network:
-      default: deny
+      default: deny-all
       allow:
         - host: api.github.com
           port: 443
-          protocol: https
   retained-runtime:
     stopped_runtime_policy: retain
 
@@ -150,23 +149,25 @@ agents:
       policy:
         stopped_runtime_policy: remove
         network:
-            default: deny
+            default: deny-all
             allow:
                 - host: api.github.com
                   port: 443
-                  protocol: https
 ```
 
-## Docker driver and `default: deny`
+## Docker driver and `default: deny-all`
 
-`reviewer` declares `default: deny`. The Docker driver cannot express the
-declared allowances while keeping the engine's own LLM facade and telemetry
-endpoint reachable, so the engine **refuses to create** that sandbox with an
-error naming the driver instead of silently running it with unrestricted egress.
-`config` and `up` succeed because they do not create a sandbox; a real `run` of
-`reviewer` fails closed.
+`reviewer` declares `default: deny-all`. The Docker driver cannot install that
+filter itself, but the daemon's forward proxy is in the sandbox's traffic path:
+the sandbox carries the proxy environment, `api.github.com:443` is allowed, and
+every other destination is refused. `config` and `up` still succeed without a
+model or API key, and a real `run` of `reviewer` filters egress instead of
+failing closed.
 
-To try a real run, use `builder` or `adhoc`, or change `locked-down` to
+If the guest cannot reach the daemon through the proxy, the declaration is
+reported as unenforced and the sandbox runs with wider egress, unless the
+deployment sets `EGRESS_UNENFORCEABLE_POLICY=refuse`. To reach destinations the
+declaration does not name, use `builder` or `adhoc`, or change `locked-down` to
 `default: allow-all` (the declaration is still validated, hashed, and stored,
 but it never denies traffic).
 

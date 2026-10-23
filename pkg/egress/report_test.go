@@ -39,10 +39,10 @@ func TestReportNetworkPolicy(t *testing.T) {
 	if len(report.Allow) != 2 {
 		t.Fatalf("allow = %+v, want two entries", report.Allow)
 	}
-	if !report.Allow[0].Inspectable || report.Allow[0].Endpoint != "api.github.com:443/https" {
+	if report.Allow[0].Endpoint != "api.github.com:443/https" {
 		t.Fatalf("allow[0] = %+v, want an inspectable HTTPS allowance", report.Allow[0])
 	}
-	if report.Allow[1].Inspectable || report.Allow[1].Endpoint != "cache.internal:6379/tcp" {
+	if report.Allow[1].Endpoint != "cache.internal:6379/tcp" {
 		t.Fatalf("allow[1] = %+v, want a non-inspectable TCP allowance", report.Allow[1])
 	}
 	if len(report.EngineAutoAllowed) != 2 {
