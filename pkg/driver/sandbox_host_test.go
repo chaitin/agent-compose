@@ -190,7 +190,33 @@ func startSandboxHostTestServer(t *testing.T, runtimes map[string]SandboxRuntime
 		grpcServer.Stop()
 		_ = listener.Close()
 	})
-	return NewSandboxHostConnector(socketPath, dir)
+	return NewSandboxHostConnector(socketPath, dir, SandboxHostModeExternal)
+}
+
+func TestSandboxHostConnectorExternalModeRefusesToSpawn(t *testing.T) {
+	// External mode dials a host that is already listening and never reaches the
+	// spawn path; this is exercised by every startSandboxHostTestServer test.
+	// Here we assert the opposite: with no listener, external mode must fail
+	// with a clear error instead of spawning a host inside the caller's domain.
+	dir, err := os.MkdirTemp("/tmp", "sandbox-host-external-test-")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	socketPath := filepath.Join(dir, "missing.sock")
+
+	connector := NewSandboxHostConnector(socketPath, dir, SandboxHostModeExternal)
+	if _, err := connector.Client(context.Background()); err == nil {
+		t.Fatalf("external mode Client() = nil error, want refuse-to-spawn error")
+	}
+}
+
+func TestSandboxHostConnectorDefaultModeIsExternal(t *testing.T) {
+	// An empty mode must resolve to external: spawning is opt-in for local
+	// development, never the silent default for a deployment.
+	if got := NewSandboxHostConnector("/tmp/never.sock", "/tmp", "").mode; got != SandboxHostModeExternal {
+		t.Fatalf("default mode = %q, want %q", got, SandboxHostModeExternal)
+	}
 }
 
 func newFakeSandboxHostRuntime() *fakeSandboxHostRuntime {

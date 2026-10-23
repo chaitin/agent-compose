@@ -64,6 +64,7 @@ type Config struct {
 	AgentComposeSocket         string
 	AgentComposeHost           string
 	SandboxHostSocket          string
+	SandboxHostMode            string
 	WebhookBodyLimitBytes      int64
 	WebhookQueueRulesJSON      string
 	WebhookQueueDefaultWorkers int
@@ -311,6 +312,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		AgentComposeSocket:         daemonHTTP.AgentComposeSocket,
 		AgentComposeHost:           daemonHTTP.AgentComposeHost,
 		SandboxHostSocket:          daemonHTTP.SandboxHostSocket,
+		SandboxHostMode:            daemonHTTP.SandboxHostMode,
 		WebhookBodyLimitBytes:      httpLimits.WebhookBodyLimitBytes,
 		WebhookQueueRulesJSON:      httpLimits.WebhookQueueRulesJSON,
 		WebhookQueueDefaultWorkers: httpLimits.WebhookQueueDefaultWorkers,
@@ -451,6 +453,7 @@ type daemonHTTPConfig struct {
 	AgentComposeSocket string
 	AgentComposeHost   string
 	SandboxHostSocket  string
+	SandboxHostMode    string
 }
 
 func loadDaemonHTTPConfig() (daemonHTTPConfig, error) {
@@ -475,12 +478,17 @@ func loadDaemonHTTPConfig() (daemonHTTPConfig, error) {
 	if err != nil {
 		return daemonHTTPConfig{}, err
 	}
+	sandboxHostMode, err := resolveSandboxHostMode(os.Getenv("AGENT_COMPOSE_SANDBOX_HOST_MODE"))
+	if err != nil {
+		return daemonHTTPConfig{}, err
+	}
 	return daemonHTTPConfig{
 		HttpListen:         httpListen,
 		DaemonAuthToken:    daemonAuthToken,
 		AgentComposeSocket: agentComposeSocket,
 		AgentComposeHost:   agentComposeHost,
 		SandboxHostSocket:  sandboxHostSocket,
+		SandboxHostMode:    sandboxHostMode,
 	}, nil
 }
 
@@ -1140,6 +1148,23 @@ func resolveSandboxHostSocket(value string) (string, error) {
 		return "", fmt.Errorf("invalid AGENT_COMPOSE_SANDBOX_HOST_SOCKET %q: path contains NUL byte", value)
 	}
 	return mustAbs(value), nil
+}
+
+// resolveSandboxHostMode parses AGENT_COMPOSE_SANDBOX_HOST_MODE. It defaults to
+// "external" (the daemon must only attach to an externally managed host, never
+// spawn one), which is the safe default for a compose deployment; spawning an
+// unprivileged host inside the daemon container would steal the data-root lock
+// from the real host. "managed" opts back into spawn-on-first-use for local
+// development and native deployments.
+func resolveSandboxHostMode(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "external", nil
+	}
+	if value != "external" && value != "managed" {
+		return "", fmt.Errorf("invalid AGENT_COMPOSE_SANDBOX_HOST_MODE %q: must be %q or %q", value, "external", "managed")
+	}
+	return value, nil
 }
 
 func validateTCPListenAddress(name, value string) error {

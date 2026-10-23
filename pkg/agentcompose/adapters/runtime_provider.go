@@ -153,7 +153,7 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	// VM drivers are held by the sandbox-host process, not the daemon: the
 	// daemon drives them through the remoteSandboxRuntime over the shared unix
 	// socket. See docs/design/daemon-upgrade-sandbox-survival.zh-CN.md §3.4.
-	sandboxHost := driverpkg.NewSandboxHostConnector(config.SandboxHostSocket, config.DataRoot)
+	sandboxHost := driverpkg.NewSandboxHostConnector(config.SandboxHostSocket, config.DataRoot, driverpkg.SandboxHostMode(config.SandboxHostMode))
 	boxliteRuntime := driverpkg.NewRemoteSandboxRuntime(driverpkg.RuntimeDriverBoxlite, sandboxHost)
 	microsandboxRuntime := driverpkg.NewRemoteSandboxRuntime(driverpkg.RuntimeDriverMicrosandbox, sandboxHost)
 	dockerRuntime, err := driverpkg.NewDockerRuntime(config)

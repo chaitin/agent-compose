@@ -192,10 +192,10 @@ guest
 
 同一个 box 在 host 里同时有多个句柄是安全的：`boxlite_get` 每次返回独立句柄，各自持有底层 box 的引用（PR #789 已对照上游源码确认）。
 
-**代码路径只有一条**：VM driver 一律通过 `remoteSandboxRuntime` 走 RPC，不保留进程内直连。daemon 先连 socket，连不上就自己拉起：
+**代码路径只有一条**：VM driver 一律通过 `remoteSandboxRuntime` 走 RPC，不保留进程内直连。daemon 连不上 socket 时的行为由 `AGENT_COMPOSE_SANDBOX_HOST_MODE` 决定（默认 `external`）：
 
-- **Compose + KVM**：sandbox-host 由 compose 预先启动。
-- **宿主机部署 / 本地开发**：daemon 拉起 `agent-compose sandbox-host`，脱离 daemon 的进程组和会话；用文件锁防止重复拉起，日志写到文件。
+- **`external`（Compose + KVM，默认）**：sandbox-host 由 compose 预先启动，daemon 只连接、绝不拉起；socket 不可达时直接报错。这样 daemon 永远不会在自己的非特权容器里拉起一个没有 `/dev/kvm` 的"错位 host"去抢 `/data` 上的文件锁、把真正的 host 逼进 `restart: always` 崩溃循环。
+- **`managed`（宿主机部署 / 本地开发）**：daemon 拉起 `agent-compose sandbox-host`，脱离 daemon 的进程组和会话；用文件锁防止重复拉起，日志写到文件。
 
 **Compose 部署**：只改 `docker-compose.kvm.yml`。installer 检测到 KVM 时本来就会叠加这个文件，用户的命令不变。
 

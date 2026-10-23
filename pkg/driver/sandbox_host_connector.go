@@ -15,6 +15,22 @@ import (
 	"google.golang.org/grpc"
 )
 
+// SandboxHostMode controls whether the daemon may spawn the sandbox-host
+// process itself or must only attach to one that is managed outside it.
+type SandboxHostMode string
+
+const (
+	// SandboxHostModeExternal means the host is managed outside the daemon
+	// (for example by Docker Compose) and the daemon must only dial it, never
+	// spawn it. Spawning here would create an unprivileged host without
+	// /dev/kvm inside the daemon's container, which could steal the data-root
+	// lock from the real host and put it into a restart loop.
+	SandboxHostModeExternal SandboxHostMode = "external"
+	// SandboxHostModeManaged means the daemon may spawn the host on first use.
+	// It is intended for local development and native deployments.
+	SandboxHostModeManaged SandboxHostMode = "managed"
+)
+
 // SandboxHostConnector owns the daemon's lazily-established connection to the
 // sandbox-host process. The connection is made on first use so a daemon whose
 // selected driver is Docker or k8s never dials or spawns a host, and so a
@@ -22,17 +38,21 @@ import (
 type SandboxHostConnector struct {
 	socketPath string
 	dataRoot   string
+	mode       SandboxHostMode
 	mu         sync.Mutex
 	client     sandboxhost.SandboxHostClient
 	conn       *grpc.ClientConn
 }
 
-func NewSandboxHostConnector(socketPath, dataRoot string) *SandboxHostConnector {
-	return &SandboxHostConnector{socketPath: socketPath, dataRoot: dataRoot}
+func NewSandboxHostConnector(socketPath, dataRoot string, mode SandboxHostMode) *SandboxHostConnector {
+	if mode == "" {
+		mode = SandboxHostModeExternal
+	}
+	return &SandboxHostConnector{socketPath: socketPath, dataRoot: dataRoot, mode: mode}
 }
 
-// Client returns the shared sandbox-host client, dialing and (for a native
-// deployment) spawning the host on first use.
+// Client returns the shared sandbox-host client, dialing and (in managed mode)
+// spawning the host on first use. External mode only dials; it never spawns.
 func (c *SandboxHostConnector) Client(ctx context.Context) (sandboxhost.SandboxHostClient, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -50,6 +70,9 @@ func (c *SandboxHostConnector) Client(ctx context.Context) (sandboxhost.SandboxH
 
 func (c *SandboxHostConnector) dialOrSpawn(ctx context.Context) (sandboxhost.SandboxHostClient, *grpc.ClientConn, error) {
 	if !sandboxHostSocketReachable(c.socketPath) {
+		if c.mode == SandboxHostModeExternal {
+			return nil, nil, fmt.Errorf("sandbox-host socket %q is not reachable (mode %q refuses to spawn; the host must be started externally)", c.socketPath, c.mode)
+		}
 		if err := spawnSandboxHost(c.socketPath, c.dataRoot); err != nil {
 			return nil, nil, err
 		}
