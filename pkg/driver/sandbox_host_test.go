@@ -122,6 +122,7 @@ type fakeRuntimeInteraction struct {
 	idx      int
 	sent     []RuntimeInputFrame
 	closed   bool
+	closedCh chan struct{}
 	sendErr  error
 	closeErr error
 }
@@ -136,7 +137,10 @@ func (f *fakeRuntimeInteraction) Send(frame RuntimeInputFrame) error {
 func (f *fakeRuntimeInteraction) CloseSend() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.closed = true
+	if !f.closed {
+		f.closed = true
+		close(f.closedCh)
+	}
 	return f.closeErr
 }
 
@@ -151,7 +155,11 @@ func (f *fakeRuntimeInteraction) Recv() (RuntimeOutputFrame, error) {
 	return RuntimeOutputFrame{}, io.EOF
 }
 
+// Wait blocks until the input side is closed, mirroring a real runtime that
+// reports its terminal result only after stdin reaches EOF. This keeps the
+// server's result message from racing ahead of forwarded input frames.
 func (f *fakeRuntimeInteraction) Wait() (RuntimeResult, error) {
+	<-f.closedCh
 	return f.result, nil
 }
 
@@ -402,7 +410,8 @@ func TestRemoteSandboxRuntimeOpenInteraction(t *testing.T) {
 		outputs: []RuntimeOutputFrame{
 			{Type: RuntimeOutputStdout, Data: []byte("hello\n")},
 		},
-		result: RuntimeResult{OperationID: "op-1", ExitCode: 0, Success: true},
+		result:   RuntimeResult{OperationID: "op-1", ExitCode: 0, Success: true},
+		closedCh: make(chan struct{}),
 	}
 	connector := startSandboxHostTestServer(t, map[string]SandboxRuntime{RuntimeDriverBoxlite: fake})
 	remote := NewRemoteSandboxRuntime(RuntimeDriverBoxlite, connector).(*remoteSandboxRuntime)
