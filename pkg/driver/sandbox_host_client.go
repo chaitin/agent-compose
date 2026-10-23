@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/chaitin/agent-compose/pkg/driver/sandboxhost"
 	"google.golang.org/grpc/codes"
@@ -243,11 +244,18 @@ func (r *remoteSandboxRuntime) TerminateProcessTree(ctx context.Context, sandbox
 }
 
 func (r *remoteSandboxRuntime) InteractionCapabilities() RuntimeInteractionCapabilities {
-	client, err := r.clientFunc(context.Background())
+	// The capability probe carries no caller context (the RuntimeInteractor
+	// interface is context-free), so bound it explicitly: an unreachable or
+	// wedged host must not stall a start path indefinitely. A transport failure
+	// degrades to no interaction support, matching a local runtime that cannot
+	// answer the probe.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := r.clientFunc(ctx)
 	if err != nil {
 		return RuntimeInteractionCapabilities{}
 	}
-	caps, err := client.InteractionCapabilities(context.Background(), &sandboxhost.DriverRequest{Driver: r.driver})
+	caps, err := client.InteractionCapabilities(ctx, &sandboxhost.DriverRequest{Driver: r.driver})
 	if err != nil {
 		return RuntimeInteractionCapabilities{}
 	}
