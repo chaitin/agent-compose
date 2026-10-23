@@ -547,9 +547,16 @@ func (r *cgoSandboxRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, v
 	return missing, nil
 }
 
-// NeedsCreate reports whether the sandbox's box does not yet exist. It is the
-// sandbox-host's existence probe for the two-phase ensure split; it performs no
-// side effects beyond a box lookup.
+// NeedsCreate reports whether the sandbox's box does not yet exist or has gone
+// stale and must be rebuilt. It is the sandbox-host's existence probe for the
+// two-phase ensure split; it performs no side effects beyond a box lookup.
+//
+// A box that still exists but is in an unresumable status must report true: the
+// daemon only resolves the create-time ProxyEnv on this path, and a stale-box
+// rebuild that goes through the reuse path would recreate the box without its
+// egress proxy variables, silently failing a default-deny policy open. This must
+// stay consistent with getOrCreateBox, which removes and rebuilds a box whose
+// normalized status matches shouldRecreateBoxForStatus.
 func (r *cgoSandboxRuntime) NeedsCreate(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
 	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
 	if sandbox != nil {
@@ -565,7 +572,11 @@ func (r *cgoSandboxRuntime) NeedsCreate(ctx context.Context, sandbox *Sandbox, v
 		}
 		return false, err
 	}
-	box.free()
+	defer box.free()
+	info, infoErr := r.boxInfo(ctx, box)
+	if infoErr == nil && shouldRecreateBoxForStatus(normalizeBoxliteStatus(info.State.Status)) {
+		return true, nil
+	}
 	return false, nil
 }
 
