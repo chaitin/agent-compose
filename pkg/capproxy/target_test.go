@@ -74,6 +74,37 @@ func TestQualifiedCapsetRoutesBusinessCallWithoutLeakingQualifier(t *testing.T) 
 	}
 }
 
+func TestQualifiedCapsetDoesNotForwardProjectScope(t *testing.T) {
+	var received metadata.MD
+	octoAddr, stopOcto := startTestRawGRPC(t, func(_ any, stream grpc.ServerStream) error {
+		received, _ = metadata.FromIncomingContext(stream.Context())
+		request := rawFrame(nil)
+		if err := stream.RecvMsg(&request); err != nil {
+			return err
+		}
+		return stream.SendMsg(rawFrame("ok"))
+	})
+	defer stopOcto()
+
+	targets := &recordingTargetResolver{target: Target{Addr: octoAddr, Token: "project-token", CapsetID: "dev"}}
+	binding := SandboxBinding{SandboxID: "s1", ProjectID: "engine-project-1", CapsetIDs: []string{"internal/dev"}}
+	proxyAddr, stopProxy := startTestProxy(t, Config{
+		Listen:  "127.0.0.1:0",
+		OctoBus: staticOctoBus("unused:1", "global-token"),
+		Targets: targets,
+	}, testResolver{binding: binding})
+	defer stopProxy()
+
+	invokeRaw(t, proxyAddr, "/pkg.Service/Call", metadata.Pairs(
+		SandboxTokenMetadata, "sandbox-token",
+		"x-octobus-capset", "internal/dev",
+		"x-octobus-instance", "instance-1",
+	))
+	if got := firstMetadata(received, projectScopeMetadata); got != "" {
+		t.Fatalf("project scope metadata leaked to project-scoped target: %q", got)
+	}
+}
+
 func TestQualifiedCapsetRoutesReflectionWithoutInstance(t *testing.T) {
 	var received metadata.MD
 	octoAddr, stopOcto := startTestRawGRPC(t, func(_ any, stream grpc.ServerStream) error {
@@ -155,7 +186,7 @@ func TestUnqualifiedTargetUsesGlobalResolver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target != (Target{Addr: "global:7412", Token: "global-token", CapsetID: "legacy-capset"}) {
+	if target != (Target{Addr: "global:7412", Token: "global-token", CapsetID: "legacy-capset", Gateway: true}) {
 		t.Fatalf("target = %#v", target)
 	}
 	if targets.calls != 0 {
