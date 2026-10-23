@@ -79,6 +79,40 @@ func TestProxyInjectsOctoBusMetadata(t *testing.T) {
 	}
 }
 
+func TestProxyForwardsProjectScopeOnGatewayPath(t *testing.T) {
+	var received metadata.MD
+	octoAddr, stopOcto := startTestRawGRPC(t, func(_ any, stream grpc.ServerStream) error {
+		received, _ = metadata.FromIncomingContext(stream.Context())
+		req := rawFrame(nil)
+		if err := stream.RecvMsg(&req); err != nil {
+			return err
+		}
+		return stream.SendMsg(rawFrame("ok:" + string(req)))
+	})
+	defer stopOcto()
+	binding := SandboxBinding{SandboxID: "s1", ProjectID: "engine-project-1", CapsetIDs: []string{"dev"}}
+	proxyAddr, stopProxy := startTestProxy(t, Config{Listen: "127.0.0.1:0", OctoBus: staticOctoBus(octoAddr, "octo-token")}, testResolver{binding: binding})
+	defer stopProxy()
+
+	conn, err := grpc.NewClient(proxyAddr, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.ForceCodec(rawCodec{})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	ctx := metadata.NewOutgoingContext(context.Background(), metadata.Pairs(
+		SandboxTokenMetadata, "sandbox-token",
+		"x-octobus-instance", "inst",
+		projectScopeMetadata, "forged-project",
+	))
+	out := rawFrame(nil)
+	if err := conn.Invoke(ctx, "/pkg.Service/Call", rawFrame("ping"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstMetadata(received, projectScopeMetadata); got != "engine-project-1" {
+		t.Fatalf("project scope metadata = %q, want engine-project-1 (guest value must be overwritten)", got)
+	}
+}
+
 func TestProxyForwardsGuestInstance(t *testing.T) {
 	var received metadata.MD
 	octoAddr, stopOcto := startTestRawGRPC(t, func(_ any, stream grpc.ServerStream) error {
@@ -311,7 +345,7 @@ func TestCapsetResolutionAndOutgoingMetadataHelpers(t *testing.T) {
 		"authorization":                []string{"Bearer guest-token"},
 		"x-octobus-capset":             []string{"old"},
 		"x-custom":                     []string{"kept"},
-	}), "new", SandboxBinding{})
+	}), "new", SandboxBinding{}, false)
 	if got := firstMetadata(outgoing, SandboxTokenMetadata); got != "" {
 		t.Fatalf("sandbox token metadata was forwarded: %q", got)
 	}
