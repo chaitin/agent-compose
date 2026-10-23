@@ -245,6 +245,8 @@ require_regex "$header" '^[[:space:]]*-[[:space:]]*"\*"[[:space:]]*$' \
   'all-tag image publication trigger'
 forbid_regex "$header" '^[[:space:]]*-[[:space:]]*"v\*"[[:space:]]*$' \
   'version-only image publication trigger'
+require_regex "$header" '^[[:space:]]*paths-ignore:[[:space:]]*$' \
+  'push path filter for non-image changes'
 
 load_job setup setup_job
 load_job build build_job
@@ -257,6 +259,10 @@ if [[ -n $setup_job ]]; then
   require_regex "$setup_job" 'actions/checkout@v4' 'setup checkout for contract audit'
   require_regex "$setup_job" '(\./)?scripts/tests/test-image-ci-contract\.sh' \
     'setup execution of image CI contract test'
+  require_regex "$setup_job" 'archlinux:[[:space:]]*\$\{\{[[:space:]]*steps\.changes\.outputs\.archlinux' \
+    'setup Arch Linux image input change output'
+  require_regex "$setup_job" 'id:[[:space:]]*changes' \
+    'setup Arch Linux image input change detection'
 fi
 
 extract_setup_script() {
@@ -431,6 +437,19 @@ if [[ -n $image_smoke_job ]]; then
     || fail "image-smoke has $smoke_build_count loadable build steps, expected three"
   load_count=$(grep -Ec 'load:[[:space:]]*true' <<<"$image_smoke_job" || true)
   [[ $load_count -eq 3 ]] || fail "image-smoke has $load_count load:true settings, expected three"
+  # The three local builds are the pull-request path. Pushes reuse the digests
+  # the build matrix already pushed instead of compiling every image again.
+  pr_build_count=$(grep -Ec "if:[[:space:]]*github\\.event_name[[:space:]]*==[[:space:]]*[\"']pull_request[\"']" <<<"$image_smoke_job" || true)
+  [[ $pr_build_count -ge 3 ]] \
+    || fail "image-smoke has $pr_build_count pull-request-only steps, expected at least three"
+  require_regex "$image_smoke_job" 'actions/download-artifact@v4' \
+    'image-smoke digest artifact download for pushes'
+  require_regex "$image_smoke_job" 'pattern:[[:space:]]*digests-\*-amd64' \
+    'image-smoke amd64 digest artifact selection'
+  require_regex "$image_smoke_job" 'docker pull' \
+    'image-smoke reuse of images pushed by the build matrix'
+  require_regex "$image_smoke_job" 'needs\.setup\.outputs\.archlinux' \
+    'image-smoke Arch Linux image input gate'
   require_regex "$image_smoke_job" 'file:[[:space:]]*Dockerfile[[:space:]]*$' \
     'image-smoke published daemon Dockerfile'
   require_regex "$image_smoke_job" 'file:[[:space:]]*guest-images/Dockerfile\.agent-compose-guest' \
