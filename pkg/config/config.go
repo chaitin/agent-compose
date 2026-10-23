@@ -101,14 +101,18 @@ type Config struct {
 	DockerHome              string
 	DockerHostSandboxRoot   string
 	DockerDefaultImage      string
-	// DockerSandboxNetwork is the Docker network each Docker sandbox container
-	// is attached to. Empty keeps the current behavior: the sandbox joins the
-	// daemon's own network. When set, the network must exist (the driver fails
-	// closed if it does not) and the daemon must be reachable from it: a
-	// deployment that separates the daemon and sandbox networks has to
-	// dual-home the daemon onto this network and point
-	// AGENT_COMPOSE_RUNTIME_BASE_URL at the daemon's address there, otherwise
-	// the engine's forward proxy cannot enforce a restricting declaration.
+	// DockerSandboxNetwork is the Docker network each newly-created Docker
+	// sandbox container is attached to. Empty keeps the current behavior: the
+	// sandbox joins the daemon's own network. Existing sandbox containers are
+	// reused as-is and keep their current network until they are recreated.
+	// When set, the network must exist (the driver fails closed if it does not)
+	// and the daemon must be reachable from it: a deployment that separates the
+	// daemon and sandbox networks has to dual-home the daemon onto this network
+	// and point AGENT_COMPOSE_RUNTIME_BASE_URL at the daemon's address there.
+	// The driver injects the forward proxy whenever that URL is a non-loopback
+	// address and does not verify it is reachable, so a network misconfiguration
+	// silently drops enforcement rather than reporting the declaration
+	// unenforced.
 	DockerSandboxNetwork       string
 	MicrosandboxHome           string
 	MicrosandboxMSBPath        string
