@@ -112,6 +112,7 @@ invalid_versions="$TEST_ROOT/invalid-versions"
 if VERSION=v9.8.7 IMAGE_PREFIX=registry.example \
   AGENT_COMPOSE_FRONTEND_VERSION=v3 \
   AGENT_COMPOSE_FRONTEND_VERSIONS=v1,v2 \
+  AGENT_COMPOSE_SANDBOX_HOST_VERSION=v-host-test \
   "$BUILDER" "$invalid_versions" >/dev/null 2>&1; then
   fail 'builder accepted a frontend default outside the supported list'
 fi
@@ -129,6 +130,7 @@ for invalid_list in ',v1' 'v1,' 'v1,,v2'; do
   if VERSION=v9.8.7 IMAGE_PREFIX=registry.example \
     AGENT_COMPOSE_FRONTEND_VERSION=v1 \
     AGENT_COMPOSE_FRONTEND_VERSIONS="$invalid_list" \
+    AGENT_COMPOSE_SANDBOX_HOST_VERSION=v-host-test \
     "$BUILDER" "$invalid_output" >/dev/null 2>&1; then
     fail "builder accepted an empty frontend version in $invalid_list"
   fi
