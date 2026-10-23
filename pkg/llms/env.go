@@ -81,6 +81,12 @@ func EnvItemValue(items []domain.SandboxEnvVar, key string) string {
 	return ""
 }
 
+// SchedulerCommandFacadeAgentModel reports the provider a scheduler command
+// runs as and the model it named. When the environment names no provider it
+// reports the default provider and an empty model; when it names one the daemon
+// cannot serve it reports an empty pair, which callers treat as "this command
+// gets no facade" rather than an error, so that provider keeps its own endpoint
+// and credential.
 func SchedulerCommandFacadeAgentModel(env map[string]string) (string, string) {
 	if env == nil {
 		return domain.DefaultAgentProvider, ""
@@ -99,6 +105,11 @@ func SchedulerCommandFacadeAgentModel(env map[string]string) (string, string) {
 		return agent, firstNonEmpty(env["CODEX_MODEL"], env["LLM_MODEL"])
 	case "claude":
 		return agent, firstNonEmpty(env["ANTHROPIC_MODEL"], env["CLAUDE_MODEL"], env["LLM_MODEL"])
+	case "dsh":
+		// dsh has no --model flag: the model belongs to the route its profile
+		// declares, so an empty value is left for the daemon to resolve, the
+		// same way codex leaves it.
+		return agent, firstNonEmpty(env["DSH_MODEL"], env["LLM_MODEL"])
 	case "opencode":
 		model := firstNonEmpty(env["OPENCODE_MODEL"], env["LLM_MODEL"])
 		if strings.TrimSpace(model) == "" {

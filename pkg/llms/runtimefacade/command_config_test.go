@@ -64,6 +64,55 @@ func TestEnsureSessionCommandFacadeConfigConfiguresSelectedAgentAndLegacyAliases
 	}
 }
 
+// A dsh command gets the facade a dsh guest reads. dsh has no --model flag and
+// takes its route from the profile it boots, so the run's model and endpoint
+// have to arrive as the dsh dialect's environment rather than as a flag.
+func TestEnsureSessionCommandFacadeConfigConfiguresDshCommand(t *testing.T) {
+	isolateLLMEnv(t)
+
+	ctx := context.Background()
+	root := t.TempDir()
+	config, store := commandFacadeTestStore(t, ctx, root)
+	seedCommandFacadeProviders(t, ctx, store)
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{
+		ID:            "sandbox-command-dsh",
+		Driver:        driverpkg.RuntimeDriverDocker,
+		WorkspacePath: filepath.Join(root, "sandboxes", "sandbox-command-dsh", "workspace"),
+	}}
+
+	result, err := EnsureSessionCommandFacadeConfig(ctx, CommandFacadeConfigRequest{Config: config, Store: store, Session: session, Agent: "dsh", Model: "openai-model", Source: TokenSourceSchedulerCommand, RunID: "run-dsh"})
+	if err != nil {
+		t.Fatalf("EnsureSessionCommandFacadeConfig returned error: %v", err)
+	}
+	endpoint := result.Env["LLM_API_ENDPOINT"]
+	if !strings.Contains(endpoint, "/llm/") || !strings.HasSuffix(endpoint, "/v1") {
+		t.Fatalf("dsh command LLM_API_ENDPOINT = %q, want a sandbox-reachable facade URL", endpoint)
+	}
+	if result.Env["LLM_API_KEY"] == "" || result.Env["LLM_API_KEY"] != result.Env["AGENT_COMPOSE_SANDBOX_TOKEN"] {
+		t.Fatalf("dsh command credential environment = %#v", result.Env)
+	}
+	if result.Env["LLM_API_PROTOCOL"] != llms.APIProtocolResponses {
+		t.Fatalf("LLM_API_PROTOCOL = %q, want responses", result.Env["LLM_API_PROTOCOL"])
+	}
+	// The guest profile materialises these three as literals, so the daemon's
+	// resolved values are what the route ends up naming.
+	if result.Env["DSH_WIRE_API"] != "openai-responses" {
+		t.Fatalf("DSH_WIRE_API = %q, want openai-responses", result.Env["DSH_WIRE_API"])
+	}
+	if result.Env["DSH_MODEL"] != "openai-model" || result.Env["AGENT_COMPOSE_RESOLVED_MODEL"] != "openai-model" {
+		t.Fatalf("dsh command model environment = %#v", result.Env)
+	}
+	if result.Env["DSH_PERMISSION_MODE"] != "danger-full-access" {
+		t.Fatalf("DSH_PERMISSION_MODE = %q, want danger-full-access", result.Env["DSH_PERMISSION_MODE"])
+	}
+	if len(result.TokenHashes) == 0 {
+		t.Fatalf("dsh command minted no facade token")
+	}
+	if got := countCommandFacadeTokens(t, ctx, store, "run-dsh"); got == 0 {
+		t.Fatalf("persisted command facade tokens = %d, want the run's token", got)
+	}
+}
+
 func TestEnsureSessionCommandFacadeConfigMintsNoStartupTokenForUnmanagedAgent(t *testing.T) {
 	isolateLLMEnv(t)
 
