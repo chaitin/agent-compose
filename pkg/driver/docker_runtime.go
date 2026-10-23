@@ -23,6 +23,7 @@ import (
 	containerapi "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	mountapi "github.com/docker/docker/api/types/mount"
+	networkapi "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/go-connections/nat"
@@ -208,7 +209,10 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	}
 	defer func() { _ = dockerClient.Close() }()
 
-	topology := r.dockerDaemonTopology(ctx, dockerClient)
+	topology, err := r.dockerDaemonTopology(ctx, dockerClient)
+	if err != nil {
+		return SandboxVMInfo{}, err
+	}
 	// The topology's own network mode is used verbatim: an unmediated
 	// restricting policy never reaches this point, because
 	// RequireSandboxNetworkEnforcement above refuses it before any container
@@ -1055,17 +1059,44 @@ func SandboxStopContextTimeout(driver string, stopTimeout time.Duration) time.Du
 	return stopTimeout + dockerStopAPIMargin
 }
 
-func (r *dockerRuntime) dockerDaemonTopology(ctx context.Context, dockerClient *client.Client) dockerDaemonTopology {
-	networkName, ok, err := r.dockerNetworkNameFromSelfContainer(ctx, dockerClient)
+func (r *dockerRuntime) dockerDaemonTopology(ctx context.Context, dockerClient *client.Client) (dockerDaemonTopology, error) {
+	networkName, containerized, err := r.dockerNetworkNameFromSelfContainer(ctx, dockerClient)
 	if err != nil {
 		slog.Warn("failed to inspect current docker container network; falling back to default docker network", "error", err)
-		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}
+		networkName, containerized = "", false
 	}
-	if !ok {
+
+	topology, err := selectDockerDaemonTopology(r.config.DockerSandboxNetwork, networkName, containerized, func(name string) error {
+		_, inspectErr := dockerClient.NetworkInspect(ctx, name, networkapi.InspectOptions{})
+		return inspectErr
+	})
+	if err != nil {
+		return dockerDaemonTopology{}, err
+	}
+	if topology.networkMode == containerapi.NetworkMode("default") {
 		slog.Warn("current process is not running in an inspectable docker container; falling back to default docker network")
-		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}
 	}
-	return dockerDaemonTopology{networkMode: containerapi.NetworkMode(networkName), containerized: true}
+	return topology, nil
+}
+
+// selectDockerDaemonTopology resolves the network a Docker sandbox joins from
+// the explicit configuration and the daemon's self-inspected network. It is pure
+// so the precedence and fail-closed behavior stay testable without a Docker
+// engine. An explicit network wins and must exist (networkExists reports the
+// inspect error); otherwise the daemon's own network is used, falling back to
+// Docker's default network when the daemon is not running in an inspectable
+// container.
+func selectDockerDaemonTopology(explicitNetwork, detectedNetwork string, containerized bool, networkExists func(string) error) (dockerDaemonTopology, error) {
+	if name := strings.TrimSpace(explicitNetwork); name != "" {
+		if err := networkExists(name); err != nil {
+			return dockerDaemonTopology{}, fmt.Errorf("docker sandbox network %q unavailable: %w", name, err)
+		}
+		return dockerDaemonTopology{networkMode: containerapi.NetworkMode(name), containerized: containerized}, nil
+	}
+	if detectedNetwork == "" {
+		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}, nil
+	}
+	return dockerDaemonTopology{networkMode: containerapi.NetworkMode(detectedNetwork), containerized: containerized}, nil
 }
 
 func (r *dockerRuntime) dockerNetworkNameFromSelfContainer(ctx context.Context, dockerClient *client.Client) (string, bool, error) {

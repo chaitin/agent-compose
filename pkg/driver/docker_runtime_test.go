@@ -679,6 +679,96 @@ func TestSelectDockerNetworkNameReturnsFalseWithoutNetworks(t *testing.T) {
 	}
 }
 
+func TestSelectDockerDaemonTopologyHonorsExplicitSandboxNetwork(t *testing.T) {
+	exists := func(string) error { return nil }
+	missing := func(name string) error { return fmt.Errorf("network %s not found", name) }
+
+	tests := []struct {
+		name              string
+		explicit          string
+		detected          string
+		containerized     bool
+		networkExists     func(string) error
+		wantNetwork       containerapi.NetworkMode
+		wantContainerized bool
+		wantErr           bool
+	}{
+		{
+			name:              "explicit network wins and preserves containerized",
+			explicit:          "sandbox-net",
+			detected:          "adp_internal",
+			containerized:     true,
+			networkExists:     exists,
+			wantNetwork:       containerapi.NetworkMode("sandbox-net"),
+			wantContainerized: true,
+		},
+		{
+			name:              "explicit network is trimmed",
+			explicit:          "  sandbox-net  ",
+			detected:          "adp_internal",
+			containerized:     true,
+			networkExists:     exists,
+			wantNetwork:       containerapi.NetworkMode("sandbox-net"),
+			wantContainerized: true,
+		},
+		{
+			name:          "missing explicit network fails closed",
+			explicit:      "sandbox-net",
+			detected:      "adp_internal",
+			containerized: true,
+			networkExists: missing,
+			wantErr:       true,
+		},
+		{
+			name:              "empty explicit network keeps the daemon network",
+			explicit:          "",
+			detected:          "adp_internal",
+			containerized:     true,
+			networkExists:     missing,
+			wantNetwork:       containerapi.NetworkMode("adp_internal"),
+			wantContainerized: true,
+		},
+		{
+			name:              "whitespace-only explicit network keeps the daemon network",
+			explicit:          "   ",
+			detected:          "adp_internal",
+			containerized:     true,
+			networkExists:     missing,
+			wantNetwork:       containerapi.NetworkMode("adp_internal"),
+			wantContainerized: true,
+		},
+		{
+			name:          "no explicit and no detected network falls back to default",
+			explicit:      "",
+			detected:      "",
+			containerized: false,
+			networkExists: missing,
+			wantNetwork:   containerapi.NetworkMode("default"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := selectDockerDaemonTopology(test.explicit, test.detected, test.containerized, test.networkExists)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("selectDockerDaemonTopology() error = nil, want an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("selectDockerDaemonTopology() error = %v, want nil", err)
+			}
+			if got.networkMode != test.wantNetwork {
+				t.Fatalf("networkMode = %q, want %q", got.networkMode, test.wantNetwork)
+			}
+			if got.containerized != test.wantContainerized {
+				t.Fatalf("containerized = %v, want %v", got.containerized, test.wantContainerized)
+			}
+		})
+	}
+}
+
 func TestDockerJupyterPortConfigRequestsAutomaticLoopbackBinding(t *testing.T) {
 	exposedPorts, portBindings := dockerJupyterPortConfig(9999)
 	port := nat.Port("9999/tcp")

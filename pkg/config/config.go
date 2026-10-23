@@ -95,12 +95,21 @@ type Config struct {
 	GlobalNetworkPolicy *egress.NetworkDeclaration
 	// GlobalNetworkPolicyInfo identifies the file and digest the effective
 	// daemon-wide policy was compiled from. It is zero when no policy is set.
-	GlobalNetworkPolicyInfo    GlobalNetworkPolicyInfo
-	BoxliteHome                string
-	BoxliteRuntimeDir          string
-	DockerHome                 string
-	DockerHostSandboxRoot      string
-	DockerDefaultImage         string
+	GlobalNetworkPolicyInfo GlobalNetworkPolicyInfo
+	BoxliteHome             string
+	BoxliteRuntimeDir       string
+	DockerHome              string
+	DockerHostSandboxRoot   string
+	DockerDefaultImage      string
+	// DockerSandboxNetwork is the Docker network each Docker sandbox container
+	// is attached to. Empty keeps the current behavior: the sandbox joins the
+	// daemon's own network. When set, the network must exist (the driver fails
+	// closed if it does not) and the daemon must be reachable from it: a
+	// deployment that separates the daemon and sandbox networks has to
+	// dual-home the daemon onto this network and point
+	// AGENT_COMPOSE_RUNTIME_BASE_URL at the daemon's address there, otherwise
+	// the engine's forward proxy cannot enforce a restricting declaration.
+	DockerSandboxNetwork       string
 	MicrosandboxHome           string
 	MicrosandboxMSBPath        string
 	MicrosandboxLibPath        string
@@ -359,6 +368,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		BoxliteRuntimeDir:          normalized.BoxliteRuntimeDir,
 		DockerHome:                 normalized.DockerHome,
 		DockerHostSandboxRoot:      normalized.DockerHostSandboxRoot,
+		DockerSandboxNetwork:       drivers.DockerSandboxNetwork,
 		DockerDefaultImage:         images.DockerDefaultImage,
 		MicrosandboxHome:           normalized.MicrosandboxHome,
 		MicrosandboxMSBPath:        normalized.MicrosandboxMSBPath,
@@ -641,6 +651,7 @@ type driverHomesConfig struct {
 	BoxliteRuntimeDir     string
 	DockerHome            string
 	DockerHostSandboxRoot string
+	DockerSandboxNetwork  string
 	MicrosandboxHome      string
 	MicrosandboxMSBPath   string
 	MicrosandboxLibPath   string
@@ -682,6 +693,10 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	if err != nil {
 		return driverHomesConfig{}, err
 	}
+	// DOCKER_SANDBOX_NETWORK is left empty by default so a Docker sandbox keeps
+	// joining the daemon's own network. It is trimmed, not normalized: the value
+	// is a Docker network name, not a path.
+	dockerSandboxNetwork := strings.TrimSpace(os.Getenv("DOCKER_SANDBOX_NETWORK"))
 
 	microsandboxHome := getenvFirst("MICROSANDBOX_HOME", "MSB_HOME")
 	if microsandboxHome == "" {
@@ -737,6 +752,7 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 		BoxliteRuntimeDir:     boxliteRuntimeDir,
 		DockerHome:            dockerHome,
 		DockerHostSandboxRoot: dockerHostSandboxRoot,
+		DockerSandboxNetwork:  dockerSandboxNetwork,
 		MicrosandboxHome:      microsandboxHome,
 		K8sRuntimeBaseURL:     k8sRuntimeBaseURL,
 		MicrosandboxMSBPath:   microsandboxMSBPath,
