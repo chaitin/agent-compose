@@ -769,6 +769,27 @@ func TestSelectDockerDaemonTopologyHonorsExplicitSandboxNetwork(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxNetworkAttachEnabled(t *testing.T) {
+	tests := []struct {
+		name            string
+		containerized   bool
+		explicitNetwork string
+		want            bool
+	}{
+		{name: "containerized daemon without explicit network attaches", containerized: true, explicitNetwork: "", want: true},
+		{name: "containerized daemon with explicit network does not attach", containerized: true, explicitNetwork: "sandbox-net", want: false},
+		{name: "native daemon without explicit network does not attach", containerized: false, explicitNetwork: "", want: false},
+		{name: "whitespace-only explicit network attaches", containerized: true, explicitNetwork: "   ", want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := dockerSandboxNetworkAttachEnabled(test.containerized, test.explicitNetwork); got != test.want {
+				t.Fatalf("dockerSandboxNetworkAttachEnabled(%v, %q) = %v, want %v", test.containerized, test.explicitNetwork, got, test.want)
+			}
+		})
+	}
+}
+
 func TestDockerJupyterPortConfigRequestsAutomaticLoopbackBinding(t *testing.T) {
 	exposedPorts, portBindings := dockerJupyterPortConfig(9999)
 	port := nat.Port("9999/tcp")

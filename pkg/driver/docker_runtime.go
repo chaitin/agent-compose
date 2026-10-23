@@ -232,8 +232,12 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		started = true
 	}
 	// Attach a containerized sandbox to the daemon's own network so it can
-	// reach the engine's LLM facade and telemetry endpoints.
-	if topology.containerized {
+	// reach the engine's LLM facade and telemetry endpoints. This is skipped
+	// when an explicit sandbox network is configured: a newly-created container
+	// is already on that network, and an existing container is reused unchanged,
+	// so enabling DOCKER_SANDBOX_NETWORK never migrates already-created
+	// sandboxes.
+	if dockerSandboxNetworkAttachEnabled(topology.containerized, r.config.DockerSandboxNetwork) {
 		if err := ensureDockerContainerNetwork(ctx, dockerClient, containerInfo, string(topology.networkMode)); err != nil {
 			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
 		}
@@ -1291,6 +1295,16 @@ func dockerJupyterHostPort(containerInfo containerapi.InspectResponse, guestPort
 		return hostPort, nil
 	}
 	return 0, fmt.Errorf("docker container %s has no valid loopback binding for jupyter port %s", containerInfo.ID, port)
+}
+
+// dockerSandboxNetworkAttachEnabled reports whether EnsureSandbox should attach
+// the container to the resolved network after creating or reusing it. It is
+// disabled when an explicit sandbox network is configured: a newly-created
+// container is already on that network, and an existing container is reused
+// unchanged, so enabling DOCKER_SANDBOX_NETWORK never migrates already-created
+// sandboxes.
+func dockerSandboxNetworkAttachEnabled(containerized bool, explicitNetwork string) bool {
+	return containerized && strings.TrimSpace(explicitNetwork) == ""
 }
 
 func ensureDockerContainerNetwork(ctx context.Context, dockerClient *client.Client, containerInfo containerapi.InspectResponse, networkName string) error {
