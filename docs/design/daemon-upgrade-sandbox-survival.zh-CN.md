@@ -203,7 +203,7 @@ guest
 services:
   sandbox-host:
     image: ${AGENT_COMPOSE_SANDBOX_HOST_IMAGE}   # 与 daemon 同镜像，版本单独配置
-    command: ["agent-compose", "sandbox-host"]
+    command: ["sandbox-host"]                      # 镜像 ENTRYPOINT 已是 agent-compose
     privileged: true
     devices: ["/dev/kvm:/dev/kvm"]
     volumes: [<与 daemon 相同的数据目录和 .env>, sandbox-host-run:/run/agent-compose]

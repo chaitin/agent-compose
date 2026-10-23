@@ -79,7 +79,7 @@ jq -e --arg data_source "$ROOT_DIR/data" '
       $host.devices[0].permissions == "rwm"
     )
   ) and
-  $host.command == ["agent-compose", "sandbox-host"] and
+  $host.command == ["sandbox-host"] and
   any($host.ports[]; .host_ip == "127.0.0.1" and .target == 7410 and .published == "7410") and
   any($host.networks.default.aliases[]; . == "agent-compose") and
   any($host.volumes[]; .source == "/var/run/docker.sock" and .target == "/var/run/docker.sock") and

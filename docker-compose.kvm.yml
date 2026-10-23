@@ -14,7 +14,7 @@ services:
     image: ${AGENT_COMPOSE_SANDBOX_HOST_IMAGE:-${AGENT_COMPOSE_IMAGE:-chaitin/agent-compose:latest}}
     container_name: agent-compose-sandbox-host
     restart: always
-    command: ["agent-compose", "sandbox-host"]
+    command: ["sandbox-host"]
     privileged: true
     devices:
       - /dev/kvm:/dev/kvm
