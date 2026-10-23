@@ -89,6 +89,7 @@ build_bundle() {
     printf 'AGENT_COMPOSE_FRONTEND_VERSIONS=%s\n' "$version"
     printf 'AGENT_COMPOSE_FRONTEND_IMAGE=%s\n' "$image"
     printf 'DEFAULT_IMAGE=%s\n' "$image"
+    printf 'AGENT_COMPOSE_SANDBOX_HOST_IMAGE=%s\n' "$image"
   } >"$payload/images/manifest.env"
   tar -C "$payload_root" -czf "$release_dir/agent-compose-installer.tar.gz" agent-compose-installer
   (cd "$release_dir" && sha256sum agent-compose-installer.tar.gz >SHASUMS256.txt)

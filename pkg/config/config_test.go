@@ -620,6 +620,43 @@ func TestNewConfigDefaultsDaemonSocketToVarRunWithoutRuntimeDir(t *testing.T) {
 	}
 }
 
+func TestNewConfigSandboxHostMode(t *testing.T) {
+	cases := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr bool
+	}{
+		{name: "defaults to external", value: "", want: "external"},
+		{name: "accepts managed", value: "managed", want: "managed"},
+		{name: "case-insensitive external", value: "EXTERNAL", want: "external"},
+		{name: "rejects unknown", value: "sidecar", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("DATA_ROOT", filepath.Join(root, "data"))
+			t.Setenv("AGENT_COMPOSE_SANDBOX_HOST_MODE", tc.value)
+
+			di := do.New()
+			do.ProvideValue(di, slog.Default())
+			config, err := NewConfig(di)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("NewConfig() = nil error, want error for mode %q", tc.value)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("NewConfig() error = %v", err)
+			}
+			if config.SandboxHostMode != tc.want {
+				t.Fatalf("SandboxHostMode = %q, want %q", config.SandboxHostMode, tc.want)
+			}
+		})
+	}
+}
+
 func testNewConfigDefaultsDaemonListenConfig(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()

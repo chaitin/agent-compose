@@ -192,3 +192,27 @@ func TestIntegrationRuntimeNetworkPolicyWorkflows(t *testing.T) {
 func TestE2ERuntimeNetworkPolicyWorkflows(t *testing.T) {
 	TestIntegrationRuntimeNetworkPolicyWorkflows(t)
 }
+
+// The sandbox-host RPC boundary is the seam the daemon crosses for every VM
+// driver operation (ensure, exec, stats, interaction, handshake), so it must
+// carry coverage in the broader shapes and not only in the unit shape.
+func TestIntegrationSandboxHostWorkflow(t *testing.T) {
+	t.Run("ensure two phase", TestRemoteSandboxRuntimeEnsureTwoPhase)
+	t.Run("ensure reuse does not mint proxy", TestRemoteSandboxRuntimeEnsureReuseDoesNotMintProxy)
+	t.Run("error mapping", TestRemoteSandboxRuntimeErrorMapping)
+	t.Run("passthrough", TestRemoteSandboxRuntimePassthrough)
+	t.Run("open interaction", TestRemoteSandboxRuntimeOpenInteraction)
+	t.Run("status and grpc error", TestSandboxHostStatusAndFromGRPCError)
+	t.Run("handshake", TestSandboxHostHandshake)
+	t.Run("interaction pump cancellation", TestRemoteInteractionPumpStopsOnCancelledContext)
+	t.Run("marshal round trip", TestSandboxHostMarshalRoundTrip)
+	t.Run("marshal nil round trip", TestSandboxHostNilRoundTrip)
+	t.Run("vm info nil proxy", TestSandboxVMInfoRoundTripPreservesNilProxyState)
+	t.Run("protocol compatible", TestSandboxHostProtocolCompatible)
+	t.Run("resolve create env", TestResolveSandboxCreateEnv)
+	t.Run("external mode refuses to spawn", TestSandboxHostConnectorExternalModeRefusesToSpawn)
+}
+
+func TestE2ESandboxHostWorkflow(t *testing.T) {
+	TestIntegrationSandboxHostWorkflow(t)
+}

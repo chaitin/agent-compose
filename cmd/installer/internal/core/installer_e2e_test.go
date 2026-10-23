@@ -40,6 +40,7 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 	if !regularFile(filepath.Join(installDir, "installer")) || !regularFile(filepath.Join(installDir, ".env")) {
 		t.Fatal("installation did not persist installer and environment")
 	}
+	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_SANDBOX_HOST_IMAGE", "registry.example/agent-compose:host-v1")
 	if strings.Join(runner.calls, "\n") != strings.Join([]string{
 		"|docker version --format {{.Server.Version}}",
 		"|docker compose version --short",
@@ -60,6 +61,9 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 		t.Fatal("upgrade unexpectedly regenerated credentials")
 	}
 	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_IMAGE", "registry.example/agent-compose:v2")
+	// The daemon image advanced to v2 while the sandbox-host image stayed
+	// pinned at host-v1, so `up -d` recreates only the daemon.
+	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_SANDBOX_HOST_IMAGE", "registry.example/agent-compose:host-v1")
 
 	writeTestFile(t, filepath.Join(installDir, "operator-note"), "keep", 0o644)
 	uninstalled, err := service.Apply(context.Background(), OperationUninstall, options)

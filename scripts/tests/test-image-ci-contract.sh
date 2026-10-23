@@ -534,6 +534,8 @@ if [[ -n $release_job ]]; then
     'release frontend default version input'
   require_regex "$release_job" 'AGENT_COMPOSE_FRONTEND_VERSIONS:.*vars\.AGENT_COMPOSE_FRONTEND_VERSIONS' \
     'release supported frontend versions input'
+  require_regex "$release_job" 'AGENT_COMPOSE_SANDBOX_HOST_VERSION:.*vars\.AGENT_COMPOSE_SANDBOX_HOST_VERSION' \
+    'release sandbox-host image tag input'
   require_regex "$release_job" 'gh release (upload|create).*upload/\*' \
     'release publication from installer output only'
   forbid_regex "$release_job" 'build/agent-compose|build-agent-compose-binary|agent-compose-(darwin|linux)-(amd64|arm64)' \

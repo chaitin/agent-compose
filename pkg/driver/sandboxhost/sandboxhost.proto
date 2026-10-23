@@ -1,0 +1,389 @@
+// SandboxHost is the internal control-plane contract between the
+// agent-compose daemon and the long-lived sandbox-host process that holds VM
+// driver state (microsandbox / BoxLite) so the daemon can be upgraded without
+// tearing down running VMs.
+//
+// This is NOT part of the public proto module: it rides the same binary and is
+// deliberately scoped to the driver.SandboxRuntime boundary. See
+// docs/design/daemon-upgrade-sandbox-survival.zh-CN.md §3.4.
+//
+// Regenerate the Go output with `cd pkg/driver/sandboxhost && buf generate`.
+syntax = "proto3";
+
+package sandboxhost.v1;
+
+option go_package = "github.com/chaitin/agent-compose/pkg/driver/sandboxhost;sandboxhost";
+
+// SandboxHost is the unix-socket gRPC service a sandbox-host process serves.
+service SandboxHost {
+  // Handshake reports the host's protocol version. The daemon supports the
+  // current version and the previous one (N and N-1); an incompatible host
+  // makes the daemon refuse the VM driver.
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+
+  // NeedsCreate answers whether the sandbox's runtime does not yet exist, so
+  // the daemon can resolve create-time credentials (ProxyEnv) only when a
+  // runtime is actually going to be created. The host is the source of truth.
+  rpc NeedsCreate(SandboxRequest) returns (NeedsCreateResponse);
+
+  // Create creates the runtime. The resolved create-time environment is carried
+  // explicitly on the sandbox (RuntimeEnvItems) because ProxyEnv is a closure
+  // and cannot cross RPC. It is idempotent against the host's VM state: if the
+  // runtime already exists the host reuses it and discards the env.
+  rpc Create(EnsureRequest) returns (SandboxVMInfo);
+
+  // Ensure reuses an existing runtime without issuing any create-time
+  // credential. It is called only when NeedsCreate already answered false.
+  rpc Ensure(EnsureRequest) returns (SandboxVMInfo);
+
+  rpc StopSandbox(SandboxRequest) returns (StopSandboxResponse);
+  rpc RemoveSandbox(SandboxRequest) returns (RemoveSandboxResponse);
+  rpc IsSandboxAlive(SandboxRequest) returns (IsSandboxAliveResponse);
+
+  rpc Exec(ExecRequest) returns (ExecResult);
+  rpc ExecStream(ExecRequest) returns (stream ExecStreamResponse);
+
+  rpc Stats(SandboxRequest) returns (SandboxStats);
+  rpc SignalGuestRuntime(SignalGuestRuntimeRequest) returns (SignalGuestRuntimeResponse);
+  rpc TerminateProcessTree(TerminateProcessTreeRequest) returns (TerminateProcessTreeResponse);
+
+  rpc InteractionCapabilities(DriverRequest) returns (RuntimeInteractionCapabilities);
+  rpc OpenInteraction(stream InteractionMessage) returns (stream InteractionMessage);
+}
+
+message DriverRequest {
+  string driver = 1;
+}
+
+message HandshakeRequest {}
+
+message HandshakeResponse {
+  // protocol_version is a monotonically increasing integer identifying the
+  // wire contract this host speaks.
+  int64 protocol_version = 1;
+}
+
+// ---------- core types (mirror pkg/driver) ----------
+
+message SandboxEnvVar {
+  string name = 1;
+  string value = 2;
+  bool secret = 3;
+}
+
+message SandboxSummary {
+  string id = 1;
+  string driver = 2;
+  string guest_image = 3;
+  string pull_policy = 4;
+  string runtime_ref = 5;
+  string workspace_path = 6;
+  int64 created_at = 7; // unix nanoseconds
+  int64 updated_at = 8; // unix nanoseconds
+}
+
+message SandboxWorkspace {
+  string type = 1;
+  string config_json = 2;
+}
+
+message SandboxVolumeMount {
+  string id = 1;
+  string type = 2;
+  string source = 3;
+  string target = 4;
+  bool read_only = 5;
+  string volume_id = 6;
+  string driver = 7;
+  string host_path = 8;
+}
+
+message Endpoint {
+  string host = 1;
+  int32 port = 2;
+  string protocol = 3;
+}
+
+message AllowEntry {
+  string host = 1;
+  int32 port = 2;
+  string protocol = 3;
+  repeated string allowed_ips = 4;
+}
+
+message EngineEndpoint {
+  string purpose = 1;
+  Endpoint endpoint = 2;
+  string source = 3;
+}
+
+message NetworkPolicy {
+  string default_action = 1;
+  repeated AllowEntry allow = 2;
+  repeated EngineEndpoint engine_endpoints = 3;
+  repeated string deny_domains = 4;
+  bool mediated_by_forward_proxy = 5;
+}
+
+message Sandbox {
+  SandboxSummary summary = 1;
+  SandboxWorkspace workspace = 2;
+  repeated SandboxEnvVar env_items = 3;
+  repeated SandboxVolumeMount volume_mounts = 4;
+  repeated SandboxEnvVar runtime_env_items = 5;
+  NetworkPolicy network_policy = 6;
+}
+
+message VMState {
+  string driver = 1;
+  string mode = 2;
+  string box_name = 3;
+  string box_id = 4;
+  string image = 5;
+  string registry = 6;
+  string runtime_home = 7;
+  int64 started_at = 8;
+  int64 start_attempted_at = 9;
+  int64 stopped_at = 10;
+  string last_error = 11;
+  string bootstrap_ref = 12;
+  string k8s_context = 13;
+  string k8s_namespace = 14;
+}
+
+message ProxyState {
+  string proxy_path = 1;
+  string guest_host = 2;
+  int32 host_port = 3;
+  int32 guest_port = 4;
+  string jupyter_url = 5;
+  string token = 6;
+  bool enabled = 7;
+  bool exposed = 8;
+}
+
+message ExecSpec {
+  string command = 1;
+  repeated string args = 2;
+  map<string, string> env = 3;
+  string cwd = 4;
+  string marker = 5;
+  bool kill_only_on_cancel = 6;
+}
+
+message ExecChunk {
+  string text = 1;
+  string stream = 2; // "stdout" | "stderr"
+}
+
+message ExecSecurityFacts {
+  int32 seccomp_unavailable = 1;
+  int32 no_new_privileges_unavailable = 2;
+}
+
+message ExecResult {
+  int32 exit_code = 1;
+  string stdout = 2;
+  string stderr = 3;
+  string output = 4;
+  bool success = 5;
+  ExecSecurityFacts security_facts = 6;
+}
+
+message SandboxVMInfo {
+  string box_id = 1;
+  string jupyter_url = 2;
+  ProxyState proxy_state = 3;
+  bool runtime_created = 4;
+}
+
+// ---------- requests / responses ----------
+
+message SandboxRequest {
+  Sandbox sandbox = 1;
+  VMState vm_state = 2;
+}
+
+message NeedsCreateResponse {
+  bool needs_create = 1;
+}
+
+// EnsureRequest carries the sandbox, VM state, and the jupyter proxy state for
+// both Create and Ensure. ProxyState is plain data (no credential); the
+// create-time credential is folded into the sandbox's RuntimeEnvItems.
+message EnsureRequest {
+  Sandbox sandbox = 1;
+  VMState vm_state = 2;
+  ProxyState proxy_state = 3;
+}
+
+message StopSandboxResponse {
+  bool missing = 1;
+}
+
+message RemoveSandboxResponse {}
+
+message IsSandboxAliveResponse {
+  bool alive = 1;
+}
+
+message ExecRequest {
+  Sandbox sandbox = 1;
+  VMState vm_state = 2;
+  ExecSpec spec = 3;
+}
+
+message ExecStreamResponse {
+  oneof payload {
+    ExecChunk chunk = 1;
+    ExecResult result = 2;
+  }
+}
+
+message SignalGuestRuntimeRequest {
+  Sandbox sandbox = 1;
+  VMState vm_state = 2;
+  string execution_id = 3;
+  string signal = 4;
+}
+
+message SignalGuestRuntimeResponse {}
+
+message TerminateProcessTreeRequest {
+  Sandbox sandbox = 1;
+  VMState vm_state = 2;
+  string marker = 3;
+}
+
+message TerminateProcessTreeResponse {}
+
+// ---------- stats ----------
+
+message MetricValue {
+  optional double value = 1;
+  string unit = 2;
+  string status = 3;
+  string message = 4;
+}
+
+message SandboxStats {
+  string sandbox_id = 1;
+  string driver = 2;
+  int64 sampled_at = 3;
+  MetricValue cpu_percent = 4;
+  MetricValue memory_usage_bytes = 5;
+  MetricValue memory_limit_bytes = 6;
+  MetricValue memory_percent = 7;
+  MetricValue network_rx_bytes = 8;
+  MetricValue network_tx_bytes = 9;
+  MetricValue block_read_bytes = 10;
+  MetricValue block_write_bytes = 11;
+  MetricValue uptime_seconds = 12;
+}
+
+// ---------- interaction ----------
+
+message RuntimeCommandSpec {
+  string command = 1;
+  repeated string args = 2;
+  map<string, string> env = 3;
+  string cwd = 4;
+}
+
+message RuntimeAgentSpec {
+  string provider = 1;
+  string model = 2;
+  string prompt = 3;
+  string session_id = 4;
+  map<string, string> metadata = 5;
+}
+
+message RuntimeStartSpec {
+  string operation_id = 1;
+  string kind = 2;
+  string origin = 3;
+  RuntimeCommandSpec command = 4;
+  RuntimeAgentSpec agent = 5;
+  string cwd = 6;
+  map<string, string> env = 7;
+  bool attach_stdin = 8;
+  bool tty = 9;
+  uint32 rows = 10;
+  uint32 cols = 11;
+  int64 timeout_ms = 12;
+  string artifact_dir = 13;
+}
+
+message RuntimeInputFrame {
+  string type = 1;
+  bytes data = 2;
+  uint32 rows = 3;
+  uint32 cols = 4;
+  string signal = 5;
+  string message = 6;
+}
+
+message RuntimeAgentEvent {
+  string type = 1;
+  string message = 2;
+  bytes payload = 3;
+  map<string, string> metadata = 4;
+}
+
+message RuntimeError {
+  string code = 1;
+  string message = 2;
+}
+
+message RuntimeResult {
+  string operation_id = 1;
+  int32 exit_code = 2;
+  bool success = 3;
+  string error = 4;
+  int64 started_at = 5;
+  int64 completed_at = 6;
+  map<string, string> artifacts = 7;
+  ExecSecurityFacts security_facts = 8;
+}
+
+message RuntimeOutputFrame {
+  string type = 1;
+  bytes data = 2;
+  RuntimeAgentEvent event = 3;
+  RuntimeResult result = 4;
+  RuntimeError error = 5;
+  int64 started_at = 6;
+}
+
+message RuntimeInteractionCapabilities {
+  bool native_exec = 1;
+  bool wrapper_stream = 2;
+  bool stdin = 3;
+  bool stdin_eof = 4;
+  bool tty = 5;
+  bool resize = 6;
+  bool signal = 7;
+  bool artifacts = 8;
+  bool agent_turns = 9;
+}
+
+// InteractionMessage is the bidirectional stream for one interaction. The
+// client sends one `open`, then input frames and an optional close_send; the
+// host replies with output frames and a final result.
+message InteractionMessage {
+  oneof payload {
+    OpenInteractionRequest open = 1;
+    RuntimeInputFrame input = 2;
+    CloseSendSignal close_send = 3;
+    RuntimeOutputFrame output = 4;
+    RuntimeResult result = 5;
+  }
+}
+
+message OpenInteractionRequest {
+  Sandbox sandbox = 1;
+  VMState vm_state = 2;
+  RuntimeStartSpec spec = 3;
+}
+
+message CloseSendSignal {}

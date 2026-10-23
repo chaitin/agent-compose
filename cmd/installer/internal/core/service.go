@@ -97,15 +97,20 @@ func (s Service) runner() CommandRunner {
 	return ExecRunner{Output: io.Discard}
 }
 
-func (s Service) checkCompose(ctx context.Context) error {
+// checkCompose verifies Docker Engine and the Docker Compose v2 plugin are
+// available and returns the plugin version. The KVM overlay's minimum version
+// is checked separately once the effective Compose file set is known, because
+// a pure Docker deployment never needs the `ports: !reset []` feature.
+func (s Service) checkCompose(ctx context.Context) (string, error) {
 	s.report(EventStep, "Checking Docker and Docker Compose")
 	if err := s.runner().Run(ctx, "", "docker", "version", "--format", "{{.Server.Version}}"); err != nil {
-		return fmt.Errorf("docker is unavailable; install Docker Engine and retry: %w", err)
+		return "", fmt.Errorf("docker is unavailable; install Docker Engine and retry: %w", err)
 	}
-	if err := s.runner().Run(ctx, "", "docker", "compose", "version", "--short"); err != nil {
-		return fmt.Errorf("docker compose v2 is unavailable; install the Docker Compose plugin and retry: %w", err)
+	version, err := s.runner().RunOutput(ctx, "", "docker", "compose", "version", "--short")
+	if err != nil {
+		return "", fmt.Errorf("docker compose v2 is unavailable; install the Docker Compose plugin and retry: %w", err)
 	}
-	return nil
+	return version, nil
 }
 
 func randomHex(bytes int) (string, error) {
@@ -133,7 +138,8 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 		return result, err
 	}
 	options.InstallDir = installDir
-	if err := s.checkCompose(ctx); err != nil {
+	composeVersion, err := s.checkCompose(ctx)
+	if err != nil {
 		return result, err
 	}
 	loadedBundle := resolved
@@ -152,6 +158,13 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 	}
 	defer plan.Close()
 	result = plan.result
+	// Only the KVM overlay uses the `ports: !reset []` override, so its minimum
+	// Compose version is enforced after the effective file set is known.
+	if composeFileUsesKVM(result.ComposeFiles) {
+		if err := checkComposeVersion(composeVersion); err != nil {
+			return result, err
+		}
+	}
 	// The port is only published by the frontend, so an explicit port without
 	// the UI would otherwise be accepted and then quietly do nothing.
 	if options.PortSet && !result.WithUI() {
@@ -168,6 +181,9 @@ func (s Service) installOrUpgrade(ctx context.Context, operation Operation, opti
 			return
 		}
 		if tx.upAttempted && !tx.previousInstall {
+			// A fresh install has no prior sandbox-host VMs to preserve, so tear
+			// down every container this attempt started (including the privileged
+			// sandbox-host) before Rollback deletes the files they point at.
 			if cleanupErr := s.compose(context.Background(), options.InstallDir, "down", "--remove-orphans"); cleanupErr != nil {
 				// Keep the candidate project metadata so the operator can retry cleanup.
 				tx.Commit()

@@ -13,6 +13,7 @@ const (
 	backendImageKey             = "AGENT_COMPOSE_IMAGE"
 	frontendImageKey            = "AGENT_COMPOSE_FRONTEND_IMAGE"
 	guestImageKey               = "DEFAULT_IMAGE"
+	sandboxHostImageKey         = "AGENT_COMPOSE_SANDBOX_HOST_IMAGE"
 	frontendVersionKey          = "AGENT_COMPOSE_FRONTEND_VERSION"
 	frontendVersionsKey         = "AGENT_COMPOSE_FRONTEND_VERSIONS"
 	installerRegistryKey        = "INSTALLER_REGISTRY"
@@ -171,7 +172,7 @@ func planImageReferences(env, state, manifest *envFile, options Options, mode st
 		guestImageKey:      options.GuestImageSet,
 	}
 	plan := imageReferencePlan{}
-	for _, key := range []string{backendImageKey, frontendVersionKey, frontendImageKey, guestImageKey} {
+	for _, key := range []string{backendImageKey, frontendVersionKey, frontendImageKey, guestImageKey, sandboxHostImageKey} {
 		value, desiredExists := desired[key]
 		current, currentExists := env.Get(key)
 		managed, managedExists := state.Get(key)
@@ -205,18 +206,29 @@ func desiredImageReferences(manifest *envFile, options Options) map[string]strin
 			}
 		}
 		frontendVersion := options.FrontendVersion
+		// The sandbox-host shares the daemon image repository but its tag is
+		// advanced independently by the release manifest, so a daemon-only
+		// upgrade does not recreate the host. Fall back to the daemon tag when
+		// the manifest does not publish a sandbox-host image yet.
+		sandboxHostVersion := version
+		if image, ok := manifest.Get(sandboxHostImageKey); ok {
+			if colon := strings.LastIndex(image, ":"); colon > strings.LastIndex(image, "/") {
+				sandboxHostVersion = image[colon+1:]
+			}
+		}
 		desired[backendImageKey] = options.ImagePrefix + "/agent-compose:" + version
 		desired[frontendVersionKey] = frontendVersion
 		desired[frontendImageKey] = options.ImagePrefix + "/agent-compose-ui:" + frontendVersion
 		desired[guestImageKey] = options.ImagePrefix + "/agent-compose-guest:" + version
+		desired[sandboxHostImageKey] = options.ImagePrefix + "/agent-compose:" + sandboxHostVersion
 	} else {
-		for _, key := range []string{backendImageKey, frontendVersionKey, frontendImageKey, guestImageKey} {
+		for _, key := range []string{backendImageKey, frontendVersionKey, frontendImageKey, guestImageKey, sandboxHostImageKey} {
 			if value, ok := manifest.Get(key); ok {
 				desired[key] = value
 			}
 		}
 		if options.RegistrySet && strings.TrimSpace(options.Registry) != "" {
-			for _, key := range []string{backendImageKey, frontendImageKey, guestImageKey} {
+			for _, key := range []string{backendImageKey, frontendImageKey, guestImageKey, sandboxHostImageKey} {
 				if value, ok := desired[key]; ok {
 					desired[key] = replaceImageRegistry(value, options.Registry)
 				}

@@ -64,6 +64,8 @@ type Config struct {
 	DaemonAuthToken            string
 	AgentComposeSocket         string
 	AgentComposeHost           string
+	SandboxHostSocket          string
+	SandboxHostMode            string
 	WebhookBodyLimitBytes      int64
 	WebhookQueueRulesJSON      string
 	WebhookQueueDefaultWorkers int
@@ -332,6 +334,8 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		DaemonAuthToken:            daemonHTTP.DaemonAuthToken,
 		AgentComposeSocket:         daemonHTTP.AgentComposeSocket,
 		AgentComposeHost:           daemonHTTP.AgentComposeHost,
+		SandboxHostSocket:          daemonHTTP.SandboxHostSocket,
+		SandboxHostMode:            daemonHTTP.SandboxHostMode,
 		WebhookBodyLimitBytes:      httpLimits.WebhookBodyLimitBytes,
 		WebhookQueueRulesJSON:      httpLimits.WebhookQueueRulesJSON,
 		WebhookQueueDefaultWorkers: httpLimits.WebhookQueueDefaultWorkers,
@@ -473,6 +477,8 @@ type daemonHTTPConfig struct {
 	DaemonAuthToken    string
 	AgentComposeSocket string
 	AgentComposeHost   string
+	SandboxHostSocket  string
+	SandboxHostMode    string
 }
 
 func loadDaemonHTTPConfig() (daemonHTTPConfig, error) {
@@ -493,11 +499,21 @@ func loadDaemonHTTPConfig() (daemonHTTPConfig, error) {
 			return daemonHTTPConfig{}, err
 		}
 	}
+	sandboxHostSocket, err := resolveSandboxHostSocket(os.Getenv("AGENT_COMPOSE_SANDBOX_HOST_SOCKET"))
+	if err != nil {
+		return daemonHTTPConfig{}, err
+	}
+	sandboxHostMode, err := resolveSandboxHostMode(os.Getenv("AGENT_COMPOSE_SANDBOX_HOST_MODE"))
+	if err != nil {
+		return daemonHTTPConfig{}, err
+	}
 	return daemonHTTPConfig{
 		HttpListen:         httpListen,
 		DaemonAuthToken:    daemonAuthToken,
 		AgentComposeSocket: agentComposeSocket,
 		AgentComposeHost:   agentComposeHost,
+		SandboxHostSocket:  sandboxHostSocket,
+		SandboxHostMode:    sandboxHostMode,
 	}, nil
 }
 
@@ -1134,6 +1150,46 @@ func DefaultAgentComposeSocket() string {
 		return filepath.Join(runtimeDir, "agent-compose.sock")
 	}
 	return DefaultAgentComposeSocketPath
+}
+
+// defaultSandboxHostSocketDir is the compose-deployment mount point the daemon
+// and sandbox-host share (see docs/design/daemon-upgrade-sandbox-survival.zh-CN.md
+// §3.4), and the fallback directory for a native deployment on Linux.
+const defaultSandboxHostSocketDir = "/run/agent-compose"
+
+func DefaultSandboxHostSocket() string {
+	if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {
+		return filepath.Join(runtimeDir, "agent-compose", "sandbox-host.sock")
+	}
+	return filepath.Join(defaultSandboxHostSocketDir, "sandbox-host.sock")
+}
+
+func resolveSandboxHostSocket(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		value = DefaultSandboxHostSocket()
+	}
+	if strings.IndexByte(value, 0) >= 0 {
+		return "", fmt.Errorf("invalid AGENT_COMPOSE_SANDBOX_HOST_SOCKET %q: path contains NUL byte", value)
+	}
+	return mustAbs(value), nil
+}
+
+// resolveSandboxHostMode parses AGENT_COMPOSE_SANDBOX_HOST_MODE. It defaults to
+// "external" (the daemon must only attach to an externally managed host, never
+// spawn one), which is the safe default for a compose deployment; spawning an
+// unprivileged host inside the daemon container would steal the data-root lock
+// from the real host. "managed" opts back into spawn-on-first-use for local
+// development and native deployments.
+func resolveSandboxHostMode(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return "external", nil
+	}
+	if value != "external" && value != "managed" {
+		return "", fmt.Errorf("invalid AGENT_COMPOSE_SANDBOX_HOST_MODE %q: must be %q or %q", value, "external", "managed")
+	}
+	return value, nil
 }
 
 func validateTCPListenAddress(name, value string) error {

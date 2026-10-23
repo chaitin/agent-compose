@@ -17,6 +17,7 @@ compose_config() {
     -u COMPOSE_FILE \
     -u COMPOSE_PROFILES \
     -u AGENT_COMPOSE_IMAGE \
+    -u AGENT_COMPOSE_SANDBOX_HOST_IMAGE \
     -u AGENT_COMPOSE_FRONTEND_IMAGE \
     -u AGENT_COMPOSE_RUNTIME_BASE_URL \
     -u AGENT_COMPOSE_DATA_DIR \
@@ -33,6 +34,7 @@ ui_json=$(compose_config -f "$ROOT_DIR/docker-compose.yml" --profile with-ui)
 kvm_json=$(compose_config -f "$ROOT_DIR/docker-compose.yml" -f "$ROOT_DIR/docker-compose.kvm.yml")
 local_json=$(compose_config -f "$ROOT_DIR/docker-compose.yml" -f "$ROOT_DIR/docker-compose.override.yml.example")
 
+# Base daemon contract: Docker-only, loopback-published 7410, no privilege.
 jq -e --arg data_source "$ROOT_DIR/data" '
   .services["agent-compose"] as $service |
   $service.privileged != true and
@@ -50,38 +52,51 @@ jq -e --arg data_source "$ROOT_DIR/data" --arg ui_data_source "$ROOT_DIR/data/ag
   any($service.volumes[]; .source == ($data_source + "/sandboxes") and .target == "/data/sandboxes" and .read_only == true)
 ' >/dev/null <<<"$ui_json"
 
+# The KVM overlay moves the VM runtime out of the daemon and into the
+# sandbox-host service. The daemon joins the host network namespace, drops its
+# own published port, and no longer needs privilege or /dev/kvm.
 jq -e '
   .services["agent-compose"] as $service |
-  $service.privileged == true and
-  (($service.devices // []) | length == 1) and
-  (
-    $service.devices[0] == "/dev/kvm:/dev/kvm" or
-    (
-      $service.devices[0].source == "/dev/kvm" and
-      $service.devices[0].target == "/dev/kvm" and
-      $service.devices[0].permissions == "rwm"
-    )
-  )
+  $service.privileged != true and
+  (($service.devices // []) | length == 0) and
+  $service.network_mode == "service:sandbox-host" and
+  (($service.ports // []) | length == 0) and
+  any($service.volumes[]; .source == "/var/run/docker.sock" and .target == "/var/run/docker.sock") and
+  any($service.volumes[]; .source == "sandbox-host-run" and .target == "/run/agent-compose")
 ' >/dev/null <<<"$kvm_json"
 
-normalize_compose=$(cat <<'JQ'
-del(.services["agent-compose"].privileged, .services["agent-compose"].devices) |
-.services |= with_entries(
-  if (.value.volumes? | type) == "array" then
-    .value.volumes |= sort_by(.source, .target)
-  else
-    .
-  end
-)
-JQ
-)
-base_without_kvm=$(jq -cS "$normalize_compose" <<<"$base_json")
-kvm_without_kvm=$(jq -cS "$normalize_compose" <<<"$kvm_json")
-if [[ "$base_without_kvm" != "$kvm_without_kvm" ]]; then
-  printf 'KVM overlay changes rendered Compose fields beyond privileged and devices\n' >&2
-  diff -u <(jq -S . <<<"$base_without_kvm") <(jq -S . <<<"$kvm_without_kvm") >&2 || true
-  exit 1
-fi
+# sandbox-host owns the VM processes: privileged, /dev/kvm, the loopback 7410
+# port, the `agent-compose` network alias, and the shared socket volume.
+jq -e --arg data_source "$ROOT_DIR/data" '
+  .services["sandbox-host"] as $host |
+  $host.privileged == true and
+  (($host.devices // []) | length == 1) and
+  (
+    $host.devices[0] == "/dev/kvm:/dev/kvm" or
+    (
+      $host.devices[0].source == "/dev/kvm" and
+      $host.devices[0].target == "/dev/kvm" and
+      $host.devices[0].permissions == "rwm"
+    )
+  ) and
+  $host.command == ["sandbox-host"] and
+  any($host.ports[]; .host_ip == "127.0.0.1" and .target == 7410 and .published == "7410") and
+  any($host.networks.default.aliases[]; . == "agent-compose") and
+  any($host.volumes[]; .source == "/var/run/docker.sock" and .target == "/var/run/docker.sock") and
+  any($host.volumes[]; .source == $data_source and .target == "/data") and
+  any($host.volumes[]; .source == "sandbox-host-run" and .target == "/run/agent-compose")
+' >/dev/null <<<"$kvm_json"
+
+# The shared socket volume is declared at the project level.
+jq -e '.volumes["sandbox-host-run"] != null' >/dev/null <<<"$kvm_json"
+
+# The daemon's identity (image, working directory, environment) is preserved
+# when the KVM overlay is applied.
+jq -e --argjson base "$base_json" '
+  ($base.services["agent-compose"].image == .services["agent-compose"].image) and
+  ($base.services["agent-compose"].working_dir == .services["agent-compose"].working_dir) and
+  ($base.services["agent-compose"].environment == .services["agent-compose"].environment)
+' >/dev/null <<<"$kvm_json"
 
 jq -e '
   .services["agent-compose"] as $service |
