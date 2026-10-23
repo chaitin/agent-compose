@@ -15,13 +15,21 @@ type composeEnvContractFile struct {
 }
 
 type composeEnvContractService struct {
-	Image       string            `yaml:"image"`
-	Environment map[string]string `yaml:"environment"`
-	Volumes     []string          `yaml:"volumes"`
-	WorkingDir  string            `yaml:"working_dir"`
-	Privileged  *bool             `yaml:"privileged"`
-	Devices     []string          `yaml:"devices"`
-	Ports       []string          `yaml:"ports"`
+	Image         string                       `yaml:"image"`
+	Environment   map[string]string            `yaml:"environment"`
+	Volumes       []string                     `yaml:"volumes"`
+	WorkingDir    string                       `yaml:"working_dir"`
+	Privileged    *bool                        `yaml:"privileged"`
+	Devices       []string                     `yaml:"devices"`
+	Ports         []string                     `yaml:"ports"`
+	Command       []string                     `yaml:"command"`
+	NetworkMode   string                       `yaml:"network_mode"`
+	ContainerName string                       `yaml:"container_name"`
+	Networks      map[string]composeEnvNetwork `yaml:"networks"`
+}
+
+type composeEnvNetwork struct {
+	Aliases []string `yaml:"aliases"`
 }
 
 func TestE2EDockerComposeSandboxEnvContract(t *testing.T) {
@@ -133,7 +141,7 @@ func TestDockerComposeKVMOverlayContract(t *testing.T) {
 	if len(baseService.Devices) != 0 {
 		t.Fatalf("base agent-compose devices = %#v, want none", baseService.Devices)
 	}
-	baseServiceKeys := composeContractServiceKeys(t, baseData, "docker-compose.yml")
+	baseServiceKeys := composeContractServiceKeys(t, baseData, "docker-compose.yml", "agent-compose")
 	for _, forbidden := range []string{"build", "privileged", "devices"} {
 		if _, ok := baseServiceKeys[forbidden]; ok {
 			t.Fatalf("base agent-compose must omit %q", forbidden)
@@ -156,16 +164,43 @@ func TestDockerComposeKVMOverlayContract(t *testing.T) {
 	if err := yaml.Unmarshal(overlayData, &overlay); err != nil {
 		t.Fatalf("parse docker-compose.kvm.yml: %v", err)
 	}
-	overlayService, ok := overlay.Services["agent-compose"]
+	hostService, ok := overlay.Services["sandbox-host"]
+	if !ok {
+		t.Fatal("docker-compose.kvm.yml missing sandbox-host service")
+	}
+	if hostService.Privileged == nil || !*hostService.Privileged {
+		t.Fatalf("sandbox-host privileged = %v, want true", hostService.Privileged)
+	}
+	if len(hostService.Devices) != 1 || hostService.Devices[0] != "/dev/kvm:/dev/kvm" {
+		t.Fatalf("sandbox-host devices = %#v, want only /dev/kvm", hostService.Devices)
+	}
+	if !stringSliceContains(hostService.Volumes, "sandbox-host-run:/run/agent-compose") {
+		t.Fatalf("sandbox-host volumes = %#v, want shared sandbox-host socket volume", hostService.Volumes)
+	}
+	if !stringSliceContains(hostService.Ports, "127.0.0.1:7410:7410") {
+		t.Fatalf("sandbox-host ports = %#v, want loopback daemon port", hostService.Ports)
+	}
+	if network, ok := hostService.Networks["default"]; !ok || !stringSliceContains(network.Aliases, "agent-compose") {
+		t.Fatalf("sandbox-host networks = %#v, want agent-compose alias", hostService.Networks)
+	}
+
+	daemonService, ok := overlay.Services["agent-compose"]
 	if !ok {
 		t.Fatal("docker-compose.kvm.yml missing agent-compose service")
 	}
-	if overlayService.Privileged == nil || !*overlayService.Privileged {
-		t.Fatalf("KVM overlay privileged = %v, want true", overlayService.Privileged)
+	if daemonService.Privileged != nil {
+		t.Fatalf("overlay agent-compose privileged = %v, want omitted (moved to sandbox-host)", *daemonService.Privileged)
 	}
-	if len(overlayService.Devices) != 1 || overlayService.Devices[0] != "/dev/kvm:/dev/kvm" {
-		t.Fatalf("KVM overlay devices = %#v, want only /dev/kvm", overlayService.Devices)
+	if len(daemonService.Devices) != 0 {
+		t.Fatalf("overlay agent-compose devices = %#v, want none (moved to sandbox-host)", daemonService.Devices)
 	}
+	if daemonService.NetworkMode != "service:sandbox-host" {
+		t.Fatalf("overlay agent-compose network_mode = %q, want service:sandbox-host", daemonService.NetworkMode)
+	}
+	if !stringSliceContains(daemonService.Volumes, "sandbox-host-run:/run/agent-compose") {
+		t.Fatalf("overlay agent-compose volumes = %#v, want shared sandbox-host socket volume", daemonService.Volumes)
+	}
+
 	if !strings.Contains(localOverride, "build:") {
 		t.Fatal("local Compose override example must retain build behavior")
 	}
@@ -183,37 +218,53 @@ func assertComposeKVMOverlayKeys(t *testing.T, data []byte) {
 	if err := yaml.Unmarshal(data, &document); err != nil {
 		t.Fatalf("parse docker-compose.kvm.yml structure: %v", err)
 	}
-	if len(document) != 1 {
-		t.Fatalf("KVM overlay top-level keys = %#v, want only services", document)
+	if len(document) != 2 {
+		t.Fatalf("KVM overlay top-level keys = %#v, want services and volumes", document)
+	}
+	volumes, ok := document["volumes"].(map[string]any)
+	if !ok {
+		t.Fatalf("KVM overlay volumes = %#v, want sandbox-host-run", document["volumes"])
+	}
+	if _, ok := volumes["sandbox-host-run"]; !ok {
+		t.Fatalf("KVM overlay volumes = %#v, want sandbox-host-run", document["volumes"])
 	}
 	services, ok := document["services"].(map[string]any)
-	if !ok || len(services) != 1 {
-		t.Fatalf("KVM overlay services = %#v, want only agent-compose", document["services"])
+	if !ok || len(services) != 2 {
+		t.Fatalf("KVM overlay services = %#v, want sandbox-host and agent-compose", document["services"])
 	}
-	service := composeContractServiceKeys(t, data, "docker-compose.kvm.yml")
-	if len(service) != 2 {
-		t.Fatalf("KVM overlay agent-compose keys = %#v, want only privileged and devices", services["agent-compose"])
+	hostKeys := composeContractServiceKeys(t, data, "docker-compose.kvm.yml", "sandbox-host")
+	for _, key := range []string{"command", "privileged", "devices", "volumes", "ports", "networks"} {
+		if _, ok := hostKeys[key]; !ok {
+			t.Fatalf("KVM overlay sandbox-host missing %q", key)
+		}
 	}
-	for _, key := range []string{"privileged", "devices"} {
-		if _, ok := service[key]; !ok {
+	daemonKeys := composeContractServiceKeys(t, data, "docker-compose.kvm.yml", "agent-compose")
+	if _, ok := daemonKeys["privileged"]; ok {
+		t.Fatalf("KVM overlay agent-compose must omit privileged (moved to sandbox-host)")
+	}
+	if _, ok := daemonKeys["devices"]; ok {
+		t.Fatalf("KVM overlay agent-compose must omit devices (moved to sandbox-host)")
+	}
+	for _, key := range []string{"network_mode", "volumes"} {
+		if _, ok := daemonKeys[key]; !ok {
 			t.Fatalf("KVM overlay agent-compose missing %q", key)
 		}
 	}
 }
 
-func composeContractServiceKeys(t *testing.T, data []byte, name string) map[string]any {
+func composeContractServiceKeys(t *testing.T, data []byte, fileName, serviceName string) map[string]any {
 	t.Helper()
 	var document map[string]any
 	if err := yaml.Unmarshal(data, &document); err != nil {
-		t.Fatalf("parse %s structure: %v", name, err)
+		t.Fatalf("parse %s structure: %v", fileName, err)
 	}
 	services, ok := document["services"].(map[string]any)
 	if !ok {
-		t.Fatalf("%s services = %#v, want mapping", name, document["services"])
+		t.Fatalf("%s services = %#v, want mapping", fileName, document["services"])
 	}
-	service, ok := services["agent-compose"].(map[string]any)
+	service, ok := services[serviceName].(map[string]any)
 	if !ok {
-		t.Fatalf("%s agent-compose = %#v, want mapping", name, services["agent-compose"])
+		t.Fatalf("%s %s = %#v, want mapping", fileName, serviceName, services[serviceName])
 	}
 	return service
 }
