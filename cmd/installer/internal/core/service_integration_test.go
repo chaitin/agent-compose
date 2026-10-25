@@ -351,7 +351,7 @@ func TestIntegrationUninstallPreservesAndPurgesData(t *testing.T) {
 			if !slices.Contains(result.RetainedFiles, "user-note") {
 				t.Fatalf("retained files = %#v", result.RetainedFiles)
 			}
-			if regularFile(filepath.Join(installDir, "docker-compose.yml")) || regularFile(filepath.Join(installDir, "installer")) {
+			if regularFile(filepath.Join(installDir, "docker-compose.yml")) || regularFile(filepath.Join(installDir, "docker-compose.kvm.yml")) || regularFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml")) || regularFile(filepath.Join(installDir, "installer")) {
 				t.Fatal("managed files survived uninstall")
 			}
 			_, envErr := os.Stat(filepath.Join(installDir, ".env"))

@@ -92,9 +92,9 @@ jq -e '
 ' >/dev/null <<<"$local_json"
 
 jq -e '
-  .services["agent-compose"].networks.default == null and
-  .services["agent-compose"].networks.sandbox == null and
-  .networks.sandbox.name == "agent-compose-sandbox"
+  (.services["agent-compose"].networks | has("default")) and
+  (.services["agent-compose"].networks | has("sandbox")) and
+  (.networks.sandbox.name == "agent-compose-sandbox")
 ' >/dev/null <<<"$sandbox_json"
 
 printf 'Compose base, KVM overlay, sandbox-network overlay, and local build override contracts passed\n'

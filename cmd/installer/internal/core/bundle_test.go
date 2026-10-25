@@ -27,15 +27,37 @@ func TestVerifyChecksum(t *testing.T) {
 	}
 }
 
-func TestExtractBundleRejectsUnexpectedPath(t *testing.T) {
+func TestExtractBundleSkipsUnknownAndTraversalMembers(t *testing.T) {
+	archive := makeBundleArchive(t, map[string]string{
+		"agent-compose-installer/docker-compose.yml":  "services: {}\n",
+		"agent-compose-installer/.env.example":        "AUTH_PASSWORD=\nAUTH_SECRET=\n",
+		"agent-compose-installer/images/manifest.env": "AGENT_COMPOSE_IMAGE=registry.example/agent-compose:v1\n",
+		"agent-compose-installer/future-member.yml":   "future: true\n",
+		"../outside": "unsafe\n",
+	})
+	destination := t.TempDir()
+	if err := extractBundle(archive, destination); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(destination, "agent-compose-installer")
+	for _, name := range []string{"docker-compose.yml", ".env.example", filepath.Join("images", "manifest.env")} {
+		if !regularFile(filepath.Join(root, name)) {
+			t.Fatalf("required member %s was not extracted", name)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(root, "future-member.yml")); !os.IsNotExist(err) {
+		t.Fatalf("unknown member was extracted: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(destination, "..", "outside")); !os.IsNotExist(err) {
+		t.Fatalf("traversal member escaped the destination: %v", err)
+	}
+}
+
+func TestExtractBundleRejectsNonRegularKnownMember(t *testing.T) {
 	var archive bytes.Buffer
 	gzipWriter := gzip.NewWriter(&archive)
 	tarWriter := tar.NewWriter(gzipWriter)
-	content := []byte("unsafe")
-	if err := tarWriter.WriteHeader(&tar.Header{Name: "../outside", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(content))}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tarWriter.Write(content); err != nil {
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "agent-compose-installer/docker-compose.yml", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd", Mode: 0o777}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tarWriter.Close(); err != nil {
@@ -44,7 +66,7 @@ func TestExtractBundleRejectsUnexpectedPath(t *testing.T) {
 	if err := gzipWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := extractBundle(archive.Bytes(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "unexpected file") {
+	if err := extractBundle(archive.Bytes(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "unexpected non-regular file") {
 		t.Fatalf("extractBundle error = %v", err)
 	}
 }

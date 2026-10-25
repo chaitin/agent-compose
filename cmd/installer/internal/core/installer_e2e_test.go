@@ -40,6 +40,9 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 	if !regularFile(filepath.Join(installDir, "installer")) || !regularFile(filepath.Join(installDir, ".env")) {
 		t.Fatal("installation did not persist installer and environment")
 	}
+	if !regularFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml")) {
+		t.Fatal("installation did not persist the sandbox-network overlay")
+	}
 	if strings.Join(runner.calls, "\n") != strings.Join([]string{
 		"|docker version --format {{.Server.Version}}",
 		"|docker compose version --short",
@@ -72,7 +75,7 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(installDir, ".env")); err != nil {
 		t.Fatalf("ordinary uninstall removed environment: %v", err)
 	}
-	if regularFile(filepath.Join(installDir, "docker-compose.yml")) || regularFile(filepath.Join(installDir, "installer")) {
+	if regularFile(filepath.Join(installDir, "docker-compose.yml")) || regularFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml")) || regularFile(filepath.Join(installDir, "installer")) {
 		t.Fatal("ordinary uninstall retained managed files")
 	}
 	if len(events) == 0 {
