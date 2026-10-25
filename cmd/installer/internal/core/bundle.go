@@ -132,10 +132,11 @@ func extractBundle(data []byte, destination string) error {
 		maxSize int64
 	}
 	allowed := map[string]bundleMember{
-		"agent-compose-installer/docker-compose.yml":     {mode: 0o644, maxSize: 8 << 20},
-		"agent-compose-installer/docker-compose.kvm.yml": {mode: 0o644, maxSize: 8 << 20},
-		"agent-compose-installer/.env.example":           {mode: 0o644, maxSize: 8 << 20},
-		"agent-compose-installer/images/manifest.env":    {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/docker-compose.yml":                 {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/docker-compose.kvm.yml":             {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/docker-compose.sandbox-network.yml": {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/.env.example":                       {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/images/manifest.env":                {mode: 0o644, maxSize: 8 << 20},
 		// Releases produced before payload versioning bundled these unused files.
 		"agent-compose-installer/README.md":  {mode: 0o644, maxSize: 1 << 20},
 		"agent-compose-installer/install.sh": {mode: 0o644, maxSize: 1 << 20},

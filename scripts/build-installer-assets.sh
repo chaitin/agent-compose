@@ -83,6 +83,7 @@ install -m 0755 "$ROOT_DIR/deploy/install.sh" "$assets/install.sh"
 # references; host binaries are intentionally not release assets.
 install -m 0644 "$ROOT_DIR/docker-compose.yml" "$payload/docker-compose.yml"
 install -m 0644 "$ROOT_DIR/docker-compose.kvm.yml" "$payload/docker-compose.kvm.yml"
+install -m 0644 "$ROOT_DIR/docker-compose.sandbox-network.yml" "$payload/docker-compose.sandbox-network.yml"
 install -m 0644 "$ROOT_DIR/.env.example" "$payload/.env.example"
 {
   printf 'INSTALLER_PAYLOAD_VERSION=1\n'

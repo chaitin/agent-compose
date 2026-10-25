@@ -334,6 +334,7 @@ func TestIntegrationUninstallPreservesAndPurgesData(t *testing.T) {
 			installDir := filepath.Join(t.TempDir(), "install")
 			writeTestFile(t, filepath.Join(installDir, "docker-compose.yml"), "services: {}\n", 0o644)
 			writeTestFile(t, filepath.Join(installDir, "docker-compose.kvm.yml"), "services: {}\n", 0o644)
+			writeTestFile(t, filepath.Join(installDir, "docker-compose.sandbox-network.yml"), "services: {}\n", 0o644)
 			writeTestFile(t, filepath.Join(installDir, ".env"), "COMPOSE_FILE=docker-compose.yml\n", 0o600)
 			writeTestFile(t, filepath.Join(installDir, ".installer-state.env"), "INSTALLER_PAYLOAD_VERSION=1\n", 0o600)
 			writeTestFile(t, filepath.Join(installDir, "installer"), "binary", 0o755)
@@ -373,6 +374,7 @@ func makeTestBundle(t *testing.T, version string) string {
 	dir := t.TempDir()
 	writeTestFile(t, filepath.Join(dir, "docker-compose.yml"), "services:\n  agent-compose:\n    image: ${AGENT_COMPOSE_IMAGE}\n", 0o644)
 	writeTestFile(t, filepath.Join(dir, "docker-compose.kvm.yml"), "services:\n  agent-compose:\n    privileged: true\n", 0o644)
+	writeTestFile(t, filepath.Join(dir, "docker-compose.sandbox-network.yml"), "services:\n  agent-compose:\n    networks:\n      - default\n      - sandbox\n", 0o644)
 	writeTestFile(t, filepath.Join(dir, ".env.example"), "AUTH_USERNAME=admin\nAUTH_PASSWORD=\nAUTH_SECRET=\nAGENT_COMPOSE_DATA_DIR=./data\n", 0o644)
 	manifest := "INSTALLER_PAYLOAD_VERSION=1\n" +
 		"AGENT_COMPOSE_IMAGE=registry.example/agent-compose:" + version + "\n" +

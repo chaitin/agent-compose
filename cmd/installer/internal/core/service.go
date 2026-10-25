@@ -18,6 +18,7 @@ import (
 var managedFiles = []string{
 	"docker-compose.yml",
 	"docker-compose.kvm.yml",
+	"docker-compose.sandbox-network.yml",
 	"installer",
 	".env",
 	".installer-state.env",
@@ -295,6 +296,19 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 			return fail(err)
 		}
 		plan.files["docker-compose.kvm.yml"] = 0o644
+	}
+	sandboxNetworkBundlePath := filepath.Join(source.Dir, "docker-compose.sandbox-network.yml")
+	sandboxNetworkInstalledPath := filepath.Join(options.InstallDir, "docker-compose.sandbox-network.yml")
+	if regularFile(sandboxNetworkBundlePath) {
+		if err := copyFile(sandboxNetworkBundlePath, filepath.Join(workDir, "docker-compose.sandbox-network.yml"), 0o644); err != nil {
+			return fail(err)
+		}
+		plan.files["docker-compose.sandbox-network.yml"] = 0o644
+	} else if regularFile(sandboxNetworkInstalledPath) {
+		if err := copyFile(sandboxNetworkInstalledPath, filepath.Join(workDir, "docker-compose.sandbox-network.yml"), 0o644); err != nil {
+			return fail(err)
+		}
+		plan.files["docker-compose.sandbox-network.yml"] = 0o644
 	}
 
 	envPath := filepath.Join(options.InstallDir, ".env")

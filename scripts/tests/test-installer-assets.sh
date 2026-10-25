@@ -60,7 +60,7 @@ cmp "$output/SHASUMS256.txt" "$second_output/SHASUMS256.txt" >/dev/null \
   || fail 'installer checksum is not reproducible'
 
 actual_payload=$(tar -tzf "$output/agent-compose-installer.tar.gz" | LC_ALL=C sort)
-expected_payload=$'agent-compose-installer/\nagent-compose-installer/.env.example\nagent-compose-installer/docker-compose.kvm.yml\nagent-compose-installer/docker-compose.yml\nagent-compose-installer/images/\nagent-compose-installer/images/manifest.env'
+expected_payload=$'agent-compose-installer/\nagent-compose-installer/.env.example\nagent-compose-installer/docker-compose.kvm.yml\nagent-compose-installer/docker-compose.sandbox-network.yml\nagent-compose-installer/docker-compose.yml\nagent-compose-installer/images/\nagent-compose-installer/images/manifest.env'
 [[ $actual_payload == "$expected_payload" ]] \
   || fail "installer payload differs: $actual_payload"
 
@@ -70,11 +70,14 @@ cmp "$ROOT_DIR/docker-compose.yml" "$payload/docker-compose.yml" >/dev/null \
   || fail 'base Compose file differs in archive'
 cmp "$ROOT_DIR/docker-compose.kvm.yml" "$payload/docker-compose.kvm.yml" >/dev/null \
   || fail 'KVM Compose overlay differs in archive'
+cmp "$ROOT_DIR/docker-compose.sandbox-network.yml" "$payload/docker-compose.sandbox-network.yml" >/dev/null \
+  || fail 'sandbox-network Compose overlay differs in archive'
 cmp "$ROOT_DIR/.env.example" "$payload/.env.example" >/dev/null \
   || fail '.env.example differs in archive'
 
 assert_mode "$payload/docker-compose.yml" 644
 assert_mode "$payload/docker-compose.kvm.yml" 644
+assert_mode "$payload/docker-compose.sandbox-network.yml" 644
 assert_mode "$payload/.env.example" 644
 assert_mode "$payload/images/manifest.env" 644
 
