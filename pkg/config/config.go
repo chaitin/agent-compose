@@ -109,6 +109,8 @@ type Config struct {
 	// and the daemon must be reachable from it: a deployment that separates the
 	// daemon and sandbox networks has to dual-home the daemon onto this network
 	// and point AGENT_COMPOSE_RUNTIME_BASE_URL at the daemon's address there.
+	// The docker-compose.sandbox-network.yml overlay sets it automatically, so
+	// operators normally select the overlay instead of setting this by hand.
 	// The driver injects the forward proxy whenever that URL is a non-loopback
 	// address and does not verify it is reachable, so a network misconfiguration
 	// silently drops enforcement rather than reporting the declaration
@@ -699,7 +701,8 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	}
 	// DOCKER_SANDBOX_NETWORK is left empty by default so a Docker sandbox keeps
 	// joining the daemon's own network. It is trimmed, not normalized: the value
-	// is a Docker network name, not a path.
+	// is a Docker network name, not a path. The sandbox-network overlay injects
+	// it, so operators normally leave it unset and only select the overlay.
 	dockerSandboxNetwork := strings.TrimSpace(os.Getenv("DOCKER_SANDBOX_NETWORK"))
 
 	microsandboxHome := getenvFirst("MICROSANDBOX_HOME", "MSB_HOME")

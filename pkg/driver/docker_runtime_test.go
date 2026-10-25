@@ -635,7 +635,8 @@ func (r *recordingDockerContainerRemover) ContainerRemove(_ context.Context, con
 }
 
 func TestSelectDockerNetworkNamePrefersUserDefinedNetwork(t *testing.T) {
-	got, ok := selectDockerNetworkName(containerapi.InspectResponse{
+	// Two user-defined networks make the alphabetical choice ambiguous.
+	got, ok, ambiguous := selectDockerNetworkName(containerapi.InspectResponse{
 		NetworkSettings: &containerapi.NetworkSettings{
 			Networks: map[string]*networkapi.EndpointSettings{
 				"bridge":             {},
@@ -650,10 +651,29 @@ func TestSelectDockerNetworkNamePrefersUserDefinedNetwork(t *testing.T) {
 	if got != "playground_default" {
 		t.Fatalf("selectDockerNetworkName returned %q, want playground_default", got)
 	}
+	if !ambiguous {
+		t.Fatalf("selectDockerNetworkName returned ambiguous=false, want true")
+	}
+}
+
+func TestSelectDockerNetworkNameSingleUserDefinedNetwork(t *testing.T) {
+	got, ok, ambiguous := selectDockerNetworkName(containerapi.InspectResponse{
+		NetworkSettings: &containerapi.NetworkSettings{
+			Networks: map[string]*networkapi.EndpointSettings{
+				"playground_default": {},
+			},
+		},
+	})
+	if !ok || got != "playground_default" {
+		t.Fatalf("selectDockerNetworkName returned %q, %v; want playground_default, true", got, ok)
+	}
+	if ambiguous {
+		t.Fatalf("selectDockerNetworkName returned ambiguous=true, want false")
+	}
 }
 
 func TestSelectDockerNetworkNameFallsBackToDefaultNetwork(t *testing.T) {
-	got, ok := selectDockerNetworkName(containerapi.InspectResponse{
+	got, ok, ambiguous := selectDockerNetworkName(containerapi.InspectResponse{
 		NetworkSettings: &containerapi.NetworkSettings{
 			Networks: map[string]*networkapi.EndpointSettings{
 				"bridge": {},
@@ -666,16 +686,19 @@ func TestSelectDockerNetworkNameFallsBackToDefaultNetwork(t *testing.T) {
 	if got != "bridge" {
 		t.Fatalf("selectDockerNetworkName returned %q, want bridge", got)
 	}
+	if ambiguous {
+		t.Fatalf("selectDockerNetworkName returned ambiguous=true, want false")
+	}
 }
 
 func TestSelectDockerNetworkNameReturnsFalseWithoutNetworks(t *testing.T) {
-	if got, ok := selectDockerNetworkName(containerapi.InspectResponse{}); ok || got != "" {
-		t.Fatalf("selectDockerNetworkName returned %q, %v; want empty false", got, ok)
+	if got, ok, ambiguous := selectDockerNetworkName(containerapi.InspectResponse{}); ok || got != "" || ambiguous {
+		t.Fatalf("selectDockerNetworkName returned %q, %v, %v; want empty, false, false", got, ok, ambiguous)
 	}
-	if got, ok := selectDockerNetworkName(containerapi.InspectResponse{
+	if got, ok, ambiguous := selectDockerNetworkName(containerapi.InspectResponse{
 		NetworkSettings: &containerapi.NetworkSettings{},
-	}); ok || got != "" {
-		t.Fatalf("selectDockerNetworkName returned %q, %v; want empty false", got, ok)
+	}); ok || got != "" || ambiguous {
+		t.Fatalf("selectDockerNetworkName returned %q, %v, %v; want empty, false, false", got, ok, ambiguous)
 	}
 }
 
@@ -688,6 +711,7 @@ func TestSelectDockerDaemonTopologyHonorsExplicitSandboxNetwork(t *testing.T) {
 		explicit          string
 		detected          string
 		containerized     bool
+		ambiguous         bool
 		networkExists     func(string) error
 		wantNetwork       containerapi.NetworkMode
 		wantContainerized bool
@@ -745,11 +769,20 @@ func TestSelectDockerDaemonTopologyHonorsExplicitSandboxNetwork(t *testing.T) {
 			networkExists: missing,
 			wantNetwork:   containerapi.NetworkMode("default"),
 		},
+		{
+			name:          "ambiguous network without explicit network fails closed",
+			explicit:      "",
+			detected:      "agent-compose-sandbox",
+			containerized: true,
+			ambiguous:     true,
+			networkExists: missing,
+			wantErr:       true,
+		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := selectDockerDaemonTopology(test.explicit, test.detected, test.containerized, test.networkExists)
+			got, err := selectDockerDaemonTopology(test.explicit, test.detected, test.containerized, test.ambiguous, test.networkExists)
 			if test.wantErr {
 				if err == nil {
 					t.Fatal("selectDockerDaemonTopology() error = nil, want an error")
