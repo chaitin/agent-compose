@@ -195,7 +195,7 @@ guest
 **代码路径只有一条**：VM driver 一律通过 `remoteSandboxRuntime` 走 RPC，不保留进程内直连。daemon 连不上 socket 时的行为由 `AGENT_COMPOSE_SANDBOX_HOST_MODE` 决定（默认 `external`）：
 
 - **`external`（Compose + KVM，默认）**：sandbox-host 由 compose 预先启动，daemon 只连接、绝不拉起；socket 不可达时直接报错。这样 daemon 永远不会在自己的非特权容器里拉起一个没有 `/dev/kvm` 的"错位 host"去抢 `/data` 上的文件锁、把真正的 host 逼进 `restart: always` 崩溃循环。
-- **`managed`（宿主机部署 / 本地开发）**：daemon 拉起 `agent-compose sandbox-host`，脱离 daemon 的进程组和会话；用文件锁防止重复拉起，日志写到文件。
+- **`managed`（宿主机部署 / 本地开发）**：daemon 拉起 `agent-compose sandbox-host`，脱离 daemon 的进程组和会话；用文件锁防止重复拉起，日志写到文件。注意 `Setsid` 只脱离进程组和会话，不脱离 cgroup：用 systemd 托管 daemon 时，`KillMode=control-group`（默认）会在停止 daemon 单元时把同 cgroup 里的 sandbox-host 一并杀掉，宿主侧要改成 `KillMode=mixed` 或让 sandbox-host 用独立 systemd 单元托管，否则 host 并不比 daemon 活得久。
 
 **Compose 部署**：只改 `docker-compose.kvm.yml`。installer 检测到 KVM 时本来就会叠加这个文件，用户的命令不变。
 

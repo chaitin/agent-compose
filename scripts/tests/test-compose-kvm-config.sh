@@ -91,6 +91,27 @@ jq -e --arg data_source "$ROOT_DIR/data" '
 # The shared socket volume is declared at the project level.
 jq -e '.volumes["sandbox-host-run"] != null' >/dev/null <<<"$kvm_json"
 
+# The sandbox-host image must not fall back to AGENT_COMPOSE_IMAGE: a daemon-only
+# upgrade advances AGENT_COMPOSE_IMAGE and must not recreate the host (which
+# would tear down its VMs). Render with AGENT_COMPOSE_IMAGE pinned to a sentinel
+# and assert the host keeps its own default.
+host_image_json=$(env \
+  -u COMPOSE_FILE \
+  -u COMPOSE_PROFILES \
+  -u AGENT_COMPOSE_SANDBOX_HOST_IMAGE \
+  AGENT_COMPOSE_IMAGE=example.invalid/daemon:upgraded \
+  docker compose \
+    --project-directory "$ROOT_DIR" \
+    --env-file "$ROOT_DIR/.env.example" \
+    -f "$ROOT_DIR/docker-compose.yml" \
+    -f "$ROOT_DIR/docker-compose.kvm.yml" \
+    config --format json)
+
+jq -e '
+  .services["agent-compose"].image == "example.invalid/daemon:upgraded" and
+  .services["sandbox-host"].image == "chaitin/agent-compose:latest"
+' >/dev/null <<<"$host_image_json"
+
 # The daemon's identity (image, working directory, environment) is preserved
 # when the KVM overlay is applied.
 jq -e --argjson base "$base_json" '

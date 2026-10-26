@@ -11,7 +11,11 @@
 # Requires Docker Compose v2.24.4 or later for the `ports: !reset []` override.
 services:
   sandbox-host:
-    image: ${AGENT_COMPOSE_SANDBOX_HOST_IMAGE:-${AGENT_COMPOSE_IMAGE:-chaitin/agent-compose:latest}}
+    # The host image is independent of AGENT_COMPOSE_IMAGE: falling back to the
+    # daemon image would recreate the host (and tear down its VMs) on a
+    # daemon-only upgrade. The installer pins this from the release manifest;
+    # outside the installer it defaults to the release tag directly.
+    image: ${AGENT_COMPOSE_SANDBOX_HOST_IMAGE:-chaitin/agent-compose:latest}
     container_name: agent-compose-sandbox-host
     restart: always
     command: ["sandbox-host"]
