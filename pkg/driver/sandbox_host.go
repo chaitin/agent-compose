@@ -54,7 +54,10 @@ func serveSandboxHost(ctx context.Context, socketPath string, server *sandboxHos
 		return fmt.Errorf("chmod sandbox-host socket %q: %w", socketPath, err)
 	}
 
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(sandboxHostMaxMsgSize),
+		grpc.MaxSendMsgSize(sandboxHostMaxMsgSize),
+	)
 	sandboxhost.RegisterSandboxHostServer(grpcServer, server)
 
 	serveErr := make(chan error, 1)
@@ -96,6 +99,10 @@ func dialSandboxHost(ctx context.Context, socketPath string) (sandboxhost.Sandbo
 	conn, err := grpc.NewClient(
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(sandboxHostMaxMsgSize),
+			grpc.MaxCallSendMsgSize(sandboxHostMaxMsgSize),
+		),
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return (&net.Dialer{}).DialContext(ctx, "unix", socketPath)
 		}),

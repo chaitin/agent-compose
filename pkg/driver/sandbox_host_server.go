@@ -18,6 +18,13 @@ import (
 // compatibility window.
 const sandboxHostProtocolVersion = 1
 
+// sandboxHostMaxMsgSize is the gRPC message ceiling shared by the daemon and
+// the sandbox-host. gRPC defaults to 4 MiB, which the accumulated ExecResult
+// output exceeds on ordinary long runs (the guest journal already allows up to
+// 8 MiB of merged stdout+stderr). The value is applied symmetrically so a large
+// result never fails with ResourceExhausted after its chunks have streamed.
+const sandboxHostMaxMsgSize = 64 << 20
+
 // sandboxHostServer serves the sandbox-host gRPC contract by dispatching to the
 // VM runtimes it holds in-process. It is the boundary the design document calls
 // the sandbox-host: the long-lived process that owns VM state so the daemon can

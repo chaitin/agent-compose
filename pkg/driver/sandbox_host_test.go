@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -191,7 +192,10 @@ func startSandboxHostTestServer(t *testing.T, runtimes map[string]SandboxRuntime
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(
+		grpc.MaxRecvMsgSize(sandboxHostMaxMsgSize),
+		grpc.MaxSendMsgSize(sandboxHostMaxMsgSize),
+	)
 	sandboxhost.RegisterSandboxHostServer(grpcServer, &sandboxHostServer{runtimes: runtimes})
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(func() {
@@ -400,6 +404,39 @@ func TestRemoteSandboxRuntimePassthrough(t *testing.T) {
 		caps := remote.InteractionCapabilities()
 		if !caps.NativeExec || !caps.Stdin || !caps.TTY {
 			t.Fatalf("InteractionCapabilities() = %#v", caps)
+		}
+	})
+}
+
+func TestRemoteSandboxRuntimeLargeExecResult(t *testing.T) {
+	// gRPC defaults to a 4 MiB message ceiling. A long run whose accumulated
+	// output exceeds that must round-trip without ResourceExhausted; otherwise
+	// the failure surfaces only after the chunks have already streamed.
+	const size = 5 << 20 // 5 MiB
+	big := strings.Repeat("x", size)
+	fake := newFakeSandboxHostRuntime()
+	fake.execResult = ExecResult{ExitCode: 0, Success: true, Output: big}
+	connector := startSandboxHostTestServer(t, map[string]SandboxRuntime{RuntimeDriverBoxlite: fake})
+	remote := NewRemoteSandboxRuntime(RuntimeDriverBoxlite, connector).(*remoteSandboxRuntime)
+	sandbox := &Sandbox{Summary: SandboxSummary{Driver: RuntimeDriverBoxlite, ID: "sandbox-1"}}
+
+	t.Run("exec", func(t *testing.T) {
+		result, err := remote.Exec(context.Background(), sandbox, VMState{}, ExecSpec{Command: "sh"})
+		if err != nil {
+			t.Fatalf("Exec() error = %v", err)
+		}
+		if len(result.Output) != size {
+			t.Fatalf("Exec() output length = %d, want %d", len(result.Output), size)
+		}
+	})
+
+	t.Run("exec stream", func(t *testing.T) {
+		result, err := remote.ExecStream(context.Background(), sandbox, VMState{}, ExecSpec{Command: "sh"}, func(ExecChunk) {})
+		if err != nil {
+			t.Fatalf("ExecStream() error = %v", err)
+		}
+		if len(result.Output) != size {
+			t.Fatalf("ExecStream() output length = %d, want %d", len(result.Output), size)
 		}
 	})
 }
