@@ -58,6 +58,10 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 		t.Fatalf("install calls:\n%s", strings.Join(runner.calls, "\n"))
 	}
 
+	// Plant a divergent overlay before upgrading so the assertion below proves
+	// the installer rewrites (rather than preserves) an existing copy.
+	writeTestFile(t, filepath.Join(installDir, "docker-compose.sandbox-network.yml"), "operator-edited: true\n", 0o644)
+
 	options.BundleDir = makeTestBundle(t, "v2")
 	upgraded, err := service.Apply(context.Background(), OperationUpgrade, options)
 	if err != nil {
@@ -67,6 +71,14 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 		t.Fatal("upgrade unexpectedly regenerated credentials")
 	}
 	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_IMAGE", "registry.example/agent-compose:v2")
+
+	overlayData, err = os.ReadFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml"))
+	if err != nil {
+		t.Fatalf("upgrade did not persist the sandbox-network overlay: %v", err)
+	}
+	if string(overlayData) != string(sandboxNetworkOverlay) {
+		t.Fatal("upgrade did not rewrite the sandbox-network overlay to the embedded copy")
+	}
 
 	writeTestFile(t, filepath.Join(installDir, "operator-note"), "keep", 0o644)
 	uninstalled, err := service.Apply(context.Background(), OperationUninstall, options)
