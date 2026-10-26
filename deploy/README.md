@@ -145,6 +145,16 @@ overlay still upgrades in place; it just does not receive the overlay file, so
 opting in on such a deployment requires rerunning the bootstrap or copying the
 overlay in by hand.
 
+Enabling the overlay is an explicit placement choice, and the driver now fails
+closed rather than guessing. This is a breaking change for one deployment shape:
+a containerized daemon attached to multiple non-default networks without
+`DOCKER_SANDBOX_NETWORK` previously picked a network alphabetically, and now
+every sandbox ensure (including resume of existing sandboxes) fails. Upgrade
+such a deployment by setting `DOCKER_SANDBOX_NETWORK` or enabling the overlay.
+An explicit network must be user-defined (the `host`/`none`/`bridge`/`default`
+built-ins are rejected) and, when the daemon is containerized, must be attached
+to the daemon, or sandbox creation fails closed.
+
 ## Uninstall
 
 Ordinary uninstall stops the Compose project and removes installer-managed
