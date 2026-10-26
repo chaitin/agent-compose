@@ -197,6 +197,8 @@ guest
 - **`external`（Compose + KVM，默认）**：sandbox-host 由 compose 预先启动，daemon 只连接、绝不拉起；socket 不可达时直接报错。这样 daemon 永远不会在自己的非特权容器里拉起一个没有 `/dev/kvm` 的"错位 host"去抢 `/data` 上的文件锁、把真正的 host 逼进 `restart: always` 崩溃循环。
 - **`managed`（宿主机部署 / 本地开发）**：daemon 拉起 `agent-compose sandbox-host`，脱离 daemon 的进程组和会话；用文件锁防止重复拉起，日志写到文件。注意 `Setsid` 只脱离进程组和会话，不脱离 cgroup：用 systemd 托管 daemon 时，`KillMode=control-group`（默认）会在停止 daemon 单元时把同 cgroup 里的 sandbox-host 一并杀掉，宿主侧要改成 `KillMode=mixed` 或让 sandbox-host 用独立 systemd 单元托管，否则 host 并不比 daemon 活得久。
 
+> **已知例外（deferral）**：daemon 的镜像缓存（`runtime_cache_sources_microsandbox.go`）和 runtime 残留清理（`microsandbox_managed_resources.go`）仍直接调用 microsandbox SDK 的元数据操作（`Image.List/Remove`、`ListSandboxesWith`、`RemoveSandbox`），没有走 RPC。这些是控制面元数据操作，不拿 live runtime 句柄、不需要 KVM，作用于 daemon 和 host 共享的 `MicrosandboxHome`；安全性来自三处兜底：残留清理只删 `Removable = !running` 的已停 sandbox、镜像删除带 `force=false` 的 SDK 级在用守卫、`ErrSandboxNotFound`/`ErrCacheNotFound` 幂等。残余风险是 list 与 remove 之间 host 恰好拉起同名 sandbox 的 TOCTOU 窗口，后果是那次启动失败（可 re-ensure 恢复）而非数据损坏。后续把 cache/cleanup 纳入 sandbox-host RPC 后应移除这两处直连。
+
 **Compose 部署**：只改 `docker-compose.kvm.yml`。installer 检测到 KVM 时本来就会叠加这个文件，用户的命令不变。
 
 ```yaml
