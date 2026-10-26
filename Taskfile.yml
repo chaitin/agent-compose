@@ -145,7 +145,7 @@ tasks:
         msg: "buf is required; run 'task prepare' first"
     cmds:
       - buf generate
-      - sh: 'cd pkg/driver/sandboxhost && buf generate'
+      - cd pkg/driver/sandboxhost && buf generate
 
   clean:
     desc: Remove generated build, test, and cache artifacts
@@ -333,6 +333,13 @@ tasks:
           AGENT_COMPOSE_E2E_GRACEFUL_STOP_DRIVERS="${AGENT_COMPOSE_E2E_GRACEFUL_STOP_DRIVERS:-docker,boxlite,microsandbox}" \
           GOCACHE={{.GO_BUILD_CACHE_DIR}} \
           {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EGracefulSandboxStopHostDaemon$' -count=1 -timeout 25m -v
+
+  test:e2e:sandbox-host-lifecycle:
+    desc: Run the opt-in sandbox-host process lifecycle E2E test (no KVM needed)
+    dir: '{{.TASKFILE_DIR}}'
+    deps: ['build:agent-compose']
+    cmds:
+      - AGENT_COMPOSE_E2E_BINARY="$PWD/build/agent-compose" GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2ESandboxHostSurvivesClientRestart$' -count=1 -timeout 5m -v
 
   test:e2e:network-policy:
     desc: Run the opt-in host-daemon declared-network-policy execution matrix E2E test (driver from AGENT_COMPOSE_E2E_NETWORK_POLICY_DRIVER, default docker)
