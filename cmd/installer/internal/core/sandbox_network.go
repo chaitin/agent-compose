@@ -8,9 +8,10 @@ import _ "embed"
 // It is embedded in the installer rather than shipped as a bundle member so
 // that an installer released before the overlay existed can still extract a
 // newer bundle during an in-place upgrade (its strict member whitelist would
-// otherwise reject the whole archive). The installer writes this content during
-// install and upgrade, so new deployments get the overlay without the bundle
-// carrying an unexpected member.
+// otherwise reject the whole archive). The installer rewrites this canonical
+// content on every install/upgrade, so new deployments get the overlay without
+// the bundle carrying an unexpected member and existing deployments pick up
+// later changes to it.
 //
 // Keep it in sync with docker-compose.sandbox-network.yml; divergence fails
 // TestSandboxNetworkOverlayMatchesRepoFile.

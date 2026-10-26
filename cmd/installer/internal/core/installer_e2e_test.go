@@ -40,8 +40,12 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 	if !regularFile(filepath.Join(installDir, "installer")) || !regularFile(filepath.Join(installDir, ".env")) {
 		t.Fatal("installation did not persist installer and environment")
 	}
-	if !regularFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml")) {
-		t.Fatal("installation did not persist the sandbox-network overlay")
+	overlayData, err := os.ReadFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml"))
+	if err != nil {
+		t.Fatalf("installation did not persist the sandbox-network overlay: %v", err)
+	}
+	if string(overlayData) != string(sandboxNetworkOverlay) {
+		t.Fatal("installation persisted a sandbox-network overlay that diverges from the embedded copy")
 	}
 	if strings.Join(runner.calls, "\n") != strings.Join([]string{
 		"|docker version --format {{.Server.Version}}",

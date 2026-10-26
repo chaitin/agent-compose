@@ -133,8 +133,10 @@ topology; it does not prove KVM permissions or BoxLite/Microsandbox health.
 
 The installer also writes `docker-compose.sandbox-network.yml` into the install
 directory so Docker-mode deployments can opt into sandbox network isolation.
-It is never selected by default: enable it by appending the overlay to
-`COMPOSE_FILE` in `.env` (for example
+It is installer-managed and rewritten on every install/upgrade (like
+`docker-compose.yml`), so operators opt in via `COMPOSE_FILE` rather than
+editing the file by hand. It is never selected by default: enable it by
+appending the overlay to `COMPOSE_FILE` in `.env` (for example
 `docker-compose.yml:docker-compose.sandbox-network.yml`) and running
 `docker compose up -d`. It is Docker-only and cannot be combined with
 `docker-compose.kvm.yml`. The overlay is embedded in the installer rather than
