@@ -10,6 +10,7 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
+	"github.com/chaitin/agent-compose/pkg/fxgo/utils"
 	"github.com/joho/godotenv"
 	"github.com/samber/do/v2"
 	"github.com/spf13/cobra"
@@ -34,6 +35,12 @@ func runSandboxHost(ctx context.Context) error {
 		// The parser embeds the unparsed remainder of the file in its message,
 		// which can include provider credentials.
 		log.Printf("dotenv load skipped: %v", sanitizeDotenvError(err))
+	}
+	// The host owns the VM processes, which inherit its file-descriptor limit;
+	// raise it the same way the daemon does so a VM's open files are not capped
+	// by whatever limit the host process inherited.
+	if err := utils.SetRlimitNoFile(); err != nil {
+		log.Printf("Warning: Failed to set RLIMIT_NOFILE: %v", err)
 	}
 
 	di := do.New()

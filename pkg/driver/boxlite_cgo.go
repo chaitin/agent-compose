@@ -603,7 +603,10 @@ func (r *cgoSandboxRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox
 }
 
 func (r *cgoSandboxRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState) error {
-	unlock := r.createLocks.lock(sandbox.Summary.ID)
+	unlock, err := r.createLocks.lockContext(ctx, sandbox.Summary.ID)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup != "" {

@@ -505,7 +505,10 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 }
 
 func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbox, vmState VMState) error {
-	unlock := r.createLocks.lock(session.Summary.ID)
+	unlock, err := r.createLocks.lockContext(ctx, session.Summary.ID)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 	if _, err := r.StopSandbox(ctx, session, vmState); err != nil {
 		return err

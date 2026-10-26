@@ -1,6 +1,8 @@
 package driver
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -80,5 +82,58 @@ func TestSandboxKeyedLocksReentrantRefCount(t *testing.T) {
 
 	if len(order) == 0 || order[0] == "second" {
 		t.Fatalf("same-key access was not serialized: %v", order)
+	}
+}
+
+func TestSandboxKeyedLocksContextCancel(t *testing.T) {
+	var locks sandboxKeyedLocks
+
+	// Hold the key so a second acquire must wait.
+	unlock := locks.lock("s")
+
+	// A context-aware acquire with an already-cancelled ctx gives up without
+	// acquiring and drops its waiting reference.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := locks.lockContext(ctx, "s"); !errors.Is(err, context.Canceled) {
+		unlock()
+		t.Fatalf("lockContext(cancelled) = %v, want context.Canceled", err)
+	}
+
+	// Cancelling while waiting must also release the reference and return
+	// context.Canceled without ever acquiring.
+	waiterDone := make(chan error, 1)
+	waitCtx, waitCancel := context.WithCancel(context.Background())
+	go func() {
+		_, err := locks.lockContext(waitCtx, "s")
+		waiterDone <- err
+	}()
+	time.Sleep(20 * time.Millisecond) // let the waiter queue behind the held lock
+	waitCancel()
+
+	select {
+	case err := <-waiterDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("lockContext returned %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waiter did not return after cancellation")
+	}
+
+	// The waiting reference is gone, leaving only the holder's.
+	locks.mu.Lock()
+	refs := locks.locks["s"].refs
+	locks.mu.Unlock()
+	if refs != 1 {
+		t.Fatalf("refs after cancelled wait = %d, want 1 (only the holder)", refs)
+	}
+
+	// Freeing the lock now removes the empty entry.
+	unlock()
+	locks.mu.Lock()
+	n := len(locks.locks)
+	locks.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("expected entry removed after holder left, got %d entries", n)
 	}
 }

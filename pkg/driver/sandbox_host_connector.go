@@ -73,6 +73,14 @@ func (c *SandboxHostConnector) Client(ctx context.Context) (sandboxhost.SandboxH
 // ProtocolVersion reports the protocol version negotiated with the sandbox-host
 // during the last successful dial. It is zero until the host is first reached,
 // which matches "no deny support" for a host the daemon has never spoken to.
+//
+// The version is negotiated once per daemon lifetime, at first dial: the daemon
+// and host are the same binary, so a host upgrade is what changes the version,
+// and the daemon re-negotiates it when it next starts (the #805 flow upgrades
+// the daemon, which restarts and re-dials). A host upgraded in place under a
+// running daemon keeps the daemon's cached version until the daemon restarts;
+// because capability gating (see requireDenyProtocolVersion) fails closed on a
+// stale version, that is safe, only conservative.
 func (c *SandboxHostConnector) ProtocolVersion() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -158,13 +166,14 @@ func spawnSandboxHost(socketPath, dataRoot string) error {
 	cmd.Stderr = logFile
 	cmd.Stdin = nil
 	// Detach from the daemon's process group and session so the host survives
-	// the daemon's shutdown and container stop. The daemon never Waits on it.
+	// the daemon's shutdown and container stop.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start sandbox-host: %w", err)
 	}
-	if err := cmd.Process.Release(); err != nil {
-		return fmt.Errorf("release sandbox-host process: %w", err)
-	}
+	// Reap the host when it eventually exits so a crash does not leave a zombie
+	// under the daemon. Setsid already detached it, so this only collects its
+	// exit status; it does not make the host die with the daemon.
+	go func() { _ = cmd.Wait() }()
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/driver/sandboxhost"
@@ -35,6 +36,13 @@ const sandboxHostDenyProtocolVersion = 2
 // 8 MiB of merged stdout+stderr). The value is applied symmetrically so a large
 // result never fails with ResourceExhausted after its chunks have streamed.
 const sandboxHostMaxMsgSize = 64 << 20
+
+// sandboxHostCreateTimeout bounds a Create that must survive the initiating
+// RPC's cancellation (the daemon may restart mid-create while a base-disk build
+// runs for tens of minutes). The bound is deliberately generous so legitimate
+// builds complete, but it prevents a hung create from holding the sandbox's
+// keyed create lock forever and starving every later ensure/remove.
+const sandboxHostCreateTimeout = 2 * time.Hour
 
 // sandboxHostServer serves the sandbox-host gRPC contract by dispatching to the
 // VM runtimes it holds in-process. It is the boundary the design document calls
@@ -147,8 +155,11 @@ func (s *sandboxHostServer) Create(ctx context.Context, req *sandboxhost.EnsureR
 	// restart mid-create (base-disk builds can take tens of minutes), and a new
 	// daemon's re-ensure must find the create still in progress and wait for it
 	// rather than starting a second one. The runtime's own ensure/create lock
-	// serializes concurrent callers.
-	info, err := runtime.EnsureSandbox(context.WithoutCancel(ctx), sandbox, vmState, proxyState)
+	// serializes concurrent callers. The detached context is still bounded by
+	// sandboxHostCreateTimeout so a hung create cannot hold the lock forever.
+	createCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sandboxHostCreateTimeout)
+	defer cancel()
+	info, err := runtime.EnsureSandbox(createCtx, sandbox, vmState, proxyState)
 	if err != nil {
 		return nil, sandboxHostStatus(err)
 	}

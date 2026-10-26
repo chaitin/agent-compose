@@ -76,6 +76,10 @@ type runtimeProvider struct {
 	config   *appconfig.Config
 	recorder *telemetry.Recorder
 	runtimes map[string]SandboxRuntime
+	// sandboxHost owns the daemon's connection to the sandbox-host process and
+	// is closed on shutdown so the gRPC transport has a shutdown owner rather
+	// than leaking until process exit.
+	sandboxHost *driverpkg.SandboxHostConnector
 	// egressProxy mediates a declaring sandbox's egress through the engine's
 	// forward proxy. Its zero value is inert: no credential store, no sandbox
 	// loader, no mediation, and the unenforced-declaration gate still applies.
@@ -154,6 +158,7 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	// daemon drives them through the remoteSandboxRuntime over the shared unix
 	// socket. See docs/design/daemon-upgrade-sandbox-survival.zh-CN.md §3.4.
 	sandboxHost := driverpkg.NewSandboxHostConnector(config.SandboxHostSocket, config.DataRoot, driverpkg.SandboxHostMode(config.SandboxHostMode))
+	provider.sandboxHost = sandboxHost
 	boxliteRuntime := driverpkg.NewRemoteSandboxRuntime(driverpkg.RuntimeDriverBoxlite, sandboxHost)
 	microsandboxRuntime := driverpkg.NewRemoteSandboxRuntime(driverpkg.RuntimeDriverMicrosandbox, sandboxHost)
 	dockerRuntime, err := driverpkg.NewDockerRuntime(config)
@@ -203,6 +208,15 @@ func (p *runtimeProvider) ForDriver(driver string) (SandboxRuntime, error) {
 		return nil, fmt.Errorf("agent-compose runtime %q is not configured", driver)
 	}
 	return runtime, nil
+}
+
+// Close closes the daemon's connection to the sandbox-host process. It gives
+// the gRPC transport a shutdown owner; the daemon calls it during shutdown.
+func (p *runtimeProvider) Close() error {
+	if p.sandboxHost == nil {
+		return nil
+	}
+	return p.sandboxHost.Close()
 }
 
 func classifyRuntimeProviderError(err error) error {
