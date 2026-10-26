@@ -1,0 +1,30 @@
+# Docker-mode sandbox network isolation overlay.
+#
+# It creates a dedicated `agent-compose-sandbox` network, dual-homes the daemon
+# onto it, and injects DOCKER_SANDBOX_NETWORK so the Docker driver places new
+# sandboxes on that network. Selecting this overlay is the whole switch: the
+# operator does not set any sandbox-network variable by hand.
+# `container_name: agent-compose` resolves on every network the container joins,
+# so the default AGENT_COMPOSE_RUNTIME_BASE_URL (http://agent-compose:7410)
+# keeps reaching the daemon from the sandbox network.
+#
+# Enable it by setting, in .env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.sandbox-network.yml
+#
+# Docker-driver deployments only: BoxLite and Microsandbox sandboxes are
+# microVMs that share the sandbox-host network namespace, so this overlay does
+# not apply to them and cannot be combined with docker-compose.kvm.yml.
+services:
+  agent-compose:
+    networks:
+      - default
+      - sandbox
+    environment:
+      DOCKER_SANDBOX_NETWORK: agent-compose-sandbox
+
+networks:
+  sandbox:
+    # Fixed physical name: Compose would otherwise call it <project>_sandbox,
+    # which changes with the directory or -p flag, while DOCKER_SANDBOX_NETWORK
+    # must be a stable Docker network name.
+    name: agent-compose-sandbox

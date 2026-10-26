@@ -102,9 +102,12 @@ type Config struct {
 	DockerHostSandboxRoot   string
 	DockerDefaultImage      string
 	// DockerSandboxNetwork is the Docker network each newly-created Docker
-	// sandbox container is attached to. Empty keeps the current behavior: the
-	// sandbox joins the daemon's own network. Existing sandbox containers are
-	// reused as-is and keep their current network until they are recreated.
+	// sandbox container is attached to. Empty keeps the current behavior when
+	// the daemon is on a single non-default network: the sandbox joins the
+	// daemon's own network. A containerized daemon attached to multiple
+	// non-default networks is ambiguous, so the driver fails closed instead of
+	// guessing. Existing sandbox containers are reused as-is and keep their
+	// current network until they are recreated.
 	// When set, the network must exist (the driver fails closed if it does not)
 	// and the daemon must be reachable from it: a deployment that separates the
 	// daemon and sandbox networks has to dual-home the daemon onto this network

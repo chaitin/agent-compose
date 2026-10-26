@@ -53,6 +53,51 @@ func TestExtractBundleSkipsUnknownAndTraversalMembers(t *testing.T) {
 	}
 }
 
+func TestExtractBundleSkipsUnknownDirectoryMembers(t *testing.T) {
+	var archive bytes.Buffer
+	gzipWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzipWriter)
+	members := []struct {
+		name    string
+		dir     bool
+		content string
+	}{
+		{name: "agent-compose-installer", dir: true},
+		{name: "agent-compose-installer/future-dir", dir: true},
+		{name: "agent-compose-installer/docker-compose.yml", content: "services: {}\n"},
+		{name: "agent-compose-installer/.env.example", content: "AUTH_PASSWORD=\nAUTH_SECRET=\n"},
+		{name: "agent-compose-installer/images", dir: true},
+		{name: "agent-compose-installer/images/manifest.env", content: "AGENT_COMPOSE_IMAGE=registry.example/agent-compose:v1\n"},
+	}
+	for _, member := range members {
+		header := &tar.Header{Name: member.name, Mode: 0o644}
+		if member.dir {
+			header.Typeflag = tar.TypeDir
+			header.Mode = 0o755
+		} else {
+			header.Typeflag = tar.TypeReg
+			header.Size = int64(len(member.content))
+		}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if !member.dir {
+			if _, err := tarWriter.Write([]byte(member.content)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractBundle(archive.Bytes(), t.TempDir()); err != nil {
+		t.Fatalf("extractBundle rejected an unknown directory member: %v", err)
+	}
+}
+
 func TestExtractBundleRejectsNonRegularKnownMember(t *testing.T) {
 	var archive bytes.Buffer
 	gzipWriter := gzip.NewWriter(&archive)

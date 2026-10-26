@@ -132,11 +132,10 @@ func extractBundle(data []byte, destination string) error {
 		maxSize int64
 	}
 	allowed := map[string]bundleMember{
-		"agent-compose-installer/docker-compose.yml":                 {mode: 0o644, maxSize: 8 << 20},
-		"agent-compose-installer/docker-compose.kvm.yml":             {mode: 0o644, maxSize: 8 << 20},
-		"agent-compose-installer/docker-compose.sandbox-network.yml": {mode: 0o644, maxSize: 8 << 20},
-		"agent-compose-installer/.env.example":                       {mode: 0o644, maxSize: 8 << 20},
-		"agent-compose-installer/images/manifest.env":                {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/docker-compose.yml":     {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/docker-compose.kvm.yml": {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/.env.example":           {mode: 0o644, maxSize: 8 << 20},
+		"agent-compose-installer/images/manifest.env":    {mode: 0o644, maxSize: 8 << 20},
 		// Releases produced before payload versioning bundled these unused files.
 		"agent-compose-installer/README.md":  {mode: 0o644, maxSize: 1 << 20},
 		"agent-compose-installer/install.sh": {mode: 0o644, maxSize: 1 << 20},
@@ -152,9 +151,10 @@ func extractBundle(data []byte, destination string) error {
 		}
 		name := filepath.ToSlash(filepath.Clean(header.Name))
 		if header.Typeflag == tar.TypeDir {
-			if name != "agent-compose-installer" && name != "agent-compose-installer/images" {
-				return fmt.Errorf("unexpected directory in deployment bundle: %s", name)
-			}
+			// Directory entries are informational: only whitelisted regular
+			// files are ever written, and their parent directories are created
+			// by MkdirAll below. Skipping them keeps the forward-compatible
+			// skip consistent for directories and files alike.
 			continue
 		}
 		member, ok := allowed[name]

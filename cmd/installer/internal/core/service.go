@@ -297,19 +297,21 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 		}
 		plan.files["docker-compose.kvm.yml"] = 0o644
 	}
-	sandboxNetworkBundlePath := filepath.Join(source.Dir, "docker-compose.sandbox-network.yml")
+	// The sandbox-network overlay is embedded in the installer rather than
+	// shipped as a bundle member, so an installer released before the overlay
+	// existed can still extract a newer bundle during an in-place upgrade.
+	// Preserve an operator-provided overlay verbatim; otherwise write the
+	// embedded canonical copy.
 	sandboxNetworkInstalledPath := filepath.Join(options.InstallDir, "docker-compose.sandbox-network.yml")
-	if regularFile(sandboxNetworkBundlePath) {
-		if err := copyFile(sandboxNetworkBundlePath, filepath.Join(workDir, "docker-compose.sandbox-network.yml"), 0o644); err != nil {
+	sandboxNetworkTarget := filepath.Join(workDir, "docker-compose.sandbox-network.yml")
+	if regularFile(sandboxNetworkInstalledPath) {
+		if err := copyFile(sandboxNetworkInstalledPath, sandboxNetworkTarget, 0o644); err != nil {
 			return fail(err)
 		}
-		plan.files["docker-compose.sandbox-network.yml"] = 0o644
-	} else if regularFile(sandboxNetworkInstalledPath) {
-		if err := copyFile(sandboxNetworkInstalledPath, filepath.Join(workDir, "docker-compose.sandbox-network.yml"), 0o644); err != nil {
-			return fail(err)
-		}
-		plan.files["docker-compose.sandbox-network.yml"] = 0o644
+	} else if err := os.WriteFile(sandboxNetworkTarget, sandboxNetworkOverlay, 0o644); err != nil {
+		return fail(err)
 	}
+	plan.files["docker-compose.sandbox-network.yml"] = 0o644
 
 	envPath := filepath.Join(options.InstallDir, ".env")
 	envData, envExists, err := readOptionalFile(envPath)
