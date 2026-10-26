@@ -26,6 +26,12 @@ import (
 const (
 	SandboxTokenMetadata           = "x-capability-sandbox-token"
 	deprecatedSessionTokenMetadata = "x-capability-session-token"
+	// projectScopeMetadata carries the sandbox's project scope (agent-compose's
+	// engine project id) to the daemon-wide capability gateway, so the platform
+	// egress can attribute calls that arrive without a caller identity. capproxy
+	// owns it: it strips any guest-supplied value and only sets it on the
+	// gateway path, never for project-scoped octobus_servers entries.
+	projectScopeMetadata = "x-octobus-project-id"
 )
 
 type SandboxBinding struct {
@@ -126,7 +132,7 @@ func (s *Server) handleUnknown(_ any, stream grpc.ServerStream) error {
 	if err != nil {
 		return err
 	}
-	outgoing := buildOutgoingMetadata(stream.Context(), target.CapsetID, binding)
+	outgoing := buildOutgoingMetadata(stream.Context(), target.CapsetID, binding, target.Gateway)
 	if !isReflectionMethod(method) {
 		// Business calls route by capset + instance + method. The instance comes
 		// from the injected guide.
@@ -144,7 +150,7 @@ func (s *Server) handleUnknown(_ any, stream grpc.ServerStream) error {
 // cannot reach a capset outside its set.
 // Trusted x-octobus-ext-* headers from the sandbox binding replace any values
 // the guest may have supplied.
-func buildOutgoingMetadata(ctx context.Context, capset string, binding SandboxBinding) metadata.MD {
+func buildOutgoingMetadata(ctx context.Context, capset string, binding SandboxBinding, gateway bool) metadata.MD {
 	incoming, _ := metadata.FromIncomingContext(ctx)
 	outgoing := incoming.Copy()
 	outgoing.Delete(SandboxTokenMetadata)
@@ -163,6 +169,15 @@ func buildOutgoingMetadata(ctx context.Context, capset string, binding SandboxBi
 	// Preserve repeated trusted values in their original HTTP order.
 	for _, h := range binding.TrustedHeaders {
 		outgoing.Append(h.Name, h.Value)
+	}
+
+	// The project scope is agent-compose's own sandbox-binding fact, never a
+	// guest claim. Strip any guest-supplied value, then forward it only on the
+	// daemon-wide gateway path (the platform egress); project-scoped
+	// octobus_servers entries neither need it nor receive it.
+	outgoing.Delete(projectScopeMetadata)
+	if gateway && binding.ProjectID != "" {
+		outgoing.Set(projectScopeMetadata, binding.ProjectID)
 	}
 
 	return outgoing

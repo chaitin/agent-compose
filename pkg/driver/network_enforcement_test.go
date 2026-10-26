@@ -270,6 +270,22 @@ func TestRequireSandboxNetworkEnforcementReportsAnUnappliedAddressConstraint(t *
 		t.Fatalf("a mediated sandbox with an address-constrained allowance was refused: %v", err)
 	}
 
+	// Microsandbox also receives the proxy, but its SDK filter applies the
+	// destination without allowed_ips. Traffic that bypasses the proxy therefore
+	// sees a weaker rule than the declaration, which refuse mode must not accept.
+	mediatedDriver := constrained
+	mediatedDriver.MediatedByForwardProxy = true
+	if err := RequireSandboxNetworkEnforcement(RuntimeDriverMicrosandbox, "sandbox-1", &mediatedDriver, config.EgressUnenforceableWarn); err != nil {
+		t.Fatalf("warn mode refused instead of reporting: %v", err)
+	}
+	err = RequireSandboxNetworkEnforcement(RuntimeDriverMicrosandbox, "sandbox-1", &mediatedDriver, config.EgressUnenforceableRefuse)
+	if !errors.Is(err, ErrSandboxNetworkEnforcementUnavailable) {
+		t.Fatalf("refuse mode error = %v, want the enforcement-unavailable sentinel", err)
+	}
+	if !strings.Contains(err.Error(), "bypasses the proxy") || !strings.Contains(err.Error(), "allowed_ips") {
+		t.Fatalf("refusal = %v, want the bypass-only address gap named", err)
+	}
+
 	// An allowance with no address constraint is unaffected.
 	plain := SandboxNetworkPolicy{
 		Default: egress.Deny,

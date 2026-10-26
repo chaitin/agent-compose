@@ -125,10 +125,11 @@ func (p Policy) Rules() []Rule {
 	return copied
 }
 
-func (r Rule) matches(name string) bool {
+func (r Rule) matches(request Request) bool {
 	if r.Match == MatchEndpoint {
-		return r.matchesEndpoint(name)
+		return r.matchesEndpoint(request)
 	}
+	name := request.Name
 	if len(r.Names) == 0 {
 		return true
 	}
@@ -145,11 +146,11 @@ func (r Rule) matches(name string) bool {
 // unparsable request name matches no pattern, so it falls through to the policy
 // default instead of being allowed by accident; an unparsable rule pattern is
 // skipped deliberately, so a pattern the engine cannot interpret never matches.
-func (r Rule) matchesEndpoint(name string) bool {
+func (r Rule) matchesEndpoint(request Request) bool {
 	if len(r.Names) == 0 {
 		return true
 	}
-	target, err := ParseEndpoint(name)
+	target, err := ParseEndpoint(request.Name)
 	if err != nil {
 		return false
 	}
@@ -158,7 +159,7 @@ func (r Rule) matchesEndpoint(name string) bool {
 		if err != nil {
 			continue
 		}
-		if pattern.matches(target) {
+		if pattern.matches(target, request.ResolvedIPs, r.Action) {
 			return true
 		}
 	}

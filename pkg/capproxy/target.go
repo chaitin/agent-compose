@@ -16,6 +16,10 @@ type Target struct {
 	Addr     string
 	Token    string
 	CapsetID string
+	// Gateway reports that the target is the daemon-wide capability gateway (an
+	// unqualified capset) rather than a project-scoped octobus_servers entry.
+	// The project scope header is only forwarded on the gateway path.
+	Gateway bool
 }
 
 // TargetResolver resolves a qualified capset declaration for an authenticated
@@ -36,7 +40,7 @@ func (s *Server) resolveTarget(ctx context.Context, binding SandboxBinding, decl
 		if !ok {
 			return Target{}, status.Error(codes.Unavailable, "capability gateway is not configured")
 		}
-		return Target{Addr: addr, Token: token, CapsetID: declaration}, nil
+		return Target{Addr: addr, Token: token, CapsetID: declaration, Gateway: true}, nil
 	}
 	if s.targets == nil {
 		return Target{}, status.Error(codes.Unavailable, "project capability gateway is not configured")

@@ -1012,6 +1012,28 @@ agent-compose config --quiet
 - 操作远程 daemon 时显式传入 `--host`，并确认目标 daemon 上的 project 名称和配置文件路径符合预期。
 - 脚本和自动化系统使用 `--json`，避免依赖表格列宽或文本排版。
 
+## Daemon 全局网络策略
+
+在 daemon 环境中设置 `EGRESS_GLOBAL_POLICY_FILE`，指向一个 YAML 文件，为所有 sandbox 声明外层出网策略。文件内容与 Agent 的 `policy.network` 块相同，包含 `default`、`allow`、`deny`，不需要外层 `network:`。必须显式写出 `default`（`allow-all` 或 `deny-all`）；省略 `default` 会直接导致启动失败，而不会沿用 compose 中“省略即 allow-all”的规则。daemon 在启动时读取一次；文件不可读、包含未知字段、缺少 `default` 或值非法都会导致启动失败。
+
+```dotenv
+EGRESS_GLOBAL_POLICY_FILE=/data/work/global-network-policy.yaml
+```
+
+```yaml
+default: deny-all
+allow:
+  - host: "*.example.com"
+    ports: [443, 80]
+  - host: 10.0.0.0/8
+    port: 5432
+deny:
+  - host: metadata.example.com
+    port: 80
+```
+
+daemon 策略对没有声明策略的 Agent 同样生效。Agent 声明只能收窄它，不能放宽：两个白名单取交集，超出 daemon 白名单的 Agent 放行项会被拒绝；daemon 的拒绝项始终保留。最终策略会进入 driver 边界和正向代理。启动日志与准入报告会给出读入的文件路径和 SHA-256，报告还会给每条最终条目标出 `[daemon]`/`[agent]` 来源。修改文件需要重启 daemon。组合规则见 [Agent Compose YAML 手册](agent-compose-yaml-manual.html)。
+
 ## Agent 原生遥测
 
 在 daemon 环境（部署时的 `.env` 文件）中配置后重启 daemon。新的执行，包括恢复的

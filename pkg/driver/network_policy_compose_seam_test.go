@@ -14,7 +14,7 @@ import (
 // the hand-written egress constants in the other tests could not catch: the
 // schema normalizes an omitted (or explicit) permissive default to "allow-all",
 // which is not an egress.Action, so a declaration that did not spell out
-// default: deny used to fail compilation and refuse to start the sandbox.
+// default: deny-all used to fail compilation and refuse to start the sandbox.
 func TestSandboxNetworkPolicyFromComposeDeclaration(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -25,7 +25,7 @@ func TestSandboxNetworkPolicyFromComposeDeclaration(t *testing.T) {
 		{
 			name: "omitted default with an allowance",
 			declaration: &compose.SandboxNetworkSpec{
-				Allow: []compose.SandboxNetworkAllowSpec{{Host: "api.github.com", Port: 443, Protocol: "https"}},
+				Allow: []compose.SandboxNetworkAllowSpec{{Host: "api.github.com", Port: 443}},
 			},
 			wantDefault: egress.Allow,
 		},
@@ -42,8 +42,8 @@ func TestSandboxNetworkPolicyFromComposeDeclaration(t *testing.T) {
 		{
 			name: "declared deny",
 			declaration: &compose.SandboxNetworkSpec{
-				Default: "deny",
-				Allow:   []compose.SandboxNetworkAllowSpec{{Host: "api.github.com", Port: 443, Protocol: "https"}},
+				Default: "deny-all",
+				Allow:   []compose.SandboxNetworkAllowSpec{{Host: "api.github.com", Port: 443}},
 			},
 			wantDefault:     egress.Deny,
 			wantDenyDefault: true,

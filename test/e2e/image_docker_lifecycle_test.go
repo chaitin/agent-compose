@@ -62,13 +62,15 @@ type imageDockerBuildInfo struct {
 }
 
 type imageDockerFixture struct {
-	docker      *client.Client
-	containerID string
-	networkID   string
-	networkName string
-	volumeName  string
-	sandboxID   string
-	baseURL     string
+	docker             *client.Client
+	containerID        string
+	networkID          string
+	networkName        string
+	sandboxNetworkID   string
+	sandboxNetworkName string
+	volumeName         string
+	sandboxID          string
+	baseURL            string
 }
 
 func TestE2EImageDockerNoKVMStartup(t *testing.T) {
@@ -244,6 +246,100 @@ func TestE2EImageDockerSandboxLifecycle(t *testing.T) {
 	assertImageDockerFixtureRemoved(t, fixture)
 }
 
+func TestE2EImageDockerSandboxNetworkPlacement(t *testing.T) {
+	daemonImage := strings.TrimSpace(os.Getenv(imageDockerE2EDaemonImageEnv))
+	if daemonImage == "" {
+		t.Skipf("set %s to run the containerized daemon sandbox-network placement smoke", imageDockerE2EDaemonImageEnv)
+	}
+	guestImage := strings.TrimSpace(os.Getenv(imageDockerE2EGuestImageEnv))
+	if guestImage == "" {
+		t.Fatalf("%s must name a local guest image", imageDockerE2EGuestImageEnv)
+	}
+	dockerSocket := strings.TrimSpace(os.Getenv(imageDockerE2ESocketEnv))
+	if dockerSocket == "" {
+		dockerSocket = "/var/run/docker.sock"
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dockerClient := newE2EDockerClient(t, ctx, daemonImage, guestImage)
+	t.Cleanup(func() { _ = dockerClient.Close() })
+	fixture := startImageDockerSandboxNetworkDaemon(t, ctx, dockerClient, daemonImage, guestImage, dockerSocket)
+	version := waitForImageDockerVersion(t, ctx, fixture)
+	assertImageDockerVersion(t, fixture, version, "linux", imageDockerImageArchitecture(t, ctx, dockerClient, daemonImage))
+
+	httpClient := imageDockerHTTPClient(0)
+	projectClient := agentcomposev2connect.NewProjectServiceClient(httpClient, fixture.baseURL)
+	runClient := agentcomposev2connect.NewRunServiceClient(httpClient, fixture.baseURL)
+	execClient := agentcomposev2connect.NewExecServiceClient(httpClient, fixture.baseURL)
+
+	projectResp, err := projectClient.ApplyProject(ctx, connect.NewRequest(&agentcomposev2.ApplyProjectRequest{
+		Spec: &agentcomposev2.ProjectSpec{
+			Name: "image-docker-sandbox-network-e2e",
+			Agents: []*agentcomposev2.AgentSpec{{
+				Name:     "placement",
+				Provider: "codex",
+				Image:    guestImage,
+				Sandbox: &agentcomposev2.SandboxSpec{
+					StoppedRuntimePolicy: domain.StoppedRuntimePolicyRetain,
+				},
+				Driver: &agentcomposev2.DriverSpec{
+					Name:   "docker",
+					Config: &agentcomposev2.DriverSpec_Docker{Docker: &agentcomposev2.DockerDriverSpec{}},
+				},
+			}},
+		},
+		Source: &agentcomposev2.ProjectSource{
+			ComposePath: "/data/image-docker-sandbox-network-e2e/agent-compose.yml",
+			ProjectDir:  "/data/image-docker-sandbox-network-e2e",
+		},
+	}))
+	if err != nil {
+		failImageDockerFixture(t, fixture, "ApplyProject returned error: %v", err)
+	}
+	if !projectResp.Msg.GetApplied() || projectResp.Msg.GetProject().GetSummary().GetProjectId() == "" {
+		failImageDockerFixture(t, fixture, "ApplyProject response = %#v", projectResp.Msg)
+	}
+	runResp, err := runClient.RunAgent(ctx, connect.NewRequest(&agentcomposev2.RunAgentRequest{
+		ProjectId:       projectResp.Msg.GetProject().GetSummary().GetProjectId(),
+		AgentName:       "placement",
+		Command:         "true",
+		Source:          agentcomposev2.RunSource_RUN_SOURCE_API,
+		CleanupPolicy:   agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING,
+		ClientRequestId: "image-docker-sandbox-network-e2e-" + strconv.FormatInt(time.Now().UnixNano(), 10),
+	}))
+	if err != nil {
+		failImageDockerFixture(t, fixture, "RunAgent returned error: %v", err)
+	}
+	runSummary := runResp.Msg.GetRun().GetSummary()
+	fixture.sandboxID = runSummary.GetSandboxId()
+	if fixture.sandboxID == "" || runSummary.GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED {
+		failImageDockerFixture(t, fixture, "RunAgent summary = %#v", runSummary)
+	}
+
+	info := inspectImageDockerSandboxContainer(t, ctx, fixture)
+	if info.NetworkSettings == nil {
+		failImageDockerFixture(t, fixture, "sandbox %s has no network settings", info.ID)
+	}
+	if _, ok := info.NetworkSettings.Networks[fixture.sandboxNetworkName]; !ok {
+		failImageDockerFixture(t, fixture, "sandbox %s is not on the dedicated network %s: networks=%v", info.ID, fixture.sandboxNetworkName, imageDockerSandboxNetworkNames(info))
+	}
+	if _, ok := info.NetworkSettings.Networks[fixture.networkName]; ok {
+		failImageDockerFixture(t, fixture, "sandbox %s unexpectedly shares the daemon's default network %s: networks=%v", info.ID, fixture.networkName, imageDockerSandboxNetworkNames(info))
+	}
+
+	// The control-plane Exec round-trip proves the daemon can reach the sandbox
+	// (Jupyter/exec) even though the two no longer share the daemon's default
+	// network: the daemon is dual-homed onto the dedicated network.
+	execResult := runImageDockerExec(t, ctx, fixture, execClient, "sh", "-lc", "printf sandbox-network-e2e > /workspace/placement-marker && cat /workspace/placement-marker")
+	if !execResult.GetSuccess() || execResult.GetExitCode() != 0 || execResult.GetStdout() != "sandbox-network-e2e" {
+		failImageDockerFixture(t, fixture, "placement Exec result = %#v", execResult)
+	}
+
+	fixture.cleanup(t)
+	assertImageDockerFixtureRemoved(t, fixture)
+}
+
 func runImageDockerVersionCommand(t *testing.T, ctx context.Context, dockerClient *client.Client, image string) imageDockerBuildInfo {
 	t.Helper()
 	name := imageDockerResourceName("version")
@@ -349,24 +445,8 @@ func startImageDockerLifecycleDaemon(t *testing.T, ctx context.Context, dockerCl
 	fixture.volumeName = volume.Name
 	port := nat.Port(imageDockerDaemonPort)
 	createResp, err := dockerClient.ContainerCreate(ctx, &containerapi.Config{
-		Image: daemonImage,
-		Env: []string{
-			"AGENT_COMPOSE_SOCKET=/data/agent-compose.sock",
-			"AUTH_PASSWORD=",
-			"AUTH_USERNAME=",
-			"DATA_ROOT=/data",
-			"DEFAULT_IMAGE=" + guestImage,
-			"DOCKER_DEFAULT_IMAGE=" + guestImage,
-			"DOCKER_HOST=unix:///var/run/docker.sock",
-			"HTTP_LISTEN=0.0.0.0:7410",
-			"LLM_API_ENDPOINT=",
-			"LLM_API_KEY=",
-			"OPENAI_API_KEY=",
-			"RUNTIME_DRIVER=docker",
-			"SANDBOX_ROOT=/data/sandboxes",
-			"SANDBOX_START_TIMEOUT=2m",
-			"SANDBOX_STOP_TIMEOUT=30s",
-		},
+		Image:        daemonImage,
+		Env:          imageDockerDaemonEnv(guestImage),
 		ExposedPorts: nat.PortSet{port: struct{}{}},
 		Labels:       imageDockerLabels(name),
 	}, &containerapi.HostConfig{
@@ -387,6 +467,101 @@ func startImageDockerLifecycleDaemon(t *testing.T, ctx context.Context, dockerCl
 	}
 	fixture.baseURL = imageDockerDaemonBaseURL(t, ctx, fixture)
 	return fixture
+}
+
+func imageDockerDaemonEnv(guestImage string) []string {
+	return []string{
+		"AGENT_COMPOSE_SOCKET=/data/agent-compose.sock",
+		"AUTH_PASSWORD=",
+		"AUTH_USERNAME=",
+		"DATA_ROOT=/data",
+		"DEFAULT_IMAGE=" + guestImage,
+		"DOCKER_DEFAULT_IMAGE=" + guestImage,
+		"DOCKER_HOST=unix:///var/run/docker.sock",
+		"HTTP_LISTEN=0.0.0.0:7410",
+		"LLM_API_ENDPOINT=",
+		"LLM_API_KEY=",
+		"OPENAI_API_KEY=",
+		"RUNTIME_DRIVER=docker",
+		"SANDBOX_ROOT=/data/sandboxes",
+		"SANDBOX_START_TIMEOUT=2m",
+		"SANDBOX_STOP_TIMEOUT=30s",
+	}
+}
+
+func startImageDockerSandboxNetworkDaemon(t *testing.T, ctx context.Context, dockerClient *client.Client, daemonImage, guestImage, dockerSocket string) *imageDockerFixture {
+	t.Helper()
+	name := imageDockerResourceName("sandbox-network")
+	defaultResp, err := dockerClient.NetworkCreate(ctx, name, networkapi.CreateOptions{
+		Driver: "bridge",
+		Labels: imageDockerLabels(name),
+	})
+	if err != nil {
+		t.Fatalf("create image Docker E2E default network: %v", err)
+	}
+	sandboxName := name + "-sandbox"
+	sandboxResp, err := dockerClient.NetworkCreate(ctx, sandboxName, networkapi.CreateOptions{
+		Driver: "bridge",
+		Labels: imageDockerLabels(name),
+	})
+	if err != nil {
+		t.Fatalf("create image Docker E2E sandbox network: %v", err)
+	}
+	fixture := &imageDockerFixture{
+		docker:             dockerClient,
+		networkID:          defaultResp.ID,
+		networkName:        name,
+		sandboxNetworkID:   sandboxResp.ID,
+		sandboxNetworkName: sandboxName,
+	}
+	t.Cleanup(func() { fixture.cleanup(t) })
+	volume, err := dockerClient.VolumeCreate(ctx, volumeapi.CreateOptions{
+		Name:   name,
+		Labels: imageDockerLabels(name),
+	})
+	if err != nil {
+		failImageDockerFixture(t, fixture, "create image Docker E2E data volume: %v", err)
+	}
+	fixture.volumeName = volume.Name
+	port := nat.Port(imageDockerDaemonPort)
+	createResp, err := dockerClient.ContainerCreate(ctx, &containerapi.Config{
+		Image:        daemonImage,
+		Env:          append(imageDockerDaemonEnv(guestImage), "DOCKER_SANDBOX_NETWORK="+sandboxName),
+		ExposedPorts: nat.PortSet{port: struct{}{}},
+		Labels:       imageDockerLabels(name),
+	}, &containerapi.HostConfig{
+		AutoRemove:  false,
+		NetworkMode: containerapi.NetworkMode(name),
+		Mounts: []mountapi.Mount{
+			{Type: mountapi.TypeBind, Source: dockerSocket, Target: "/var/run/docker.sock"},
+			{Type: mountapi.TypeVolume, Source: volume.Name, Target: "/data"},
+		},
+		PortBindings: nat.PortMap{port: []nat.PortBinding{{HostIP: "127.0.0.1"}}},
+	}, nil, nil, name)
+	if err != nil {
+		failImageDockerFixture(t, fixture, "create sandbox-network daemon container: %v", err)
+	}
+	fixture.containerID = createResp.ID
+	if err := dockerClient.NetworkConnect(ctx, sandboxName, createResp.ID, nil); err != nil {
+		failImageDockerFixture(t, fixture, "connect daemon to sandbox network %s: %v", sandboxName, err)
+	}
+	if err := dockerClient.ContainerStart(ctx, createResp.ID, containerapi.StartOptions{}); err != nil {
+		failImageDockerFixture(t, fixture, "start sandbox-network daemon container: %v", err)
+	}
+	fixture.baseURL = imageDockerDaemonBaseURL(t, ctx, fixture)
+	return fixture
+}
+
+func imageDockerSandboxNetworkNames(info containerapi.InspectResponse) []string {
+	if info.NetworkSettings == nil {
+		return nil
+	}
+	names := make([]string, 0, len(info.NetworkSettings.Networks))
+	for name := range info.NetworkSettings.Networks {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 func imageDockerResourceName(kind string) string {
@@ -651,6 +826,11 @@ func (fixture *imageDockerFixture) cleanup(t *testing.T) {
 	if fixture.networkID != "" {
 		if err := fixture.docker.NetworkRemove(ctx, fixture.networkID); err != nil && !cerrdefs.IsNotFound(err) {
 			t.Errorf("remove image Docker E2E network %s: %v", fixture.networkID, err)
+		}
+	}
+	if fixture.sandboxNetworkID != "" {
+		if err := fixture.docker.NetworkRemove(ctx, fixture.sandboxNetworkID); err != nil && !cerrdefs.IsNotFound(err) {
+			t.Errorf("remove image Docker E2E sandbox network %s: %v", fixture.sandboxNetworkID, err)
 		}
 	}
 	if fixture.volumeName != "" {

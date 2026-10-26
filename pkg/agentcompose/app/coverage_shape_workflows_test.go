@@ -12,4 +12,13 @@ func TestIntegrationAppSetupWorkflow(t *testing.T) {
 
 func TestE2EAppSetupWorkflow(t *testing.T) {
 	TestIntegrationAppSetupWorkflow(t)
+	t.Run("rejected network policy admission", TestIntegrationRejectedNetworkPolicyLeavesNoProject)
+	t.Run("network policy reports", func(t *testing.T) {
+		TestAgentNetworkPolicyReportsNameTheMechanismAndTheGap(t)
+		TestAgentNetworkPolicyReportsStateTheOutcomeOfAnUnenforceableDeclaration(t)
+		TestAgentNetworkPolicyReportsRejectADeclarationTheEngineCannotRead(t)
+		TestAgentNetworkPolicyReportsIncludeTheDaemonGlobalPolicy(t)
+		TestAgentNetworkPolicyReportsCarryPolicyProvenance(t)
+		TestNetworkPolicyConnectErrorClassifiesTheDeclaration(t)
+	})
 }

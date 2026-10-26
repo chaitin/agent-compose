@@ -19,14 +19,22 @@ func TestNetworkPolicyReportsToProtoCarriesTheDeclaredAccount(t *testing.T) {
 		Restricts: true,
 		Default:   egress.Deny,
 		Allow: []egress.DeclaredAllowance{{
-			Endpoint:    "api.github.com:443/https",
-			Inspectable: true,
-			AllowedIPs:  []string{"203.0.113.0/24"},
+			Endpoint:   "api.github.com:443/*",
+			AllowedIPs: []string{"203.0.113.0/24"},
+			Sources:    []string{"daemon", "agent"},
 		}},
-		Mediated:    true,
-		Enforced:    true,
-		Enforcement: driverpkg.SandboxEgressForwardProxyEnforcement("docker"),
-		Warning:     "",
+		Deny: []egress.DeclaredDenial{{
+			Endpoint: "metadata.example.com:80/*",
+			Sources:  []string{"daemon"},
+		}},
+		Mediated:           true,
+		Enforced:           true,
+		Enforcement:        driverpkg.SandboxEgressForwardProxyEnforcement("docker"),
+		Mechanisms:         []string{"forward_proxy"},
+		Limitations:        []string{"traffic that bypasses the proxy is not decided"},
+		DaemonPolicySource: "/policy.yaml",
+		DaemonPolicySHA256: "abc123",
+		Warning:            "",
 	}}
 
 	mapped := NetworkPolicyReportsToProto(reports)
@@ -37,15 +45,28 @@ func TestNetworkPolicyReportsToProtoCarriesTheDeclaredAccount(t *testing.T) {
 	if report.GetAgent() != "worker" || report.GetDriver() != "docker" || !report.GetRestricts() || !report.GetMediated() || !report.GetEnforced() {
 		t.Fatalf("mapped report = %+v, want the declared, mediated default-deny account", report)
 	}
-	if report.GetDefault() != string(egress.Deny) || report.GetMechanism() != "forward_proxy" || report.GetStrength() != "allowlist" {
-		t.Fatalf("mapped report = %+v, want the default action and the proxy mechanism", report)
+	if report.GetDefault() != "deny-all" || report.GetMechanism() != "forward_proxy" || report.GetStrength() != "allowlist" {
+		t.Fatalf("mapped report = %+v, want the deny-all mode and the proxy mechanism", report)
 	}
 	allow := report.GetAllow()
-	if len(allow) != 1 || allow[0].GetEndpoint() != "api.github.com:443/https" || !allow[0].GetInspectable() {
-		t.Fatalf("allow = %+v, want the inspectable https allowance", allow)
+	if len(allow) != 1 || allow[0].GetEndpoint() != "api.github.com:443/*" || allow[0].GetAllowedIps()[0] != "203.0.113.0/24" {
+		t.Fatalf("allow = %+v, want the declared allowance and its range", allow)
 	}
 	if got := allow[0].GetAllowedIps(); len(got) != 1 || got[0] != "203.0.113.0/24" {
 		t.Fatalf("allowed_ips = %v, want the declared range", got)
+	}
+	if got := allow[0].GetSources(); len(got) != 2 || got[0] != "daemon" || got[1] != "agent" {
+		t.Fatalf("allow sources = %v, want daemon and agent", got)
+	}
+	deny := report.GetDeny()
+	if len(deny) != 1 || deny[0].GetEndpoint() != "metadata.example.com:80/*" || len(deny[0].GetSources()) != 1 || deny[0].GetSources()[0] != "daemon" {
+		t.Fatalf("deny = %+v, want the declared denial and its daemon source", deny)
+	}
+	if len(report.GetMechanisms()) != 1 || report.GetMechanisms()[0] != "forward_proxy" {
+		t.Fatalf("mechanisms = %v, want the proxy", report.GetMechanisms())
+	}
+	if len(report.GetLimitations()) != 1 || report.GetDaemonPolicySource() != "/policy.yaml" || report.GetDaemonPolicySha256() != "abc123" {
+		t.Fatalf("report audit fields = %+v", report)
 	}
 }
 

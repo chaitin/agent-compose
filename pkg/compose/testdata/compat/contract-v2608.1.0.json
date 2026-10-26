@@ -278,13 +278,33 @@
       "optional": true
     },
     {
-      "path": "agents.*.policy.network.allow[].protocol",
-      "go_type": "string",
+      "path": "agents.*.policy.network.allow[].ports",
+      "go_type": "sequence\u003cint\u003e",
       "optional": true
     },
     {
       "path": "agents.*.policy.network.default",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "agents.*.policy.network.deny",
+      "go_type": "sequence\u003cmapping\u003ccompose.SandboxNetworkDenySpec\u003e\u003e",
+      "optional": true
+    },
+    {
+      "path": "agents.*.policy.network.deny[].host",
+      "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "agents.*.policy.network.deny[].port",
+      "go_type": "int",
+      "optional": true
+    },
+    {
+      "path": "agents.*.policy.network.deny[].ports",
+      "go_type": "sequence\u003cint\u003e",
       "optional": true
     },
     {
@@ -328,13 +348,33 @@
       "optional": true
     },
     {
-      "path": "agents.*.sandbox.network.allow[].protocol",
-      "go_type": "string",
+      "path": "agents.*.sandbox.network.allow[].ports",
+      "go_type": "sequence\u003cint\u003e",
       "optional": true
     },
     {
       "path": "agents.*.sandbox.network.default",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "agents.*.sandbox.network.deny",
+      "go_type": "sequence\u003cmapping\u003ccompose.SandboxNetworkDenySpec\u003e\u003e",
+      "optional": true
+    },
+    {
+      "path": "agents.*.sandbox.network.deny[].host",
+      "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "agents.*.sandbox.network.deny[].port",
+      "go_type": "int",
+      "optional": true
+    },
+    {
+      "path": "agents.*.sandbox.network.deny[].ports",
+      "go_type": "sequence\u003cint\u003e",
       "optional": true
     },
     {
@@ -703,13 +743,33 @@
       "optional": true
     },
     {
-      "path": "policies.*.network.allow[].protocol",
-      "go_type": "string",
+      "path": "policies.*.network.allow[].ports",
+      "go_type": "sequence\u003cint\u003e",
       "optional": true
     },
     {
       "path": "policies.*.network.default",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "policies.*.network.deny",
+      "go_type": "sequence\u003cmapping\u003ccompose.SandboxNetworkDenySpec\u003e\u003e",
+      "optional": true
+    },
+    {
+      "path": "policies.*.network.deny[].host",
+      "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "policies.*.network.deny[].port",
+      "go_type": "int",
+      "optional": true
+    },
+    {
+      "path": "policies.*.network.deny[].ports",
+      "go_type": "sequence\u003cint\u003e",
       "optional": true
     },
     {

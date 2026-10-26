@@ -34,7 +34,7 @@ func (s Service) uninstall(ctx context.Context, options Options) (Result, error)
 		return Result{}, fmt.Errorf("stop deployment before uninstall: %w", err)
 	}
 	s.report(EventStep, "Removing installer-managed files")
-	for _, name := range []string{"docker-compose.yml", "docker-compose.kvm.yml", ".installer-state.env"} {
+	for _, name := range []string{"docker-compose.yml", "docker-compose.kvm.yml", "docker-compose.sandbox-network.yml", ".installer-state.env"} {
 		if err := os.Remove(filepath.Join(installDir, name)); err != nil && !os.IsNotExist(err) {
 			return Result{}, fmt.Errorf("remove %s: %w", name, err)
 		}

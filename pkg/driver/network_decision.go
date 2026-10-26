@@ -25,6 +25,7 @@ func SandboxNetworkEgressPolicy(policy SandboxNetworkPolicy) (egress.Policy, err
 	}
 	declaration := egress.NetworkDeclaration{Default: normalizedDefault}
 	declaration.Allow = append(declaration.Allow, policy.Allow...)
+	declaration.Deny = append(declaration.Deny, policy.Deny...)
 	return egress.EffectiveNetworkPolicy(&declaration, policy.EngineEndpoints)
 }
 

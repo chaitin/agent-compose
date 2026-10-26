@@ -36,17 +36,21 @@ type AgentNetworkPolicyReport struct {
 	Agent string
 	// Driver is the resolved runtime driver the report was computed for.
 	Driver string
-	// Declared is false when the agent declared no network policy. Undeclared is
-	// not deny (D3): egress stays unrestricted and there is nothing to enforce.
+	// Declared is false when neither the agent nor the daemon declared a network
+	// policy. Undeclared is not deny (D3): egress stays unrestricted and there
+	// is nothing to enforce. A daemon-wide policy sets it true for every agent,
+	// including one that declared nothing itself.
 	Declared bool
-	// Restricts is false when the declaration cannot refuse anything, because an
-	// allow list only restricts under default: deny. It is false for an
-	// undeclared policy too.
+	// Restricts is false when the declaration cannot refuse anything: an allow
+	// default with no denial. It is true for a deny default or any declared
+	// denial, and false for an undeclared policy.
 	Restricts bool
 	// Default is the action applied to traffic no entry matches.
 	Default egress.Action
 	// Allow lists the declared allowances, including their address ranges.
 	Allow []egress.DeclaredAllowance
+	// Deny lists the declared refusals.
+	Deny []egress.DeclaredDenial
 	// Mediated reports whether the engine's own forward proxy will apply the
 	// declaration rather than the driver.
 	Mediated bool
@@ -54,6 +58,22 @@ type AgentNetworkPolicyReport struct {
 	Enforcement SandboxNetworkEnforcement
 	// Enforced reports whether that mechanism applies the declaration.
 	Enforced bool
+	// Mechanisms lists every enforcement mechanism that will apply at least part
+	// of this declaration, in driver-first order: for example
+	// ["sdk_network_policy", "forward_proxy"]. Mechanism above remains the one
+	// that determines the reported strength, so a consumer that only knows the
+	// primary mechanism keeps its existing interpretation.
+	Mechanisms []string
+	// Limitations states material limits of the reported enforcement that do not
+	// make it unenforced, such as traffic that bypasses the forward proxy. It is
+	// empty when there is nothing beyond Mechanism to disclose.
+	Limitations []string
+	// DaemonPolicySource and DaemonPolicySHA256 identify the daemon-wide policy
+	// the effective declaration was computed against. They are empty when no
+	// daemon-wide policy was configured, or when this report was produced
+	// outside project admission.
+	DaemonPolicySource string
+	DaemonPolicySHA256 string
 	// Unapplied names the parts of the declaration the mechanism does not apply.
 	// It is empty when the mechanism applies all of it.
 	Unapplied []string
@@ -85,17 +105,28 @@ func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkD
 	report.Declared = true
 	report.Default = declared.Default
 	report.Allow = declared.Allow
-	if declaration.Default != egress.Deny {
-		// Documented and deliberate: an allow list restricts nothing unless the
-		// default refuses what it does not match.
+	report.Deny = declared.Deny
+	if !declared.Restricts {
+		// Documented and deliberate: an allow list with an allow default cannot
+		// refuse anything, so there is no mechanism to report.
 		return report, nil
 	}
 	report.Restricts = true
 
-	enforcement := SandboxNetworkEnforcementFor(resolved)
+	driverEnforcement := SandboxNetworkEnforcementFor(resolved)
+	if driverEnforcement.Strength != SandboxEgressStrengthNone {
+		report.Mechanisms = append(report.Mechanisms, driverEnforcement.Mechanism)
+	}
+	if mediated {
+		report.Mechanisms = append(report.Mechanisms, mechanismForwardProxy)
+	}
+	enforcement := driverEnforcement
 	if mediated {
 		enforcement = SandboxEgressForwardProxyEnforcement(resolved)
 		report.Mediated = true
+	}
+	if declaration.Default != egress.Deny && len(declaration.Deny) > 0 && enforcement.AppliesDenyEntries {
+		enforcement.Strength = SandboxEgressStrengthDenyList
 	}
 	report.Enforcement = enforcement
 
@@ -107,14 +138,31 @@ func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkD
 	// function through egress.NetworkDeclaration in the same change that makes
 	// them declarable (see the file comment).
 	addresses := egress.AddressConstrainedAllowances(declaration.Allow)
+	addressGapOnBypass := mediated && addresses > 0 &&
+		driverEnforcement.Strength != SandboxEgressStrengthNone && !driverEnforcement.AppliesAllowedAddresses
 	switch {
-	case !enforcement.AppliesAllowEntries:
+	case len(declaration.Allow) > 0 && !enforcement.AppliesAllowEntries:
 		report.Unapplied = append(report.Unapplied, "the declared allowances")
 	case addresses > 0 && !enforcement.AppliesAllowedAddresses:
 		report.Unapplied = append(report.Unapplied, "the addresses the declared allowances may resolve to")
 	}
+	if addressGapOnBypass {
+		report.Unapplied = append(report.Unapplied, "the addresses the declared allowances may resolve to on traffic that bypasses the forward proxy")
+	}
+	if len(declaration.Deny) > 0 && !enforcement.AppliesDenyEntries {
+		report.Unapplied = append(report.Unapplied, "the declared denials")
+	}
 	if !enforcement.AppliesEngineEndpoints {
 		report.Unapplied = append(report.Unapplied, "the engine's own sandbox endpoints")
+	}
+	if mediated {
+		report.Limitations = append(report.Limitations,
+			"the engine's forward proxy decides only traffic that honors the proxy environment; a process that bypasses it is not decided by the proxy")
+		if addresses > 0 && driverEnforcement.Strength != SandboxEgressStrengthNone && !driverEnforcement.AppliesAllowedAddresses {
+			report.Limitations = append(report.Limitations, fmt.Sprintf(
+				"%s applies the declared destinations but not allowed_ips; traffic that bypasses the forward proxy is not address-constrained",
+				driverEnforcement.Mechanism))
+		}
 	}
 
 	if enforcement.Strength == SandboxEgressStrengthNone {
@@ -124,9 +172,11 @@ func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkD
 		)
 		return report, nil
 	}
-	if addresses > 0 && !enforcement.AppliesAllowedAddresses && mode == config.EgressUnenforceableRefuse {
-		// The creation path refuses exactly this gap, so a report that answered
-		// Enforced would describe a sandbox that will never start.
+	refuses := (addresses > 0 && !enforcement.AppliesAllowedAddresses) || addressGapOnBypass ||
+		(len(declaration.Deny) > 0 && !enforcement.AppliesDenyEntries)
+	if refuses && mode == config.EgressUnenforceableRefuse {
+		// The creation path refuses exactly these gaps, so a report that
+		// answered Enforced would describe a sandbox that will never start.
 		report.Warning = fmt.Sprintf("%s does not apply %s; %s",
 			enforcement.Mechanism, strings.Join(report.Unapplied, ", "), unenforceableOutcome(mode))
 		return report, nil

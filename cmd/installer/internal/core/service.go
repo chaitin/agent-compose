@@ -18,6 +18,7 @@ import (
 var managedFiles = []string{
 	"docker-compose.yml",
 	"docker-compose.kvm.yml",
+	"docker-compose.sandbox-network.yml",
 	"installer",
 	".env",
 	".installer-state.env",
@@ -312,6 +313,17 @@ func prepareInstallPlan(operation Operation, options Options, source *bundle) (*
 		}
 		plan.files["docker-compose.kvm.yml"] = 0o644
 	}
+	// The sandbox-network overlay is embedded in the installer rather than
+	// shipped as a bundle member, so an installer released before the overlay
+	// existed can still extract a newer bundle during an in-place upgrade. It
+	// is installer-managed like docker-compose.yml and rewritten on every
+	// install/upgrade so existing deployments pick up later changes to it;
+	// operators opt in via COMPOSE_FILE and do not edit the file by hand.
+	sandboxNetworkTarget := filepath.Join(workDir, "docker-compose.sandbox-network.yml")
+	if err := os.WriteFile(sandboxNetworkTarget, sandboxNetworkOverlay, 0o644); err != nil {
+		return fail(err)
+	}
+	plan.files["docker-compose.sandbox-network.yml"] = 0o644
 
 	envPath := filepath.Join(options.InstallDir, ".env")
 	envData, envExists, err := readOptionalFile(envPath)

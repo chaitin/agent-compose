@@ -16,7 +16,6 @@ import (
 
 	containerapi "github.com/docker/docker/api/types/container"
 	mountapi "github.com/docker/docker/api/types/mount"
-	networkapi "github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -632,51 +631,6 @@ func (r *recordingDockerContainerRemover) ContainerRemove(_ context.Context, con
 	r.containerID = containerID
 	r.options = options
 	return r.err
-}
-
-func TestSelectDockerNetworkNamePrefersUserDefinedNetwork(t *testing.T) {
-	got, ok := selectDockerNetworkName(containerapi.InspectResponse{
-		NetworkSettings: &containerapi.NetworkSettings{
-			Networks: map[string]*networkapi.EndpointSettings{
-				"bridge":             {},
-				"playground_default": {},
-				"z_custom":           {},
-			},
-		},
-	})
-	if !ok {
-		t.Fatalf("selectDockerNetworkName returned ok=false")
-	}
-	if got != "playground_default" {
-		t.Fatalf("selectDockerNetworkName returned %q, want playground_default", got)
-	}
-}
-
-func TestSelectDockerNetworkNameFallsBackToDefaultNetwork(t *testing.T) {
-	got, ok := selectDockerNetworkName(containerapi.InspectResponse{
-		NetworkSettings: &containerapi.NetworkSettings{
-			Networks: map[string]*networkapi.EndpointSettings{
-				"bridge": {},
-			},
-		},
-	})
-	if !ok {
-		t.Fatalf("selectDockerNetworkName returned ok=false")
-	}
-	if got != "bridge" {
-		t.Fatalf("selectDockerNetworkName returned %q, want bridge", got)
-	}
-}
-
-func TestSelectDockerNetworkNameReturnsFalseWithoutNetworks(t *testing.T) {
-	if got, ok := selectDockerNetworkName(containerapi.InspectResponse{}); ok || got != "" {
-		t.Fatalf("selectDockerNetworkName returned %q, %v; want empty false", got, ok)
-	}
-	if got, ok := selectDockerNetworkName(containerapi.InspectResponse{
-		NetworkSettings: &containerapi.NetworkSettings{},
-	}); ok || got != "" {
-		t.Fatalf("selectDockerNetworkName returned %q, %v; want empty false", got, ok)
-	}
 }
 
 func TestDockerJupyterPortConfigRequestsAutomaticLoopbackBinding(t *testing.T) {

@@ -97,6 +97,7 @@ type Controller struct {
 	volumes    VolumeManager
 	gateway    CapabilityGatewaySource
 	stop       func(context.Context, *domain.Sandbox) error
+	admit      func(context.Context, *projectdef.NormalizedProjectSpec) error
 	defaultDR  string
 	lifecycle  projectLifecycleGates
 }
@@ -110,6 +111,11 @@ type ControllerDependencies struct {
 	Volumes     VolumeManager
 	Gateway     CapabilityGatewaySource
 	StopSandbox func(context.Context, *domain.Sandbox) error
+	// Admit checks a normalized candidate before applyProject writes any state.
+	// The application layer composes it for policy that the compose domain does
+	// not own; a returned error aborts the apply before a project or revision is
+	// persisted.
+	Admit func(context.Context, *projectdef.NormalizedProjectSpec) error
 }
 
 func NewController(deps ControllerDependencies) *Controller {
@@ -126,6 +132,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		volumes:    deps.Volumes,
 		gateway:    deps.Gateway,
 		stop:       deps.StopSandbox,
+		admit:      deps.Admit,
 		defaultDR:  defaultDriver,
 	}
 }
@@ -275,6 +282,13 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 	}
 	if issues := c.validateProjectAgentDefinitions(normalized); len(issues) > 0 {
 		return ApplyResult{Issues: issues, RevisionSpec: normalized.Spec}, nil
+	}
+	// Admit before any write: a candidate the daemon-wide policy refuses must
+	// not leave a project or revision behind.
+	if c.admit != nil {
+		if err := c.admit(ctx, normalized.Spec); err != nil {
+			return ApplyResult{}, err
+		}
 	}
 	release := func() {}
 	if !lifecycleHeld {

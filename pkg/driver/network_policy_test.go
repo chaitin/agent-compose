@@ -137,7 +137,7 @@ func TestNewSandboxNetworkPolicyNormalizesAndValidates(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			policy, err := NewSandboxNetworkPolicy(test.defaultName, test.allow, test.engine, test.denyDomains)
+			policy, err := NewSandboxNetworkPolicy(test.defaultName, test.allow, nil, test.engine, test.denyDomains)
 			if test.wantErr {
 				if err == nil {
 					t.Fatalf("NewSandboxNetworkPolicy() error = nil, want an error; policy = %+v", policy)
@@ -214,29 +214,43 @@ func TestSandboxNetworkPolicyDenyByDefault(t *testing.T) {
 	}
 }
 
-func TestSandboxNetworkPolicyPermittingEndpoints(t *testing.T) {
+func TestSandboxNetworkPolicyEndpointOrdering(t *testing.T) {
 	engine := mustEngineEndpoint(t, egress.PurposeLLMFacade, "facade.internal", 7410, egress.ProtocolHTTPS)
 	allow := mustAllow(t, "api.example.com", 443, egress.ProtocolHTTPS)
-	duplicate := mustAllow(t, "API.example.com", 443, egress.ProtocolHTTPS)
+	deny := egress.DenyEntry{Host: "bad.example.com", Port: 443, Protocol: egress.ProtocolHTTPS}
 
 	policy := SandboxNetworkPolicy{
 		Default:         egress.Deny,
-		Allow:           []egress.AllowEntry{allow, duplicate},
+		Allow:           []egress.AllowEntry{allow},
+		Deny:            []egress.DenyEntry{deny},
 		EngineEndpoints: []egress.EngineEndpoint{engine},
 	}
-	got := policy.permittingEndpoints()
-	want := []egress.Endpoint{engine.Endpoint, {Host: "api.example.com", Port: 443, Protocol: egress.ProtocolHTTPS}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("permittingEndpoints() = %+v, want %+v", got, want)
+	if got, want := policy.engineEndpoints(), []egress.Endpoint{engine.Endpoint}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("engineEndpoints() = %+v, want %+v", got, want)
+	}
+	if got, want := policy.allowingEndpoints(), []egress.Endpoint{{Host: "api.example.com", Port: 443, Protocol: egress.ProtocolHTTPS}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("allowingEndpoints() = %+v, want %+v", got, want)
+	}
+	if got, want := policy.denyingEndpoints(), []egress.Endpoint{{Host: "bad.example.com", Port: 443, Protocol: egress.ProtocolHTTPS}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("denyingEndpoints() = %+v, want %+v", got, want)
 	}
 
-	permissive := SandboxNetworkPolicy{
+	denyList := SandboxNetworkPolicy{
 		Default:         egress.Allow,
 		Allow:           []egress.AllowEntry{allow},
+		Deny:            []egress.DenyEntry{deny},
 		EngineEndpoints: []egress.EngineEndpoint{engine},
 	}
-	if got := permissive.permittingEndpoints(); got != nil {
-		t.Fatalf("permittingEndpoints() for allow = %+v, want nil", got)
+	if got := denyList.allowingEndpoints(); got != nil {
+		t.Fatalf("allowingEndpoints() for a denylist = %+v, want nil (an allowance cannot narrow an allow default)", got)
+	}
+	if got, want := denyList.engineEndpoints(), []egress.Endpoint{engine.Endpoint}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("engineEndpoints() for a denylist = %+v, want %+v", got, want)
+	}
+
+	permissive := SandboxNetworkPolicy{Default: egress.Allow, EngineEndpoints: []egress.EngineEndpoint{engine}}
+	if got := permissive.engineEndpoints(); got != nil {
+		t.Fatalf("engineEndpoints() for a permissive policy = %+v, want nil", got)
 	}
 }
 
@@ -245,8 +259,81 @@ func TestSandboxNetworkPolicyPermittingEndpoints(t *testing.T) {
 func TestSandboxNetworkPolicyRejectsMalformedHost(t *testing.T) {
 	_, err := NewSandboxNetworkPolicy(egress.Deny, []egress.AllowEntry{
 		{Host: "bad host.example.com", Port: 443, Protocol: egress.ProtocolHTTPS},
-	}, nil, nil)
+	}, nil, nil, nil)
 	if err == nil {
 		t.Fatal("NewSandboxNetworkPolicy() error = nil, want a validation error")
+	}
+}
+
+func TestSandboxNetworkPolicyCarriesAndNormalizesDenials(t *testing.T) {
+	policy, err := SandboxNetworkPolicyFromDeclaration(&egress.NetworkDeclaration{
+		Default: egress.Allow,
+		Deny: []egress.DenyEntry{
+			{Host: "Metadata.Example.com", Port: 80, Protocol: egress.ProtocolTCP},
+			{Host: "10.2.16.21", Port: 443, Protocol: egress.ProtocolHTTPS},
+		},
+	}, []egress.EngineEndpoint{
+		mustEngineEndpoint(t, egress.PurposeLLMFacade, "facade.internal", 7410, egress.ProtocolHTTPS),
+	}, nil)
+	if err != nil {
+		t.Fatalf("SandboxNetworkPolicyFromDeclaration() error = %v", err)
+	}
+	if policy.DenyByDefault() {
+		t.Fatal("denylist policy reported deny-by-default")
+	}
+	if !policy.Restricts() {
+		t.Fatal("denylist policy does not report that it restricts")
+	}
+	want := []egress.DenyEntry{
+		{Host: "metadata.example.com", Port: 80, Protocol: egress.ProtocolTCP},
+		{Host: "10.2.16.21", Port: 443, Protocol: egress.ProtocolHTTPS},
+	}
+	if !reflect.DeepEqual(policy.Deny, want) {
+		t.Fatalf("Deny = %+v, want %+v", policy.Deny, want)
+	}
+	if got := policy.engineEndpoints(); len(got) != 1 || got[0].Host != "facade.internal" {
+		t.Fatalf("engineEndpoints() = %+v, want the engine endpoint", got)
+	}
+}
+
+func TestNewSandboxNetworkPolicyRejectsInvalidDenials(t *testing.T) {
+	for _, entry := range []egress.DenyEntry{
+		{Host: "", Port: 443},
+		{Host: "api.example.com", Port: 0},
+		{Host: "api.example.com", Port: 443, Protocol: "sctp"},
+	} {
+		if _, err := NewSandboxNetworkPolicy(egress.Allow, nil, []egress.DenyEntry{entry}, nil, nil); err == nil {
+			t.Fatalf("NewSandboxNetworkPolicy accepted invalid denial %+v", entry)
+		}
+	}
+	if _, err := NewSandboxNetworkPolicy(egress.Allow, nil, []egress.DenyEntry{
+		{Host: "API.example.com", Port: 443, Protocol: egress.ProtocolTCP},
+		{Host: "api.example.com", Port: 443, Protocol: egress.ProtocolTCP},
+	}, nil, nil); err == nil {
+		t.Fatal("NewSandboxNetworkPolicy accepted duplicate denials")
+	}
+}
+
+func TestSandboxNetworkPolicyFromLayeredDeclarationAcceptsSharedDenial(t *testing.T) {
+	// The daemon and the agent may both deny the same endpoint. Layering
+	// collapses the duplicate, and the driver compiler must accept the result
+	// instead of failing sandbox creation with a duplicate-entry error.
+	deny := egress.DenyEntry{Host: "metadata.example.com", Port: 80, Protocol: egress.ProtocolAny}
+	outer := &egress.NetworkDeclaration{Default: egress.Allow, Deny: []egress.DenyEntry{deny}}
+	inner := &egress.NetworkDeclaration{
+		Default: egress.Deny,
+		Allow:   []egress.AllowEntry{{Host: "api.example.com", Port: 443, Protocol: egress.ProtocolAny}},
+		Deny:    []egress.DenyEntry{deny},
+	}
+	layered, err := egress.LayerNetworkDeclarations(outer, inner)
+	if err != nil {
+		t.Fatalf("LayerNetworkDeclarations() error = %v", err)
+	}
+	policy, err := SandboxNetworkPolicyFromDeclaration(layered, nil, nil)
+	if err != nil {
+		t.Fatalf("SandboxNetworkPolicyFromDeclaration() error = %v", err)
+	}
+	if len(policy.Deny) != 1 {
+		t.Fatalf("deny = %+v, want the shared denial once", policy.Deny)
 	}
 }

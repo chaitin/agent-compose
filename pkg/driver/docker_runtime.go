@@ -11,7 +11,6 @@ import (
 	"log/slog"
 	"math"
 	"net"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -74,11 +73,6 @@ type dockerContainerFailureCleaner interface {
 }
 
 type dockerContainerInspector func(context.Context, string) (containerapi.InspectResponse, error)
-
-type dockerDaemonTopology struct {
-	networkMode   containerapi.NetworkMode
-	containerized bool
-}
 
 // dockerExecCollector accumulates one exec call's stdout/stderr. Docker's
 // own caller (stdcopy.StdCopy demultiplexing a single stream) only ever
@@ -208,11 +202,15 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	}
 	defer func() { _ = dockerClient.Close() }()
 
-	topology := r.dockerDaemonTopology(ctx, dockerClient)
-	// The topology's own network mode is used verbatim: a declared
-	// default-deny policy never reaches this point, because
+	topology, err := r.dockerDaemonTopology(ctx, dockerClient)
+	if err != nil {
+		return SandboxVMInfo{}, err
+	}
+	// The topology's own network mode is used verbatim: an unmediated
+	// restricting policy never reaches this point, because
 	// RequireSandboxNetworkEnforcement above refuses it before any container
-	// exists.
+	// exists. A policy the forward proxy mediates does reach here with the
+	// proxy environment on the sandbox.
 	containerInfo, created, err := r.getOrCreateContainer(ctx, dockerClient, dockerContainerCreateRequest{
 		Sandbox: sandbox, VMState: vmState, ProxyState: proxyState, NetworkMode: topology.networkMode,
 	})
@@ -227,8 +225,12 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		started = true
 	}
 	// Attach a containerized sandbox to the daemon's own network so it can
-	// reach the engine's LLM facade and telemetry endpoints.
-	if topology.containerized {
+	// reach the engine's LLM facade and telemetry endpoints. This is skipped
+	// when an explicit sandbox network is configured: a newly-created container
+	// is already on that network, and an existing container is reused unchanged,
+	// so enabling DOCKER_SANDBOX_NETWORK never migrates already-created
+	// sandboxes.
+	if dockerSandboxNetworkAttachEnabled(topology.containerized, r.config.DockerSandboxNetwork) {
 		if err := ensureDockerContainerNetwork(ctx, dockerClient, containerInfo, string(topology.networkMode)); err != nil {
 			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
 		}
@@ -1054,66 +1056,6 @@ func SandboxStopContextTimeout(driver string, stopTimeout time.Duration) time.Du
 	return stopTimeout + dockerStopAPIMargin
 }
 
-func (r *dockerRuntime) dockerDaemonTopology(ctx context.Context, dockerClient *client.Client) dockerDaemonTopology {
-	networkName, ok, err := r.dockerNetworkNameFromSelfContainer(ctx, dockerClient)
-	if err != nil {
-		slog.Warn("failed to inspect current docker container network; falling back to default docker network", "error", err)
-		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}
-	}
-	if !ok {
-		slog.Warn("current process is not running in an inspectable docker container; falling back to default docker network")
-		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}
-	}
-	return dockerDaemonTopology{networkMode: containerapi.NetworkMode(networkName), containerized: true}
-}
-
-func (r *dockerRuntime) dockerNetworkNameFromSelfContainer(ctx context.Context, dockerClient *client.Client) (string, bool, error) {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "", false, nil
-	}
-	hostname = strings.TrimSpace(hostname)
-	if hostname == "" {
-		return "", false, nil
-	}
-
-	containerInfo, err := dockerClient.ContainerInspect(ctx, hostname)
-	if err != nil {
-		if isDockerNotFound(err) {
-			return "", false, nil
-		}
-		return "", false, fmt.Errorf("inspect current docker container %s: %w", hostname, err)
-	}
-	networkName, ok := selectDockerNetworkName(containerInfo)
-	return networkName, ok, nil
-}
-
-func selectDockerNetworkName(containerInfo containerapi.InspectResponse) (string, bool) {
-	if containerInfo.NetworkSettings == nil || len(containerInfo.NetworkSettings.Networks) == 0 {
-		return "", false
-	}
-	networkNames := make([]string, 0, len(containerInfo.NetworkSettings.Networks))
-	for name := range containerInfo.NetworkSettings.Networks {
-		name = strings.TrimSpace(name)
-		if name != "" {
-			networkNames = append(networkNames, name)
-		}
-	}
-	sort.Strings(networkNames)
-	for _, name := range networkNames {
-		switch name {
-		case "bridge", "host", "none":
-			continue
-		default:
-			return name, true
-		}
-	}
-	if len(networkNames) == 0 {
-		return "", false
-	}
-	return networkNames[0], true
-}
-
 func (r *dockerRuntime) findContainer(ctx context.Context, dockerClient *client.Client, sandbox *Sandbox, vmState VMState) (containerapi.InspectResponse, bool, error) {
 	for _, lookup := range []string{strings.TrimSpace(vmState.BoxID), r.containerName(sandbox, vmState)} {
 		if lookup == "" {
@@ -1259,22 +1201,6 @@ func dockerJupyterHostPort(containerInfo containerapi.InspectResponse, guestPort
 		return hostPort, nil
 	}
 	return 0, fmt.Errorf("docker container %s has no valid loopback binding for jupyter port %s", containerInfo.ID, port)
-}
-
-func ensureDockerContainerNetwork(ctx context.Context, dockerClient *client.Client, containerInfo containerapi.InspectResponse, networkName string) error {
-	networkName = strings.TrimSpace(networkName)
-	if networkName == "" || networkName == "default" {
-		return nil
-	}
-	if containerInfo.NetworkSettings != nil {
-		if _, ok := containerInfo.NetworkSettings.Networks[networkName]; ok {
-			return nil
-		}
-	}
-	if err := dockerClient.NetworkConnect(ctx, networkName, containerInfo.ID, nil); err != nil {
-		return fmt.Errorf("connect docker container %s to daemon network %s: %w", containerInfo.ID, networkName, err)
-	}
-	return nil
 }
 
 func (r *dockerRuntime) containerName(sandbox *Sandbox, vmState VMState) string {

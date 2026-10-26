@@ -307,6 +307,9 @@ The task uses `agent-compose:latest`, `agent-compose-guest:latest`, and
 image with no Docker socket, privilege, device, or `/dev/kvm` and verifies
 `/api/version`. The lifecycle case mounts the selected socket, then uses the
 public APIs to create, exec, stop, resume, exec, and remove a Docker sandbox.
+The network-placement case dual-homes the daemon on a dedicated network with
+`DOCKER_SANDBOX_NETWORK` and verifies via `docker inspect` that the sandbox
+lands there and the daemon still reaches it.
 Both cases use isolated resources and fail if their labeled containers,
 network, or volumes remain after cleanup. The task also installs a
 fixture-scoped interrupt/exit cleanup trap; a hard-killed run reports any stale

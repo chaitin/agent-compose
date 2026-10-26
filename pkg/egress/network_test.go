@@ -33,7 +33,7 @@ func TestHostPatternMatches(t *testing.T) {
 }
 
 func TestValidateHostPattern(t *testing.T) {
-	valid := []string{"api.github.com", "*.example.com", "*", "10.0.0.1", "a-b.example.com"}
+	valid := []string{"api.github.com", "*.example.com", "*", "10.0.0.1", "2001:db8::1", "10.0.0.0/8", "2001:db8::/32", "a-b.example.com"}
 	for _, pattern := range valid {
 		if err := ValidateHostPattern(pattern); err != nil {
 			t.Fatalf("ValidateHostPattern(%q) = %v, want nil", pattern, err)
@@ -46,7 +46,8 @@ func TestValidateHostPattern(t *testing.T) {
 		"*.example..com":      "empty label",
 		"foo*bar.example.com": "wildcard inside a label",
 		"exa mple.com":        "space",
-		"2001:db8::1":         "ipv6 separator",
+		"2001:db8::zz":        "invalid ipv6",
+		"10.0.0.0/33":         "invalid cidr",
 		"-bad.example.com":    "leading dash",
 	}
 	for pattern, reason := range invalid {
@@ -81,6 +82,27 @@ func TestEndpointNameRoundTrip(t *testing.T) {
 	}
 	if _, err := ParseEndpoint(anyEndpoint.Name()); err != nil {
 		t.Fatalf("ParseEndpoint(Name(any)) returned error: %v", err)
+	}
+
+	ipv6Endpoint, err := NewEndpoint("2001:0db8::1", 443, ProtocolHTTPS)
+	if err != nil {
+		t.Fatalf("NewEndpoint(ipv6) returned error: %v", err)
+	}
+	if got := ipv6Endpoint.Name(); got != "[2001:db8::1]:443/https" {
+		t.Fatalf("Name(ipv6) = %q, want [2001:db8::1]:443/https", got)
+	}
+	if parsed, err := ParseEndpoint(ipv6Endpoint.Name()); err != nil || parsed != ipv6Endpoint {
+		t.Fatalf("ParseEndpoint(ipv6) = %+v, %v, want %+v", parsed, err, ipv6Endpoint)
+	}
+	cidrEndpoint, err := NewEndpoint("10.2.16.21/8", 443, ProtocolHTTPS)
+	if err != nil {
+		t.Fatalf("NewEndpoint(cidr) returned error: %v", err)
+	}
+	if got := cidrEndpoint.Name(); got != "10.0.0.0/8:443/https" {
+		t.Fatalf("Name(cidr) = %q, want 10.0.0.0/8:443/https", got)
+	}
+	if parsed, err := ParseEndpoint(cidrEndpoint.Name()); err != nil || parsed != cidrEndpoint {
+		t.Fatalf("ParseEndpoint(cidr) = %+v, %v, want %+v", parsed, err, cidrEndpoint)
 	}
 
 	for _, raw := range []string{"api.github.com", "api.github.com:443", "api.github.com:443/", ":443/tcp", "api.github.com:abc/tcp"} {
@@ -218,6 +240,12 @@ func TestCompileNetworkPolicyRejectsInvalidDeclaration(t *testing.T) {
 	if _, err := CompileNetworkPolicy(NetworkDeclaration{Default: Deny, Allow: []AllowEntry{{Host: "api.github.com", Port: 0}}}, nil); err == nil {
 		t.Fatal("CompileNetworkPolicy accepted port 0")
 	}
+	if _, err := CompileNetworkPolicy(NetworkDeclaration{Default: Allow, Deny: []DenyEntry{{Host: "", Port: 443}}}, nil); err == nil {
+		t.Fatal("CompileNetworkPolicy accepted an empty denied host")
+	}
+	if _, err := CompileNetworkPolicy(NetworkDeclaration{Default: Allow, Deny: []DenyEntry{{Host: "api.github.com", Port: 443, Protocol: "sctp"}}}, nil); err == nil {
+		t.Fatal("CompileNetworkPolicy accepted an unknown denied protocol")
+	}
 }
 
 func TestEffectiveNetworkPolicyUndeclaredIsUnrestricted(t *testing.T) {
@@ -341,5 +369,129 @@ func TestCompileNetworkPolicyCanonicalizesDeclaredAddresses(t *testing.T) {
 	request.ResolvedIPs = []string{"203.0.113.8"}
 	if got := Decide(policy, request); got.Allowed() {
 		t.Fatalf("decision = %+v, want an address in neither declared range to be denied", got)
+	}
+}
+
+func TestCompileNetworkPolicyDenyList(t *testing.T) {
+	declaration := NetworkDeclaration{
+		Default: Allow,
+		Deny: []DenyEntry{
+			{Host: "metadata.example.com", Port: 80, Protocol: ProtocolTCP},
+			{Host: "*.blocked.example", Port: 443, Protocol: ProtocolHTTPS},
+		},
+	}
+	if !declaration.Restricts() {
+		t.Fatal("a declaration with denials does not report that it restricts")
+	}
+	policy, err := CompileNetworkPolicy(declaration, nil)
+	if err != nil {
+		t.Fatalf("CompileNetworkPolicy returned error: %v", err)
+	}
+	if policy.Default() != Allow {
+		t.Fatalf("default = %q, want %q", policy.Default(), Allow)
+	}
+	blocked, err := NewEndpoint("metadata.example.com", 80, ProtocolTCP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Decide(policy, NetworkRequest("sandbox-1", blocked)); got.Allowed() || got.RuleID != "network.deny" {
+		t.Fatalf("denied endpoint decision = %+v, want a deny by network.deny", got)
+	}
+	allowed, err := NewEndpoint("public.example.com", 443, ProtocolHTTPS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Decide(policy, NetworkRequest("sandbox-1", allowed)); !got.Allowed() {
+		t.Fatalf("undeclared endpoint decision = %+v, want the allow default", got)
+	}
+}
+
+func TestCompileNetworkPolicyDenyWinsOverAllow(t *testing.T) {
+	declaration := NetworkDeclaration{
+		Default: Deny,
+		Allow:   []AllowEntry{{Host: "*.example.com", Port: 443, Protocol: ProtocolHTTPS}},
+		Deny:    []DenyEntry{{Host: "bad.example.com", Port: 443, Protocol: ProtocolHTTPS}},
+	}
+	policy, err := CompileNetworkPolicy(declaration, nil)
+	if err != nil {
+		t.Fatalf("CompileNetworkPolicy returned error: %v", err)
+	}
+	bad, err := NewEndpoint("bad.example.com", 443, ProtocolHTTPS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Decide(policy, NetworkRequest("sandbox-1", bad)); got.Allowed() || got.RuleID != "network.deny" {
+		t.Fatalf("denied endpoint decision = %+v, want the denial to win over the wildcard allowance", got)
+	}
+	good, err := NewEndpoint("api.example.com", 443, ProtocolHTTPS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := Decide(policy, NetworkRequest("sandbox-1", good)); !got.Allowed() {
+		t.Fatalf("allowed endpoint decision = %+v, want the allowance", got)
+	}
+}
+
+func TestCompileNetworkPolicyDenyListKeepsEngineEndpointsReachable(t *testing.T) {
+	engineEndpoint, err := NewEndpoint("host.docker.internal", 7410, ProtocolHTTP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := []EngineEndpoint{{Purpose: PurposeLLMFacade, Endpoint: engineEndpoint, Source: SourceRuntimeBaseURL}}
+	declaration := NetworkDeclaration{
+		Default: Allow,
+		Deny:    []DenyEntry{{Host: "host.docker.internal", Port: 7410, Protocol: ProtocolHTTP}},
+	}
+	policy, err := CompileNetworkPolicy(declaration, engine)
+	if err != nil {
+		t.Fatalf("CompileNetworkPolicy returned error: %v", err)
+	}
+	got := Decide(policy, NetworkRequest("sandbox-1", engineEndpoint))
+	if !got.Allowed() || got.RuleID != "engine."+string(PurposeLLMFacade) {
+		t.Fatalf("engine endpoint decision = %+v, want the engine rule to precede the denial", got)
+	}
+}
+
+func TestReportNetworkPolicyDenyList(t *testing.T) {
+	declaration := NetworkDeclaration{
+		Default: Allow,
+		Deny:    []DenyEntry{{Host: "metadata.example.com", Port: 80, Protocol: ProtocolTCP}},
+	}
+	report, err := ReportNetworkPolicy(&declaration, nil)
+	if err != nil {
+		t.Fatalf("ReportNetworkPolicy returned error: %v", err)
+	}
+	if !report.Restricts || report.Default != Allow {
+		t.Fatalf("report = %+v, want Restricts true with allow default", report)
+	}
+	if len(report.Deny) != 1 || report.Deny[0].Endpoint != "metadata.example.com:80/tcp" {
+		t.Fatalf("report.Deny = %+v, want the declared denial", report.Deny)
+	}
+
+	allowOnly := NetworkDeclaration{Default: Allow, Allow: []AllowEntry{{Host: "api.example.com", Port: 443, Protocol: ProtocolHTTPS}}}
+	report, err = ReportNetworkPolicy(&allowOnly, nil)
+	if err != nil {
+		t.Fatalf("ReportNetworkPolicy returned error: %v", err)
+	}
+	if report.Restricts {
+		t.Fatalf("report = %+v, want an allow-only declaration not to restrict", report)
+	}
+}
+
+func TestNormalizeHostCanonicalizesBracketedIPv6(t *testing.T) {
+	tests := map[string]string{
+		"[2001:db8::1]":   "2001:db8::1",
+		"[2001:db8::/32]": "2001:db8::/32",
+		"2001:0DB8:0::1":  "2001:db8::1",
+		"10.2.16.21/8":    "10.0.0.0/8",
+	}
+	for input, want := range tests {
+		got, err := NormalizeHost(input)
+		if err != nil {
+			t.Fatalf("NormalizeHost(%q) error = %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("NormalizeHost(%q) = %q, want %q", input, got, want)
+		}
 	}
 }

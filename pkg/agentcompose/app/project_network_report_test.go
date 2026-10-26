@@ -1,11 +1,15 @@
 package app
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
+	"connectrpc.com/connect"
+
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	"github.com/chaitin/agent-compose/pkg/egress"
 )
 
 type staticMediation struct {
@@ -33,9 +37,9 @@ func normalizedAgentWithNetwork(name, driver string, network *compose.Normalized
 // rather than being presented as a control.
 func TestAgentNetworkPolicyReportsNameTheMechanismAndTheGap(t *testing.T) {
 	deny := &compose.NormalizedSandboxNetworkSpec{
-		Default: compose.SandboxNetworkDefaultDeny,
+		Default: compose.SandboxNetworkDefaultDenyAll,
 		Allow: []compose.NormalizedSandboxNetworkAllowSpec{{
-			Host: "api.github.com", Port: 443, Protocol: "https",
+			Host: "api.github.com", Port: 443,
 			AllowedIPs: []string{"203.0.113.0/24"},
 		}},
 	}
@@ -69,8 +73,11 @@ func TestAgentNetworkPolicyReportsNameTheMechanismAndTheGap(t *testing.T) {
 	if len(worker.Allow) != 1 || !equalStrings(worker.Allow[0].AllowedIPs, []string{"203.0.113.0/24"}) {
 		t.Fatalf("worker allow = %+v, want the declared address range", worker.Allow)
 	}
-	if worker.Warning != "" || len(worker.Unapplied) != 0 {
-		t.Fatalf("worker report = %+v, want nothing unapplied through the proxy", worker)
+	if len(worker.Mechanisms) != 1 || worker.Mechanisms[0] != "forward_proxy" {
+		t.Fatalf("worker mechanisms = %v, want the forward proxy", worker.Mechanisms)
+	}
+	if len(worker.Limitations) == 0 || !strings.Contains(strings.Join(worker.Limitations, " "), "bypasses") {
+		t.Fatalf("worker limitations = %v, want the proxy-bypass limit", worker.Limitations)
 	}
 
 	// The engine cannot reach this agent's sandbox through the proxy, and the
@@ -79,6 +86,9 @@ func TestAgentNetworkPolicyReportsNameTheMechanismAndTheGap(t *testing.T) {
 	builder := reports[0]
 	if !builder.Enforced || builder.Mediated {
 		t.Fatalf("builder report = %+v, want the driver's own mechanism", builder)
+	}
+	if len(builder.Mechanisms) != 1 || builder.Mechanisms[0] != "sdk_network_policy" {
+		t.Fatalf("builder mechanisms = %v, want the driver's own mechanism", builder.Mechanisms)
 	}
 	if len(builder.Unapplied) != 1 || !strings.Contains(builder.Unapplied[0], "addresses") {
 		t.Fatalf("builder unapplied = %v, want the address constraint", builder.Unapplied)
@@ -97,7 +107,7 @@ func TestAgentNetworkPolicyReportsNameTheMechanismAndTheGap(t *testing.T) {
 // that admission answers "and then what": the report names the deployment's own
 // EGRESS_UNENFORCEABLE_POLICY rather than leaving it to be looked up.
 func TestAgentNetworkPolicyReportsStateTheOutcomeOfAnUnenforceableDeclaration(t *testing.T) {
-	deny := &compose.NormalizedSandboxNetworkSpec{Default: compose.SandboxNetworkDefaultDeny}
+	deny := &compose.NormalizedSandboxNetworkSpec{Default: compose.SandboxNetworkDefaultDenyAll}
 	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
 		normalizedAgentWithNetwork("worker", "k8s", deny),
 	}}
@@ -143,4 +153,96 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestAgentNetworkPolicyReportsIncludeTheDaemonGlobalPolicy pins that admission
+// accounts for the daemon-wide bound even when an agent declared no policy of
+// its own; otherwise the report would describe a project wider than the one the
+// daemon will actually run.
+func TestAgentNetworkPolicyReportsIncludeTheDaemonGlobalPolicy(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	global := &egress.NetworkDeclaration{
+		Default: egress.Deny,
+		Allow:   []egress.AllowEntry{{Host: "api.github.com", Port: 443, Protocol: egress.ProtocolAny}},
+	}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, &appconfig.Config{GlobalNetworkPolicy: global})
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 1 || reports[0].Agent != "plain" || !reports[0].Declared || !reports[0].Restricts {
+		t.Fatalf("reports = %+v, want the daemon policy reported for the undeclared agent", reports)
+	}
+	if reports[0].Default != egress.Deny || len(reports[0].Allow) != 1 {
+		t.Fatalf("report = %+v, want the daemon allowlist", reports[0])
+	}
+	if !equalStrings(reports[0].Allow[0].Sources, []string{"daemon"}) {
+		t.Fatalf("allow sources = %v, want daemon", reports[0].Allow[0].Sources)
+	}
+}
+
+// TestAgentNetworkPolicyReportsCarryPolicyProvenance pins that a merged entry
+// names the layer that contributed it. Without this, an operator cannot tell a
+// daemon boundary from an agent rule once the effective declaration has been
+// compiled.
+func TestAgentNetworkPolicyReportsCarryPolicyProvenance(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("worker", "docker", &compose.NormalizedSandboxNetworkSpec{
+			Default: compose.SandboxNetworkDefaultDenyAll,
+			Allow: []compose.NormalizedSandboxNetworkAllowSpec{{
+				Host: "10.0.0.0/8", Port: 443,
+			}},
+			Deny: []compose.NormalizedSandboxNetworkDenySpec{{
+				Host: "metadata.example.com", Port: 80,
+			}},
+		}),
+	}}
+	global := &egress.NetworkDeclaration{
+		Default: egress.Deny,
+		Allow: []egress.AllowEntry{{
+			Host: "10.0.0.0/8", Port: 443, Protocol: egress.ProtocolAny,
+		}},
+		Deny: []egress.DenyEntry{{
+			Host: "metadata.example.com", Port: 80, Protocol: egress.ProtocolAny,
+		}},
+	}
+	config := &appconfig.Config{
+		GlobalNetworkPolicy: global,
+		GlobalNetworkPolicyInfo: appconfig.GlobalNetworkPolicyInfo{
+			Path:   "/etc/agent-compose/network-policy.yaml",
+			SHA256: "0123456789abcdef",
+		},
+	}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("reports = %+v, want one", reports)
+	}
+	report := reports[0]
+	if !equalStrings(report.Allow[0].Sources, []string{"daemon", "agent"}) {
+		t.Fatalf("allow sources = %v, want daemon and agent", report.Allow[0].Sources)
+	}
+	if !equalStrings(report.Deny[0].Sources, []string{"daemon", "agent"}) {
+		t.Fatalf("deny sources = %v, want daemon and agent", report.Deny[0].Sources)
+	}
+	if report.DaemonPolicySource != config.GlobalNetworkPolicyInfo.Path || report.DaemonPolicySHA256 != config.GlobalNetworkPolicyInfo.SHA256 {
+		t.Fatalf("daemon policy identity = %q %q, want %q %q", report.DaemonPolicySource, report.DaemonPolicySHA256, config.GlobalNetworkPolicyInfo.Path, config.GlobalNetworkPolicyInfo.SHA256)
+	}
+}
+
+// TestNetworkPolicyConnectErrorClassifiesTheDeclaration pins that a report the
+// daemon cannot derive is answered as a declaration problem. The project has
+// already been applied when the report is built, so CodeInternal would both
+// misclassify the cause and suggest a retry.
+func TestNetworkPolicyConnectErrorClassifiesTheDeclaration(t *testing.T) {
+	err := networkPolicyConnectError(errors.New(`agent "worker": allowance api.example.com:443 is outside the daemon-wide policy`))
+	if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+		t.Fatalf("connect code = %v, want %v", code, connect.CodeInvalidArgument)
+	}
+	if !strings.Contains(err.Error(), "outside the daemon-wide policy") {
+		t.Fatalf("error = %v, want the declaration failure preserved", err)
+	}
 }

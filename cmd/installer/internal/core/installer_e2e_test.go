@@ -41,6 +41,13 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 		t.Fatal("installation did not persist installer and environment")
 	}
 	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_SANDBOX_HOST_IMAGE", "registry.example/agent-compose:host-v1")
+	overlayData, err := os.ReadFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml"))
+	if err != nil {
+		t.Fatalf("installation did not persist the sandbox-network overlay: %v", err)
+	}
+	if string(overlayData) != string(sandboxNetworkOverlay) {
+		t.Fatal("installation persisted a sandbox-network overlay that diverges from the embedded copy")
+	}
 	if strings.Join(runner.calls, "\n") != strings.Join([]string{
 		"|docker version --format {{.Server.Version}}",
 		"|docker compose version --short",
@@ -51,6 +58,10 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 	}, "\n") {
 		t.Fatalf("install calls:\n%s", strings.Join(runner.calls, "\n"))
 	}
+
+	// Plant a divergent overlay before upgrading so the assertion below proves
+	// the installer rewrites (rather than preserves) an existing copy.
+	writeTestFile(t, filepath.Join(installDir, "docker-compose.sandbox-network.yml"), "operator-edited: true\n", 0o644)
 
 	options.BundleDir = makeTestBundle(t, "v2")
 	upgraded, err := service.Apply(context.Background(), OperationUpgrade, options)
@@ -65,6 +76,14 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 	// pinned at host-v1, so `up -d` recreates only the daemon.
 	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_SANDBOX_HOST_IMAGE", "registry.example/agent-compose:host-v1")
 
+	overlayData, err = os.ReadFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml"))
+	if err != nil {
+		t.Fatalf("upgrade did not persist the sandbox-network overlay: %v", err)
+	}
+	if string(overlayData) != string(sandboxNetworkOverlay) {
+		t.Fatal("upgrade did not rewrite the sandbox-network overlay to the embedded copy")
+	}
+
 	writeTestFile(t, filepath.Join(installDir, "operator-note"), "keep", 0o644)
 	uninstalled, err := service.Apply(context.Background(), OperationUninstall, options)
 	if err != nil {
@@ -76,7 +95,7 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(installDir, ".env")); err != nil {
 		t.Fatalf("ordinary uninstall removed environment: %v", err)
 	}
-	if regularFile(filepath.Join(installDir, "docker-compose.yml")) || regularFile(filepath.Join(installDir, "installer")) {
+	if regularFile(filepath.Join(installDir, "docker-compose.yml")) || regularFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml")) || regularFile(filepath.Join(installDir, "installer")) {
 		t.Fatal("ordinary uninstall retained managed files")
 	}
 	if len(events) == 0 {

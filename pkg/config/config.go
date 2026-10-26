@@ -14,6 +14,7 @@ import (
 
 	"github.com/samber/do/v2"
 
+	"github.com/chaitin/agent-compose/pkg/egress"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -89,12 +90,42 @@ type Config struct {
 	RuntimeDriver      string
 	// EgressUnenforceablePolicy decides whether a declared network policy the
 	// selected driver cannot apply warns and runs or refuses the sandbox.
-	EgressUnenforceablePolicy  EgressUnenforceablePolicy
-	BoxliteHome                string
-	BoxliteRuntimeDir          string
-	DockerHome                 string
-	DockerHostSandboxRoot      string
-	DockerDefaultImage         string
+	EgressUnenforceablePolicy EgressUnenforceablePolicy
+	// GlobalNetworkPolicy is the daemon-wide outer bound for every agent's
+	// outbound network policy. It is nil when no global policy file is
+	// configured, preserving the undeclared behavior.
+	GlobalNetworkPolicy *egress.NetworkDeclaration
+	// GlobalNetworkPolicyInfo identifies the file and digest the effective
+	// daemon-wide policy was compiled from. It is zero when no policy is set.
+	GlobalNetworkPolicyInfo GlobalNetworkPolicyInfo
+	BoxliteHome             string
+	BoxliteRuntimeDir       string
+	DockerHome              string
+	DockerHostSandboxRoot   string
+	DockerDefaultImage      string
+	// DockerSandboxNetwork is the Docker network each newly-created Docker
+	// sandbox container is attached to. Empty keeps the current behavior when
+	// the daemon is on a single non-default network: the sandbox joins the
+	// daemon's own network. A containerized daemon attached to multiple
+	// non-default networks is ambiguous, so the driver fails closed instead of
+	// guessing. Existing sandbox containers are reused as-is and keep their
+	// current network until they are recreated.
+	// When set, the network must be a user-defined network (the built-in
+	// host/none/bridge/default networks are rejected) and must exist; the driver
+	// fails closed if it does not. A containerized daemon must also be attached
+	// to it, or the driver fails closed. The daemon must be reachable from the
+	// network: the docker-compose.sandbox-network.yml overlay dual-homes the
+	// daemon onto it and keeps the `container_name: agent-compose` alias, so the
+	// default AGENT_COMPOSE_RUNTIME_BASE_URL (http://agent-compose:7410) keeps
+	// resolving; only a hand-built separation that lacks that alias has to point
+	// AGENT_COMPOSE_RUNTIME_BASE_URL at the daemon's address on the sandbox
+	// network. The overlay sets this variable automatically, so operators
+	// normally select the overlay instead of setting it by hand.
+	// The driver injects the forward proxy whenever that URL is a non-loopback
+	// address and does not verify it is reachable, so a network misconfiguration
+	// silently drops enforcement rather than reporting the declaration
+	// unenforced.
+	DockerSandboxNetwork       string
 	MicrosandboxHome           string
 	MicrosandboxMSBPath        string
 	MicrosandboxLibPath        string
@@ -185,22 +216,24 @@ func NewConfig(di do.Injector) (*Config, error) {
 // configSources bundles every environment-derived config group NewConfig
 // assembles into the final *Config.
 type configSources struct {
-	AgentTelemetry  AgentTelemetryConfig
-	Database        databaseConfig
-	Sandbox         sandboxRootConfigValues
-	DaemonHTTP      daemonHTTPConfig
-	LLM             llmEnvConfig
-	Timeouts        runtimeTimeoutsConfig
-	Drivers         driverHomesConfig
-	Images          imageEnvConfig
-	Resources       sandboxResourceConfig
-	Cleanup         cleanupConfigValues
-	GuestPaths      *Config
-	GuestABI        string
-	SandboxTimeouts sandboxTimeoutsConfig
-	HTTPLimits      httpLimitsConfig
-	EventDelivery   domain.EventDeliveryScope
-	EgressEnforce   EgressUnenforceablePolicy
+	AgentTelemetry   AgentTelemetryConfig
+	Database         databaseConfig
+	Sandbox          sandboxRootConfigValues
+	DaemonHTTP       daemonHTTPConfig
+	LLM              llmEnvConfig
+	Timeouts         runtimeTimeoutsConfig
+	Drivers          driverHomesConfig
+	Images           imageEnvConfig
+	Resources        sandboxResourceConfig
+	Cleanup          cleanupConfigValues
+	GuestPaths       *Config
+	GuestABI         string
+	SandboxTimeouts  sandboxTimeoutsConfig
+	HTTPLimits       httpLimitsConfig
+	EventDelivery    domain.EventDeliveryScope
+	EgressEnforce    EgressUnenforceablePolicy
+	GlobalPolicy     *egress.NetworkDeclaration
+	GlobalPolicyInfo GlobalNetworkPolicyInfo
 }
 
 func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, error) {
@@ -255,23 +288,36 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 	if err != nil {
 		return configSources{}, err
 	}
+	globalPolicy, globalPolicyInfo, err := loadGlobalNetworkPolicy()
+	if err != nil {
+		return configSources{}, err
+	}
+	if globalPolicyInfo.Path != "" {
+		// Name the exact bytes in the startup log as well as the admission
+		// report, so a daemon restart is auditable even before a project is
+		// applied. The path and digest are not secrets; the rules themselves stay
+		// out of the log.
+		logger.Info("daemon-wide network policy loaded", "source", globalPolicyInfo.Path, "sha256", globalPolicyInfo.SHA256)
+	}
 	return configSources{
-		AgentTelemetry:  telemetry,
-		Database:        database,
-		Sandbox:         sandbox,
-		DaemonHTTP:      daemonHTTP,
-		LLM:             loadLLMEnvConfig(logger),
-		Timeouts:        loadRuntimeTimeoutsConfig(logger),
-		Drivers:         drivers,
-		Images:          images,
-		Resources:       resources,
-		Cleanup:         cleanup,
-		GuestPaths:      guestPaths,
-		GuestABI:        loadGuestABIManifestPath(),
-		SandboxTimeouts: sandboxTimeouts,
-		HTTPLimits:      loadHTTPLimitsConfig(logger),
-		EventDelivery:   eventDelivery,
-		EgressEnforce:   egressEnforce,
+		AgentTelemetry:   telemetry,
+		Database:         database,
+		Sandbox:          sandbox,
+		DaemonHTTP:       daemonHTTP,
+		LLM:              loadLLMEnvConfig(logger),
+		Timeouts:         loadRuntimeTimeoutsConfig(logger),
+		Drivers:          drivers,
+		Images:           images,
+		Resources:        resources,
+		Cleanup:          cleanup,
+		GuestPaths:       guestPaths,
+		GuestABI:         loadGuestABIManifestPath(),
+		SandboxTimeouts:  sandboxTimeouts,
+		HTTPLimits:       loadHTTPLimitsConfig(logger),
+		EventDelivery:    eventDelivery,
+		EgressEnforce:    egressEnforce,
+		GlobalPolicy:     globalPolicy,
+		GlobalPolicyInfo: globalPolicyInfo,
 	}, nil
 }
 
@@ -334,10 +380,13 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		EventDeliveryScope:         sources.EventDelivery,
 		RuntimeDriver:              drivers.RuntimeDriver,
 		EgressUnenforceablePolicy:  sources.EgressEnforce,
+		GlobalNetworkPolicy:        sources.GlobalPolicy,
+		GlobalNetworkPolicyInfo:    sources.GlobalPolicyInfo,
 		BoxliteHome:                normalized.BoxliteHome,
 		BoxliteRuntimeDir:          normalized.BoxliteRuntimeDir,
 		DockerHome:                 normalized.DockerHome,
 		DockerHostSandboxRoot:      normalized.DockerHostSandboxRoot,
+		DockerSandboxNetwork:       drivers.DockerSandboxNetwork,
 		DockerDefaultImage:         images.DockerDefaultImage,
 		MicrosandboxHome:           normalized.MicrosandboxHome,
 		MicrosandboxMSBPath:        normalized.MicrosandboxMSBPath,
@@ -632,6 +681,7 @@ type driverHomesConfig struct {
 	BoxliteRuntimeDir     string
 	DockerHome            string
 	DockerHostSandboxRoot string
+	DockerSandboxNetwork  string
 	MicrosandboxHome      string
 	MicrosandboxMSBPath   string
 	MicrosandboxLibPath   string
@@ -673,6 +723,11 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	if err != nil {
 		return driverHomesConfig{}, err
 	}
+	// DOCKER_SANDBOX_NETWORK is left empty by default so a Docker sandbox keeps
+	// joining the daemon's own network. It is trimmed, not normalized: the value
+	// is a Docker network name, not a path. The sandbox-network overlay injects
+	// it, so operators normally leave it unset and only select the overlay.
+	dockerSandboxNetwork := strings.TrimSpace(os.Getenv("DOCKER_SANDBOX_NETWORK"))
 
 	microsandboxHome := getenvFirst("MICROSANDBOX_HOME", "MSB_HOME")
 	if microsandboxHome == "" {
@@ -728,6 +783,7 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 		BoxliteRuntimeDir:     boxliteRuntimeDir,
 		DockerHome:            dockerHome,
 		DockerHostSandboxRoot: dockerHostSandboxRoot,
+		DockerSandboxNetwork:  dockerSandboxNetwork,
 		MicrosandboxHome:      microsandboxHome,
 		K8sRuntimeBaseURL:     k8sRuntimeBaseURL,
 		MicrosandboxMSBPath:   microsandboxMSBPath,

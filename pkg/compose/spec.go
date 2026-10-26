@@ -131,25 +131,45 @@ type SandboxSpec struct {
 // sandboxes. Declaring the block is what makes the policy exist; omitting it
 // leaves outbound access exactly as it is today.
 type SandboxNetworkSpec struct {
-	// Default is "allow-all" (the value an omitted default normalizes to) or
-	// "deny". It applies only because this block was declared.
+	// Default selects the mode and the action for traffic no entry matches. It
+	// is "allow-all" (the value an omitted default normalizes to) or "deny-all".
+	//
+	// "deny-all" is allowlist mode: only an Allow entry can permit a destination.
+	// "allow-all" is denylist mode: every destination is permitted unless a Deny
+	// entry refuses it. A Deny entry wins over an Allow entry in either mode, so
+	// allowlist mode can carve exceptions out of a broad allowance.
 	Default string                    `yaml:"default,omitempty" json:"default,omitempty"`
 	Allow   []SandboxNetworkAllowSpec `yaml:"allow,omitempty" json:"allow,omitempty"`
+	Deny    []SandboxNetworkDenySpec  `yaml:"deny,omitempty" json:"deny,omitempty"`
 }
 
-// SandboxNetworkAllowSpec is one declared allowance. Host may be a host
-// pattern whose labels are separated by "."; "*" matches exactly one label.
+// SandboxNetworkAllowSpec is one declared allowance. Host may be a host name,
+// a label-wise pattern whose labels are separated by ".", an IP literal, or a
+// CIDR range; "*" matches exactly one label in a pattern.
 type SandboxNetworkAllowSpec struct {
 	Host string `yaml:"host,omitempty" json:"host,omitempty"`
-	Port int    `yaml:"port,omitempty" json:"port,omitempty"`
-	// Protocol is optional. An omitted protocol normalizes to "any", which is
-	// an opaque allowance: the engine does not claim it can inspect it.
-	Protocol string `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+	// Port and Ports are alternatives: exactly one destination port, or a list
+	// of ports that normalization expands into one canonical entry per port.
+	// Specifying both is rejected so the declaration has no ambiguous meaning.
+	Port  int   `yaml:"port,omitempty" json:"port,omitempty"`
+	Ports []int `yaml:"ports,omitempty" json:"ports,omitempty"`
 	// AllowedIPs optionally restricts which addresses Host may resolve to. Each
 	// entry is an IP address or a CIDR range; a name that resolves outside them
 	// is not covered by this allowance, so a name the declaration trusts cannot
 	// be pointed at an address it does not.
 	AllowedIPs []string `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"`
+}
+
+// SandboxNetworkDenySpec is one declared refusal. It has the same destination
+// shape as an allowance but no AllowedIPs field: a denial refuses the
+// destination, and constraining it to selected addresses would turn a deny
+// entry into something the declaration cannot express unambiguously.
+type SandboxNetworkDenySpec struct {
+	Host string `yaml:"host,omitempty" json:"host,omitempty"`
+	// Port and Ports are alternatives, as on an allowance; normalization
+	// expands each listed port into its own canonical denial.
+	Port  int   `yaml:"port,omitempty" json:"port,omitempty"`
+	Ports []int `yaml:"ports,omitempty" json:"ports,omitempty"`
 }
 
 type AgentMCPEntriesSpec []AgentMCPEntrySpec
@@ -660,6 +680,7 @@ func validateSandboxNetwork(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
 		"default": validateScalar,
 		"allow":   validateSandboxNetworkAllowList,
+		"deny":    validateSandboxNetworkDenyList,
 	})
 }
 
@@ -672,8 +693,25 @@ func validateSandboxNetworkAllowList(node *yaml.Node, path string) error {
 		if err := validateMapping(item, itemPath, map[string]nodeValidator{
 			"host":        validateScalar,
 			"port":        validateInt,
-			"protocol":    validateScalar,
+			"ports":       validateIntSequence,
 			"allowed_ips": validateStringList,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSandboxNetworkDenyList(node *yaml.Node, path string) error {
+	if err := requireKind(node, path, yaml.SequenceNode, "sequence"); err != nil {
+		return err
+	}
+	for index, item := range node.Content {
+		itemPath := fmt.Sprintf("%s[%d]", path, index)
+		if err := validateMapping(item, itemPath, map[string]nodeValidator{
+			"host":  validateScalar,
+			"port":  validateInt,
+			"ports": validateIntSequence,
 		}); err != nil {
 			return err
 		}
@@ -1034,6 +1072,9 @@ func validateMapping(node *yaml.Node, path string, fields map[string]nodeValidat
 		seen[key.Value] = key
 		validator, ok := fields[key.Value]
 		if !ok {
+			if key.Value == "protocol" && networkEntryPath(path) {
+				return newParseError(key, fieldPath, `protocol was removed from network entries; remove this field, entries match any protocol`)
+			}
 			return newParseError(key, fieldPath, "unknown field")
 		}
 		if err := validator(value, fieldPath); err != nil {
@@ -1069,11 +1110,31 @@ func validateInt(node *yaml.Node, path string) error {
 	return nil
 }
 
+func validateIntSequence(node *yaml.Node, path string) error {
+	if err := requireKind(node, path, yaml.SequenceNode, "sequence"); err != nil {
+		return err
+	}
+	for index, item := range node.Content {
+		if err := validateInt(item, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func requireKind(node *yaml.Node, path string, want yaml.Kind, wantName string) error {
 	if node.Kind != want {
 		return newParseError(node, path, fmt.Sprintf("expected %s, got %s", wantName, nodeKindName(node.Kind)))
 	}
 	return nil
+}
+
+// networkEntryPath reports whether path is the parent of one allow or deny
+// entry. It is intentionally narrow: only the removed protocol field gets the
+// migration message, while every other unknown field keeps the strict generic
+// error.
+func networkEntryPath(path string) bool {
+	return strings.Contains(path, ".network.allow[") || strings.Contains(path, ".network.deny[")
 }
 
 func newParseError(node *yaml.Node, path string, message string) error {

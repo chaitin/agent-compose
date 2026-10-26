@@ -49,15 +49,15 @@ func TestDecodeRevisionSpecRejectsUnknownStoredClosedSetString(t *testing.T) {
 // silently changed the stopped-runtime lifecycle of every run: a sandbox created
 // with `retain` recorded `remove` and lost its runtime on the next stop.
 func TestDecodeRevisionSpecKeepsTheAgentPolicyBlock(t *testing.T) {
-	spec, err := DecodeRevisionSpec(`{"name":"demo","agents":[{"name":"retained","policy":{"stopped_runtime_policy":"retain","network":{"default":"deny"}}},{"name":"deprecated","sandbox":{"stopped_runtime_policy":"retain"}}]}`)
+	spec, err := DecodeRevisionSpec(`{"name":"demo","agents":[{"name":"retained","policy":{"stopped_runtime_policy":"retain","network":{"default":"deny-all"}}},{"name":"deprecated","sandbox":{"stopped_runtime_policy":"retain"}}]}`)
 	if err != nil {
 		t.Fatalf("DecodeRevisionSpec returned error: %v", err)
 	}
 	if got := spec.GetAgents()[0].GetSandbox().GetStoppedRuntimePolicy(); got != "retain" {
 		t.Fatalf("policy.stopped_runtime_policy = %q, want retain", got)
 	}
-	if got := spec.GetAgents()[0].GetSandbox().GetNetwork().GetDefault(); got != "deny" {
-		t.Fatalf("policy.network.default = %q, want deny", got)
+	if got := spec.GetAgents()[0].GetSandbox().GetNetwork().GetDefault(); got != "deny-all" {
+		t.Fatalf("policy.network.default = %q, want deny-all", got)
 	}
 	if got := spec.GetAgents()[1].GetSandbox().GetStoppedRuntimePolicy(); got != "retain" {
 		t.Fatalf("deprecated sandbox.stopped_runtime_policy = %q, want retain", got)
