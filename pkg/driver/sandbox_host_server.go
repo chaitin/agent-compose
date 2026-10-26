@@ -83,11 +83,12 @@ func (s *sandboxHostServer) runtimeForDriver(driver string) (SandboxRuntime, err
 }
 
 // sandboxHostStatus converts a driver-boundary error into a gRPC status. The
-// interaction-unsupported error is preserved as Unimplemented so the daemon can
-// reconstruct the capability refusal; exec-termination-unconfirmed rides
-// Aborted; context cancellation and deadline expiry keep their gRPC codes so
-// the daemon can reconstruct errors.Is(err, context.Canceled) /
-// context.DeadlineExceeded; everything else rides Internal with its message.
+// sentinel-backed errors are preserved with dedicated codes so the daemon can
+// reconstruct them via fromGRPCError: interaction-unsupported rides
+// Unimplemented, guest-runtime-gone rides NotFound, guest-runtime-not-ready
+// rides FailedPrecondition, exec-termination-unconfirmed rides Aborted; context
+// cancellation and deadline expiry keep their gRPC codes; everything else rides
+// Internal with its message.
 func sandboxHostStatus(err error) error {
 	if err == nil {
 		return nil
@@ -95,6 +96,10 @@ func sandboxHostStatus(err error) error {
 	switch {
 	case errors.Is(err, ErrRuntimeInteractionUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())
+	case errors.Is(err, ErrGuestRuntimeGone):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, ErrGuestRuntimeNotReady):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrExecTerminationUnconfirmed):
 		return status.Error(codes.Aborted, err.Error())
 	case errors.Is(err, context.Canceled):

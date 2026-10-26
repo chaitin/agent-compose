@@ -49,6 +49,14 @@ func requireDenyProtocolVersion(version int64, policy *SandboxNetworkPolicy) err
 	return nil
 }
 
+// ErrRuntimeCapabilityUnsupported reports that the sandbox-host runtime does not
+// implement an optional capability (stats, liveness, guest signals, or process
+// tree termination). It is distinct from ErrRuntimeInteractionUnsupported, which
+// is specific to the interaction surface: mapping every Unimplemented code to
+// the interaction sentinel would make a "stats unsupported" refusal look like an
+// interaction refusal.
+var ErrRuntimeCapabilityUnsupported = errors.New("runtime capability unsupported")
+
 // fromGRPCError reconstructs driver-boundary errors that were encoded as gRPC
 // status codes by sandboxHostStatus. The daemon's error classification relies on
 // sentinel matching, so the sentinel-backed cases are restored here.
@@ -58,7 +66,11 @@ func fromGRPCError(err error) error {
 	}
 	switch status.Code(err) {
 	case codes.Unimplemented:
-		return fmt.Errorf("%w: %s", ErrRuntimeInteractionUnsupported, status.Convert(err).Message())
+		return fmt.Errorf("%w: %s", ErrRuntimeCapabilityUnsupported, status.Convert(err).Message())
+	case codes.NotFound:
+		return fmt.Errorf("%w: %s", ErrGuestRuntimeGone, status.Convert(err).Message())
+	case codes.FailedPrecondition:
+		return fmt.Errorf("%w: %s", ErrGuestRuntimeNotReady, status.Convert(err).Message())
 	case codes.Aborted:
 		return fmt.Errorf("%w: %s", ErrExecTerminationUnconfirmed, status.Convert(err).Message())
 	case codes.Canceled:
@@ -68,6 +80,20 @@ func fromGRPCError(err error) error {
 	default:
 		return err
 	}
+}
+
+// fromInteractionGRPCError is fromGRPCError for the interaction surface: an
+// Unimplemented refusal there means the runtime does not support interaction,
+// not a generic capability, so it is restored as ErrRuntimeInteractionUnsupported
+// instead of ErrRuntimeCapabilityUnsupported.
+func fromInteractionGRPCError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if status.Code(err) == codes.Unimplemented {
+		return fmt.Errorf("%w: %s", ErrRuntimeInteractionUnsupported, status.Convert(err).Message())
+	}
+	return fromGRPCError(err)
 }
 
 // resolveSandboxCreateEnv resolves the sandbox's ProxyEnv closure and folds the
@@ -290,7 +316,7 @@ func (r *remoteSandboxRuntime) OpenInteraction(ctx context.Context, sandbox *San
 	}
 	stream, err := client.OpenInteraction(ctx)
 	if err != nil {
-		return nil, fromGRPCError(err)
+		return nil, fromInteractionGRPCError(err)
 	}
 	if err := stream.Send(&sandboxhost.InteractionMessage{
 		Payload: &sandboxhost.InteractionMessage_Open{
@@ -301,7 +327,7 @@ func (r *remoteSandboxRuntime) OpenInteraction(ctx context.Context, sandbox *San
 			},
 		},
 	}); err != nil {
-		return nil, fromGRPCError(err)
+		return nil, fromInteractionGRPCError(err)
 	}
 	return newRemoteInteraction(ctx, stream), nil
 }
@@ -339,7 +365,7 @@ func (ri *remoteInteraction) pump() {
 			if errors.Is(err, io.EOF) {
 				err = io.ErrUnexpectedEOF
 			}
-			ri.resultErr = fromGRPCError(err)
+			ri.resultErr = fromInteractionGRPCError(err)
 			return
 		}
 		switch payload := msg.GetPayload().(type) {

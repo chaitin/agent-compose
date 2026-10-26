@@ -314,8 +314,14 @@ func TestRemoteSandboxRuntimeErrorMapping(t *testing.T) {
 		ensureErr    error
 		wantSentinel error
 	}{
-		{name: "interaction unsupported", ensureErr: ErrRuntimeInteractionUnsupported, wantSentinel: ErrRuntimeInteractionUnsupported},
+		// A non-interaction RPC that yields Unimplemented must come back as the
+		// generic capability sentinel, not the interaction one (the reviewer's
+		// misleading-mapping concern). ErrRuntimeInteractionUnsupported is the
+		// server-side source of Unimplemented here.
+		{name: "unimplemented maps to capability unsupported", ensureErr: ErrRuntimeInteractionUnsupported, wantSentinel: ErrRuntimeCapabilityUnsupported},
 		{name: "exec termination unconfirmed", ensureErr: ErrExecTerminationUnconfirmed, wantSentinel: ErrExecTerminationUnconfirmed},
+		{name: "guest runtime gone", ensureErr: ErrGuestRuntimeGone, wantSentinel: ErrGuestRuntimeGone},
+		{name: "guest runtime not ready", ensureErr: ErrGuestRuntimeNotReady, wantSentinel: ErrGuestRuntimeNotReady},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -494,34 +500,49 @@ func TestSandboxHostStatusAndFromGRPCError(t *testing.T) {
 	if sandboxHostStatus(nil) != nil {
 		t.Fatalf("sandboxHostStatus(nil) must be nil")
 	}
-	if code := status.Code(sandboxHostStatus(ErrRuntimeInteractionUnsupported)); code != codes.Unimplemented {
-		t.Fatalf("interaction unsupported code = %v, want Unimplemented", code)
+	serverCases := []struct {
+		err  error
+		code codes.Code
+	}{
+		{ErrRuntimeInteractionUnsupported, codes.Unimplemented},
+		{ErrGuestRuntimeGone, codes.NotFound},
+		{ErrGuestRuntimeNotReady, codes.FailedPrecondition},
+		{ErrExecTerminationUnconfirmed, codes.Aborted},
+		{errors.New("boom"), codes.Internal},
+		{context.Canceled, codes.Canceled},
+		{context.DeadlineExceeded, codes.DeadlineExceeded},
 	}
-	if code := status.Code(sandboxHostStatus(ErrExecTerminationUnconfirmed)); code != codes.Aborted {
-		t.Fatalf("exec termination code = %v, want Aborted", code)
-	}
-	if code := status.Code(sandboxHostStatus(errors.New("boom"))); code != codes.Internal {
-		t.Fatalf("generic code = %v, want Internal", code)
-	}
-	if code := status.Code(sandboxHostStatus(context.Canceled)); code != codes.Canceled {
-		t.Fatalf("canceled code = %v, want Canceled", code)
-	}
-	if code := status.Code(sandboxHostStatus(context.DeadlineExceeded)); code != codes.DeadlineExceeded {
-		t.Fatalf("deadline code = %v, want DeadlineExceeded", code)
+	for _, tc := range serverCases {
+		if code := status.Code(sandboxHostStatus(tc.err)); code != tc.code {
+			t.Fatalf("sandboxHostStatus(%v) code = %v, want %v", tc.err, code, tc.code)
+		}
 	}
 
-	if !errors.Is(fromGRPCError(status.Error(codes.Unimplemented, "no")), ErrRuntimeInteractionUnsupported) {
-		t.Fatalf("fromGRPCError(Unimplemented) must map to interaction unsupported")
+	clientCases := []struct {
+		err         error
+		want        error
+		interaction bool
+	}{
+		{status.Error(codes.Unimplemented, "no"), ErrRuntimeCapabilityUnsupported, false},
+		{status.Error(codes.Unimplemented, "no"), ErrRuntimeInteractionUnsupported, true},
+		{status.Error(codes.NotFound, "gone"), ErrGuestRuntimeGone, false},
+		{status.Error(codes.FailedPrecondition, "not ready"), ErrGuestRuntimeNotReady, false},
+		{status.Error(codes.Aborted, "no"), ErrExecTerminationUnconfirmed, false},
+		{status.Error(codes.Canceled, "canceled"), context.Canceled, false},
+		{status.Error(codes.DeadlineExceeded, "deadline"), context.DeadlineExceeded, false},
 	}
-	if !errors.Is(fromGRPCError(status.Error(codes.Aborted, "no")), ErrExecTerminationUnconfirmed) {
-		t.Fatalf("fromGRPCError(Aborted) must map to exec termination")
+	for _, tc := range clientCases {
+		var got error
+		if tc.interaction {
+			got = fromInteractionGRPCError(tc.err)
+		} else {
+			got = fromGRPCError(tc.err)
+		}
+		if !errors.Is(got, tc.want) {
+			t.Fatalf("map(%v) = %v, want errors.Is %v", tc.err, got, tc.want)
+		}
 	}
-	if !errors.Is(fromGRPCError(status.Error(codes.Canceled, "canceled")), context.Canceled) {
-		t.Fatalf("fromGRPCError(Canceled) must map to context.Canceled")
-	}
-	if !errors.Is(fromGRPCError(status.Error(codes.DeadlineExceeded, "deadline")), context.DeadlineExceeded) {
-		t.Fatalf("fromGRPCError(DeadlineExceeded) must map to context.DeadlineExceeded")
-	}
+
 	if err := fromGRPCError(status.Error(codes.Internal, "boom")); status.Code(err) != codes.Internal {
 		t.Fatalf("fromGRPCError(Internal) must pass through, got %v", err)
 	}
