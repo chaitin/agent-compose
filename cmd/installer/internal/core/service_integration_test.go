@@ -334,6 +334,7 @@ func TestIntegrationUninstallPreservesAndPurgesData(t *testing.T) {
 			installDir := filepath.Join(t.TempDir(), "install")
 			writeTestFile(t, filepath.Join(installDir, "docker-compose.yml"), "services: {}\n", 0o644)
 			writeTestFile(t, filepath.Join(installDir, "docker-compose.kvm.yml"), "services: {}\n", 0o644)
+			writeTestFile(t, filepath.Join(installDir, "docker-compose.sandbox-network.yml"), "services: {}\n", 0o644)
 			writeTestFile(t, filepath.Join(installDir, ".env"), "COMPOSE_FILE=docker-compose.yml\n", 0o600)
 			writeTestFile(t, filepath.Join(installDir, ".installer-state.env"), "INSTALLER_PAYLOAD_VERSION=1\n", 0o600)
 			writeTestFile(t, filepath.Join(installDir, "installer"), "binary", 0o755)
@@ -350,7 +351,7 @@ func TestIntegrationUninstallPreservesAndPurgesData(t *testing.T) {
 			if !slices.Contains(result.RetainedFiles, "user-note") {
 				t.Fatalf("retained files = %#v", result.RetainedFiles)
 			}
-			if regularFile(filepath.Join(installDir, "docker-compose.yml")) || regularFile(filepath.Join(installDir, "installer")) {
+			if regularFile(filepath.Join(installDir, "docker-compose.yml")) || regularFile(filepath.Join(installDir, "docker-compose.kvm.yml")) || regularFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml")) || regularFile(filepath.Join(installDir, "installer")) {
 				t.Fatal("managed files survived uninstall")
 			}
 			_, envErr := os.Stat(filepath.Join(installDir, ".env"))

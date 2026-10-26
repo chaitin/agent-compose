@@ -567,6 +567,33 @@ func TestNewConfigUsesSandboxEnvironmentWhenLegacyAlsoSet(t *testing.T) {
 	}
 }
 
+func TestNewConfigLoadsDockerSandboxNetwork(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "explicit", value: "sandbox-net", want: "sandbox-net"},
+		{name: "trimmed", value: "  sandbox-net  ", want: "sandbox-net"},
+		{name: "empty keeps default", value: "", want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("DATA_ROOT", t.TempDir())
+			t.Setenv("DOCKER_SANDBOX_NETWORK", test.value)
+			di := do.New()
+			do.ProvideValue(di, slog.Default())
+			config, err := NewConfig(di)
+			if err != nil {
+				t.Fatalf("NewConfig returned error: %v", err)
+			}
+			if config.DockerSandboxNetwork != test.want {
+				t.Fatalf("DockerSandboxNetwork = %q, want %q", config.DockerSandboxNetwork, test.want)
+			}
+		})
+	}
+}
+
 func TestNewConfigJupyterReadyTimeoutDefaultAndGuard(t *testing.T) {
 	cases := []struct {
 		name  string

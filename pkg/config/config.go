@@ -95,12 +95,35 @@ type Config struct {
 	GlobalNetworkPolicy *egress.NetworkDeclaration
 	// GlobalNetworkPolicyInfo identifies the file and digest the effective
 	// daemon-wide policy was compiled from. It is zero when no policy is set.
-	GlobalNetworkPolicyInfo    GlobalNetworkPolicyInfo
-	BoxliteHome                string
-	BoxliteRuntimeDir          string
-	DockerHome                 string
-	DockerHostSandboxRoot      string
-	DockerDefaultImage         string
+	GlobalNetworkPolicyInfo GlobalNetworkPolicyInfo
+	BoxliteHome             string
+	BoxliteRuntimeDir       string
+	DockerHome              string
+	DockerHostSandboxRoot   string
+	DockerDefaultImage      string
+	// DockerSandboxNetwork is the Docker network each newly-created Docker
+	// sandbox container is attached to. Empty keeps the current behavior when
+	// the daemon is on a single non-default network: the sandbox joins the
+	// daemon's own network. A containerized daemon attached to multiple
+	// non-default networks is ambiguous, so the driver fails closed instead of
+	// guessing. Existing sandbox containers are reused as-is and keep their
+	// current network until they are recreated.
+	// When set, the network must be a user-defined network (the built-in
+	// host/none/bridge/default networks are rejected) and must exist; the driver
+	// fails closed if it does not. A containerized daemon must also be attached
+	// to it, or the driver fails closed. The daemon must be reachable from the
+	// network: the docker-compose.sandbox-network.yml overlay dual-homes the
+	// daemon onto it and keeps the `container_name: agent-compose` alias, so the
+	// default AGENT_COMPOSE_RUNTIME_BASE_URL (http://agent-compose:7410) keeps
+	// resolving; only a hand-built separation that lacks that alias has to point
+	// AGENT_COMPOSE_RUNTIME_BASE_URL at the daemon's address on the sandbox
+	// network. The overlay sets this variable automatically, so operators
+	// normally select the overlay instead of setting it by hand.
+	// The driver injects the forward proxy whenever that URL is a non-loopback
+	// address and does not verify it is reachable, so a network misconfiguration
+	// silently drops enforcement rather than reporting the declaration
+	// unenforced.
+	DockerSandboxNetwork       string
 	MicrosandboxHome           string
 	MicrosandboxMSBPath        string
 	MicrosandboxLibPath        string
@@ -359,6 +382,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		BoxliteRuntimeDir:          normalized.BoxliteRuntimeDir,
 		DockerHome:                 normalized.DockerHome,
 		DockerHostSandboxRoot:      normalized.DockerHostSandboxRoot,
+		DockerSandboxNetwork:       drivers.DockerSandboxNetwork,
 		DockerDefaultImage:         images.DockerDefaultImage,
 		MicrosandboxHome:           normalized.MicrosandboxHome,
 		MicrosandboxMSBPath:        normalized.MicrosandboxMSBPath,
@@ -641,6 +665,7 @@ type driverHomesConfig struct {
 	BoxliteRuntimeDir     string
 	DockerHome            string
 	DockerHostSandboxRoot string
+	DockerSandboxNetwork  string
 	MicrosandboxHome      string
 	MicrosandboxMSBPath   string
 	MicrosandboxLibPath   string
@@ -682,6 +707,11 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	if err != nil {
 		return driverHomesConfig{}, err
 	}
+	// DOCKER_SANDBOX_NETWORK is left empty by default so a Docker sandbox keeps
+	// joining the daemon's own network. It is trimmed, not normalized: the value
+	// is a Docker network name, not a path. The sandbox-network overlay injects
+	// it, so operators normally leave it unset and only select the overlay.
+	dockerSandboxNetwork := strings.TrimSpace(os.Getenv("DOCKER_SANDBOX_NETWORK"))
 
 	microsandboxHome := getenvFirst("MICROSANDBOX_HOME", "MSB_HOME")
 	if microsandboxHome == "" {
@@ -737,6 +767,7 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 		BoxliteRuntimeDir:     boxliteRuntimeDir,
 		DockerHome:            dockerHome,
 		DockerHostSandboxRoot: dockerHostSandboxRoot,
+		DockerSandboxNetwork:  dockerSandboxNetwork,
 		MicrosandboxHome:      microsandboxHome,
 		K8sRuntimeBaseURL:     k8sRuntimeBaseURL,
 		MicrosandboxMSBPath:   microsandboxMSBPath,

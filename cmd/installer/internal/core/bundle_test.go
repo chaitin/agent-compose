@@ -49,6 +49,24 @@ func TestExtractBundleRejectsUnexpectedPath(t *testing.T) {
 	}
 }
 
+func TestExtractBundleRejectsNonRegularKnownMember(t *testing.T) {
+	var archive bytes.Buffer
+	gzipWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzipWriter)
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "agent-compose-installer/docker-compose.yml", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd", Mode: 0o777}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzipWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractBundle(archive.Bytes(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "unexpected file") {
+		t.Fatalf("extractBundle error = %v", err)
+	}
+}
+
 func TestExtractBundleAcceptsLegacyReleaseMembers(t *testing.T) {
 	archive := makeBundleArchive(t, map[string]string{
 		"agent-compose-installer/docker-compose.yml":  "services: {}\n",

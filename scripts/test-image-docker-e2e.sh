@@ -112,7 +112,7 @@ DOCKER_HOST="$docker_host" \
   AGENT_COMPOSE_E2E_RUN_ID="$task_run_id" \
   GOCACHE="${GOCACHE:-$ROOT_DIR/.cache/go-build}" \
   "$GO_TOOLCHAIN_SCRIPT" go test ./test/e2e \
-    -run '^TestE2EImageDocker(NoKVMStartup|SandboxLifecycle)$' -count=1 -v || test_status=$?
+    -run '^TestE2EImageDocker(NoKVMStartup|SandboxLifecycle|SandboxNetworkPlacement)$' -count=1 -v || test_status=$?
 
 leak_status=0
 audit_resources leaked "$task_run_filter" || leak_status=$?

@@ -22,7 +22,7 @@ func TestImageDockerTaskContract(t *testing.T) {
 		"AGENT_COMPOSE_E2E_GUEST_IMAGE",
 		"AGENT_COMPOSE_E2E_DOCKER_SOCKET",
 		"AGENT_COMPOSE_E2E_RUN_ID",
-		"TestE2EImageDocker(NoKVMStartup|SandboxLifecycle)",
+		"TestE2EImageDocker(NoKVMStartup|SandboxLifecycle|SandboxNetworkPlacement)",
 		"label=agent-compose.e2e=image-docker",
 		"cleanup_image_docker_e2e_resources",
 	} {
