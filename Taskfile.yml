@@ -145,6 +145,7 @@ tasks:
         msg: "buf is required; run 'task prepare' first"
     cmds:
       - buf generate
+      - sh: 'cd pkg/driver/sandboxhost && buf generate'
 
   clean:
     desc: Remove generated build, test, and cache artifacts
