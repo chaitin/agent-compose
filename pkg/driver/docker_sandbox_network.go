@@ -27,9 +27,16 @@ func (r *dockerRuntime) dockerDaemonTopology(ctx context.Context, dockerClient *
 		networkName, containerized, ambiguous, networkNames = "", false, false, nil
 	}
 
-	topology, err := selectDockerDaemonTopology(r.config.DockerSandboxNetwork, networkName, networkNames, containerized, ambiguous, func(name string) error {
-		_, inspectErr := dockerClient.NetworkInspect(ctx, name, networkapi.InspectOptions{})
-		return inspectErr
+	topology, err := selectDockerDaemonTopology(dockerDaemonTopologyInput{
+		explicitNetwork: r.config.DockerSandboxNetwork,
+		detectedNetwork: networkName,
+		daemonNetworks:  networkNames,
+		containerized:   containerized,
+		ambiguous:       ambiguous,
+		networkExists: func(name string) error {
+			_, inspectErr := dockerClient.NetworkInspect(ctx, name, networkapi.InspectOptions{})
+			return inspectErr
+		},
 	})
 	if err != nil {
 		return dockerDaemonTopology{}, err
@@ -52,27 +59,38 @@ func (r *dockerRuntime) dockerDaemonTopology(ctx context.Context, dockerClient *
 // containerized daemon attached to more than one non-default network is
 // ambiguous and fails closed instead of guessing, since the overlay injects
 // DOCKER_SANDBOX_NETWORK whenever it dual-homes the daemon.
-func selectDockerDaemonTopology(explicitNetwork, detectedNetwork string, daemonNetworks []string, containerized, ambiguous bool, networkExists func(string) error) (dockerDaemonTopology, error) {
-	if name := strings.TrimSpace(explicitNetwork); name != "" {
+// dockerDaemonTopologyInput bundles the resolver's inputs so it stays a
+// single-argument pure function under the repository argument-count limit.
+type dockerDaemonTopologyInput struct {
+	explicitNetwork string
+	detectedNetwork string
+	daemonNetworks  []string
+	containerized   bool
+	ambiguous       bool
+	networkExists   func(string) error
+}
+
+func selectDockerDaemonTopology(input dockerDaemonTopologyInput) (dockerDaemonTopology, error) {
+	if name := strings.TrimSpace(input.explicitNetwork); name != "" {
 		switch name {
 		case "host", "none", "bridge", "default":
 			return dockerDaemonTopology{}, fmt.Errorf("docker sandbox network %q is not an isolated user-defined network", name)
 		}
-		if err := networkExists(name); err != nil {
+		if err := input.networkExists(name); err != nil {
 			return dockerDaemonTopology{}, fmt.Errorf("docker sandbox network %q unavailable: %w", name, err)
 		}
-		if containerized && !containsNetworkName(daemonNetworks, name) {
+		if input.containerized && !containsNetworkName(input.daemonNetworks, name) {
 			return dockerDaemonTopology{}, fmt.Errorf("docker sandbox network %q is not attached to the daemon; attach the daemon to it or enable the docker-compose.sandbox-network.yml overlay", name)
 		}
-		return dockerDaemonTopology{networkMode: containerapi.NetworkMode(name), containerized: containerized}, nil
+		return dockerDaemonTopology{networkMode: containerapi.NetworkMode(name), containerized: input.containerized}, nil
 	}
-	if ambiguous {
+	if input.ambiguous {
 		return dockerDaemonTopology{}, fmt.Errorf("docker daemon is attached to multiple non-default networks; set DOCKER_SANDBOX_NETWORK or enable the docker-compose.sandbox-network.yml overlay")
 	}
-	if detectedNetwork == "" {
+	if input.detectedNetwork == "" {
 		return dockerDaemonTopology{networkMode: containerapi.NetworkMode("default")}, nil
 	}
-	return dockerDaemonTopology{networkMode: containerapi.NetworkMode(detectedNetwork), containerized: containerized}, nil
+	return dockerDaemonTopology{networkMode: containerapi.NetworkMode(input.detectedNetwork), containerized: input.containerized}, nil
 }
 
 // containsNetworkName reports whether name is among the non-empty network names.

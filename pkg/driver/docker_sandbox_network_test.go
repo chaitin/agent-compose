@@ -239,7 +239,14 @@ func TestSelectDockerDaemonTopologyHonorsExplicitSandboxNetwork(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := selectDockerDaemonTopology(test.explicit, test.detected, test.daemonNetworks, test.containerized, test.ambiguous, test.networkExists)
+			got, err := selectDockerDaemonTopology(dockerDaemonTopologyInput{
+				explicitNetwork: test.explicit,
+				detectedNetwork: test.detected,
+				daemonNetworks:  test.daemonNetworks,
+				containerized:   test.containerized,
+				ambiguous:       test.ambiguous,
+				networkExists:   test.networkExists,
+			})
 			if test.wantErr {
 				if err == nil {
 					t.Fatal("selectDockerDaemonTopology() error = nil, want an error")
@@ -261,9 +268,15 @@ func TestSelectDockerDaemonTopologyHonorsExplicitSandboxNetwork(t *testing.T) {
 
 func TestSelectDockerDaemonTopologyTrimsExplicitNetworkForInspect(t *testing.T) {
 	var inspected string
-	_, err := selectDockerDaemonTopology("  sandbox-net  ", "adp_internal", []string{"adp_internal", "sandbox-net"}, true, false, func(name string) error {
-		inspected = name
-		return nil
+	_, err := selectDockerDaemonTopology(dockerDaemonTopologyInput{
+		explicitNetwork: "  sandbox-net  ",
+		detectedNetwork: "adp_internal",
+		daemonNetworks:  []string{"adp_internal", "sandbox-net"},
+		containerized:   true,
+		networkExists: func(name string) error {
+			inspected = name
+			return nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("selectDockerDaemonTopology() error = %v, want nil", err)
