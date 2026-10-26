@@ -125,6 +125,13 @@ func marshalNetworkPolicy(p *SandboxNetworkPolicy) *sandboxhost.NetworkPolicy {
 			AllowedIps: append([]string(nil), entry.AllowedIPs...),
 		})
 	}
+	for _, entry := range p.Deny {
+		policy.Deny = append(policy.Deny, &sandboxhost.DenyEntry{
+			Host:     entry.Host,
+			Port:     int32(entry.Port),
+			Protocol: string(entry.Protocol),
+		})
+	}
 	for _, endpoint := range p.EngineEndpoints {
 		policy.EngineEndpoints = append(policy.EngineEndpoints, &sandboxhost.EngineEndpoint{
 			Purpose: string(endpoint.Purpose),
@@ -154,6 +161,13 @@ func unmarshalNetworkPolicy(p *sandboxhost.NetworkPolicy) *SandboxNetworkPolicy 
 			Port:       int(entry.GetPort()),
 			Protocol:   egress.Protocol(entry.GetProtocol()),
 			AllowedIPs: append([]string(nil), entry.GetAllowedIps()...),
+		})
+	}
+	for _, entry := range p.GetDeny() {
+		policy.Deny = append(policy.Deny, egress.DenyEntry{
+			Host:     entry.GetHost(),
+			Port:     int(entry.GetPort()),
+			Protocol: egress.Protocol(entry.GetProtocol()),
 		})
 	}
 	for _, endpoint := range p.GetEngineEndpoints() {

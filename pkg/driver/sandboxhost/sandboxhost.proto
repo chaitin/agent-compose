@@ -111,6 +111,15 @@ message AllowEntry {
   repeated string allowed_ips = 4;
 }
 
+// DenyEntry is one declared refusal. It mirrors egress.DenyEntry and, unlike
+// AllowEntry, deliberately carries no allowed_ips: constraining a refusal to
+// selected addresses would make one entry mean two different things.
+message DenyEntry {
+  string host = 1;
+  int32 port = 2;
+  string protocol = 3;
+}
+
 message EngineEndpoint {
   string purpose = 1;
   Endpoint endpoint = 2;
@@ -123,6 +132,7 @@ message NetworkPolicy {
   repeated EngineEndpoint engine_endpoints = 3;
   repeated string deny_domains = 4;
   bool mediated_by_forward_proxy = 5;
+  repeated DenyEntry deny = 6;
 }
 
 message Sandbox {

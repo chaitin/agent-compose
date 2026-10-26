@@ -36,12 +36,13 @@ const (
 // selected driver is Docker or k8s never dials or spawns a host, and so a
 // compose-deployed daemon simply attaches to the pre-started host.
 type SandboxHostConnector struct {
-	socketPath string
-	dataRoot   string
-	mode       SandboxHostMode
-	mu         sync.Mutex
-	client     sandboxhost.SandboxHostClient
-	conn       *grpc.ClientConn
+	socketPath      string
+	dataRoot        string
+	mode            SandboxHostMode
+	mu              sync.Mutex
+	client          sandboxhost.SandboxHostClient
+	conn            *grpc.ClientConn
+	protocolVersion int64
 }
 
 func NewSandboxHostConnector(socketPath, dataRoot string, mode SandboxHostMode) *SandboxHostConnector {
@@ -59,25 +60,35 @@ func (c *SandboxHostConnector) Client(ctx context.Context) (sandboxhost.SandboxH
 	if c.client != nil {
 		return c.client, nil
 	}
-	client, conn, err := c.dialOrSpawn(ctx)
+	client, conn, version, err := c.dialOrSpawn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	c.client = client
 	c.conn = conn
+	c.protocolVersion = version
 	return client, nil
 }
 
-func (c *SandboxHostConnector) dialOrSpawn(ctx context.Context) (sandboxhost.SandboxHostClient, *grpc.ClientConn, error) {
+// ProtocolVersion reports the protocol version negotiated with the sandbox-host
+// during the last successful dial. It is zero until the host is first reached,
+// which matches "no deny support" for a host the daemon has never spoken to.
+func (c *SandboxHostConnector) ProtocolVersion() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.protocolVersion
+}
+
+func (c *SandboxHostConnector) dialOrSpawn(ctx context.Context) (sandboxhost.SandboxHostClient, *grpc.ClientConn, int64, error) {
 	if !sandboxHostSocketReachable(c.socketPath) {
 		if c.mode == SandboxHostModeExternal {
-			return nil, nil, fmt.Errorf("sandbox-host socket %q is not reachable (mode %q refuses to spawn; the host must be started externally)", c.socketPath, c.mode)
+			return nil, nil, 0, fmt.Errorf("sandbox-host socket %q is not reachable (mode %q refuses to spawn; the host must be started externally)", c.socketPath, c.mode)
 		}
 		if err := spawnSandboxHost(c.socketPath, c.dataRoot); err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
 		if err := waitSandboxHostSocket(ctx, c.socketPath); err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
 	}
 	return dialSandboxHost(ctx, c.socketPath)
@@ -93,6 +104,7 @@ func (c *SandboxHostConnector) Close() error {
 	err := c.conn.Close()
 	c.conn = nil
 	c.client = nil
+	c.protocolVersion = 0
 	return err
 }
 

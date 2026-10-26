@@ -36,6 +36,7 @@ func TestSandboxHostMarshalRoundTrip(t *testing.T) {
 		NetworkPolicy: &SandboxNetworkPolicy{
 			Default: egress.Deny,
 			Allow:   []egress.AllowEntry{{Host: "example.com", Port: 443, Protocol: "tcp", AllowedIPs: []string{"10.0.0.0/8"}}},
+			Deny:    []egress.DenyEntry{{Host: "blocked.example.com", Port: 22, Protocol: "tcp"}},
 			EngineEndpoints: []egress.EngineEndpoint{{
 				Purpose: egress.PurposeLLMFacade, Endpoint: egress.Endpoint{Host: "facade", Port: 7410, Protocol: "tcp"}, Source: "runtime_base_url",
 			}},
@@ -150,6 +151,41 @@ func TestSandboxHostProtocolCompatible(t *testing.T) {
 	}
 	if sandboxHostProtocolCompatible(-1) {
 		t.Fatalf("negative protocol version must be incompatible")
+	}
+}
+
+func TestRequireDenyProtocolVersion(t *testing.T) {
+	denyPolicy := &SandboxNetworkPolicy{Deny: []egress.DenyEntry{{Host: "blocked.example.com", Port: 22, Protocol: "tcp"}}}
+	noDeny := &SandboxNetworkPolicy{Deny: nil, Allow: []egress.AllowEntry{{Host: "example.com", Port: 443, Protocol: "tcp"}}}
+
+	tests := []struct {
+		name    string
+		version int64
+		policy  *SandboxNetworkPolicy
+		wantErr bool
+	}{
+		{name: "deny on current protocol is accepted", version: sandboxHostProtocolVersion, policy: denyPolicy},
+		{name: "deny on deny-capable protocol is accepted", version: sandboxHostDenyProtocolVersion, policy: denyPolicy},
+		{name: "deny on older protocol fails closed", version: sandboxHostDenyProtocolVersion - 1, policy: denyPolicy, wantErr: true},
+		{name: "no deny on older protocol is accepted", version: sandboxHostDenyProtocolVersion - 1, policy: noDeny},
+		{name: "nil policy on older protocol is accepted", version: sandboxHostDenyProtocolVersion - 1, policy: nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := requireDenyProtocolVersion(tt.version, tt.policy)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected fail-closed error, got nil")
+				}
+				if !errors.Is(err, ErrSandboxNetworkEnforcementUnavailable) {
+					t.Fatalf("expected ErrSandboxNetworkEnforcementUnavailable, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
 	}
 }
 

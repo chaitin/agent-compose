@@ -16,7 +16,18 @@ import (
 // speaks. It is monotonically increasing; the daemon accepts this version and
 // the previous one (N and N-1). Bump it only with a corresponding daemon-side
 // compatibility window.
-const sandboxHostProtocolVersion = 1
+//
+// Version 2 added NetworkPolicy.deny so declared refusals reach the VM driver.
+// A host that predates it silently drops deny entries, so the daemon fails
+// closed (rather than applying a policy without its denials) when a sandbox
+// declares deny rules against an N-1 host.
+const sandboxHostProtocolVersion = 2
+
+// sandboxHostDenyProtocolVersion is the first protocol version whose wire
+// NetworkPolicy carries deny entries. A daemon driving a host below it refuses
+// a deny-declaring sandbox instead of letting the host silently ignore the
+// refusal.
+const sandboxHostDenyProtocolVersion = 2
 
 // sandboxHostMaxMsgSize is the gRPC message ceiling shared by the daemon and
 // the sandbox-host. gRPC defaults to 4 MiB, which the accumulated ExecResult

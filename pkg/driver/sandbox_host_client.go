@@ -20,10 +20,14 @@ import (
 type remoteSandboxRuntime struct {
 	driver     string
 	clientFunc func(context.Context) (sandboxhost.SandboxHostClient, error)
+	version    func() int64
 }
 
-func newRemoteSandboxRuntime(driver string, clientFunc func(context.Context) (sandboxhost.SandboxHostClient, error)) *remoteSandboxRuntime {
-	return &remoteSandboxRuntime{driver: resolveRuntimeDriver(driver), clientFunc: clientFunc}
+func newRemoteSandboxRuntime(driver string, clientFunc func(context.Context) (sandboxhost.SandboxHostClient, error), version func() int64) *remoteSandboxRuntime {
+	if version == nil {
+		version = func() int64 { return sandboxHostProtocolVersion }
+	}
+	return &remoteSandboxRuntime{driver: resolveRuntimeDriver(driver), clientFunc: clientFunc, version: version}
 }
 
 // NewRemoteSandboxRuntime returns a SandboxRuntime that proxies the named VM
@@ -31,7 +35,18 @@ func newRemoteSandboxRuntime(driver string, clientFunc func(context.Context) (sa
 // SandboxRuntime surface plus the optional Stats, IsSandboxAlive,
 // SignalGuestRuntime, TerminateProcessTree, and RuntimeInteractor interfaces.
 func NewRemoteSandboxRuntime(driver string, connector *SandboxHostConnector) SandboxRuntime {
-	return newRemoteSandboxRuntime(driver, connector.Client)
+	return newRemoteSandboxRuntime(driver, connector.Client, connector.ProtocolVersion)
+}
+
+// requireDenyProtocolVersion fails closed when a sandbox declares deny entries
+// but the negotiated host protocol predates deny support. A host below
+// sandboxHostDenyProtocolVersion silently drops the entries, so accepting the
+// sandbox would apply a policy without its refusals.
+func requireDenyProtocolVersion(version int64, policy *SandboxNetworkPolicy) error {
+	if policy != nil && len(policy.Deny) > 0 && version < sandboxHostDenyProtocolVersion {
+		return fmt.Errorf("sandbox declares deny rules but the sandbox-host speaks protocol %d (deny requires %d): %w", version, sandboxHostDenyProtocolVersion, ErrSandboxNetworkEnforcementUnavailable)
+	}
+	return nil
 }
 
 // fromGRPCError reconstructs driver-boundary errors that were encoded as gRPC
@@ -77,6 +92,9 @@ func resolveSandboxCreateEnv(ctx context.Context, sandbox *Sandbox) (*Sandbox, e
 func (r *remoteSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
 	client, err := r.clientFunc(ctx)
 	if err != nil {
+		return SandboxVMInfo{}, err
+	}
+	if err := requireDenyProtocolVersion(r.version(), sandbox.NetworkPolicy); err != nil {
 		return SandboxVMInfo{}, err
 	}
 	needs, err := client.NeedsCreate(ctx, &sandboxhost.SandboxRequest{
