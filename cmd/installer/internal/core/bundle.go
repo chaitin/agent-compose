@@ -151,23 +151,14 @@ func extractBundle(data []byte, destination string) error {
 		}
 		name := filepath.ToSlash(filepath.Clean(header.Name))
 		if header.Typeflag == tar.TypeDir {
-			// Directory entries are informational: only whitelisted regular
-			// files are ever written, and their parent directories are created
-			// by MkdirAll below. Skipping them keeps the forward-compatible
-			// skip consistent for directories and files alike.
+			if name != "agent-compose-installer" && name != "agent-compose-installer/images" {
+				return fmt.Errorf("unexpected directory in deployment bundle: %s", name)
+			}
 			continue
 		}
 		member, ok := allowed[name]
-		if !ok {
-			// Skip unrecognized members instead of rejecting the whole bundle so
-			// an installer predating a newly introduced optional member can still
-			// unpack a newer bundle during an in-place upgrade. Only whitelisted
-			// names (all under agent-compose-installer/) are ever written, so this
-			// also drops any path-traversal attempt without touching the disk.
-			continue
-		}
-		if header.Typeflag != tar.TypeReg {
-			return fmt.Errorf("unexpected non-regular file in deployment bundle: %s", name)
+		if !ok || header.Typeflag != tar.TypeReg {
+			return fmt.Errorf("unexpected file in deployment bundle: %s", name)
 		}
 		if header.Size < 0 || header.Size > member.maxSize {
 			return fmt.Errorf("deployment bundle file %s exceeds the size limit", name)

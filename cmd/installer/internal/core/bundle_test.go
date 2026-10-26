@@ -27,65 +27,16 @@ func TestVerifyChecksum(t *testing.T) {
 	}
 }
 
-func TestExtractBundleSkipsUnknownAndTraversalMembers(t *testing.T) {
-	archive := makeBundleArchive(t, map[string]string{
-		"agent-compose-installer/docker-compose.yml":  "services: {}\n",
-		"agent-compose-installer/.env.example":        "AUTH_PASSWORD=\nAUTH_SECRET=\n",
-		"agent-compose-installer/images/manifest.env": "AGENT_COMPOSE_IMAGE=registry.example/agent-compose:v1\n",
-		"agent-compose-installer/future-member.yml":   "future: true\n",
-		"../outside": "unsafe\n",
-	})
-	destination := t.TempDir()
-	if err := extractBundle(archive, destination); err != nil {
-		t.Fatal(err)
-	}
-	root := filepath.Join(destination, "agent-compose-installer")
-	for _, name := range []string{"docker-compose.yml", ".env.example", filepath.Join("images", "manifest.env")} {
-		if !regularFile(filepath.Join(root, name)) {
-			t.Fatalf("required member %s was not extracted", name)
-		}
-	}
-	if _, err := os.Lstat(filepath.Join(root, "future-member.yml")); !os.IsNotExist(err) {
-		t.Fatalf("unknown member was extracted: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(destination, "..", "outside")); !os.IsNotExist(err) {
-		t.Fatalf("traversal member escaped the destination: %v", err)
-	}
-}
-
-func TestExtractBundleSkipsUnknownDirectoryMembers(t *testing.T) {
+func TestExtractBundleRejectsUnexpectedPath(t *testing.T) {
 	var archive bytes.Buffer
 	gzipWriter := gzip.NewWriter(&archive)
 	tarWriter := tar.NewWriter(gzipWriter)
-	members := []struct {
-		name    string
-		dir     bool
-		content string
-	}{
-		{name: "agent-compose-installer", dir: true},
-		{name: "agent-compose-installer/future-dir", dir: true},
-		{name: "agent-compose-installer/docker-compose.yml", content: "services: {}\n"},
-		{name: "agent-compose-installer/.env.example", content: "AUTH_PASSWORD=\nAUTH_SECRET=\n"},
-		{name: "agent-compose-installer/images", dir: true},
-		{name: "agent-compose-installer/images/manifest.env", content: "AGENT_COMPOSE_IMAGE=registry.example/agent-compose:v1\n"},
+	content := []byte("unsafe")
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "../outside", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(content))}); err != nil {
+		t.Fatal(err)
 	}
-	for _, member := range members {
-		header := &tar.Header{Name: member.name, Mode: 0o644}
-		if member.dir {
-			header.Typeflag = tar.TypeDir
-			header.Mode = 0o755
-		} else {
-			header.Typeflag = tar.TypeReg
-			header.Size = int64(len(member.content))
-		}
-		if err := tarWriter.WriteHeader(header); err != nil {
-			t.Fatal(err)
-		}
-		if !member.dir {
-			if _, err := tarWriter.Write([]byte(member.content)); err != nil {
-				t.Fatal(err)
-			}
-		}
+	if _, err := tarWriter.Write(content); err != nil {
+		t.Fatal(err)
 	}
 	if err := tarWriter.Close(); err != nil {
 		t.Fatal(err)
@@ -93,8 +44,8 @@ func TestExtractBundleSkipsUnknownDirectoryMembers(t *testing.T) {
 	if err := gzipWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := extractBundle(archive.Bytes(), t.TempDir()); err != nil {
-		t.Fatalf("extractBundle rejected an unknown directory member: %v", err)
+	if err := extractBundle(archive.Bytes(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "unexpected file") {
+		t.Fatalf("extractBundle error = %v", err)
 	}
 }
 
@@ -111,7 +62,7 @@ func TestExtractBundleRejectsNonRegularKnownMember(t *testing.T) {
 	if err := gzipWriter.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := extractBundle(archive.Bytes(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "unexpected non-regular file") {
+	if err := extractBundle(archive.Bytes(), t.TempDir()); err == nil || !strings.Contains(err.Error(), "unexpected file") {
 		t.Fatalf("extractBundle error = %v", err)
 	}
 }
