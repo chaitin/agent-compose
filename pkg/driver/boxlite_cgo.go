@@ -169,10 +169,11 @@ import (
 )
 
 type cgoSandboxRuntime struct {
-	config   *appconfig.Config
-	mu       sync.Mutex
-	ensureMu sync.Mutex
-	rt       *C.CBoxliteRuntime
+	config      *appconfig.Config
+	mu          sync.Mutex
+	ensureMu    sync.Mutex
+	createLocks sandboxKeyedLocks
+	rt          *C.CBoxliteRuntime
 }
 
 type cgoBoxHandle struct {
@@ -559,10 +560,7 @@ func (r *cgoSandboxRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, v
 // stay consistent with getOrCreateBox, which removes and rebuilds a box whose
 // normalized status matches shouldRecreateBoxForStatus.
 func (r *cgoSandboxRuntime) NeedsCreate(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
-	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
-	if sandbox != nil {
-		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
-	}
+	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup == "" {
 		return true, nil
 	}
@@ -585,10 +583,7 @@ func (r *cgoSandboxRuntime) NeedsCreate(ctx context.Context, sandbox *Sandbox, v
 // running. Without it, startup reconciliation cannot tell that a BoxLite VM
 // died and leaves the sandbox reported as running.
 func (r *cgoSandboxRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
-	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
-	if sandbox != nil {
-		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
-	}
+	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup == "" {
 		return false, nil
 	}
@@ -608,10 +603,9 @@ func (r *cgoSandboxRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox
 }
 
 func (r *cgoSandboxRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState) error {
-	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
-	if sandbox != nil {
-		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
-	}
+	unlock := r.createLocks.lock(sandbox.Summary.ID)
+	defer unlock()
+	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup != "" {
 		if err := r.removeBox(ctx, lookup, true); err != nil && !isBoxNotFound(err) {
 			return err
@@ -633,10 +627,7 @@ func (r *cgoSandboxRuntime) TerminateProcessTree(ctx context.Context, sandbox *S
 	if strings.TrimSpace(marker) == "" {
 		return fmt.Errorf("process tree marker is required")
 	}
-	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
-	if sandbox != nil {
-		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
-	}
+	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup == "" {
 		return nil
 	}
@@ -904,7 +895,9 @@ func untarInto(dst string, src io.Reader) error {
 }
 
 func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (*cgoBoxHandle, bool, error) {
-	if existingID := strings.TrimSpace(vmState.BoxID); existingID != "" {
+	unlock := r.createLocks.lock(sandbox.Summary.ID)
+	defer unlock()
+	if existingID := boxliteLookupKey(sandbox, vmState); existingID != "" {
 		box, err := r.getBox(ctx, existingID)
 		if err == nil {
 			info, infoErr := r.boxInfo(ctx, box)

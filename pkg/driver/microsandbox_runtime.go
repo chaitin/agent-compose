@@ -30,7 +30,7 @@ type microsandboxRuntime struct {
 
 	lifecycleMu      sync.Mutex
 	lifecycleHandles map[string]*microsandbox.Sandbox
-	createLocks      microsandboxKeyedLocks
+	createLocks      sandboxKeyedLocks
 	baseBuilds       singleflight.Group
 
 	// warnRebindDisabled keeps a deployment that turned DNS rebind protection
