@@ -428,6 +428,9 @@ jobs:
           VERSION: ${{ github.ref_name }}
           AGENT_COMPOSE_FRONTEND_VERSION: ${{ vars.AGENT_COMPOSE_FRONTEND_VERSION || 'latest' }}
           AGENT_COMPOSE_FRONTEND_VERSIONS: ${{ vars.AGENT_COMPOSE_FRONTEND_VERSIONS || vars.AGENT_COMPOSE_FRONTEND_VERSION || 'latest' }}
+          # The sandbox-host image tag is advanced independently of VERSION so a
+          # daemon-only upgrade leaves the host pinned; it must be set explicitly.
+          AGENT_COMPOSE_SANDBOX_HOST_VERSION: ${{ vars.AGENT_COMPOSE_SANDBOX_HOST_VERSION }}
         run: ./scripts/build-installer-assets.sh ./upload
       - name: Publish release
         env:

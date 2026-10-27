@@ -192,10 +192,12 @@ guest
 
 同一个 box 在 host 里同时有多个句柄是安全的：`boxlite_get` 每次返回独立句柄，各自持有底层 box 的引用（PR #789 已对照上游源码确认）。
 
-**代码路径只有一条**：VM driver 一律通过 `remoteSandboxRuntime` 走 RPC，不保留进程内直连。daemon 先连 socket，连不上就自己拉起：
+**代码路径只有一条**：VM driver 一律通过 `remoteSandboxRuntime` 走 RPC，不保留进程内直连。daemon 连不上 socket 时的行为由 `AGENT_COMPOSE_SANDBOX_HOST_MODE` 决定（默认 `external`）：
 
-- **Compose + KVM**：sandbox-host 由 compose 预先启动。
-- **宿主机部署 / 本地开发**：daemon 拉起 `agent-compose sandbox-host`，脱离 daemon 的进程组和会话；用文件锁防止重复拉起，日志写到文件。
+- **`external`（Compose + KVM，默认）**：sandbox-host 由 compose 预先启动，daemon 只连接、绝不拉起；socket 不可达时直接报错。这样 daemon 永远不会在自己的非特权容器里拉起一个没有 `/dev/kvm` 的"错位 host"去抢 `/data` 上的文件锁、把真正的 host 逼进 `restart: always` 崩溃循环。
+- **`managed`（宿主机部署 / 本地开发）**：daemon 拉起 `agent-compose sandbox-host`，脱离 daemon 的进程组和会话；用文件锁防止重复拉起，日志写到文件。注意 `Setsid` 只脱离进程组和会话，不脱离 cgroup：用 systemd 托管 daemon 时，`KillMode=control-group`（默认）会在停止 daemon 单元时把同 cgroup 里的 sandbox-host 一并杀掉，宿主侧要改成 `KillMode=mixed` 或让 sandbox-host 用独立 systemd 单元托管，否则 host 并不比 daemon 活得久。
+
+> **已知例外（deferral）**：daemon 的镜像缓存（`runtime_cache_sources_microsandbox.go`）和 runtime 残留清理（`microsandbox_managed_resources.go`）仍直接调用 microsandbox SDK 的元数据操作（`Image.List/Remove`、`ListSandboxesWith`、`RemoveSandbox`），没有走 RPC。这些是控制面元数据操作，不拿 live runtime 句柄、不需要 KVM，作用于 daemon 和 host 共享的 `MicrosandboxHome`；安全性来自三处兜底：残留清理只删 `Removable = !running` 的已停 sandbox、镜像删除带 `force=false` 的 SDK 级在用守卫、`ErrSandboxNotFound`/`ErrCacheNotFound` 幂等。残余风险是 list 与 remove 之间 host 恰好拉起同名 sandbox 的 TOCTOU 窗口，后果是那次启动失败（可 re-ensure 恢复）而非数据损坏。后续把 cache/cleanup 纳入 sandbox-host RPC 后应移除这两处直连。
 
 **Compose 部署**：只改 `docker-compose.kvm.yml`。installer 检测到 KVM 时本来就会叠加这个文件，用户的命令不变。
 
@@ -203,7 +205,7 @@ guest
 services:
   sandbox-host:
     image: ${AGENT_COMPOSE_SANDBOX_HOST_IMAGE}   # 与 daemon 同镜像，版本单独配置
-    command: ["agent-compose", "sandbox-host"]
+    command: ["sandbox-host"]                      # 镜像 ENTRYPOINT 已是 agent-compose
     privileged: true
     devices: ["/dev/kvm:/dev/kvm"]
     volumes: [<与 daemon 相同的数据目录和 .env>, sandbox-host-run:/run/agent-compose]
@@ -215,8 +217,8 @@ services:
     volumes: [sandbox-host-run:/run/agent-compose]
 ```
 
-- sandbox-host 的镜像版本由 Release manifest 单独推进，只在 VM driver 或 RPC 协议变化时才变。平时 `docker compose up -d` 只重建 daemon。
-- installer 要增加 Compose 最低版本检查（2.24.4）；回滚时的 `down --remove-orphans` 改成只停 daemon，避免停掉 host 或出现版本错配。
+- sandbox-host 的镜像版本由 Release manifest 单独推进，只在 VM driver 或 RPC 协议变化时才变。平时 `docker compose up -d` 只重建 daemon。发布脚本要求显式传入 `AGENT_COMPOSE_SANDBOX_HOST_VERSION`，不回退到 daemon 的 `VERSION`，防止误把 daemon-only 升级变成 host 重建。
+- installer 只在叠加 KVM overlay 时检查 Compose 最低版本（2.24.4，`ports: !reset []` 所需）；纯 Docker 部署不受此约束。升级失败回滚只停 daemon、保留 host 及其 VM；首次安装失败仍用 `down --remove-orphans` 清理本次创建的全部容器（此时没有需要保留的旧 VM）。
 
 **需要 drain 的两种情况**：第一次升级到拆分版本时，以及 sandbox-host 自身升级时，VM 和其中的任务都会丢失。做法是先 drain（停止派发新任务，等正在跑的 run 结束或超时），再升级，之后用同一块 rootfs 盘冷启动。如果同时换了 guest 镜像，drain 窗口要把构建基础盘的时间算进去。第一次升级的情况要写进 release note。
 

@@ -13,3 +13,22 @@ services:
         HTTPS_PROXY: ${HTTPS_PROXY:-}
         ALL_PROXY: ${ALL_PROXY:-}
         NO_PROXY: ${NO_PROXY:-}
+
+  # The KVM overlay's sandbox-host defaults to the release image, so a local dev
+  # stack that also applies docker-compose.kvm.yml would pull the published
+  # image instead of the locally built one. Build it from the same source so a
+  # local KVM run exercises the working tree.
+  sandbox-host:
+    image: ${AGENT_COMPOSE_DEV_IMAGE:-agent-compose:latest}
+    build:
+      context: .
+      dockerfile: ${AGENT_COMPOSE_DOCKERFILE:-Dockerfile}
+      args:
+        VERSION: ${VERSION:-dev}
+        REGISTRY_MIRROR: ${REGISTRY_MIRROR:-docker.io}
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+        GITHUB_MIRROR: ${GITHUB_MIRROR:-https://github.com}
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        ALL_PROXY: ${ALL_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}

@@ -2267,6 +2267,40 @@
       ]
     },
     {
+      "path": "agent-compose sandbox-host",
+      "use": "sandbox-host",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
       "path": "agent-compose scheduler",
       "use": "scheduler",
       "flags": [

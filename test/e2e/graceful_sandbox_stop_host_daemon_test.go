@@ -45,6 +45,11 @@ func TestE2EGracefulSandboxStopHostDaemon(t *testing.T) {
 	baseURL := "http://" + listenAddress
 	daemon := startE2EDaemonWithEnv(t, binary, repoRoot, testRoot, listenAddress, image, map[string]string{
 		"SANDBOX_START_TIMEOUT": "10m",
+		// The VM drivers live in the sandbox-host, which the native test daemon
+		// must spawn itself (managed) on a socket it can create under the test
+		// root rather than the compose-only /run/agent-compose mount point.
+		"AGENT_COMPOSE_SANDBOX_HOST_MODE":   "managed",
+		"AGENT_COMPOSE_SANDBOX_HOST_SOCKET": filepath.Join(testRoot, "sandbox-host.sock"),
 	})
 	waitForE2EDaemon(t, ctx, daemon, baseURL)
 

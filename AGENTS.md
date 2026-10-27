@@ -151,7 +151,8 @@ Current compose behavior:
 - the user-created `.env` is mounted read-only at `/data/work/.env` for daemon configuration
 - `.env.example` and the installer set `DEFAULT_IMAGE=chaitin/agent-compose-guest:latest`, overriding the application's minimal Debian default for deployed sandboxes
 - the base file mounts the Docker socket but does not set `privileged` or expose `/dev/kvm`; it supports the default Docker driver on its own
-- `docker-compose.kvm.yml` is the explicit overlay that adds `privileged` and `/dev/kvm` for BoxLite or Microsandbox deployments
+- `docker-compose.kvm.yml` is the explicit overlay for BoxLite or Microsandbox deployments; it adds a privileged `sandbox-host` service (with `/dev/kvm`) that owns VM processes, moves the daemon into `network_mode: service:sandbox-host`, clears the daemon's published port, and shares a `sandbox-host-run` volume carrying the daemon<->sandbox-host socket. It requires Docker Compose v2.24.4+ for the `ports: !reset []` override
+- the `sandbox-host` image is `${AGENT_COMPOSE_SANDBOX_HOST_IMAGE:-chaitin/agent-compose:latest}` (it deliberately does not fall back to `AGENT_COMPOSE_IMAGE`, so pinning the daemon image cannot leak into the host and recreate it on a daemon-only upgrade); the installer manages it from the release manifest and advances it independently of the daemon image, so a daemon-only upgrade recreates the daemon without touching the host and its VMs
 - the installer detects `/dev/kvm` for a new installation and persists the selected Compose file set in `.env`; upgrades also preserve a populated legacy `./data/agent-compose` data directory. Neither behavior is a runtime health check
 
 Compose and environment variable conventions:

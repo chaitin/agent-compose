@@ -169,10 +169,11 @@ import (
 )
 
 type cgoSandboxRuntime struct {
-	config   *appconfig.Config
-	mu       sync.Mutex
-	ensureMu sync.Mutex
-	rt       *C.CBoxliteRuntime
+	config      *appconfig.Config
+	mu          sync.Mutex
+	ensureMu    sync.Mutex
+	createLocks sandboxKeyedLocks
+	rt          *C.CBoxliteRuntime
 }
 
 type cgoBoxHandle struct {
@@ -548,14 +549,41 @@ func (r *cgoSandboxRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, v
 	return missing, nil
 }
 
+// NeedsCreate reports whether the sandbox's box does not yet exist or has gone
+// stale and must be rebuilt. It is the sandbox-host's existence probe for the
+// two-phase ensure split; it performs no side effects beyond a box lookup.
+//
+// A box that still exists but is in an unresumable status must report true: the
+// daemon only resolves the create-time ProxyEnv on this path, and a stale-box
+// rebuild that goes through the reuse path would recreate the box without its
+// egress proxy variables, silently failing a default-deny policy open. This must
+// stay consistent with getOrCreateBox, which removes and rebuilds a box whose
+// normalized status matches shouldRecreateBoxForStatus.
+func (r *cgoSandboxRuntime) NeedsCreate(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
+	lookup := boxliteLookupKey(sandbox, vmState)
+	if lookup == "" {
+		return true, nil
+	}
+	box, err := r.getBox(ctx, lookup)
+	if err != nil {
+		if isBoxNotFound(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	defer box.free()
+	info, infoErr := r.boxInfo(ctx, box)
+	if infoErr == nil && shouldRecreateBoxForStatus(normalizeBoxliteStatus(info.State.Status)) {
+		return true, nil
+	}
+	return false, nil
+}
+
 // IsSandboxAlive reports whether the sandbox's box still exists and is
 // running. Without it, startup reconciliation cannot tell that a BoxLite VM
 // died and leaves the sandbox reported as running.
 func (r *cgoSandboxRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
-	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
-	if sandbox != nil {
-		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
-	}
+	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup == "" {
 		return false, nil
 	}
@@ -575,10 +603,12 @@ func (r *cgoSandboxRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox
 }
 
 func (r *cgoSandboxRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState) error {
-	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
-	if sandbox != nil {
-		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
+	unlock, err := r.createLocks.lockContext(ctx, sandbox.Summary.ID)
+	if err != nil {
+		return err
 	}
+	defer unlock()
+	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup != "" {
 		if err := r.removeBox(ctx, lookup, true); err != nil && !isBoxNotFound(err) {
 			return err
@@ -600,10 +630,7 @@ func (r *cgoSandboxRuntime) TerminateProcessTree(ctx context.Context, sandbox *S
 	if strings.TrimSpace(marker) == "" {
 		return fmt.Errorf("process tree marker is required")
 	}
-	lookup := firstNonEmpty(strings.TrimSpace(vmState.BoxID), strings.TrimSpace(vmState.BoxName))
-	if sandbox != nil {
-		lookup = firstNonEmpty(lookup, strings.TrimSpace(sandbox.Summary.RuntimeRef))
-	}
+	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup == "" {
 		return nil
 	}
@@ -871,7 +898,9 @@ func untarInto(dst string, src io.Reader) error {
 }
 
 func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (*cgoBoxHandle, bool, error) {
-	if existingID := strings.TrimSpace(vmState.BoxID); existingID != "" {
+	unlock := r.createLocks.lock(sandbox.Summary.ID)
+	defer unlock()
+	if existingID := boxliteLookupKey(sandbox, vmState); existingID != "" {
 		box, err := r.getBox(ctx, existingID)
 		if err == nil {
 			info, infoErr := r.boxInfo(ctx, box)
@@ -1208,6 +1237,17 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 			C.boxlite_options_free(options)
 		}
 	}()
+
+	// Name the box with the same stable identifier boxliteLookupKey probes, so
+	// a daemon restarted mid-create can find the in-progress box by name once
+	// the host finishes building it (BoxID is only persisted after the base
+	// disk completes). Without set_name, boxlite_create_box produces an unnamed
+	// box that boxlite_get(id_or_name) can never resolve by RuntimeRef, so the
+	// restarted daemon would build a second, orphaned box.
+	boxName := boxliteSandboxName(sandbox, vmState)
+	boxNameCString := C.CString(boxName)
+	defer C.free(unsafe.Pointer(boxNameCString))
+	C.boxlite_options_set_name(options, boxNameCString)
 
 	if strings.TrimSpace(rootfsPath) != "" {
 		rootfsCString := C.CString(rootfsPath)

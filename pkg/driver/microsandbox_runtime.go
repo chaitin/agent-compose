@@ -30,7 +30,7 @@ type microsandboxRuntime struct {
 
 	lifecycleMu      sync.Mutex
 	lifecycleHandles map[string]*microsandbox.Sandbox
-	createLocks      microsandboxKeyedLocks
+	createLocks      sandboxKeyedLocks
 	baseBuilds       singleflight.Group
 
 	// warnRebindDisabled keeps a deployment that turned DNS rebind protection
@@ -505,7 +505,10 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 }
 
 func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbox, vmState VMState) error {
-	unlock := r.createLocks.lock(session.Summary.ID)
+	unlock, err := r.createLocks.lockContext(ctx, session.Summary.ID)
+	if err != nil {
+		return err
+	}
 	defer unlock()
 	if _, err := r.StopSandbox(ctx, session, vmState); err != nil {
 		return err
@@ -964,6 +967,42 @@ func (r *microsandboxRuntime) connectLiveSandbox(ctx context.Context, handle *mi
 		return nil, true, nil
 	}
 	return nil, false, err
+}
+
+// NeedsCreate reports whether the sandbox's runtime does not yet exist or has
+// gone stale and must be rebuilt. It is the sandbox-host's existence probe for
+// the two-phase ensure split.
+//
+// A handle that survives microsandbox.GetSandbox but whose agent relay has died
+// must still report true: the daemon only resolves the create-time proxy
+// environment on this path, and a stale-handle rebuild that goes through the
+// reuse path would recreate the sandbox without it.
+func (r *microsandboxRuntime) NeedsCreate(ctx context.Context, session *Sandbox, vmState VMState) (bool, error) {
+	if err := r.ensureReady(ctx); err != nil {
+		return false, err
+	}
+	name := r.sandboxName(session, vmState)
+	handle, err := microsandbox.GetSandbox(ctx, name)
+	if err != nil {
+		if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
+			return true, nil
+		}
+		return false, err
+	}
+	if handle.Status() != microsandbox.SandboxStatusRunning && handle.Status() != microsandbox.SandboxStatusDraining {
+		// A stopped sandbox is reused via Start and does not need a fresh create;
+		// its runtime already holds the environment it was created with.
+		return false, nil
+	}
+	sandbox, stale, err := r.connectLiveSandbox(ctx, handle, name)
+	if err != nil {
+		return false, err
+	}
+	if stale || sandbox == nil {
+		return true, nil
+	}
+	r.releaseSandboxHandle(name, sandbox)
+	return false, nil
 }
 
 func (r *microsandboxRuntime) IsSandboxAlive(ctx context.Context, session *Sandbox, vmState VMState) (bool, error) {

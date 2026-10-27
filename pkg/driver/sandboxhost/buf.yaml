@@ -1,0 +1,11 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - MINIMAL
+  except:
+    # The contract is the daemon<->sandbox-host wire format, not the public
+    # proto module, so it deliberately lives flat in this directory rather than
+    # under a sandboxhost/v1/ path that PACKAGE_DIRECTORY_MATCH would demand.
+    - PACKAGE_DIRECTORY_MATCH

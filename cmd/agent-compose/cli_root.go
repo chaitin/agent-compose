@@ -66,6 +66,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 
 	commands := []*cobra.Command{
 		newCLIDaemonCommand(runDaemon),
+		newCLISandboxHostCommand(),
 		newCLIVersionCommand(&options),
 		newCLIStatusCommand(&options),
 		newCLIAuthCommand(&options),

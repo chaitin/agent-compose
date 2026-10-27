@@ -10,6 +10,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 generated_files=(
   proto/agentcompose/v2/agentcompose.pb.go
   proto/health/v1/health.pb.go
+  pkg/driver/sandboxhost/sandboxhost.pb.go
 )
 
 for generated_file in "${generated_files[@]}"; do
@@ -32,10 +33,11 @@ done
 # untracked file that git diff cannot see.
 if command -v buf >/dev/null 2>&1; then
   buf generate
-  drift="$(git status --porcelain -- proto)"
+  (cd pkg/driver/sandboxhost && buf generate && buf lint)
+  drift="$(git status --porcelain -- proto pkg/driver/sandboxhost)"
   if [[ -n "$drift" ]]; then
     echo "$drift" >&2
-    echo "proto/ is out of date - run 'buf generate' and commit the result" >&2
+    echo "generated protobuf sources are out of date - run 'task generate:proto' and commit the result" >&2
     exit 1
   fi
 fi

@@ -24,6 +24,7 @@ build_assets() {
     IMAGE_PREFIX=registry.example/agent-compose \
     AGENT_COMPOSE_FRONTEND_VERSION=v-ui-test \
     AGENT_COMPOSE_FRONTEND_VERSIONS=v-ui-test,v-ui-legacy \
+    AGENT_COMPOSE_SANDBOX_HOST_VERSION=v-host-test \
     "$BUILDER" "$output" >/dev/null
 }
 
@@ -90,7 +91,7 @@ grep -Fxq 'AUTH_PASSWORD=' "$payload/.env.example" \
 grep -Fxq 'AUTH_SECRET=' "$payload/.env.example" \
   || fail '.env.example must keep AUTH_SECRET empty'
 
-expected_manifest=$'INSTALLER_PAYLOAD_VERSION=1\nAGENT_COMPOSE_IMAGE=registry.example/agent-compose/agent-compose:v9.8.7\nAGENT_COMPOSE_FRONTEND_VERSION=v-ui-test\nAGENT_COMPOSE_FRONTEND_VERSIONS=v-ui-test,v-ui-legacy\nAGENT_COMPOSE_FRONTEND_IMAGE=registry.example/agent-compose/agent-compose-ui:v-ui-test\nDEFAULT_IMAGE=registry.example/agent-compose/agent-compose-guest:v9.8.7'
+expected_manifest=$'INSTALLER_PAYLOAD_VERSION=1\nAGENT_COMPOSE_IMAGE=registry.example/agent-compose/agent-compose:v9.8.7\nAGENT_COMPOSE_FRONTEND_VERSION=v-ui-test\nAGENT_COMPOSE_FRONTEND_VERSIONS=v-ui-test,v-ui-legacy\nAGENT_COMPOSE_FRONTEND_IMAGE=registry.example/agent-compose/agent-compose-ui:v-ui-test\nDEFAULT_IMAGE=registry.example/agent-compose/agent-compose-guest:v9.8.7\nAGENT_COMPOSE_SANDBOX_HOST_IMAGE=registry.example/agent-compose/agent-compose:v-host-test'
 actual_manifest=$(<"$payload/images/manifest.env")
 [[ $actual_manifest == "$expected_manifest" ]] \
   || fail "image manifest differs: $actual_manifest"
@@ -111,16 +112,25 @@ invalid_versions="$TEST_ROOT/invalid-versions"
 if VERSION=v9.8.7 IMAGE_PREFIX=registry.example \
   AGENT_COMPOSE_FRONTEND_VERSION=v3 \
   AGENT_COMPOSE_FRONTEND_VERSIONS=v1,v2 \
+  AGENT_COMPOSE_SANDBOX_HOST_VERSION=v-host-test \
   "$BUILDER" "$invalid_versions" >/dev/null 2>&1; then
   fail 'builder accepted a frontend default outside the supported list'
 fi
 [[ ! -e $invalid_versions ]] || fail 'invalid frontend versions left an output directory'
+
+missing_sandbox_host="$TEST_ROOT/missing-sandbox-host"
+if VERSION=v9.8.7 IMAGE_PREFIX=registry.example \
+  "$BUILDER" "$missing_sandbox_host" >/dev/null 2>&1; then
+  fail 'builder accepted a missing AGENT_COMPOSE_SANDBOX_HOST_VERSION'
+fi
+[[ ! -e $missing_sandbox_host ]] || fail 'missing sandbox-host version left an output directory'
 
 for invalid_list in ',v1' 'v1,' 'v1,,v2'; do
   invalid_output="$TEST_ROOT/invalid-list-${invalid_list//,/_}"
   if VERSION=v9.8.7 IMAGE_PREFIX=registry.example \
     AGENT_COMPOSE_FRONTEND_VERSION=v1 \
     AGENT_COMPOSE_FRONTEND_VERSIONS="$invalid_list" \
+    AGENT_COMPOSE_SANDBOX_HOST_VERSION=v-host-test \
     "$BUILDER" "$invalid_output" >/dev/null 2>&1; then
     fail "builder accepted an empty frontend version in $invalid_list"
   fi

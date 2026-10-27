@@ -28,6 +28,41 @@ func TestReplaceImageRegistryPreservesRepositoryAndIdentifier(t *testing.T) {
 	}
 }
 
+func TestPlanImageReferencesManagesSandboxHostImageIndependently(t *testing.T) {
+	makeManifest := func(daemonVersion string) *envFile {
+		return parseEnvFile([]byte(
+			"AGENT_COMPOSE_IMAGE=registry.example/agent-compose:" + daemonVersion + "\n" +
+				"AGENT_COMPOSE_FRONTEND_VERSION=latest\n" +
+				"AGENT_COMPOSE_FRONTEND_IMAGE=registry.example/agent-compose-ui:latest\n" +
+				"DEFAULT_IMAGE=registry.example/agent-compose-guest:" + daemonVersion + "\n" +
+				"AGENT_COMPOSE_SANDBOX_HOST_IMAGE=registry.example/agent-compose:host-v1\n"))
+	}
+	options := DefaultOptions()
+	env := parseEnvFile(nil)
+	state := parseEnvFile(nil)
+
+	install := planImageReferences(env, state, makeManifest("v2"), options, "install")
+	if got := install.selection(sandboxHostImageKey); got.Value != "registry.example/agent-compose:host-v1" || got.Source != ImageSourceRelease {
+		t.Fatalf("install sandbox-host selection = %#v", got)
+	}
+	if err := applyPlannedImageReferences(env, state, install); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := env.Get(sandboxHostImageKey); got != "registry.example/agent-compose:host-v1" {
+		t.Fatalf("env sandbox-host image = %q", got)
+	}
+
+	// A daemon-only upgrade advances the backend while the sandbox-host stays
+	// pinned to its independently released tag.
+	upgrade := planImageReferences(env, state, makeManifest("v3"), options, "upgrade")
+	if got := upgrade.selection(backendImageKey); got.Value != "registry.example/agent-compose:v3" {
+		t.Fatalf("upgrade backend selection = %#v", got)
+	}
+	if got := upgrade.selection(sandboxHostImageKey); got.Value != "registry.example/agent-compose:host-v1" || got.Source != ImageSourceRelease {
+		t.Fatalf("upgrade sandbox-host selection = %#v", got)
+	}
+}
+
 func TestSupportedFrontendVersions(t *testing.T) {
 	manifest := parseEnvFile([]byte("AGENT_COMPOSE_FRONTEND_VERSION=v2\nAGENT_COMPOSE_FRONTEND_VERSIONS=v2,v1\n"))
 	versions, defaultVersion, err := supportedFrontendVersions(manifest)
@@ -144,6 +179,7 @@ func TestInstallPersistsAndUpgradeClearsRegistry(t *testing.T) {
 	assertTestEnv(t, env, backendImageKey, "mirror.example.com:5000/agent-compose:v2")
 	assertTestEnv(t, env, frontendImageKey, "mirror.example.com:5000/agent-compose-ui:v1")
 	assertTestEnv(t, env, guestImageKey, "mirror.example.com:5000/agent-compose-guest:v2")
+	assertTestEnv(t, env, sandboxHostImageKey, "mirror.example.com:5000/agent-compose:host-v1")
 
 	options.BundleDir = makeTestBundleWithFrontendVersions(t, "v3", "v2", "v2,v1")
 	options.Registry = ""
@@ -156,6 +192,9 @@ func TestInstallPersistsAndUpgradeClearsRegistry(t *testing.T) {
 	assertTestEnv(t, env, backendImageKey, "registry.example/agent-compose:v3")
 	assertTestEnv(t, env, frontendImageKey, "registry.example/agent-compose-ui:v1")
 	assertTestEnv(t, env, guestImageKey, "registry.example/agent-compose-guest:v3")
+	// The sandbox-host image is pinned independently of the daemon release, so
+	// it survives the v2->v3 upgrade untouched.
+	assertTestEnv(t, env, sandboxHostImageKey, "registry.example/agent-compose:host-v1")
 }
 
 func TestEffectiveOptionsMigratesLegacyImagePrefix(t *testing.T) {

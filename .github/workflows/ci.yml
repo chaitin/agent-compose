@@ -49,10 +49,11 @@ jobs:
       - name: Verify generated Protobuf sources are current
         run: |
           buf generate
-          drift="$(git status --porcelain -- proto)"
+          (cd pkg/driver/sandboxhost && buf generate && buf lint)
+          drift="$(git status --porcelain -- proto pkg/driver/sandboxhost)"
           if [ -n "$drift" ]; then
             echo "$drift"
-            echo "::error::proto/ is out of date - run 'buf generate' and commit the result"
+            echo "::error::generated protobuf sources are out of date - run 'task generate:proto' and commit the result"
             exit 1
           fi
       - name: Run lint

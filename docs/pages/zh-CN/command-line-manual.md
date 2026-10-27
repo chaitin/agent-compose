@@ -985,6 +985,7 @@ status 响应。
 
 ```bash
 agent-compose daemon
+agent-compose sandbox-host
 agent-compose status
 agent-compose version
 agent-compose config
@@ -992,10 +993,19 @@ agent-compose config --quiet
 ```
 
 - `daemon`：启动 agent-compose daemon。
+- `sandbox-host`：运行长期存活的 sandbox-host 进程，持有 BoxLite 和 Microsandbox 虚拟机，使 daemon 升级时无需拆除虚拟机。它通常由 daemon 或 KVM Compose overlay 启动，而不是直接调用；见下文「Sandbox-host 配置」。
 - `status`：检查 daemon 状态。
 - `version`：输出 CLI 构建版本。
 - `config`：解析、校验并输出 normalized project 配置。
 - `config --quiet`：只校验配置，不输出 normalized config。
+
+### Sandbox-host 配置
+
+daemon 通过 Unix socket 上的 gRPC 通道驱动 BoxLite 和 Microsandbox 虚拟机，通道另一端是长期存活的 `sandbox-host` 进程，因此 daemon 升级时只重建 daemon，而不会重建 host 或其虚拟机。三个环境变量控制这一交接：
+
+- `AGENT_COMPOSE_SANDBOX_HOST_MODE`：`external`（默认）或 `managed`。`external` 表示 daemon 只连接外部托管的 host、绝不自行拉起 —— 这是 Compose 部署的安全默认值，由 `sandbox-host` 服务持有虚拟机。`managed` 让 daemon 在首次使用时自行拉起 host，用于本地和原生部署。非特权 daemon 容器必须保持 `external`；否则容器内拉起的 host 会抢占真正 host 的数据目录锁。
+- `AGENT_COMPOSE_SANDBOX_HOST_SOCKET`：sandbox-host 的 Unix socket 路径，默认为 `$XDG_RUNTIME_DIR/agent-compose/sandbox-host.sock`，未设置 `XDG_RUNTIME_DIR` 时为 `/run/agent-compose/sandbox-host.sock`。
+- `AGENT_COMPOSE_SANDBOX_HOST_IMAGE`：KVM Compose overlay（`docker-compose.kvm.yml`）使用的 sandbox-host 镜像，默认为 `chaitin/agent-compose:latest`。它刻意不回退到 `AGENT_COMPOSE_IMAGE`，这样单独升级 daemon 时固定 daemon 镜像不会泄漏到 host、导致 host 被重建。
 
 ## 暂缓命令
 

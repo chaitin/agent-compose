@@ -40,6 +40,7 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 	if !regularFile(filepath.Join(installDir, "installer")) || !regularFile(filepath.Join(installDir, ".env")) {
 		t.Fatal("installation did not persist installer and environment")
 	}
+	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_SANDBOX_HOST_IMAGE", "registry.example/agent-compose:host-v1")
 	overlayData, err := os.ReadFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml"))
 	if err != nil {
 		t.Fatalf("installation did not persist the sandbox-network overlay: %v", err)
@@ -71,6 +72,9 @@ func TestE2EInstallerLifecycle(t *testing.T) {
 		t.Fatal("upgrade unexpectedly regenerated credentials")
 	}
 	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_IMAGE", "registry.example/agent-compose:v2")
+	// The daemon image advanced to v2 while the sandbox-host image stayed
+	// pinned at host-v1, so `up -d` recreates only the daemon.
+	assertTestEnv(t, readTestEnv(t, filepath.Join(installDir, ".env")), "AGENT_COMPOSE_SANDBOX_HOST_IMAGE", "registry.example/agent-compose:host-v1")
 
 	overlayData, err = os.ReadFile(filepath.Join(installDir, "docker-compose.sandbox-network.yml"))
 	if err != nil {

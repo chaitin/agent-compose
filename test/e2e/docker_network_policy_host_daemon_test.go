@@ -113,6 +113,14 @@ func TestE2EDockerNetworkPolicyExecutionMatrix(t *testing.T) {
 	}
 	if driver != "docker" {
 		extraEnv[strings.ToUpper(driver)+"_DEFAULT_IMAGE"] = image
+		// VM drivers live in the sandbox-host, which the native test daemon must
+		// spawn itself (managed) on a socket under the temp dir rather than the
+		// compose-only /run/agent-compose mount point; in external mode the first
+		// Ensure would fail with "socket is not reachable".
+		hostSocketPath := filepath.Join(os.TempDir(), fmt.Sprintf("agent-compose-netpol-host-%d.sock", os.Getpid()))
+		t.Cleanup(func() { _ = os.Remove(hostSocketPath) })
+		extraEnv["AGENT_COMPOSE_SANDBOX_HOST_MODE"] = "managed"
+		extraEnv["AGENT_COMPOSE_SANDBOX_HOST_SOCKET"] = hostSocketPath
 	}
 	daemon := startE2EDaemonWithEnv(t, binary, repoRoot, dataRoot, address, image, extraEnv)
 	waitForE2EDaemon(t, ctx, daemon, baseURL)

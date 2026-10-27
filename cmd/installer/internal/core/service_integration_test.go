@@ -12,13 +12,13 @@ import (
 )
 
 type fakeRunner struct {
-	calls    []string
-	failOn   string
-	failures []string
+	calls          []string
+	failOn         string
+	failures       []string
+	composeVersion string
 }
 
-func (r *fakeRunner) Run(_ context.Context, dir, name string, args ...string) error {
-	call := strings.TrimSpace(dir + "|" + name + " " + strings.Join(args, " "))
+func (r *fakeRunner) record(call string) error {
 	r.calls = append(r.calls, call)
 	if r.failOn != "" && strings.Contains(call, r.failOn) {
 		return errors.New("injected command failure")
@@ -29,6 +29,21 @@ func (r *fakeRunner) Run(_ context.Context, dir, name string, args ...string) er
 		}
 	}
 	return nil
+}
+
+func (r *fakeRunner) Run(_ context.Context, dir, name string, args ...string) error {
+	return r.record(strings.TrimSpace(dir + "|" + name + " " + strings.Join(args, " ")))
+}
+
+func (r *fakeRunner) RunOutput(_ context.Context, dir, name string, args ...string) (string, error) {
+	call := strings.TrimSpace(dir + "|" + name + " " + strings.Join(args, " "))
+	if err := r.record(call); err != nil {
+		return "", err
+	}
+	if r.composeVersion == "" {
+		r.composeVersion = "v2.30.0"
+	}
+	return r.composeVersion, nil
 }
 
 func TestIntegrationInstallUpgradePreservesUserConfiguration(t *testing.T) {
@@ -301,6 +316,40 @@ func TestIntegrationFailedInitialStartRollsBackAfterCleanup(t *testing.T) {
 	}
 }
 
+func TestIntegrationPureDockerAcceptsOldCompose(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	runner := &fakeRunner{composeVersion: "v2.20.0"}
+	options := DefaultOptions()
+	options.InstallDir = installDir
+	options.BundleDir = makeTestBundle(t, "v1")
+	options.KVMPath = filepath.Join(root, "missing-kvm")
+	options.NoStart = true
+	result, err := (Service{Runner: runner}).Apply(context.Background(), OperationInstall, options)
+	if err != nil {
+		t.Fatalf("pure Docker install with old compose = %v", err)
+	}
+	if result.ComposeFiles != "docker-compose.yml" {
+		t.Fatalf("ComposeFiles = %q, want docker-compose.yml", result.ComposeFiles)
+	}
+}
+
+func TestIntegrationKVMOverlayRequiresComposeVersion(t *testing.T) {
+	root := t.TempDir()
+	installDir := filepath.Join(root, "install")
+	kvmPath := filepath.Join(root, "kvm-device")
+	writeTestFile(t, kvmPath, "kvm", 0o600)
+	runner := &fakeRunner{composeVersion: "v2.20.0"}
+	options := DefaultOptions()
+	options.InstallDir = installDir
+	options.BundleDir = makeTestBundle(t, "v1")
+	options.KVMPath = kvmPath
+	options.NoStart = true
+	if _, err := (Service{Runner: runner}).Apply(context.Background(), OperationInstall, options); err == nil || !strings.Contains(err.Error(), "2.24.4 or later is required") {
+		t.Fatalf("KVM overlay install with old compose = %v, want version error", err)
+	}
+}
+
 func TestIntegrationLegacyDataAndAmbiguousData(t *testing.T) {
 	root := t.TempDir()
 	installDir := filepath.Join(root, "legacy")
@@ -379,7 +428,10 @@ func makeTestBundle(t *testing.T, version string) string {
 		"AGENT_COMPOSE_IMAGE=registry.example/agent-compose:" + version + "\n" +
 		"AGENT_COMPOSE_FRONTEND_VERSION=latest\n" +
 		"AGENT_COMPOSE_FRONTEND_IMAGE=registry.example/agent-compose-ui:latest\n" +
-		"DEFAULT_IMAGE=registry.example/agent-compose-guest:" + version + "\n"
+		"DEFAULT_IMAGE=registry.example/agent-compose-guest:" + version + "\n" +
+		// The sandbox-host image is pinned independently of the daemon version,
+		// so a daemon-only upgrade does not recreate the host.
+		"AGENT_COMPOSE_SANDBOX_HOST_IMAGE=registry.example/agent-compose:host-v1\n"
 	writeTestFile(t, filepath.Join(dir, "images", "manifest.env"), manifest, 0o644)
 	return dir
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chaitin/agent-compose/pkg/agentcompose/adapters"
 	agentcomposeapp "github.com/chaitin/agent-compose/pkg/agentcompose/app"
 	"github.com/chaitin/agent-compose/pkg/agentcompose/proxy"
 	"github.com/chaitin/agent-compose/pkg/config"
@@ -244,6 +245,18 @@ func (a *DaemonApp) shutdown(servers *daemonServers) error {
 		joined = errors.Join(joined, fmt.Errorf("stop background managers: %w", err))
 	}
 	cancelBackground()
+
+	// Close the sandbox-host transport so the gRPC connection has a shutdown
+	// owner instead of leaking until process exit. Use Invoke (not MustInvoke)
+	// and skip when the provider is not registered: lifecycle tests construct a
+	// DaemonApp without the full runtime wiring, and shutdown is best-effort.
+	if provider, err := do.Invoke[adapters.RuntimeProvider](a.DI); err == nil {
+		if closer, ok := any(provider).(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				joined = errors.Join(joined, fmt.Errorf("close runtime provider: %w", err))
+			}
+		}
+	}
 
 	// Flush buffered spans last so spans produced while stopping background
 	// managers are still exported.
