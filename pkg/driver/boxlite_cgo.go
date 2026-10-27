@@ -1238,6 +1238,17 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 		}
 	}()
 
+	// Name the box with the same stable identifier boxliteLookupKey probes, so
+	// a daemon restarted mid-create can find the in-progress box by name once
+	// the host finishes building it (BoxID is only persisted after the base
+	// disk completes). Without set_name, boxlite_create_box produces an unnamed
+	// box that boxlite_get(id_or_name) can never resolve by RuntimeRef, so the
+	// restarted daemon would build a second, orphaned box.
+	boxName := boxliteSandboxName(sandbox, vmState)
+	boxNameCString := C.CString(boxName)
+	defer C.free(unsafe.Pointer(boxNameCString))
+	C.boxlite_options_set_name(options, boxNameCString)
+
 	if strings.TrimSpace(rootfsPath) != "" {
 		rootfsCString := C.CString(rootfsPath)
 		defer C.free(unsafe.Pointer(rootfsCString))

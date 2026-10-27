@@ -18,3 +18,17 @@ func boxliteLookupKey(sandbox *Sandbox, vmState VMState) string {
 	}
 	return lookup
 }
+
+// boxliteSandboxName returns the stable name assigned to a new box via
+// boxlite_options_set_name. It is the value boxliteLookupKey resolves to before
+// the BoxID is persisted (BoxName is RuntimeRef at create time), so a daemon
+// restarted mid-create can find the in-progress box by name once the host
+// finishes building it. It deliberately excludes BoxID: that identifier is
+// BoxLite-assigned and only exists after the base disk completes, so naming a
+// box with it would either be empty or reuse a stale ID after a recreate.
+func boxliteSandboxName(sandbox *Sandbox, vmState VMState) string {
+	if sandbox == nil {
+		return firstNonEmpty(strings.TrimSpace(vmState.BoxName), strings.TrimSpace(vmState.BoxID))
+	}
+	return firstNonEmpty(strings.TrimSpace(vmState.BoxName), strings.TrimSpace(sandbox.Summary.RuntimeRef), "agent-compose-"+sandbox.Summary.ID)
+}

@@ -24,3 +24,27 @@ func TestBoxliteLookupKey(t *testing.T) {
 		})
 	}
 }
+
+func TestBoxliteSandboxName(t *testing.T) {
+	sandbox := &Sandbox{Summary: SandboxSummary{ID: "sandbox-1", RuntimeRef: "agent-compose-sandbox-1"}}
+	tests := []struct {
+		name    string
+		sandbox *Sandbox
+		vmState VMState
+		want    string
+	}{
+		{name: "box name wins", sandbox: sandbox, vmState: VMState{BoxName: "box-name"}, want: "box-name"},
+		{name: "runtime ref when name empty", sandbox: sandbox, vmState: VMState{}, want: "agent-compose-sandbox-1"},
+		{name: "id fallback when ref empty", sandbox: &Sandbox{Summary: SandboxSummary{ID: "sandbox-1"}}, vmState: VMState{}, want: "agent-compose-sandbox-1"},
+		{name: "stale box id is ignored for the name", sandbox: sandbox, vmState: VMState{BoxID: "stale-box-id", BoxName: "box-name"}, want: "box-name"},
+		{name: "whitespace name is skipped", sandbox: sandbox, vmState: VMState{BoxName: "  "}, want: "agent-compose-sandbox-1"},
+		{name: "empty without sandbox", sandbox: nil, vmState: VMState{}, want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := boxliteSandboxName(tt.sandbox, tt.vmState); got != tt.want {
+				t.Fatalf("boxliteSandboxName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
