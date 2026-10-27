@@ -13,6 +13,7 @@ func TestBoxliteLookupKey(t *testing.T) {
 		{name: "box id wins", sandbox: sandbox, vmState: VMState{BoxID: "box-id", BoxName: "box-name"}, want: "box-id"},
 		{name: "box name when id empty", sandbox: sandbox, vmState: VMState{BoxName: "box-name"}, want: "box-name"},
 		{name: "runtime ref when id and name empty", sandbox: sandbox, vmState: VMState{}, want: "agent-compose-sandbox-1"},
+		{name: "id fallback when runtime ref empty", sandbox: &Sandbox{Summary: SandboxSummary{ID: "sandbox-1"}}, vmState: VMState{}, want: "agent-compose-sandbox-1"},
 		{name: "empty when no identifier", sandbox: nil, vmState: VMState{}, want: ""},
 		{name: "whitespace id is skipped", sandbox: sandbox, vmState: VMState{BoxID: "  ", BoxName: "box-name"}, want: "box-name"},
 	}
@@ -65,14 +66,17 @@ func TestBoxliteCreateNameMatchesLookupKeyBeforeBoxID(t *testing.T) {
 		{BoxName: "  "},                      // whitespace name falls through to RuntimeRef
 		{BoxID: "   "},                       // whitespace BoxID is skipped like an empty one
 	}
+	noRuntimeRef := &Sandbox{Summary: SandboxSummary{ID: "sandbox-1"}}
 	for _, vmState := range cases {
-		lookup := boxliteLookupKey(sandbox, vmState)
-		name := boxliteSandboxName(sandbox, vmState)
-		if lookup == "" || name == "" {
-			t.Fatalf("vmState %+v: lookup key %q / create name %q must both be non-empty", vmState, lookup, name)
-		}
-		if lookup != name {
-			t.Fatalf("vmState %+v: lookup key %q != create name %q; a restarted daemon would miss the in-progress box", vmState, lookup, name)
+		for _, sb := range []*Sandbox{sandbox, noRuntimeRef} {
+			lookup := boxliteLookupKey(sb, vmState)
+			name := boxliteSandboxName(sb, vmState)
+			if lookup == "" || name == "" {
+				t.Fatalf("sandbox %+v vmState %+v: lookup key %q / create name %q must both be non-empty", sb.Summary, vmState, lookup, name)
+			}
+			if lookup != name {
+				t.Fatalf("sandbox %+v vmState %+v: lookup key %q != create name %q; a restarted daemon would miss the in-progress box", sb.Summary, vmState, lookup, name)
+			}
 		}
 	}
 }
