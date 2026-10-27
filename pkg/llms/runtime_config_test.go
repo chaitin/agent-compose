@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/capabilities"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -35,6 +36,52 @@ func TestWriteCodexRuntimeConfigRendersRetryPolicy(t *testing.T) {
 		if !strings.Contains(config, want) {
 			t.Fatalf("Codex runtime config %q does not contain %q", config, want)
 		}
+	}
+}
+
+// A gateway-enabled sandbox injects CAP_TOKEN, which codex's
+// ignore_default_excludes = false would otherwise filter out of the shell the
+// model runs commands in (it matches *TOKEN*). The capability catalog tells the
+// model to read that token from the environment, so the writer must re-inject
+// it via shell_environment_policy.set while keeping the default excludes on.
+func TestWriteCodexRuntimeConfigInjectsCapabilityToken(t *testing.T) {
+	root := t.TempDir()
+	sandbox := &domain.Sandbox{
+		Summary: domain.SandboxSummary{ID: "sandbox-1", WorkspacePath: filepath.Join(root, "workspace")},
+		EnvItems: []domain.SandboxEnvVar{
+			{Name: capabilities.SandboxTokenEnvName, Value: "cap-token-123", Secret: true},
+		},
+	}
+	if err := WriteCodexRuntimeConfig(sandbox, CodexRuntimeConfig{Model: "gpt-test", BaseURL: "http://runtime/openai/v1", WireAPI: APIProtocolResponses, Policy: CodexRuntimePolicyFromConfig(nil)}); err != nil {
+		t.Fatalf("WriteCodexRuntimeConfig returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(sandbox), ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("read Codex runtime config: %v", err)
+	}
+	config := string(data)
+	if !strings.Contains(config, "ignore_default_excludes = false") {
+		t.Fatalf("Codex runtime config disabled default excludes: %s", config)
+	}
+	if !strings.Contains(config, "[shell_environment_policy.set]") || !strings.Contains(config, `CAP_TOKEN = "cap-token-123"`) {
+		t.Fatalf("Codex runtime config did not inject CAP_TOKEN: %s", config)
+	}
+}
+
+// A sandbox without a capability gateway has no CAP_TOKEN, so the writer must
+// not emit a stray shell_environment_policy.set table.
+func TestWriteCodexRuntimeConfigOmitsCapabilityTokenWhenAbsent(t *testing.T) {
+	root := t.TempDir()
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", WorkspacePath: filepath.Join(root, "workspace")}}
+	if err := WriteCodexRuntimeConfig(sandbox, CodexRuntimeConfig{Model: "gpt-test", BaseURL: "http://runtime/openai/v1", WireAPI: APIProtocolResponses, Policy: CodexRuntimePolicyFromConfig(nil)}); err != nil {
+		t.Fatalf("WriteCodexRuntimeConfig returned error: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(execution.HostSandboxHome(sandbox), ".codex", "config.toml"))
+	if err != nil {
+		t.Fatalf("read Codex runtime config: %v", err)
+	}
+	if strings.Contains(string(data), "[shell_environment_policy.set]") {
+		t.Fatalf("Codex runtime config injected a CAP_TOKEN set block without a token: %s", data)
 	}
 }
 

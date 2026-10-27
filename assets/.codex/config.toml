@@ -16,6 +16,9 @@ network_access = true
 
 [shell_environment_policy]
 inherit = "all"
+# keep KEY/SECRET/TOKEN variables out of the model's shell. For gateway-enabled
+# runs, pkg/llms/runtime_config.go additionally re-injects CAP_TOKEN through
+# shell_environment_policy.set; this seed has no per-sandbox token to write.
 ignore_default_excludes = false
 
 [history]

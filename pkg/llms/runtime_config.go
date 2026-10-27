@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/capabilities"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -94,6 +95,22 @@ func WriteCodexRuntimeConfig(session *domain.Sandbox, cfg CodexRuntimeConfig) er
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create codex config dir: %w", err)
 	}
+	// ignore_default_excludes = false below tells codex to drop environment
+	// variables whose names contain KEY, SECRET, or TOKEN from the shell the
+	// model runs commands in. The capability gateway's CAP_TOKEN matches
+	// *TOKEN*, yet the capability catalog instructs the model to read that
+	// token from the environment — so a gateway-enabled sandbox would otherwise
+	// lose it. codex applies shell_environment_policy.set entries after the
+	// default excludes, so re-inject the per-sandbox token there instead of
+	// disabling the excludes, which would also expose every other
+	// KEY/SECRET/TOKEN variable. The token already reaches the sandbox process
+	// environment and the persisted sandbox record; writing it here only makes
+	// it visible to codex's shell. Its value is a UUID, safe for a TOML basic
+	// string.
+	capTokenSet := ""
+	if token := capabilities.SandboxToken(session); token != "" {
+		capTokenSet = fmt.Sprintf("\n[shell_environment_policy.set]\n%s = %q\n", capabilities.SandboxTokenEnvName, token)
+	}
 	payload := fmt.Sprintf(`model_provider = "agent_compose"
 model = %q
 check_for_update_on_startup = false
@@ -124,10 +141,10 @@ network_access = true
 [shell_environment_policy]
 inherit = "all"
 ignore_default_excludes = false
-
+%s
 [history]
 persistence = "save-all"
-`, model, baseURL, credentialEnv, wireAPI, policy.RequestMaxRetries, policy.StreamMaxRetries, policy.StreamIdleTimeout.Milliseconds())
+`, model, baseURL, credentialEnv, wireAPI, policy.RequestMaxRetries, policy.StreamMaxRetries, policy.StreamIdleTimeout.Milliseconds(), capTokenSet)
 	// This writer replaces the whole file, and WriteCodexMCPConfig keeps the
 	// project's MCP servers in the same file. An interactive prompt attach
 	// refreshes this configuration after the MCP region was written, so without
