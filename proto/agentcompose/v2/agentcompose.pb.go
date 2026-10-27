@@ -2999,9 +2999,9 @@ type RemoveProjectResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Project *Project               `protobuf:"bytes,1,opt,name=project,proto3" json:"project,omitempty"`
 	Changes []*ProjectChange       `protobuf:"bytes,2,rep,name=changes,proto3" json:"changes,omitempty"`
-	// Set only when a cleanup failure was tolerated: the project record was
-	// removed but some runtime resource may remain. UNSPECIFIED means no such
-	// failure was tolerated.
+	// Set only when a cleanup failure was tolerated: the schedulers were
+	// disabled and some sandboxes may remain, but the project record was not
+	// marked removed. UNSPECIFIED means no such failure was tolerated.
 	Effect        OperationEffect      `protobuf:"varint,3,opt,name=effect,proto3,enum=agentcompose.v2.OperationEffect" json:"effect,omitempty"`
 	Reason        OperationErrorReason `protobuf:"varint,4,opt,name=reason,proto3,enum=agentcompose.v2.OperationErrorReason" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields

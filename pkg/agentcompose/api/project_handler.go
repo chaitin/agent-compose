@@ -462,7 +462,7 @@ func (h *ProjectHandler) enrichProjectAgentRuns(ctx context.Context, project *ag
 	}
 	states, err := store.ListProjectAgentRunStates(ctx, project.GetSummary().GetProjectId())
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
+		return ErrorForCode(connect.CodeInternal, ResourceProject, err)
 	}
 	statesByAgent := make(map[string]domain.ProjectAgentRunState, len(states))
 	for _, state := range states {

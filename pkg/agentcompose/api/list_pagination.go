@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"connectrpc.com/connect"
+
+	"github.com/chaitin/agent-compose/pkg/apierror"
 )
 
 const (
@@ -16,7 +18,7 @@ func listPagination(offset, limit uint32) (int, int, error) {
 		limit = defaultListLimit
 	}
 	if limit > maxListLimit {
-		return 0, 0, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("limit must be 0 or at most %d", maxListLimit))
+		return 0, 0, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectUnspecified, fmt.Errorf("limit must be 0 or at most %d", maxListLimit))
 	}
 	return int(offset), int(limit), nil
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -127,6 +128,38 @@ func TestCodeHelpersPickTheRightEffect(t *testing.T) {
 	write := WriteErrorForCode(connect.CodeUnavailable, ResourceSandbox, errors.New("down"))
 	if detail, _ := errdetail.From(write); detail.Effect != EffectToProto(apierror.EffectUnknown) || ReasonFromProto(detail.Reason) != apierror.ReasonSandboxRuntimeUnavail {
 		t.Fatalf("write helper detail = %#v", detail)
+	}
+}
+
+func TestConnectErrorForProjectContextCancellation(t *testing.T) {
+	// A cancellation that got wrapped into an image sentinel by the ensure path
+	// must still surface as CANCELED, not as an image backend failure.
+	cancelled := fmt.Errorf("%w: %w", images.ErrInspectFailed, context.Canceled)
+	mapped := ConnectErrorForProject(cancelled)
+	if got := connect.CodeOf(mapped); got != connect.CodeCanceled {
+		t.Fatalf("code = %s, want canceled", got)
+	}
+	detail, ok := errdetail.From(mapped)
+	if !ok || ReasonFromProto(detail.Reason) != apierror.ReasonOperationCanceled {
+		t.Fatalf("detail = %#v, %v", detail, ok)
+	}
+}
+
+func TestMarkerOverridesInnerUnknownEffect(t *testing.T) {
+	// An inner boundary already reported UNKNOWN; an outer NOT_APPLIED marker
+	// must win because the marker is the only way to claim NOT_APPLIED.
+	inner := NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectUnknown, errors.New("boom"))
+	marked := apierror.NotApplied(inner)
+	if !apierror.IsNotApplied(marked) {
+		t.Fatal("marker was not preserved")
+	}
+	mapped := ConnectErrorForProject(marked)
+	detail, ok := errdetail.From(mapped)
+	if !ok {
+		t.Fatal("mapped error carries no detail")
+	}
+	if detail.Effect != EffectToProto(apierror.EffectNotApplied) {
+		t.Fatalf("effect = %s, want not_applied (marker must override inner unknown)", detail.Effect)
 	}
 }
 

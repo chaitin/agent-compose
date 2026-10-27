@@ -108,6 +108,20 @@ func TestAppProjectControllerHelperCoverage(t *testing.T) {
 	}
 }
 
+func TestValidationIssuesToProtoDefaultsErrorReason(t *testing.T) {
+	protoIssues := validationIssuesToProto([]projects.ValidationIssue{{Path: "path", Message: "bad"}})
+	if len(protoIssues) != 1 {
+		t.Fatalf("issues = %#v", protoIssues)
+	}
+	if got := protoIssues[0].GetReason(); got != api.ReasonToProto(apierror.ReasonProjectSpecInvalid) {
+		t.Fatalf("error issue reason = %s, want project_spec_invalid", got)
+	}
+	warnings := validationIssuesToProto([]projects.ValidationIssue{{Severity: projects.ValidationSeverityWarning, Path: "p", Message: "w"}})
+	if len(warnings) != 1 || warnings[0].GetReason() != api.ReasonToProto(apierror.ReasonUnspecified) {
+		t.Fatalf("warning reason = %#v, want unspecified", warnings)
+	}
+}
+
 func TestCapabilityRuntimeConfigCoverage(t *testing.T) {
 	if got := (capabilityRuntimeConfig{}).CapProxyListen(); got != "" {
 		t.Fatalf("nil config CapProxyListen = %q", got)

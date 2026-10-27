@@ -185,22 +185,28 @@ func ConnectErrorForImageBackend(op, imageRef string, fallback apierror.Reason, 
 // ConnectErrorForImageBackendWrite maps a backend failure for a write RPC. A
 // reference that never existed and a reference the backend rejected changed
 // nothing; every other failure may have left the image store partially
-// touched, so it reports UNKNOWN.
+// touched, so it reports UNKNOWN. The NOT_APPLIED claim is still routed through
+// the apierror marker so that package stays the single source of truth.
 func ConnectErrorForImageBackendWrite(op, imageRef string, fallback apierror.Reason, err error) error {
 	code, reason, cause := classifyImageBackendError(op, imageRef, fallback, err)
 	if cause == nil {
 		return nil
 	}
-	effect := apierror.EffectUnknown
 	if reason == apierror.ReasonImageNotFound || reason == apierror.ReasonImageReferenceInvalid {
-		effect = apierror.EffectNotApplied
+		cause = apierror.NotApplied(cause)
 	}
-	return NewOperationError(code, reason, effect, cause)
+	return NewOperationError(code, reason, apierror.EffectFor(cause), cause)
 }
 
 func classifyImageBackendError(op, imageRef string, fallback apierror.Reason, err error) (connect.Code, apierror.Reason, error) {
 	if err == nil {
 		return 0, apierror.ReasonUnspecified, nil
+	}
+	if errors.Is(err, context.Canceled) {
+		return connect.CodeCanceled, apierror.ReasonOperationCanceled, err
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return connect.CodeDeadlineExceeded, apierror.ReasonOperationTimeout, err
 	}
 	backendErr, kind, ok := images.ClassifyBackendError(err)
 	if !ok {

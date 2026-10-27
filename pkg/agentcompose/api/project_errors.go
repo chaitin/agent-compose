@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 
 	"connectrpc.com/connect"
@@ -30,6 +31,10 @@ func ConnectErrorForProject(err error) error {
 
 func classifyProjectError(err error) (connect.Code, apierror.Reason) {
 	switch {
+	case errors.Is(err, context.Canceled):
+		return connect.CodeCanceled, apierror.ReasonOperationCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return connect.CodeDeadlineExceeded, apierror.ReasonOperationTimeout
 	case errors.Is(err, projects.ErrRevisionConflict):
 		return connect.CodeAborted, apierror.ReasonRevisionConflict
 	case errors.Is(err, projects.ErrVolumeNotFound):

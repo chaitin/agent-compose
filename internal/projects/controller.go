@@ -348,7 +348,14 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 		ProjectName: normalized.Spec.Name,
 		Agents:      agentRecords,
 	}); err != nil {
-		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("%w: apply project %s: %w", ErrUnavailable, normalized.Spec.Name, err))
+		// Image ensure happens before the first write, but a cancellation or
+		// timeout is never proof that nothing happened: a pull may have been
+		// interrupted mid-transfer. Those stay UNKNOWN instead of NOT_APPLIED.
+		applyErr := fmt.Errorf("%w: apply project %s: %w", ErrUnavailable, normalized.Spec.Name, err)
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			applyErr = apierror.NotApplied(applyErr)
+		}
+		return ApplyResult{}, applyErr
 	}
 	if err := c.ensureProjectVolumes(ctx, project, normalized.Spec); err != nil {
 		// A volume may already have been created before the failure, so this
@@ -553,8 +560,10 @@ type RemoveResult struct {
 	Agents     []domain.ProjectAgentRecord
 	Schedulers []domain.ProjectSchedulerRecord
 	Changes    []Change
-	// Effect is set when a cleanup failure was tolerated: the project record
-	// is gone but some runtime resource may remain. Reason names the category.
+	// Effect and Reason are set when a cleanup failure was tolerated: the
+	// schedulers were disabled and some sandboxes may remain, but the project
+	// record was not marked removed. They stay UNSPECIFIED when the project
+	// was removed cleanly.
 	Effect apierror.Effect
 	Reason apierror.Reason
 }

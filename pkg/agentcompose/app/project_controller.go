@@ -172,7 +172,7 @@ func (d projectControllerDelegate) applyResponse(result projects.ApplyResult) (*
 	response := applyProjectResponse(result)
 	reports, err := agentNetworkPolicyReports(result.RevisionSpec, d.mediation, d.config)
 	if err != nil {
-		return nil, networkPolicyApplyError(err)
+		return nil, networkPolicyApplyError(err, result.Effect)
 	}
 	response.NetworkPolicies = api.NetworkPolicyReportsToProto(reports)
 	return response, nil
@@ -186,10 +186,14 @@ func networkPolicyConnectError(err error) error {
 	return api.NewOperationError(connect.CodeInvalidArgument, apierror.ReasonNetworkPolicyRejected, apierror.EffectUnspecified, err)
 }
 
-// networkPolicyApplyError classifies a report derivation failure after the
-// apply committed: the project state is durable, so the outcome is UNKNOWN.
-func networkPolicyApplyError(err error) error {
-	return api.NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectUnknown, err)
+// networkPolicyApplyError classifies a report derivation failure on the apply
+// path. The effect follows the apply result: NOT_APPLIED for a dry-run or a
+// pre-write rejection, UNKNOWN once the project state may be durable.
+func networkPolicyApplyError(err error, effect apierror.Effect) error {
+	if effect == apierror.EffectUnspecified {
+		effect = apierror.EffectUnknown
+	}
+	return api.NewOperationError(connect.CodeInternal, apierror.ReasonInternal, effect, err)
 }
 
 // networkPolicyReports accounts for the declared network policies of a spec the
@@ -349,10 +353,16 @@ func validationIssuesToProto(items []projects.ValidationIssue) []*agentcomposev2
 	issues := make([]*agentcomposev2.ProjectValidationIssue, 0, len(items))
 	for _, item := range items {
 		issue := api.ProjectValidationIssue(item.Path, item.Message)
-		issue.Reason = api.ReasonToProto(item.Reason)
 		if item.Severity == projects.ValidationSeverityWarning {
 			issue.Severity = agentcomposev2.ProjectValidationSeverity_PROJECT_VALIDATION_SEVERITY_WARNING
 		}
+		reason := item.Reason
+		if reason == apierror.ReasonUnspecified && item.Severity != projects.ValidationSeverityWarning {
+			// The proto contract requires a reason on error-severity issues;
+			// an unspecified reason is the spec-invalid default.
+			reason = apierror.ReasonProjectSpecInvalid
+		}
+		issue.Reason = api.ReasonToProto(reason)
 		issues = append(issues, issue)
 	}
 	return issues

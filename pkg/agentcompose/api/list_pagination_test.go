@@ -4,6 +4,9 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+
+	"github.com/chaitin/agent-compose/pkg/apierror"
+	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 func TestListPaginationConstraints(t *testing.T) {
@@ -43,5 +46,22 @@ func TestPaginateListReturnsExactTotalAndEmptyPageBeyondEnd(t *testing.T) {
 	page, total, err = paginateList([]string{"a", "b", "c"}, 3, 1)
 	if err != nil || total != 3 || len(page) != 0 {
 		t.Fatalf("empty page=%v total=%d err=%v", page, total, err)
+	}
+}
+
+func TestListPaginationCarriesInvalidRequestReason(t *testing.T) {
+	_, _, err := listPagination(0, maxListLimit+1)
+	if err == nil {
+		t.Fatal("expected an error for an oversized limit")
+	}
+	detail, ok := errdetail.From(err)
+	if !ok {
+		t.Fatal("pagination error carries no detail")
+	}
+	if ReasonFromProto(detail.Reason) != apierror.ReasonInvalidRequest {
+		t.Fatalf("reason = %d, want invalid_request", ReasonFromProto(detail.Reason))
+	}
+	if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
+		t.Fatalf("effect = %d, want unspecified", EffectFromProto(detail.Effect))
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
+	"github.com/chaitin/agent-compose/pkg/images"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
 
@@ -116,5 +117,64 @@ func TestPreWriteApplyFailuresAreMarkedNotApplied(t *testing.T) {
 	_, err = controller.ApplyProject(ctx, ApplyRequest{Normalized: normalized})
 	if !apierror.IsNotApplied(err) {
 		t.Fatalf("missing store error %v is not marked not-applied", err)
+	}
+}
+
+type cancellingImagesBackend struct{}
+
+func (cancellingImagesBackend) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {
+	return images.ListResult{}, nil
+}
+
+func (cancellingImagesBackend) PullImage(context.Context, images.PullRequest) (images.PullResult, error) {
+	return images.PullResult{}, context.Canceled
+}
+
+func (cancellingImagesBackend) InspectImage(context.Context, images.InspectRequest) (images.InspectResult, error) {
+	return images.InspectResult{}, context.Canceled
+}
+
+func (cancellingImagesBackend) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
+	return images.RemoveResult{}, nil
+}
+
+func TestImageEnsureCancellationIsNotMarkedNotApplied(t *testing.T) {
+	ctx := context.Background()
+	raw, err := compose.Parse([]byte(`
+name: cancel-image
+agents:
+  worker:
+    provider: codex
+    image: guest:latest
+    driver:
+      docker: {}
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	spec, err := compose.Normalize(raw, compose.NormalizeOptions{ProjectDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	hash, err := spec.Hash()
+	if err != nil {
+		t.Fatalf("Hash returned error: %v", err)
+	}
+	normalized := NormalizedProject{Spec: spec, SpecHash: hash, SourcePath: "/projects/cancel-image"}
+	controller := NewController(ControllerDependencies{
+		Config:  &appconfig.Config{RuntimeDriver: driverpkg.RuntimeDriverDocker},
+		Store:   &pr551Store{},
+		Images:  cancellingImagesBackend{},
+		Volumes: pr551NoopVolumeManager{},
+	})
+	_, err = controller.ApplyProject(ctx, ApplyRequest{Normalized: normalized})
+	if err == nil {
+		t.Fatal("ApplyProject returned nil error, want image ensure cancellation")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error does not wrap context.Canceled: %v", err)
+	}
+	if apierror.IsNotApplied(err) {
+		t.Fatal("image ensure cancellation was marked not-applied, want unknown")
 	}
 }

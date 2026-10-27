@@ -85,9 +85,12 @@ func WriteErrorForCode(code connect.Code, kind ResourceKind, cause error) error 
 
 // preserveOrUpgradeDetail keeps a detail an inner boundary attached, but a
 // write boundary must not put UNSPECIFIED on the wire: the effect is upgraded
-// while the inner reason (which may be more precise) is preserved.
+// while the inner reason (which may be more precise) is preserved. A
+// NOT_APPLIED marker on the outer error wins over an inner boundary's
+// UNKNOWN, because the marker is the only way to claim NOT_APPLIED and must
+// not be silently downgraded.
 func preserveOrUpgradeDetail(err error, detail errdetail.Detail, effect apierror.Effect) error {
-	if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
+	if EffectFromProto(detail.Effect) != apierror.EffectUnspecified && effect != apierror.EffectNotApplied {
 		return err
 	}
 	reason := ReasonFromProto(detail.Reason)

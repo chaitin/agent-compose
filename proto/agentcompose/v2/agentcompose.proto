@@ -602,9 +602,9 @@ message RemoveProjectRequest {
 message RemoveProjectResponse {
   Project project = 1;
   repeated ProjectChange changes = 2;
-  // Set only when a cleanup failure was tolerated: the project record was
-  // removed but some runtime resource may remain. UNSPECIFIED means no such
-  // failure was tolerated.
+  // Set only when a cleanup failure was tolerated: the schedulers were
+  // disabled and some sandboxes may remain, but the project record was not
+  // marked removed. UNSPECIFIED means no such failure was tolerated.
   OperationEffect effect = 3;
   OperationErrorReason reason = 4;
 }
