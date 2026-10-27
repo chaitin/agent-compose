@@ -53,6 +53,43 @@ func TestSmokeBoxLiteRuntimeRetentionAndRelease(t *testing.T) {
 	assertRuntimeRetentionAndRelease(t, ctx, config, runtime, session, vmState, proxyState)
 }
 
+// TestSmokeBoxLiteReusesNamedBoxAfterBoxIDLoss guards the daemon-restart
+// scenario behind boxlite_options_set_name: when a daemon restarts after
+// creating a box but before persisting its BoxID, the sandbox store still
+// holds BoxName (RuntimeRef at create), so lookup must resolve the box by that
+// name and reuse it instead of issuing a second, orphaned create. A reused
+// runtime must report the same BoxID; a divergent BoxID proves get-by-name did
+// not find the named box and a duplicate was created.
+func TestSmokeBoxLiteReusesNamedBoxAfterBoxIDLoss(t *testing.T) {
+	runtimeSmokeEnabled(t, RuntimeDriverBoxlite)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	config := newRuntimeSmokeConfig(t, RuntimeDriverBoxlite)
+	session, vmState, proxyState := newRuntimeSmokeSandbox(t, ctx, config, RuntimeDriverBoxlite)
+	proxyState.Enabled = false
+	runtime := &cgoSandboxRuntime{config: config}
+
+	info, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState)
+	if err != nil {
+		t.Fatalf("EnsureSandbox() error = %v", err)
+	}
+	originalBoxID := info.BoxID
+	vmState.BoxID = originalBoxID
+	cleanupRuntimeSmokeSandbox(t, config, runtime, session, vmState)
+
+	// Simulate a daemon restart that lost the unpersisted BoxID while BoxName
+	// remained. Lookup must fall back to the name assigned at create and reuse
+	// the existing box rather than creating a duplicate.
+	vmState.BoxID = ""
+	resumed, err := runtime.EnsureSandbox(ctx, session, vmState, proxyState)
+	if err != nil {
+		t.Fatalf("EnsureSandbox() after BoxID loss error = %v", err)
+	}
+	if resumed.BoxID != originalBoxID {
+		t.Fatalf("resumed box = %q, want original %q (must be found by name)", resumed.BoxID, originalBoxID)
+	}
+}
+
 func TestSmokeBoxLiteRuntimeMountManifestDirectoryOnlyStarts(t *testing.T) {
 	runtimeSmokeEnabled(t, RuntimeDriverBoxlite)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
