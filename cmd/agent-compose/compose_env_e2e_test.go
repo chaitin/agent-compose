@@ -174,6 +174,9 @@ func TestDockerComposeKVMOverlayContract(t *testing.T) {
 	if len(hostService.Devices) != 1 || hostService.Devices[0] != "/dev/kvm:/dev/kvm" {
 		t.Fatalf("sandbox-host devices = %#v, want only /dev/kvm", hostService.Devices)
 	}
+	if len(hostService.Command) != 1 || hostService.Command[0] != "sandbox-host" {
+		t.Fatalf("sandbox-host command = %#v, want [sandbox-host]", hostService.Command)
+	}
 	if !stringSliceContains(hostService.Volumes, "sandbox-host-run:/run/agent-compose") {
 		t.Fatalf("sandbox-host volumes = %#v, want shared sandbox-host socket volume", hostService.Volumes)
 	}
