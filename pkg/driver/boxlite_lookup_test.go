@@ -48,3 +48,31 @@ func TestBoxliteSandboxName(t *testing.T) {
 		})
 	}
 }
+
+// TestBoxliteCreateNameMatchesLookupKeyBeforeBoxID guards the in-progress-create
+// reuse invariant: before the base disk build finishes the BoxID is not yet
+// persisted, so the only identifier a restarted daemon can probe is the name
+// assigned at create. If the create name and the lookup key ever diverge here,
+// NeedsCreate/getOrCreateBox would miss the in-progress box and issue a second,
+// orphaned create. Once the BoxID is persisted it becomes the authoritative
+// lookup key (the box remains addressable by name too), so the invariant only
+// holds while the BoxID is empty.
+func TestBoxliteCreateNameMatchesLookupKeyBeforeBoxID(t *testing.T) {
+	sandbox := &Sandbox{Summary: SandboxSummary{ID: "sandbox-1", RuntimeRef: "agent-compose-sandbox-1"}}
+	cases := []VMState{
+		{},                                   // fresh create, RuntimeRef fallback
+		{BoxName: "agent-compose-sandbox-1"}, // BoxName persisted at create
+		{BoxName: "  "},                      // whitespace name falls through to RuntimeRef
+		{BoxID: "   "},                       // whitespace BoxID is skipped like an empty one
+	}
+	for _, vmState := range cases {
+		lookup := boxliteLookupKey(sandbox, vmState)
+		name := boxliteSandboxName(sandbox, vmState)
+		if lookup == "" || name == "" {
+			t.Fatalf("vmState %+v: lookup key %q / create name %q must both be non-empty", vmState, lookup, name)
+		}
+		if lookup != name {
+			t.Fatalf("vmState %+v: lookup key %q != create name %q; a restarted daemon would miss the in-progress box", vmState, lookup, name)
+		}
+	}
+}
