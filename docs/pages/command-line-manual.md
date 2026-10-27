@@ -1007,6 +1007,7 @@ status response for automation.
 
 ```bash
 agent-compose daemon
+agent-compose sandbox-host
 agent-compose status
 agent-compose version
 agent-compose config
@@ -1014,10 +1015,19 @@ agent-compose config --quiet
 ```
 
 - `daemon`: start the agent-compose daemon.
+- `sandbox-host`: run the long-lived sandbox-host process that owns BoxLite and Microsandbox VMs so the daemon can be upgraded without tearing them down. It is normally started by the daemon or by the KVM Compose overlay, not invoked directly; see "Sandbox-host configuration" below.
 - `status`: query daemon status.
 - `version`: print the CLI build version.
 - `config`: parse, validate, and print normalized project config.
 - `config --quiet`: validate config without printing the normalized config.
+
+### Sandbox-host configuration
+
+The daemon drives BoxLite and Microsandbox VMs through a long-lived `sandbox-host` process over a Unix-socket gRPC channel, so a daemon upgrade recreates the daemon without recreating the host or its VMs. Three environment variables govern the handoff:
+
+- `AGENT_COMPOSE_SANDBOX_HOST_MODE`: `external` (default) or `managed`. `external` means the daemon only attaches to an externally managed host and never spawns one — the safe default for the Compose deployment, where the `sandbox-host` service owns the VMs. `managed` makes the daemon spawn the host on first use, for local and native deployments. An unprivileged daemon container must stay on `external`; spawning an in-container host there would steal the data-root lock from the real host.
+- `AGENT_COMPOSE_SANDBOX_HOST_SOCKET`: the sandbox-host Unix socket path, defaulting to `$XDG_RUNTIME_DIR/agent-compose/sandbox-host.sock`, or `/run/agent-compose/sandbox-host.sock` when `XDG_RUNTIME_DIR` is unset.
+- `AGENT_COMPOSE_SANDBOX_HOST_IMAGE`: the sandbox-host image used by the KVM Compose overlay (`docker-compose.kvm.yml`), defaulting to `chaitin/agent-compose:latest`. It deliberately does not fall back to `AGENT_COMPOSE_IMAGE`, so pinning the daemon image cannot leak into the host and recreate it on a daemon-only upgrade.
 
 ## Deferred Commands
 
