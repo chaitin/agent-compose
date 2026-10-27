@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
@@ -132,7 +133,7 @@ func NewSandboxHandler(deps SandboxHandlerDeps, stats ...SandboxStatsRuntimeReso
 func (h *SandboxHandler) GetSandbox(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxRequest]) (*connect.Response[agentcomposev2.GetSandboxResponse], error) {
 	sandbox, err := h.loadSandbox(ctx, req.Msg.GetSandboxId())
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	result := h.sandboxToV2(ctx, sandbox)
 	h.populateSandboxNotebookURL(sandbox, result)
@@ -176,7 +177,7 @@ func (h *SandboxHandler) ListSandboxes(ctx context.Context, req *connect.Request
 	}
 	statuses, err := sandboxes.NormalizeVMStatuses(statusValues)
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	store, ok := h.store.(SandboxListStore)
 	if !ok {
@@ -189,7 +190,7 @@ func (h *SandboxHandler) ListSandboxes(ctx context.Context, req *connect.Request
 		Limit:      limit,
 	})
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	response := &agentcomposev2.ListSandboxesResponse{Sandboxes: make([]*agentcomposev2.Sandbox, 0, len(result.Sandboxes)), Total: uint32(result.TotalCount)}
 	targets := h.resolveSandboxTargets(ctx, result.Sandboxes)
@@ -202,10 +203,10 @@ func (h *SandboxHandler) ListSandboxes(ctx context.Context, req *connect.Request
 func (h *SandboxHandler) ListSandboxHistory(ctx context.Context, req *connect.Request[agentcomposev2.ListSandboxHistoryRequest]) (*connect.Response[agentcomposev2.ListSandboxHistoryResponse], error) {
 	sandboxID := strings.TrimSpace(req.Msg.GetSandboxId())
 	if err := validateSandboxID(sandboxID); err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	if _, err := h.store.GetSandbox(ctx, sandboxID); err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, ErrorForCode(connect.CodeNotFound, ResourceSandbox, err)
 	}
 	store, ok := h.store.(SandboxHistoryStore)
 	if !ok {
@@ -213,11 +214,11 @@ func (h *SandboxHandler) ListSandboxHistory(ctx context.Context, req *connect.Re
 	}
 	cells, err := store.ListCells(ctx, sandboxID)
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	events, err := store.ListEvents(ctx, sandboxID)
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	response, err := paginateSandboxHistory(cells, events, req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
@@ -319,11 +320,11 @@ func sandboxHistoryEventToV2(event *domain.SandboxEvent) *agentcomposev2.Sandbox
 func (h *SandboxHandler) StopSandbox(ctx context.Context, req *connect.Request[agentcomposev2.StopSandboxRequest]) (*connect.Response[agentcomposev2.StopSandboxResponse], error) {
 	options, err := sandboxStopOptions(req.Msg)
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceSandbox)
 	}
 	sandbox, err := h.loadSandbox(ctx, req.Msg.GetSandboxId())
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
 	}
 	policy := sandboxes.EffectiveStoppedRuntimePolicy(sandbox)
 	state := sandboxes.EffectiveStoppedRuntimeState(sandbox)
@@ -338,22 +339,22 @@ func (h *SandboxHandler) StopSandbox(ctx context.Context, req *connect.Request[a
 	retryRelease := sandbox.Summary.VMStatus == domain.VMStatusStopped &&
 		policy == domain.StoppedRuntimePolicyRemove && state == domain.StoppedRuntimeStateReleasePending
 	if sandbox.Summary.VMStatus != domain.VMStatusRunning && !retryRelease {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("sandbox %s cannot be stopped from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
+		return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, fmt.Errorf("sandbox %s cannot be stopped from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
 	}
 	if options.Mode != sandboxes.StopModeGraceful {
 		stopped, stopErr := h.delegate.StopSandbox(ctx, sandbox.Summary.ID)
 		if stopErr != nil {
-			return nil, stopErr
+			return nil, ConnectErrorForDomainWrite(stopErr, ResourceSandbox)
 		}
 		return connect.NewResponse(&agentcomposev2.StopSandboxResponse{Sandbox: h.sandboxToV2(ctx, stopped), Outcome: agentcomposev2.SandboxStopOutcome_SANDBOX_STOP_OUTCOME_FORCE}), nil
 	}
 	graceful, ok := h.delegate.(SandboxGracefulLifecycleDelegate)
 	if !ok {
-		return nil, connect.NewError(connect.CodeUnimplemented, fmt.Errorf("graceful sandbox stop is unsupported"))
+		return nil, NewOperationError(connect.CodeUnimplemented, apierror.ReasonUnsupported, apierror.EffectNotApplied, fmt.Errorf("graceful sandbox stop is unsupported"))
 	}
 	outcome, stopErr := graceful.StopSandboxWithOptions(ctx, sandbox.Summary.ID, options)
 	if stopErr != nil {
-		return nil, stopErr
+		return nil, ConnectErrorForDomainWrite(stopErr, ResourceSandbox)
 	}
 	return connect.NewResponse(&agentcomposev2.StopSandboxResponse{Sandbox: h.sandboxToV2(ctx, outcome.Sandbox), Outcome: sandboxStopOutcomeToProto(outcome)}), nil
 }
@@ -399,20 +400,20 @@ func sandboxStopOutcomeToProto(outcome sandboxes.StopOutcome) agentcomposev2.San
 func (h *SandboxHandler) ResumeSandbox(ctx context.Context, req *connect.Request[agentcomposev2.ResumeSandboxRequest]) (*connect.Response[agentcomposev2.ResumeSandboxResponse], error) {
 	sandbox, err := h.loadSandbox(ctx, req.Msg.GetSandboxId())
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
 	}
 	if sandbox.Summary.VMStatus == domain.VMStatusRunning {
 		return connect.NewResponse(&agentcomposev2.ResumeSandboxResponse{Sandbox: h.sandboxToV2(ctx, sandbox)}), nil
 	}
 	if sandbox.Summary.VMStatus != domain.VMStatusStopped {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("sandbox %s cannot be resumed from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
+		return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, fmt.Errorf("sandbox %s cannot be resumed from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
 	}
 	if domain.SandboxWorkspaceUnavailable(sandbox) {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("sandbox %s workspace was reclaimed and cannot be resumed", sandbox.Summary.ID))
+		return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, fmt.Errorf("sandbox %s workspace was reclaimed and cannot be resumed", sandbox.Summary.ID))
 	}
 	resumed, err := h.delegate.ResumeSandbox(ctx, sandbox.Summary.ID)
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
 	}
 	return connect.NewResponse(&agentcomposev2.ResumeSandboxResponse{Sandbox: h.sandboxToV2(ctx, resumed)}), nil
 }
@@ -424,14 +425,14 @@ func (h *SandboxHandler) loadSandbox(ctx context.Context, rawID string) (*domain
 	}
 	sandbox, err := h.store.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, apierror.NotApplied(connect.NewError(connect.CodeNotFound, err))
 	}
 	if h.reconciler == nil {
 		return sandbox, nil
 	}
 	reconciled, err := h.reconciler.ReconcileRuntimeState(ctx, sandbox)
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	return reconciled, nil
 }
@@ -517,7 +518,7 @@ func (h *SandboxHandler) RemoveSandbox(ctx context.Context, req *connect.Request
 			if errors.Is(err, sandboxes.ErrOwnershipUnknown) || errors.Is(err, sandboxes.ErrUnsafeResidue) {
 				return nil, connect.NewError(connect.CodeFailedPrecondition, err)
 			}
-			return nil, ConnectErrorForDomain(err)
+			return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 		}
 		if h.dashboard != nil {
 			h.dashboard.Notify("sandbox_removed")
@@ -550,7 +551,7 @@ func (h *SandboxHandler) RemoveSandbox(ctx context.Context, req *connect.Request
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("sandbox runtime remover is required"))
 	}
 	if err := h.remover.RemoveSandboxVM(ctx, session); err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	if err := h.store.RemoveSandbox(ctx, sandboxID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -614,41 +615,41 @@ func sandboxPruneCandidatesToProto(items []sandboxes.PruneCandidate) []*agentcom
 func (h *SandboxHandler) GetSandboxStats(ctx context.Context, req *connect.Request[agentcomposev2.GetSandboxStatsRequest]) (*connect.Response[agentcomposev2.GetSandboxStatsResponse], error) {
 	sandboxID := strings.TrimSpace(req.Msg.GetSandboxId())
 	if err := validateSandboxID(sandboxID); err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	session, err := h.store.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, ErrorForCode(connect.CodeNotFound, ResourceSandbox, err)
 	}
 	if h.reconciler != nil {
 		reconciled, recErr := h.reconciler.ReconcileRuntimeState(ctx, session)
 		if recErr != nil {
 			slog.Warn("failed to reconcile sandbox runtime state before stats", "sandbox_id", sandboxID, "error", recErr)
-			return nil, connect.NewError(connect.CodeInternal, recErr)
+			return nil, ErrorForCode(connect.CodeInternal, ResourceSandbox, recErr)
 		}
 		session = reconciled
 	}
 	if session.Summary.VMStatus != domain.VMStatusRunning {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("sandbox %s is not running", sandboxID))
+		return nil, ErrorForCode(connect.CodeFailedPrecondition, ResourceSandbox, fmt.Errorf("sandbox %s is not running", sandboxID))
 	}
 	statsStore, ok := h.store.(SandboxStatsStore)
 	if !ok {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("sandbox stats store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceSandbox, fmt.Errorf("sandbox stats store is required"))
 	}
 	if h.stats == nil {
-		return nil, ConnectErrorForDomain(domain.ClassifyError(domain.ErrUnsupported, "sandbox stats are unsupported by this daemon", nil))
+		return nil, ConnectErrorForDomainKind(domain.ClassifyError(domain.ErrUnsupported, "sandbox stats are unsupported by this daemon", nil), ResourceSandbox)
 	}
 	vmState, err := statsStore.GetVMState(sandboxID)
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	runtime, err := h.stats(session)
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	stats, err := runtime.Stats(ctx, session, vmState)
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
 	stats.SandboxID = firstNonEmpty(stats.SandboxID, sandboxID)
 	stats.Driver = firstNonEmpty(stats.Driver, session.Summary.Driver, vmState.Driver)

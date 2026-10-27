@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/images"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
@@ -34,7 +35,7 @@ func (h *ImageHandler) ListImages(ctx context.Context, req *connect.Request[agen
 		All:   req.Msg.GetAll(),
 	})
 	if err != nil {
-		return nil, ConnectErrorForImageBackend("list images", "", err)
+		return nil, ConnectErrorForImageBackend("list images", "", apierror.ReasonImageBackendUnavailable, err)
 	}
 	page, total, err := paginateList(result.Images, req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
@@ -66,14 +67,14 @@ func (h *ImageHandler) PullImage(ctx context.Context, req *connect.Request[agent
 		}), nil
 	}
 	if !images.IsNotFound(err) {
-		return nil, ConnectErrorForImageBackend("inspect image before pull", imageRef, err)
+		return nil, ConnectErrorForImageBackendWrite("inspect image before pull", imageRef, apierror.ReasonImageBackendUnavailable, err)
 	}
 	result, err := backend.PullImage(ctx, images.PullRequest{
 		ImageRef: imageRef,
 		Platform: req.Msg.GetPlatform(),
 	})
 	if err != nil {
-		return nil, ConnectErrorForImageBackend("pull image", imageRef, err)
+		return nil, ConnectErrorForImageBackendWrite("pull image", imageRef, apierror.ReasonImagePullFailed, err)
 	}
 	return connect.NewResponse(&agentcomposev2.PullImageResponse{
 		Image:       result.Image,
@@ -104,7 +105,7 @@ func (h *ImageHandler) InspectImage(ctx context.Context, req *connect.Request[ag
 	}
 	result, err := backend.InspectImage(ctx, images.InspectRequest{ImageRef: imageRef})
 	if err != nil {
-		return nil, ConnectErrorForImageBackend("inspect image", imageRef, err)
+		return nil, ConnectErrorForImageBackend("inspect image", imageRef, apierror.ReasonImageBackendUnavailable, err)
 	}
 	return connect.NewResponse(&agentcomposev2.InspectImageResponse{
 		Image:       result.Image,
@@ -127,7 +128,7 @@ func (h *ImageHandler) RemoveImage(ctx context.Context, req *connect.Request[age
 		PruneChildren: req.Msg.GetPruneChildren(),
 	})
 	if err != nil {
-		return nil, ConnectErrorForImageBackend("remove image", imageRef, err)
+		return nil, ConnectErrorForImageBackendWrite("remove image", imageRef, apierror.ReasonImageBackendUnavailable, err)
 	}
 	return connect.NewResponse(&agentcomposev2.RemoveImageResponse{
 		ImageRef:     result.ImageRef,
@@ -165,38 +166,79 @@ func (h *ImageHandler) BuildImage(ctx context.Context, req *connect.Request[agen
 		if errors.Is(err, images.ErrBuildUnsupported) {
 			return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("build image: %w", err))
 		}
-		return ConnectErrorForImageBackend("build image", firstNonEmptyImageRef(tags...), err)
+		return ConnectErrorForImageBackendWrite("build image", firstNonEmptyImageRef(tags...), apierror.ReasonImageBuildFailed, err)
 	}
 	return nil
 }
 
-func ConnectErrorForImageBackend(op, imageRef string, err error) error {
-	if err == nil {
+// ConnectErrorForImageBackend maps a backend failure for a read RPC: it
+// carries a reason but no effect. fallback names the operation class the
+// caller was performing, so the mapper never has to parse Op text.
+func ConnectErrorForImageBackend(op, imageRef string, fallback apierror.Reason, err error) error {
+	code, reason, cause := classifyImageBackendError(op, imageRef, fallback, err)
+	if cause == nil {
 		return nil
 	}
-	if backendErr, kind, ok := images.ClassifyBackendError(err); ok {
-		if imageRef != "" && backendErr.ImageRef == "" {
-			backendErr.ImageRef = imageRef
-		}
-		if op != "" && backendErr.Op == "" {
-			backendErr.Op = op
-		}
-		code := connect.CodeUnavailable
-		switch kind {
-		case images.ErrorKindNotFound:
-			code = connect.CodeNotFound
-		case images.ErrorKindInvalidReference:
-			code = connect.CodeInvalidArgument
-		case images.ErrorKindConflict:
-			code = connect.CodeFailedPrecondition
-		case images.ErrorKindInternal:
-			code = connect.CodeInternal
-		case images.ErrorKindUnavailable:
-			code = connect.CodeUnavailable
-		}
-		return connect.NewError(code, backendErr)
+	return NewOperationError(code, reason, apierror.EffectUnspecified, cause)
+}
+
+// ConnectErrorForImageBackendWrite maps a backend failure for a write RPC. A
+// reference that never existed and a reference the backend rejected changed
+// nothing; every other failure may have left the image store partially
+// touched, so it reports UNKNOWN.
+func ConnectErrorForImageBackendWrite(op, imageRef string, fallback apierror.Reason, err error) error {
+	code, reason, cause := classifyImageBackendError(op, imageRef, fallback, err)
+	if cause == nil {
+		return nil
 	}
-	return connect.NewError(connect.CodeUnknown, err)
+	effect := apierror.EffectUnknown
+	if reason == apierror.ReasonImageNotFound || reason == apierror.ReasonImageReferenceInvalid {
+		effect = apierror.EffectNotApplied
+	}
+	return NewOperationError(code, reason, effect, cause)
+}
+
+func classifyImageBackendError(op, imageRef string, fallback apierror.Reason, err error) (connect.Code, apierror.Reason, error) {
+	if err == nil {
+		return 0, apierror.ReasonUnspecified, nil
+	}
+	backendErr, kind, ok := images.ClassifyBackendError(err)
+	if !ok {
+		// The backend could not classify its own failure; that is a daemon
+		// bug, not an image condition.
+		return connect.CodeInternal, apierror.ReasonInternal, err
+	}
+	if imageRef != "" && backendErr.ImageRef == "" {
+		backendErr.ImageRef = imageRef
+	}
+	if backendErr.Op == "" {
+		backendErr.Op = op
+	}
+	switch kind {
+	case images.ErrorKindNotFound:
+		return connect.CodeNotFound, apierror.ReasonImageNotFound, backendErr
+	case images.ErrorKindInvalidReference:
+		return connect.CodeInvalidArgument, apierror.ReasonImageReferenceInvalid, backendErr
+	case images.ErrorKindConflict:
+		return connect.CodeFailedPrecondition, apierror.ReasonImageInUse, backendErr
+	case images.ErrorKindInternal:
+		return connect.CodeInternal, apierror.ReasonInternal, backendErr
+	case images.ErrorKindUnavailable:
+		return connect.CodeUnavailable, imageFallbackReason(fallback), backendErr
+	default:
+		return connect.CodeUnavailable, imageFallbackReason(fallback), backendErr
+	}
+}
+
+// imageFallbackReason keeps an operation-class reason only when it is one of
+// the image categories; anything else falls back to the backend category.
+func imageFallbackReason(fallback apierror.Reason) apierror.Reason {
+	switch fallback {
+	case apierror.ReasonImagePullFailed, apierror.ReasonImageBuildFailed, apierror.ReasonImageBackendUnavailable:
+		return fallback
+	default:
+		return apierror.ReasonImageBackendUnavailable
+	}
 }
 
 func normalizeImageBuildStrings(values []string) []string {

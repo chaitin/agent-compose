@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/chaitin/agent-compose/pkg/agentcompose/api"
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/dashboard"
@@ -292,7 +293,7 @@ func (b *SandboxRPCBridge) createSandboxWithAgent(ctx context.Context, req sandb
 	if err := b.driver.StartSandboxVM(ctx, session); err != nil {
 		session.Summary.VMStatus = domain.VMStatusFailed
 		_ = b.store.UpdateSandbox(ctx, session)
-		return nil, api.ConnectErrorForDomain(err)
+		return nil, api.ConnectErrorForDomainWrite(err, api.ResourceSandbox)
 	}
 	session.Summary.VMStatus = domain.VMStatusRunning
 	if err := b.store.UpdateSandbox(ctx, session); err != nil {
@@ -341,11 +342,11 @@ func (b *SandboxRPCBridge) ResumeSandbox(ctx context.Context, sandboxID string) 
 func (b *SandboxRPCBridge) resumeSandbox(ctx context.Context, sandboxID, source string) (*domain.Sandbox, error) {
 	session, err := b.store.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, api.ConnectErrorForDomainWrite(apierror.NotApplied(connect.NewError(connect.CodeNotFound, err)), api.ResourceSandbox)
 	}
 	loaded, err := b.sessionLifecycle().ResumeLoaded(ctx, session, capabilities.SandboxCapsets(session))
 	if err != nil {
-		return nil, api.ConnectErrorForDomain(err)
+		return nil, api.ConnectErrorForDomainWrite(err, api.ResourceSandbox)
 	}
 	b.indexCapabilitySandbox(loaded)
 	b.publishSandboxLifecycle(ctx, "agent-compose.session.resumed", loaded, source)
@@ -377,7 +378,9 @@ func (b *SandboxRPCBridge) stopSandbox(ctx context.Context, sandboxID, source st
 func (b *SandboxRPCBridge) stopSandboxWithOptions(ctx context.Context, sandboxID, source string, options sandboxes.StopOptions) (sandboxes.StopOutcome, error) {
 	session, err := b.store.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return sandboxes.StopOutcome{}, connect.NewError(connect.CodeNotFound, err)
+		// Nothing was stopped: the lookup failed before the runtime was
+		// touched.
+		return sandboxes.StopOutcome{}, api.ConnectErrorForDomainWrite(apierror.NotApplied(connect.NewError(connect.CodeNotFound, err)), api.ResourceSandbox)
 	}
 	if reconciled, recErr := b.ReconcileRuntimeState(ctx, session); recErr != nil {
 		slog.Warn("failed to reconcile sandbox runtime state before stop", "sandbox_id", session.Summary.ID, "error", recErr)
@@ -392,7 +395,7 @@ func (b *SandboxRPCBridge) stopSandboxWithOptions(ctx context.Context, sandboxID
 		b.publishSandboxLifecycle(ctx, "agent-compose.session.stopped", outcome.Sandbox, source)
 	}
 	if stopErr != nil {
-		return outcome, api.ConnectErrorForDomain(stopErr)
+		return outcome, api.ConnectErrorForDomainWrite(stopErr, api.ResourceSandbox)
 	}
 	return outcome, nil
 }

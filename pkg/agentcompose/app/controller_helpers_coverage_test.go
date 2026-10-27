@@ -9,6 +9,8 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/chaitin/agent-compose/internal/projects"
+	"github.com/chaitin/agent-compose/pkg/agentcompose/api"
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/events/webhooks"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -18,7 +20,7 @@ import (
 )
 
 func TestAppProjectControllerHelperCoverage(t *testing.T) {
-	if normalized, issues, err := normalizeProjectRequest(nil, nil, ""); err != nil || normalized.Spec != nil || len(issues) != 1 {
+	if normalized, issues, err := normalizeProjectRequest(nil, nil, ""); err != nil || normalized.Spec != nil || len(issues) != 1 || issues[0].Reason != apierror.ReasonProjectSpecInvalid {
 		t.Fatalf("normalizeProjectRequest nil normalized=%#v issues=%#v err=%v", normalized, issues, err)
 	}
 	dupSpec := &agentcomposev2.ProjectSpec{Variables: []*agentcomposev2.EnvVarSpec{{Name: "A"}, {Name: " A "}}}
@@ -58,6 +60,16 @@ func TestAppProjectControllerHelperCoverage(t *testing.T) {
 	}
 	if got := validationIssuesFromProto(warnings); len(got) != 1 || got[0].Severity != projects.ValidationSeverityWarning {
 		t.Fatalf("warning round trip = %#v", got)
+	}
+	reasonIssues := validationIssuesToProto([]projects.ValidationIssue{{Path: "agents.worker.scheduler.script", Message: "bad", Reason: apierror.ReasonSchedulerScriptInvalid}})
+	if len(reasonIssues) != 1 || reasonIssues[0].GetReason() != api.ReasonToProto(apierror.ReasonSchedulerScriptInvalid) {
+		t.Fatalf("reason issue = %#v", reasonIssues)
+	}
+	if got := validationIssuesFromProto(reasonIssues); len(got) != 1 || got[0].Reason != apierror.ReasonSchedulerScriptInvalid {
+		t.Fatalf("reason round trip = %#v", got)
+	}
+	if resp := applyProjectResponse(projects.ApplyResult{Effect: apierror.EffectNotApplied}); resp.GetEffect() != api.EffectToProto(apierror.EffectNotApplied) {
+		t.Fatalf("apply response effect = %s, want not_applied", resp.GetEffect())
 	}
 	changes := projectChangesToProto([]projects.Change{
 		{Action: projects.ChangeActionCreated, ResourceType: "project", ResourceID: "created"},

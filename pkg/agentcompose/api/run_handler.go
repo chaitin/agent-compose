@@ -13,6 +13,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
@@ -111,14 +112,14 @@ func (h *RunHandler) AttachAgentRun(ctx context.Context, stream *connect.BidiStr
 func (h *RunHandler) ListRunEvents(ctx context.Context, req *connect.Request[agentcomposev2.ListRunEventsRequest]) (*connect.Response[agentcomposev2.ListRunEventsResponse], error) {
 	runID := strings.TrimSpace(req.Msg.GetRunId())
 	if runID == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
+		return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceRun, fmt.Errorf("run id is required"))
 	}
 	_, err := h.store.GetProjectRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
+			return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, err)
 		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
 	}
 	offset, limit, err := listPagination(req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
@@ -126,19 +127,19 @@ func (h *RunHandler) ListRunEvents(ctx context.Context, req *connect.Request[age
 	}
 	store, ok := h.store.(RunEventStore)
 	if !ok {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("run event store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, fmt.Errorf("run event store is required"))
 	}
 	events, err := store.ListProjectRunEventsPage(ctx, runID, offset, limit)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
 	}
 	historyAvailable, err := store.HasProjectRunEvents(ctx, runID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
 	}
 	total, err := store.CountProjectRunEvents(ctx, runID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
 	}
 	response := &agentcomposev2.ListRunEventsResponse{HistoryAvailable: historyAvailable, Total: uint32(total)}
 	for _, event := range events {
@@ -196,28 +197,28 @@ func runEventToProto(event domain.ProjectRunEventRecord) *agentcomposev2.RunEven
 
 func (h *RunHandler) GetRun(ctx context.Context, req *connect.Request[agentcomposev2.GetRunRequest]) (*connect.Response[agentcomposev2.GetRunResponse], error) {
 	if h.store == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, fmt.Errorf("config store is required"))
 	}
 	runID := strings.TrimSpace(req.Msg.GetRunId())
 	if runID == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
+		return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceRun, fmt.Errorf("run id is required"))
 	}
 	run, err := h.store.GetProjectRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
+			return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, err)
 		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
 	}
 	if projectID := strings.TrimSpace(req.Msg.GetProjectId()); projectID != "" && run.ProjectID != projectID {
-		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("project run %s not found in project %s", runID, projectID))
+		return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, fmt.Errorf("project run %s not found in project %s", runID, projectID))
 	}
 	return connect.NewResponse(&agentcomposev2.GetRunResponse{Run: ProjectRunDetailToProto(run)}), nil
 }
 
 func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcomposev2.ListRunsRequest]) (*connect.Response[agentcomposev2.ListRunsResponse], error) {
 	if h.store == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, fmt.Errorf("config store is required"))
 	}
 	offset, limit, err := listPagination(req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
@@ -233,7 +234,7 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 	// as an internal error.
 	labels, err := domain.NormalizeProjectRunLabels(req.Msg.GetLabels())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceRun, err)
 	}
 	options := domain.ProjectRunListOptions{
 		ProjectID:      req.Msg.GetProjectId(),
@@ -253,9 +254,9 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 	result, err := h.store.ListProjectRunsByOptions(ctx, options)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
+			return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, err)
 		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
 	}
 	items := make([]*agentcomposev2.RunSummary, 0, len(result.Runs))
 	for _, run := range result.Runs {
@@ -264,9 +265,9 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 	total, eventScopeTruncated, err := h.store.CountProjectRuns(ctx, options)
 	if err != nil {
 		if errors.Is(err, domain.ErrNotFound) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
+			return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, err)
 		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
 	}
 	return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: items, Total: uint32(total), EventScopeTruncated: eventScopeTruncated}), nil
 }
@@ -542,26 +543,28 @@ func tailRunLogOffset(path string, lines int) (uint64, error) {
 
 func (h *RunHandler) StopRun(ctx context.Context, req *connect.Request[agentcomposev2.StopRunRequest]) (*connect.Response[agentcomposev2.StopRunResponse], error) {
 	if h.store == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+		return nil, WriteErrorForCode(connect.CodeInternal, ResourceRun, fmt.Errorf("config store is required"))
 	}
 	runID := strings.TrimSpace(req.Msg.GetRunId())
 	if runID == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
+		return nil, WriteErrorForCode(connect.CodeInvalidArgument, ResourceRun, fmt.Errorf("run id is required"))
 	}
 	if h.stopper != nil {
 		// The reason is audit data. Prompt sessions derive succeeded/canceled
 		// from their own turn state; command sessions retain cancellation.
 		stopped, err := h.stopper.StopActiveRun(ctx, runID, req.Msg.GetReason())
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return nil, WriteErrorForCode(connect.CodeInternal, ResourceRun, err)
 		}
 		if stopped {
 			run, err := h.store.GetProjectRun(ctx, runID)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					return nil, connect.NewError(connect.CodeNotFound, err)
+					// The stop already happened; this read-back failing says
+					// nothing about whether it did.
+					return nil, WriteErrorForCode(connect.CodeNotFound, ResourceRun, err)
 				}
-				return nil, connect.NewError(connect.CodeInternal, err)
+				return nil, WriteErrorForCode(connect.CodeInternal, ResourceRun, err)
 			}
 			return connect.NewResponse(&agentcomposev2.StopRunResponse{
 				Run:           ProjectRunDetailToProto(run),
@@ -572,9 +575,9 @@ func (h *RunHandler) StopRun(ctx context.Context, req *connect.Request[agentcomp
 	current, err := h.store.GetProjectRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
+			return nil, ConnectErrorForDomainWrite(apierror.NotApplied(connect.NewError(connect.CodeNotFound, err)), ResourceRun)
 		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, WriteErrorForCode(connect.CodeInternal, ResourceRun, err)
 	}
 	if runs.StatusIsTerminal(current.Status) {
 		return connect.NewResponse(&agentcomposev2.StopRunResponse{

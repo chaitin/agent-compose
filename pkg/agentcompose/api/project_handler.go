@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/chaitin/agent-compose/internal/projects"
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -171,7 +172,7 @@ func (h *ProjectHandler) ApplyProject(ctx context.Context, req *connect.Request[
 func (h *ProjectHandler) PatchProject(ctx context.Context, req *connect.Request[agentcomposev2.PatchProjectRequest]) (*connect.Response[agentcomposev2.ApplyProjectResponse], error) {
 	projectRef, err := projectReferenceFromProto(req.Msg.GetProject())
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, projectConnectError(apierror.NotApplied(err))
 	}
 	return h.delegate.PatchProject(ctx, req, projectRef)
 }
@@ -179,7 +180,7 @@ func (h *ProjectHandler) PatchProject(ctx context.Context, req *connect.Request[
 func (h *ProjectHandler) RemoveProject(ctx context.Context, req *connect.Request[agentcomposev2.RemoveProjectRequest]) (*connect.Response[agentcomposev2.RemoveProjectResponse], error) {
 	projectRef, err := projectReferenceFromProto(req.Msg.GetProject())
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, projectConnectError(apierror.NotApplied(err))
 	}
 	return h.delegate.RemoveProject(ctx, req, projectRef)
 }
@@ -191,11 +192,11 @@ func (h *ProjectHandler) WatchProject(ctx context.Context, req *connect.Request[
 func (h *ProjectHandler) GetScheduler(ctx context.Context, req *connect.Request[agentcomposev2.GetSchedulerRequest]) (*connect.Response[agentcomposev2.GetSchedulerResponse], error) {
 	scheduler, err := h.resolveGetScheduler(ctx, req.Msg)
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceScheduler)
 	}
 	response, err := h.schedulerResponse(ctx, scheduler)
 	if err != nil {
-		return nil, err
+		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
 	}
 	return connect.NewResponse(response), nil
 }
@@ -208,15 +209,15 @@ func (h *ProjectHandler) ListSchedulers(ctx context.Context, req *connect.Reques
 	query := strings.TrimSpace(req.Msg.GetQuery())
 	pageStore, ok := h.store.(ProjectSchedulerPageStore)
 	if !ok {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("scheduler page store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, fmt.Errorf("scheduler page store is required"))
 	}
 	schedulers, err := pageStore.ListProjectSchedulersPage(ctx, query, offset, limit)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
 	}
 	total, err := pageStore.CountProjectSchedulers(ctx, query)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
 	}
 	summaries := make([]*agentcomposev2.SchedulerSummary, 0, len(schedulers))
 	for _, scheduler := range schedulers {
@@ -241,7 +242,7 @@ func (h *ProjectHandler) ListSchedulers(ctx context.Context, req *connect.Reques
 func (h *ProjectHandler) ListSchedulerEvents(ctx context.Context, req *connect.Request[agentcomposev2.ListSchedulerEventsRequest]) (*connect.Response[agentcomposev2.ListSchedulerEventsResponse], error) {
 	_, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceScheduler)
 	}
 	offset, limit, err := listPagination(req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
@@ -271,14 +272,14 @@ func (h *ProjectHandler) ListSchedulerEvents(ctx context.Context, req *connect.R
 func (h *ProjectHandler) SetSchedulerEnabled(ctx context.Context, req *connect.Request[agentcomposev2.SetSchedulerEnabledRequest]) (*connect.Response[agentcomposev2.SetSchedulerEnabledResponse], error) {
 	_, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceScheduler)
 	}
 	if h.schedulerRuntime == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("scheduler runtime controller is required"))
+		return nil, NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectUnknown, fmt.Errorf("scheduler runtime controller is required"))
 	}
 	definition, err := h.schedulerRuntime.SetSchedulerEnabled(ctx, scheduler.ID, req.Msg.GetEnabled())
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, ConnectErrorForDomainWrite(err, ResourceScheduler)
 	}
 	scheduler.Enabled = definition.Summary.Enabled
 	return connect.NewResponse(&agentcomposev2.SetSchedulerEnabledResponse{Scheduler: ProjectSchedulersToProto([]domain.ProjectSchedulerRecord{scheduler})[0], Overridden: true}), nil
@@ -287,18 +288,18 @@ func (h *ProjectHandler) SetSchedulerEnabled(ctx context.Context, req *connect.R
 func (h *ProjectHandler) SetSchedulerTriggerEnabled(ctx context.Context, req *connect.Request[agentcomposev2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[agentcomposev2.SetSchedulerTriggerEnabledResponse], error) {
 	_, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceScheduler)
 	}
 	if h.schedulerRuntime == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("scheduler runtime controller is required"))
+		return nil, NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectUnknown, fmt.Errorf("scheduler runtime controller is required"))
 	}
 	triggerID := strings.TrimSpace(req.Msg.GetTriggerId())
 	if triggerID == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("trigger id is required"))
+		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectNotApplied, fmt.Errorf("trigger id is required"))
 	}
 	definition, err := h.schedulerRuntime.SetSchedulerTriggerEnabled(ctx, scheduler.ID, triggerID, req.Msg.GetEnabled())
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, ConnectErrorForDomainWrite(err, ResourceScheduler)
 	}
 	for _, trigger := range definition.Triggers {
 		if trigger.ID == triggerID {
@@ -307,7 +308,10 @@ func (h *ProjectHandler) SetSchedulerTriggerEnabled(ctx context.Context, req *co
 			return connect.NewResponse(&agentcomposev2.SetSchedulerTriggerEnabledResponse{Trigger: resolved}), nil
 		}
 	}
-	return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("trigger %s not found", triggerID))
+	// Reaching here means the write was accepted but the returned definition no
+	// longer contains the trigger: that is an internal read-back inconsistency,
+	// not a missing resource.
+	return nil, NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectUnknown, fmt.Errorf("trigger %s not found in the updated scheduler definition", triggerID))
 }
 
 func resolvedTriggerToProto(trigger domain.SchedulerTrigger, declared *agentcomposev2.TriggerSpec) *agentcomposev2.ResolvedTrigger {
@@ -404,46 +408,40 @@ func projectTimestamp(value time.Time) *timestamppb.Timestamp {
 }
 
 func projectConnectError(err error) error {
-	if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
-		return connect.NewError(connect.CodeNotFound, err)
-	}
-	if errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrAmbiguous) {
-		return connect.NewError(connect.CodeInvalidArgument, err)
-	}
-	return connect.NewError(connect.CodeInternal, err)
+	return ConnectErrorForProject(err)
 }
 
 func (h *ProjectHandler) GetProject(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
 	if h.store == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, fmt.Errorf("config store is required"))
 	}
 	project, err := h.resolveProjectRef(ctx, req.Msg.GetProject())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, connect.NewError(connect.CodeNotFound, err)
+			return nil, ErrorForCode(connect.CodeNotFound, ResourceProject, err)
 		}
 		if errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrAmbiguous) {
-			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+			return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceProject, err)
 		}
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
 	}
 	agents, err := h.store.ListProjectAgents(ctx, project.ID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
 	}
 	schedulers, err := h.store.ListProjectSchedulers(ctx, project.ID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
 	}
 	var spec *agentcomposev2.ProjectSpec
 	if req.Msg.GetIncludeSpec() && project.CurrentRevision > 0 {
 		revision, err := h.store.GetProjectRevision(ctx, project.ID, project.CurrentRevision)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
 		}
 		spec, err = runs.DecodeRevisionSpec(revision.SpecJSON)
 		if err != nil {
-			return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("decode project %s revision %d: %w", project.Name, project.CurrentRevision, err))
+			return nil, ErrorForCode(connect.CodeInternal, ResourceProject, fmt.Errorf("decode project %s revision %d: %w", project.Name, project.CurrentRevision, err))
 		}
 		spec = RedactProjectSpecSecrets(spec)
 	}
@@ -490,7 +488,7 @@ func (h *ProjectHandler) enrichProjectAgentRuns(ctx context.Context, project *ag
 
 func (h *ProjectHandler) ListProjects(ctx context.Context, req *connect.Request[agentcomposev2.ListProjectsRequest]) (*connect.Response[agentcomposev2.ListProjectsResponse], error) {
 	if h.store == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, fmt.Errorf("config store is required"))
 	}
 	offset, limit, err := listPagination(req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
@@ -503,7 +501,7 @@ func (h *ProjectHandler) ListProjects(ctx context.Context, req *connect.Request[
 		Limit:          limit,
 	})
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
 	}
 	resp := &agentcomposev2.ListProjectsResponse{
 		Total: uint32(result.TotalCount),

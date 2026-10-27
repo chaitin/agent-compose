@@ -7,6 +7,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/idset"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -91,19 +92,19 @@ func (h *ProjectHandler) RunScheduler(ctx context.Context, req *connect.Request[
 
 func (h *ProjectHandler) StartSchedulerRun(ctx context.Context, req *connect.Request[agentcomposev2.StartSchedulerRunRequest]) (*connect.Response[agentcomposev2.StartSchedulerRunResponse], error) {
 	if strings.TrimSpace(req.Msg.GetTriggerId()) == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("scheduler trigger id is required"))
+		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectNotApplied, fmt.Errorf("scheduler trigger id is required"))
 	}
 	_, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceScheduler)
 	}
 	payloadJSON, err := normalizeSchedulerRunPayload(req.Msg.GetPayloadJson())
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceScheduler)
 	}
 	runtime, err := h.schedulerRunRuntime()
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(err, ResourceScheduler)
 	}
 	run, err := runtime.StartSchedulerRun(ctx, schedulers.SchedulerRunRequest{
 		SchedulerID: scheduler.ID,
@@ -111,7 +112,7 @@ func (h *ProjectHandler) StartSchedulerRun(ctx context.Context, req *connect.Req
 		PayloadJSON: payloadJSON,
 	})
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainWrite(err, ResourceScheduler)
 	}
 	return connect.NewResponse(&agentcomposev2.StartSchedulerRunResponse{Run: schedulerRunToProto(run, scheduler)}), nil
 }
@@ -119,13 +120,13 @@ func (h *ProjectHandler) StartSchedulerRun(ctx context.Context, req *connect.Req
 func (h *ProjectHandler) GetSchedulerRun(ctx context.Context, req *connect.Request[agentcomposev2.GetSchedulerRunRequest]) (*connect.Response[agentcomposev2.GetSchedulerRunResponse], error) {
 	_, scheduler, run, err := h.resolveProjectSchedulerRun(ctx, req.Msg.GetProject(), req.Msg.GetRunId())
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSchedulerRun)
 	}
 	item := schedulerRunToProto(run, scheduler)
 	if sandboxStore, ok := h.store.(ProjectSchedulerRunSandboxStore); ok {
 		sandboxIDs, err := sandboxStore.ListSchedulerRunSandboxIDs(ctx, []schedulers.SchedulerRunKey{{SchedulerID: run.SchedulerID, RunID: run.ID}})
 		if err != nil {
-			return nil, ConnectErrorForDomain(err)
+			return nil, ConnectErrorForDomainKind(err, ResourceSchedulerRun)
 		}
 		item.SandboxIds = sandboxIDs[schedulers.SchedulerRunKey{SchedulerID: run.SchedulerID, RunID: run.ID}]
 	}
@@ -135,7 +136,7 @@ func (h *ProjectHandler) GetSchedulerRun(ctx context.Context, req *connect.Reque
 func (h *ProjectHandler) ListSchedulerRuns(ctx context.Context, req *connect.Request[agentcomposev2.ListSchedulerRunsRequest]) (*connect.Response[agentcomposev2.ListSchedulerRunsResponse], error) {
 	_, schedulerRecords, err := h.resolveProjectSchedulerRunTargets(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSchedulerRun)
 	}
 	offset, limit, err := listPagination(req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
@@ -143,7 +144,7 @@ func (h *ProjectHandler) ListSchedulerRuns(ctx context.Context, req *connect.Req
 	}
 	status, err := schedulerRunStatusFilter(req.Msg.GetStatus())
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSchedulerRun)
 	}
 	triggerID := strings.TrimSpace(req.Msg.GetTriggerId())
 	schedulerIDs := make([]string, 0, len(schedulerRecords))
@@ -158,7 +159,7 @@ func (h *ProjectHandler) ListSchedulerRuns(ctx context.Context, req *connect.Req
 	}
 	store, err := h.schedulerRunStore()
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSchedulerRun)
 	}
 	runs, err := store.ListSchedulerRunsPage(ctx, schedulers.SchedulerRunPageFilter{
 		SchedulerIDs:   schedulerIDs,
@@ -169,11 +170,11 @@ func (h *ProjectHandler) ListSchedulerRuns(ctx context.Context, req *connect.Req
 		Limit:          limit,
 	})
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSchedulerRun)
 	}
 	total, err := store.CountSchedulerRunsPage(ctx, schedulers.SchedulerRunPageFilter{SchedulerIDs: schedulerIDs, RequireTrigger: true, TriggerID: triggerID, Status: status})
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainKind(err, ResourceSchedulerRun)
 	}
 	response := &agentcomposev2.ListSchedulerRunsResponse{Runs: make([]*agentcomposev2.SchedulerRun, 0, len(runs)), Total: uint32(total)}
 	keys := make([]schedulers.SchedulerRunKey, 0, len(runs))
@@ -239,15 +240,15 @@ func (h *ProjectHandler) BatchGetLatestSchedulerRuns(ctx context.Context, req *c
 func (h *ProjectHandler) StopSchedulerRun(ctx context.Context, req *connect.Request[agentcomposev2.StopSchedulerRunRequest]) (*connect.Response[agentcomposev2.StopSchedulerRunResponse], error) {
 	_, scheduler, resolved, err := h.resolveProjectSchedulerRun(ctx, req.Msg.GetProject(), req.Msg.GetRunId())
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceSchedulerRun)
 	}
 	runtime, err := h.schedulerRunRuntime()
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(err, ResourceSchedulerRun)
 	}
 	run, requested, err := runtime.StopSchedulerRun(ctx, scheduler.ID, resolved.ID, req.Msg.GetReason())
 	if err != nil {
-		return nil, ConnectErrorForDomain(err)
+		return nil, ConnectErrorForDomainWrite(err, ResourceSchedulerRun)
 	}
 	return connect.NewResponse(&agentcomposev2.StopSchedulerRunResponse{Run: schedulerRunToProto(run, scheduler), StopRequested: requested}), nil
 }

@@ -2,6 +2,7 @@ package projects
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -34,7 +35,10 @@ func (c *Controller) ensureProjectVolumes(ctx context.Context, project domain.Pr
 		if volumeSpec.External {
 			record, err = c.volumes.Inspect(ctx, name)
 			if err != nil {
-				return fmt.Errorf("external volume %s: %w", name, err)
+				if errors.Is(err, domain.ErrNotFound) {
+					return fmt.Errorf("%w: external volume %s: %w", ErrVolumeNotFound, name, err)
+				}
+				return fmt.Errorf("%w: external volume %s: %w", ErrVolumeUnavailable, name, err)
 			}
 		} else {
 			record, _, err = c.volumes.Ensure(ctx, domain.VolumeRecord{
@@ -45,7 +49,7 @@ func (c *Controller) ensureProjectVolumes(ctx context.Context, project domain.Pr
 				ProjectID: project.ID,
 			})
 			if err != nil {
-				return fmt.Errorf("ensure volume %s: %w", name, err)
+				return fmt.Errorf("%w: ensure volume %s: %w", ErrVolumeUnavailable, name, err)
 			}
 		}
 		links[key] = domain.ProjectVolumeLink{VolumeID: record.ID, External: volumeSpec.External}

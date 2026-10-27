@@ -1,0 +1,84 @@
+syntax = "proto3";
+
+package agentcompose.v2;
+
+option go_package = "github.com/chaitin/agent-compose/proto/agentcompose/v2;agentcomposev2";
+
+// OperationErrorReason is the stable category of an external RPC failure. The
+// daemon owns this closed set: values are only ever appended, never renumbered
+// or reused. Clients must treat an unknown value as an unknown category and
+// must never fall back to matching the human-readable message.
+enum OperationErrorReason {
+  OPERATION_ERROR_REASON_UNSPECIFIED = 0;
+
+  // Response channel: the caller can fix the declaration by editing the spec.
+  OPERATION_ERROR_REASON_PROJECT_SPEC_INVALID       = 1;
+  OPERATION_ERROR_REASON_AGENT_DEFINITION_INVALID   = 2;
+  OPERATION_ERROR_REASON_SCHEDULER_INVALID          = 3;
+  OPERATION_ERROR_REASON_SCHEDULER_SCRIPT_INVALID   = 4;
+  OPERATION_ERROR_REASON_SCHEDULER_RECONCILE_FAILED = 5;
+
+  // Error channel: request and resource state.
+  OPERATION_ERROR_REASON_NETWORK_POLICY_REJECTED = 6;
+  OPERATION_ERROR_REASON_PROJECT_NOT_FOUND       = 7;
+  OPERATION_ERROR_REASON_REVISION_CONFLICT       = 8;
+  OPERATION_ERROR_REASON_INVALID_REQUEST         = 9;
+  OPERATION_ERROR_REASON_UNSUPPORTED             = 10;
+  OPERATION_ERROR_REASON_OPERATION_BUSY          = 11;
+  OPERATION_ERROR_REASON_PRECONDITION_FAILED     = 12;
+
+  // Error channel: resource not found.
+  OPERATION_ERROR_REASON_SCHEDULER_NOT_FOUND     = 13;
+  OPERATION_ERROR_REASON_SCHEDULER_RUN_NOT_FOUND = 14;
+  OPERATION_ERROR_REASON_RUN_NOT_FOUND           = 15;
+  OPERATION_ERROR_REASON_SANDBOX_NOT_FOUND       = 16;
+
+  // Error channel: images.
+  OPERATION_ERROR_REASON_IMAGE_NOT_FOUND           = 17;
+  OPERATION_ERROR_REASON_IMAGE_PULL_FAILED         = 18;
+  OPERATION_ERROR_REASON_IMAGE_REFERENCE_INVALID   = 19;
+  OPERATION_ERROR_REASON_IMAGE_BACKEND_UNAVAILABLE = 20;
+  OPERATION_ERROR_REASON_IMAGE_BUILD_FAILED        = 21;
+  OPERATION_ERROR_REASON_IMAGE_IN_USE              = 22;
+
+  // Error channel: volumes and sandboxes.
+  OPERATION_ERROR_REASON_VOLUME_NOT_FOUND            = 23;
+  OPERATION_ERROR_REASON_VOLUME_UNAVAILABLE          = 24;
+  OPERATION_ERROR_REASON_SANDBOX_CREATION_FAILED     = 25;
+  OPERATION_ERROR_REASON_SANDBOX_STOP_FAILED         = 26;
+  OPERATION_ERROR_REASON_SANDBOX_RUNTIME_UNAVAILABLE = 27;
+
+  // Error channel: storage and fallback.
+  OPERATION_ERROR_REASON_STORAGE_UNAVAILABLE = 28;
+  OPERATION_ERROR_REASON_INTERNAL            = 29;
+
+  // Error channel: timeout and cancellation. These are never evidence that a
+  // write did not take effect; write RPCs report OPERATION_EFFECT_UNKNOWN.
+  OPERATION_ERROR_REASON_OPERATION_CANCELED = 30;
+  OPERATION_ERROR_REASON_OPERATION_TIMEOUT  = 31;
+
+  // Error channel: a not-found the call site cannot attribute to one resource
+  // type. Specific *_NOT_FOUND values are preferred whenever known.
+  OPERATION_ERROR_REASON_RESOURCE_NOT_FOUND = 32;
+}
+
+// OperationEffect is meaningful for write RPCs only. A write RPC must always
+// set it; a client that reads UNSPECIFIED on a write RPC must treat it as
+// UNKNOWN. Successful responses keep it UNSPECIFIED.
+enum OperationEffect {
+  OPERATION_EFFECT_UNSPECIFIED = 0;
+  // The daemon can prove this request changed none of the state the RPC's
+  // contract covers.
+  OPERATION_EFFECT_NOT_APPLIED = 1;
+  // The effect may have happened and cannot be proven absent.
+  OPERATION_EFFECT_UNKNOWN = 2;
+  // Value 3 is intentionally left free for a future APPLIED outcome. Do not
+  // add it to a `reserved` statement: reserving would make it unusable.
+}
+
+// OperationErrorDetail is the single structured detail attached to Connect
+// errors by the daemon.
+message OperationErrorDetail {
+  OperationErrorReason reason = 1;
+  OperationEffect effect = 2;
+}
