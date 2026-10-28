@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/capability"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
@@ -21,12 +22,20 @@ var (
 	ErrRevisionConflict = errors.New("project revision conflict")
 	ErrUnavailable      = errors.New("project dependency unavailable")
 	ErrUnimplemented    = errors.New("project operation unimplemented")
+	// ErrVolumeNotFound reports an external volume the caller declared but
+	// that does not exist. ErrVolumeUnavailable reports a volume operation the
+	// backend could not complete.
+	ErrVolumeNotFound    = errors.New("project volume not found")
+	ErrVolumeUnavailable = errors.New("project volume unavailable")
 )
 
 type ValidationIssue struct {
 	Severity ValidationSeverity
 	Path     string
 	Message  string
+	// Reason is the stable machine-readable category. It is required for
+	// error-severity issues and may stay UNSPECIFIED for warnings.
+	Reason apierror.Reason
 }
 
 type ValidationSeverity string
@@ -180,6 +189,10 @@ type ApplyResult struct {
 	Applied      bool
 	Unchanged    bool
 	RevisionSpec *projectdef.NormalizedProjectSpec
+	// Effect describes what the response channel can promise when Applied is
+	// false. UNSPECIFIED means the daemon did not classify it; clients must
+	// treat that as UNKNOWN.
+	Effect apierror.Effect
 }
 
 func (c *Controller) ApplyProject(ctx context.Context, req ApplyRequest) (ApplyResult, error) {
@@ -196,54 +209,54 @@ type PatchRequest struct {
 
 func (c *Controller) PatchProject(ctx context.Context, req PatchRequest) (ApplyResult, error) {
 	if HasValidationErrors(req.Issues) {
-		return ApplyResult{Issues: req.Issues}, nil
+		return ApplyResult{Issues: req.Issues, Effect: apierror.EffectNotApplied}, nil
 	}
 	if c.store == nil {
-		return ApplyResult{}, fmt.Errorf("patch project: config store is required")
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("patch project: config store is required"))
 	}
 	expectedHash := strings.TrimSpace(req.ExpectedCurrentSpecHash)
 	if expectedHash == "" {
-		return ApplyResult{}, fmt.Errorf("%w: expected current spec hash is required", ErrInvalidRequest)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("%w: expected current spec hash is required", ErrInvalidRequest))
 	}
 	project, err := c.resolveProjectRef(ctx, req.Project, false)
 	if err != nil {
-		return ApplyResult{}, err
+		return ApplyResult{}, apierror.NotApplied(err)
 	}
 	release, err := c.lifecycle.acquire(ctx, project.Name)
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("patch project %s: wait for lifecycle operation: %w", project.Name, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("patch project %s: wait for lifecycle operation: %w", project.Name, err))
 	}
 	defer release()
 	project, err = c.resolveProjectRef(ctx, ProjectRefByID(project.ID), false)
 	if err != nil {
-		return ApplyResult{}, err
+		return ApplyResult{}, apierror.NotApplied(err)
 	}
 	if project.CurrentRevision <= 0 {
-		return ApplyResult{}, fmt.Errorf("%w: project %s has no current revision", ErrInvalidRequest, project.Name)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("%w: project %s has no current revision", ErrInvalidRequest, project.Name))
 	}
 	revision, err := c.store.GetProjectRevision(ctx, project.ID, project.CurrentRevision)
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("patch project %s: load current revision: %w", project.Name, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("patch project %s: load current revision: %w", project.Name, err))
 	}
 	if expectedHash != revision.SpecHash {
-		return ApplyResult{}, fmt.Errorf("%w: expected spec hash %s does not match current spec hash %s", ErrRevisionConflict, expectedHash, revision.SpecHash)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("%w: expected spec hash %s does not match current spec hash %s", ErrRevisionConflict, expectedHash, revision.SpecHash))
 	}
 	current, err := projectdef.ParseCanonicalJSON([]byte(revision.SpecJSON))
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("patch project %s: parse current revision: %w", project.Name, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("patch project %s: parse current revision: %w", project.Name, err))
 	}
 	if req.Spec == nil {
-		return ApplyResult{Issues: []ValidationIssue{{Path: "spec", Message: "project spec is required"}}, RevisionSpec: current}, nil
+		return ApplyResult{Issues: []ValidationIssue{{Path: "spec", Message: "project spec is required", Reason: apierror.ReasonProjectSpecInvalid}}, RevisionSpec: current, Effect: apierror.EffectNotApplied}, nil
 	}
 	if strings.TrimSpace(req.Spec.Name) != project.Name {
-		return ApplyResult{Issues: []ValidationIssue{{Path: "spec.name", Message: "project name cannot be changed by PatchProject"}}, RevisionSpec: current}, nil
+		return ApplyResult{Issues: []ValidationIssue{{Path: "spec.name", Message: "project name cannot be changed by PatchProject", Reason: apierror.ReasonProjectSpecInvalid}}, RevisionSpec: current, Effect: apierror.EffectNotApplied}, nil
 	}
 	restored, restoreIssues, err := RestoreProjectSecrets(current, req.Spec)
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("patch project %s: restore secrets: %w", project.Name, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("patch project %s: restore secrets: %w", project.Name, err))
 	}
 	if HasValidationErrors(restoreIssues) {
-		return ApplyResult{Issues: restoreIssues, RevisionSpec: current}, nil
+		return ApplyResult{Issues: restoreIssues, RevisionSpec: current, Effect: apierror.EffectNotApplied}, nil
 	}
 	normalizedSpec, err := projectdef.Normalize(restored, projectdef.NormalizeOptions{
 		ComposePath:       project.SourcePath,
@@ -252,13 +265,13 @@ func (c *Controller) PatchProject(ctx context.Context, req PatchRequest) (ApplyR
 	if err != nil {
 		var validationErr *projectdef.ValidationError
 		if errors.As(err, &validationErr) {
-			return ApplyResult{Issues: []ValidationIssue{{Path: validationErr.Path, Message: validationErr.Message}}, RevisionSpec: current}, nil
+			return ApplyResult{Issues: []ValidationIssue{{Path: validationErr.Path, Message: validationErr.Message, Reason: apierror.ReasonProjectSpecInvalid}}, RevisionSpec: current, Effect: apierror.EffectNotApplied}, nil
 		}
-		return ApplyResult{}, fmt.Errorf("patch project %s: normalize candidate: %w", project.Name, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("patch project %s: normalize candidate: %w", project.Name, err))
 	}
 	specHash, err := normalizedSpec.Hash()
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("patch project %s: hash candidate: %w", project.Name, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("patch project %s: hash candidate: %w", project.Name, err))
 	}
 	return c.applyProject(ctx, ApplyRequest{
 		Normalized: NormalizedProject{Spec: normalizedSpec, SpecHash: specHash, SourcePath: project.SourcePath},
@@ -271,52 +284,52 @@ func (c *Controller) PatchProject(ctx context.Context, req PatchRequest) (ApplyR
 func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecycleHeld bool) (ApplyResult, error) {
 	normalized := req.Normalized
 	if HasValidationErrors(req.Issues) {
-		return ApplyResult{Issues: req.Issues, RevisionSpec: normalized.Spec}, nil
+		return ApplyResult{Issues: req.Issues, RevisionSpec: normalized.Spec, Effect: apierror.EffectNotApplied}, nil
 	}
 	if c.store == nil {
-		return ApplyResult{}, fmt.Errorf("apply project: config store is required")
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("apply project: config store is required"))
 	}
 	project, err := NewRecordFromSpec(normalized.Spec, normalized.SourcePath)
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("%w: apply project: %w", ErrInvalidRequest, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("%w: apply project: %w", ErrInvalidRequest, err))
 	}
 	if issues := c.validateProjectAgentDefinitions(normalized); len(issues) > 0 {
-		return ApplyResult{Issues: issues, RevisionSpec: normalized.Spec}, nil
+		return ApplyResult{Issues: issues, RevisionSpec: normalized.Spec, Effect: apierror.EffectNotApplied}, nil
 	}
 	// Admit before any write: a candidate the daemon-wide policy refuses must
 	// not leave a project or revision behind.
 	if c.admit != nil {
 		if err := c.admit(ctx, normalized.Spec); err != nil {
-			return ApplyResult{}, err
+			return ApplyResult{}, apierror.NotApplied(err)
 		}
 	}
 	release := func() {}
 	if !lifecycleHeld {
 		release, err = c.lifecycle.acquire(ctx, project.Name)
 		if err != nil {
-			return ApplyResult{}, fmt.Errorf("apply project %s: wait for lifecycle operation: %w", normalized.Spec.Name, err)
+			return ApplyResult{}, apierror.NotApplied(fmt.Errorf("apply project %s: wait for lifecycle operation: %w", normalized.Spec.Name, err))
 		}
 	}
 	defer release()
 	existingByName, nameFound, err := c.projectByNameIfExists(ctx, project.Name)
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("apply project %s: resolve existing name: %w", normalized.Spec.Name, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("apply project %s: resolve existing name: %w", normalized.Spec.Name, err))
 	}
 	if nameFound {
 		project.ID = existingByName.ID
 		project.ShortID = existingByName.ShortID
 	}
 	if issues := c.validateSchedulers(ctx, normalized); len(issues) > 0 {
-		return ApplyResult{Issues: issues, RevisionSpec: normalized.Spec}, nil
+		return ApplyResult{Issues: issues, RevisionSpec: normalized.Spec, Effect: apierror.EffectNotApplied}, nil
 	}
 	warnings, err := c.capabilityGatewayWarnings(ctx, normalized.Spec)
 	if err != nil {
-		return ApplyResult{}, err
+		return ApplyResult{}, apierror.NotApplied(err)
 	}
 	warnings = append(warnings, llmCredentialWarnings(normalized.Spec)...)
 	agentRecords, agentDefinitions, schedulerRecords, _, err := c.projectArtifacts(ctx, project, 0, normalized)
 	if err != nil {
-		return ApplyResult{}, fmt.Errorf("%w: apply project %s: %w", ErrInvalidRequest, normalized.Spec.Name, err)
+		return ApplyResult{}, apierror.NotApplied(fmt.Errorf("%w: apply project %s: %w", ErrInvalidRequest, normalized.Spec.Name, err))
 	}
 	if req.DryRun {
 		return ApplyResult{
@@ -328,16 +341,31 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 			Applied:      false,
 			Issues:       append(req.Issues, warnings...),
 			RevisionSpec: normalized.Spec,
+			Effect:       apierror.EffectNotApplied,
 		}, nil
 	}
 	if err := images.EnsureProjectAgentImages(ctx, c.config, c.images, images.ProjectAgentImagesRequest{
 		ProjectName: normalized.Spec.Name,
 		Agents:      agentRecords,
 	}); err != nil {
-		return ApplyResult{}, fmt.Errorf("%w: apply project %s: %w", ErrUnavailable, normalized.Spec.Name, err)
+		// Image ensure happens before the first write. A not-found or invalid
+		// reference proves nothing was pulled — but only when it is the first
+		// agent to fail: once an earlier agent was ensured successfully, that
+		// ensure may already have pulled its image into the local cache, so the
+		// failure can no longer prove NOT_APPLIED. A pull may also have been
+		// interrupted mid-transfer (leaving partial layers). Those stay
+		// UNKNOWN, matching the image service's write mapper.
+		applyErr := fmt.Errorf("%w: apply project %s: %w", ErrUnavailable, normalized.Spec.Name, err)
+		if !errors.Is(err, images.ErrImageEnsurePartial) &&
+			(errors.Is(err, images.ErrImageNotFound) || errors.Is(err, images.ErrInvalidReference)) {
+			applyErr = apierror.NotApplied(applyErr)
+		}
+		return ApplyResult{}, applyErr
 	}
 	if err := c.ensureProjectVolumes(ctx, project, normalized.Spec); err != nil {
-		return ApplyResult{}, fmt.Errorf("%w: apply project %s: %w", ErrInvalidRequest, normalized.Spec.Name, err)
+		// A volume may already have been created before the failure, so this
+		// is not proof that nothing happened: no NotApplied marker.
+		return ApplyResult{}, fmt.Errorf("apply project %s: %w", normalized.Spec.Name, err)
 	}
 
 	existingProject, projectFound, err := c.store.GetProjectIfExists(ctx, project.ID, true)
@@ -448,10 +476,13 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 			Agents:       agents,
 			Schedulers:   schedulers,
 			Changes:      changes,
-			Issues:       append(append(req.Issues, warnings...), ValidationIssue{Path: "reconcile.schedulers", Message: fmt.Sprintf("apply project %s: %v", normalized.Spec.Name, err)}),
+			Issues:       append(append(req.Issues, warnings...), ValidationIssue{Path: "reconcile.schedulers", Message: fmt.Sprintf("apply project %s: %v", normalized.Spec.Name, err), Reason: apierror.ReasonSchedulerReconcileFailed}),
 			Applied:      false,
 			Unchanged:    false,
 			RevisionSpec: normalized.Spec,
+			// The project and revision are already durable here; only the
+			// scheduler reconciliation failed.
+			Effect: apierror.EffectUnknown,
 		}, nil
 	}
 	if !schedulersUnchanged {
@@ -534,27 +565,33 @@ type RemoveResult struct {
 	Agents     []domain.ProjectAgentRecord
 	Schedulers []domain.ProjectSchedulerRecord
 	Changes    []Change
+	// Effect and Reason are set when a cleanup failure was tolerated: the
+	// schedulers were disabled and some sandboxes may remain, but the project
+	// record was not marked removed. They stay UNSPECIFIED when the project
+	// was removed cleanly.
+	Effect apierror.Effect
+	Reason apierror.Reason
 }
 
 func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (RemoveResult, error) {
 	if c.store == nil {
-		return RemoveResult{}, fmt.Errorf("config store is required")
+		return RemoveResult{}, apierror.NotApplied(fmt.Errorf("config store is required"))
 	}
 	if req.RemoveHistory {
-		return RemoveResult{}, ErrUnimplemented
+		return RemoveResult{}, apierror.NotApplied(ErrUnimplemented)
 	}
 	project, err := c.resolveProjectRef(ctx, req.Project, true)
 	if err != nil {
-		return RemoveResult{}, err
+		return RemoveResult{}, apierror.NotApplied(err)
 	}
 	release, err := c.lifecycle.acquire(ctx, project.Name)
 	if err != nil {
-		return RemoveResult{}, fmt.Errorf("remove project %s: wait for lifecycle operation: %w", project.Name, err)
+		return RemoveResult{}, apierror.NotApplied(fmt.Errorf("remove project %s: wait for lifecycle operation: %w", project.Name, err))
 	}
 	defer release()
 	project, err = c.resolveProjectRef(ctx, ProjectRefByID(project.ID), true)
 	if err != nil {
-		return RemoveResult{}, err
+		return RemoveResult{}, apierror.NotApplied(err)
 	}
 	downChanges, err := DownProject(ctx, project, DownOptions{
 		Store:             c.store,
@@ -564,6 +601,8 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 	})
 	changes := downChangesToChanges(downChanges)
 	if err != nil {
+		// Disabling schedulers or stopping sandboxes may already have
+		// happened, so this is not proof that nothing changed.
 		return RemoveResult{Project: project, Changes: changes}, err
 	}
 	if DownChangesHaveFailures(downChanges) {
@@ -575,7 +614,18 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 		if listSchedulersErr != nil {
 			return RemoveResult{Project: project, Agents: agents, Changes: changes}, listSchedulersErr
 		}
-		return RemoveResult{Project: project, Agents: agents, Schedulers: schedulers, Changes: changes}, nil
+		return RemoveResult{
+			Project:    project,
+			Agents:     agents,
+			Schedulers: schedulers,
+			Changes:    changes,
+			Effect:     apierror.EffectUnknown,
+			// DownChangesHaveFailures currently tolerates only a sandbox stop
+			// failure (scheduler disable failures return a hard error above),
+			// so ReasonSandboxStopFailed is exact. Revisit this reason if another
+			// cleanup class is ever added to the tolerated branch.
+			Reason: apierror.ReasonSandboxStopFailed,
+		}, nil
 	}
 	if project.RemovedAt.IsZero() {
 		removedProject, err := c.store.MarkProjectRemoved(ctx, project.ID)
@@ -711,7 +761,7 @@ func (c *Controller) projectSchedulerBuildsFromSpec(ctx context.Context, project
 func (c *Controller) validateSchedulers(ctx context.Context, normalized NormalizedProject) []ValidationIssue {
 	project, err := NewRecordFromSpec(normalized.Spec, normalized.SourcePath)
 	if err != nil {
-		return []ValidationIssue{{Path: "spec", Message: err.Error()}}
+		return []ValidationIssue{{Path: "spec", Message: err.Error(), Reason: apierror.ReasonProjectSpecInvalid}}
 	}
 	builds, err := c.projectSchedulerBuildsFromSpec(ctx, project, 0, normalized.Spec)
 	if err != nil {
@@ -720,11 +770,11 @@ func (c *Controller) validateSchedulers(ctx context.Context, normalized Normaliz
 	schedulerRecords := SchedulerDefinitions(builds)
 	for _, definition := range schedulerRecords {
 		if _, err := schedulers.NormalizeScheduler(definition, false); err != nil {
-			return []ValidationIssue{{Path: "schedulers." + definition.Summary.AgentName, Message: err.Error()}}
+			return []ValidationIssue{{Path: "schedulers." + definition.Summary.AgentName, Message: err.Error(), Reason: apierror.ReasonSchedulerInvalid}}
 		}
 		for _, trigger := range definition.Triggers {
 			if _, err := schedulers.NormalizeSchedulerTrigger(definition.Summary.ID, trigger); err != nil {
-				return []ValidationIssue{{Path: "schedulers." + definition.Summary.AgentName + ".triggers", Message: err.Error()}}
+				return []ValidationIssue{{Path: "schedulers." + definition.Summary.AgentName + ".triggers", Message: err.Error(), Reason: apierror.ReasonSchedulerInvalid}}
 			}
 		}
 	}
@@ -734,6 +784,7 @@ func (c *Controller) validateSchedulers(ctx context.Context, normalized Normaliz
 type projectSchedulerBuildError struct {
 	path    string
 	message string
+	reason  apierror.Reason
 }
 
 func (e *projectSchedulerBuildError) Error() string {
@@ -746,11 +797,11 @@ func (e *projectSchedulerBuildError) Error() string {
 func (c *Controller) validateInlineSchedulerScript(ctx context.Context, agentName, script string) (schedulers.SchedulerValidationResult, error) {
 	path := "agents." + agentName + ".scheduler.script"
 	if c == nil || c.schedulers == nil {
-		return schedulers.SchedulerValidationResult{}, &projectSchedulerBuildError{path: path, message: "scheduler controller is required to validate scheduler script"}
+		return schedulers.SchedulerValidationResult{}, &projectSchedulerBuildError{path: path, message: "scheduler controller is required to validate scheduler script", reason: apierror.ReasonSchedulerScriptInvalid}
 	}
 	validation, err := c.schedulers.Validate(ctx, domain.SchedulerRuntimeScheduler, script)
 	if err != nil {
-		return schedulers.SchedulerValidationResult{}, &projectSchedulerBuildError{path: path, message: err.Error()}
+		return schedulers.SchedulerValidationResult{}, &projectSchedulerBuildError{path: path, message: err.Error(), reason: apierror.ReasonSchedulerScriptInvalid}
 	}
 	return validation, nil
 }
@@ -758,34 +809,38 @@ func (c *Controller) validateInlineSchedulerScript(ctx context.Context, agentNam
 func projectSchedulerBuildIssue(err error) ValidationIssue {
 	var buildErr *projectSchedulerBuildError
 	if errors.As(err, &buildErr) {
-		return ValidationIssue{Path: buildErr.path, Message: buildErr.message}
+		reason := buildErr.reason
+		if reason == apierror.ReasonUnspecified {
+			reason = apierror.ReasonSchedulerInvalid
+		}
+		return ValidationIssue{Path: buildErr.path, Message: buildErr.message, Reason: reason}
 	}
-	return ValidationIssue{Path: "schedulers", Message: err.Error()}
+	return ValidationIssue{Path: "schedulers", Message: err.Error(), Reason: apierror.ReasonSchedulerInvalid}
 }
 
 func (c *Controller) validateProjectAgentDefinitions(normalized NormalizedProject) []ValidationIssue {
 	project, err := NewRecordFromSpec(normalized.Spec, normalized.SourcePath)
 	if err != nil {
-		return []ValidationIssue{{Path: "spec", Message: err.Error()}}
+		return []ValidationIssue{{Path: "spec", Message: err.Error(), Reason: apierror.ReasonProjectSpecInvalid}}
 	}
 	agents, err := NewAgentDefinitionsFromSpec(project, 0, normalized.Spec)
 	if err != nil {
-		return []ValidationIssue{{Path: "agents", Message: err.Error()}}
+		return []ValidationIssue{{Path: "agents", Message: err.Error(), Reason: apierror.ReasonAgentDefinitionInvalid}}
 	}
 	var issues []ValidationIssue
 	for _, agent := range agents {
 		path := "agents." + agent.AgentName
 		if _, err := NormalizeAgentDefinition(agent, true); err != nil {
-			issues = append(issues, ValidationIssue{Path: path, Message: err.Error()})
+			issues = append(issues, ValidationIssue{Path: path, Message: err.Error(), Reason: apierror.ReasonAgentDefinitionInvalid})
 			continue
 		}
 		driver, err := driverpkg.ResolveSandboxRuntimeDriver(agent.Driver, c.defaultDR)
 		if err != nil {
-			issues = append(issues, ValidationIssue{Path: path + ".driver", Message: err.Error()})
+			issues = append(issues, ValidationIssue{Path: path + ".driver", Message: err.Error(), Reason: apierror.ReasonAgentDefinitionInvalid})
 			continue
 		}
 		if err := driverpkg.ValidateCompiledRuntimeDriver(driver); err != nil {
-			issues = append(issues, ValidationIssue{Path: path + ".driver", Message: err.Error()})
+			issues = append(issues, ValidationIssue{Path: path + ".driver", Message: err.Error(), Reason: apierror.ReasonAgentDefinitionInvalid})
 		}
 	}
 	return issues

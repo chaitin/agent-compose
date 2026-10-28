@@ -45,6 +45,55 @@ func TestEnsureDriverImageUsesDockerBackendFromAutoBackend(t *testing.T) {
 	}
 }
 
+func TestEnsureDriverImageCarriesFailureSentinels(t *testing.T) {
+	notFound := func(op string) error {
+		return OpError{Op: op, ImageRef: "guest:latest", Err: imagecache.NewError(imagecache.ErrorKindNotFound, op, "guest:latest", errors.New("missing"))}
+	}
+	tests := []struct {
+		name    string
+		backend *ensureBackend
+		want    error
+	}{
+		{
+			name:    "inspect and pull both report not found",
+			backend: &ensureBackend{inspectErr: notFound("inspect image"), pullErr: notFound("pull image")},
+			want:    ErrImageNotFound,
+		},
+		{
+			name:    "pull fails for another reason",
+			backend: &ensureBackend{inspectErr: notFound("inspect image"), pullErr: errors.New("registry unavailable")},
+			want:    ErrPullFailed,
+		},
+		{
+			name:    "inspect fails for another reason",
+			backend: &ensureBackend{inspectErr: errors.New("daemon unavailable")},
+			want:    ErrInspectFailed,
+		},
+		{
+			name: "inspect rejects the reference",
+			backend: &ensureBackend{inspectErr: OpError{
+				Op:       "inspect image",
+				ImageRef: "bad ref",
+				Err:      imagecache.NewError(imagecache.ErrorKindInvalidReference, "parse", "bad ref", errors.New("invalid")),
+			}},
+			want: ErrInvalidReference,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := EnsureDriverImage(context.Background(), &appconfig.Config{}, tc.backend, EnsureRequest{
+				Driver:      "docker",
+				ImageRef:    "guest:latest",
+				ProjectName: "project",
+				AgentName:   "agent",
+			})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("EnsureDriverImage() error = %v, want errors.Is(_, %v)", err, tc.want)
+			}
+		})
+	}
+}
+
 type ensureBackend struct {
 	inspectErr   error
 	pullErr      error

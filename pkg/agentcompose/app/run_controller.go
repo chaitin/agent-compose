@@ -13,6 +13,7 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/agentcompose/adapters"
 	"github.com/chaitin/agent-compose/pkg/agentcompose/api"
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/dashboard"
@@ -322,7 +323,10 @@ func runConnectError(err error) error {
 		return nil
 	}
 	if errors.Is(err, runs.ErrInvalidRequest) {
-		return connect.NewError(connect.CodeInvalidArgument, err)
+		// The same sentinel is raised mid-attach (a duplicate start frame), so
+		// it is not proof that nothing happened. The StartAgentRun write-order
+		// audit has not been done; keep the safe default.
+		return api.NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectUnknown, err)
 	}
 	if errors.Is(err, domain.ErrUnsupported) ||
 		errors.Is(err, domain.ErrNotFound) ||
@@ -333,7 +337,7 @@ func runConnectError(err error) error {
 		errors.Is(err, domain.ErrConflict) ||
 		errors.Is(err, domain.ErrReferenced) ||
 		errors.Is(err, domain.ErrAlreadyExists) {
-		return api.ConnectErrorForDomain(err)
+		return api.ConnectErrorForDomainWrite(err, api.ResourceRun)
 	}
-	return connect.NewError(connect.CodeInternal, fmt.Errorf("%w", err))
+	return api.NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectFor(err), err)
 }

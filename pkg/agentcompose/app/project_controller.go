@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/agentcompose/adapters"
 	"github.com/chaitin/agent-compose/pkg/agentcompose/api"
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
@@ -122,11 +122,12 @@ type projectControllerDelegate struct {
 func (d projectControllerDelegate) ValidateProject(ctx context.Context, req *connect.Request[agentcomposev2.ValidateProjectRequest]) (*connect.Response[agentcomposev2.ValidateProjectResponse], error) {
 	normalized, issues, err := normalizeProjectRequest(req.Msg.GetSpec(), req.Msg.GetSource(), req.Msg.GetSubmittedSpecHash())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, api.ErrorForCode(connect.CodeInternal, api.ResourceProject, err)
 	}
 	result, err := d.controller.ValidateProject(ctx, normalized, issues)
 	if err != nil {
-		return nil, projectConnectError(err)
+		// ValidateProject is read-only: it carries a reason but no effect.
+		return nil, api.ConnectErrorForDomainKind(err, api.ResourceProject)
 	}
 	reports, err := d.networkPolicyReports(normalized.Spec)
 	if err != nil {
@@ -143,7 +144,7 @@ func (d projectControllerDelegate) ValidateProject(ctx context.Context, req *con
 func (d projectControllerDelegate) ApplyProject(ctx context.Context, req *connect.Request[agentcomposev2.ApplyProjectRequest]) (*connect.Response[agentcomposev2.ApplyProjectResponse], error) {
 	normalized, issues, err := normalizeProjectRequest(req.Msg.GetSpec(), req.Msg.GetSource(), req.Msg.GetSubmittedSpecHash())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, api.WriteErrorForCode(connect.CodeInternal, api.ResourceProject, err)
 	}
 	result, err := d.controller.ApplyProject(ctx, projects.ApplyRequest{
 		Normalized: normalized,
@@ -171,18 +172,31 @@ func (d projectControllerDelegate) applyResponse(result projects.ApplyResult) (*
 	response := applyProjectResponse(result)
 	reports, err := agentNetworkPolicyReports(result.RevisionSpec, d.mediation, d.config)
 	if err != nil {
-		return nil, networkPolicyConnectError(err)
+		return nil, networkPolicyApplyError(err, result.Effect)
 	}
 	response.NetworkPolicies = api.NetworkPolicyReportsToProto(reports)
 	return response, nil
 }
 
-// networkPolicyConnectError classifies a report derivation failure. It can only
-// come from the declaration or from how it layers under the daemon-wide policy,
-// both of which the caller can fix, so the answer is InvalidArgument rather than
-// Internal.
+// networkPolicyConnectError classifies a report derivation failure for a read
+// RPC. It can only come from the declaration or from how it layers under the
+// daemon-wide policy, both of which the caller can fix, so the answer stays
+// InvalidArgument.
 func networkPolicyConnectError(err error) error {
-	return connect.NewError(connect.CodeInvalidArgument, err)
+	return api.NewOperationError(connect.CodeInvalidArgument, apierror.ReasonNetworkPolicyRejected, apierror.EffectUnspecified, err)
+}
+
+// networkPolicyApplyError classifies a report derivation failure on the apply
+// path. The cause is still the declaration or its layering under the daemon
+// policy, both of which the caller can fix, so the code stays InvalidArgument
+// like the read path; only the effect follows the apply result: NOT_APPLIED
+// for a dry-run or a pre-write rejection, UNKNOWN once the project state may
+// be durable.
+func networkPolicyApplyError(err error, effect apierror.Effect) error {
+	if effect == apierror.EffectUnspecified {
+		effect = apierror.EffectUnknown
+	}
+	return api.NewOperationError(connect.CodeInvalidArgument, apierror.ReasonNetworkPolicyRejected, effect, err)
 }
 
 // networkPolicyReports accounts for the declared network policies of a spec the
@@ -194,7 +208,7 @@ func (d projectControllerDelegate) networkPolicyReports(spec *compose.Normalized
 func (d projectControllerDelegate) PatchProject(ctx context.Context, req *connect.Request[agentcomposev2.PatchProjectRequest], projectRef projects.ProjectRef) (*connect.Response[agentcomposev2.ApplyProjectResponse], error) {
 	raw, issues, err := parseProjectRequest(req.Msg.GetSpec())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, api.WriteErrorForCode(connect.CodeInternal, api.ResourceProject, err)
 	}
 	result, err := d.controller.PatchProject(ctx, projects.PatchRequest{
 		Project:                 projectRef,
@@ -220,6 +234,7 @@ func applyProjectResponse(result projects.ApplyResult) *agentcomposev2.ApplyProj
 		Issues:    validationIssuesToProto(result.Issues),
 		Applied:   result.Applied,
 		Unchanged: result.Unchanged,
+		Effect:    api.EffectToProto(result.Effect),
 	}
 	if strings.TrimSpace(result.Project.ID) != "" {
 		resp.Project = api.ProjectToProto(result.Project, spec, result.Agents, result.Schedulers)
@@ -241,6 +256,8 @@ func (d projectControllerDelegate) RemoveProject(ctx context.Context, req *conne
 	return connect.NewResponse(&agentcomposev2.RemoveProjectResponse{
 		Project: api.ProjectToProto(result.Project, nil, result.Agents, result.Schedulers),
 		Changes: projectChangesToProto(result.Changes),
+		Effect:  api.EffectToProto(result.Effect),
+		Reason:  api.ReasonToProto(result.Reason),
 	}), nil
 }
 
@@ -280,14 +297,14 @@ func normalizeProjectRequest(spec *agentcomposev2.ProjectSpec, source *agentcomp
 	}
 	submittedHash = strings.TrimSpace(submittedHash)
 	if submittedHash != "" && submittedHash != hash {
-		return result, []projects.ValidationIssue{{Path: "submitted_spec_hash", Message: fmt.Sprintf("submitted spec hash %s does not match normalized spec hash %s", submittedHash, hash)}}, nil
+		return result, []projects.ValidationIssue{{Path: "submitted_spec_hash", Message: fmt.Sprintf("submitted spec hash %s does not match normalized spec hash %s", submittedHash, hash), Reason: apierror.ReasonProjectSpecInvalid}}, nil
 	}
 	return result, nil, nil
 }
 
 func parseProjectRequest(spec *agentcomposev2.ProjectSpec) (*compose.ProjectSpec, []projects.ValidationIssue, error) {
 	if spec == nil {
-		return nil, []projects.ValidationIssue{{Path: "spec", Message: "project spec is required"}}, nil
+		return nil, []projects.ValidationIssue{{Path: "spec", Message: "project spec is required", Reason: apierror.ReasonProjectSpecInvalid}}, nil
 	}
 	raw, protoIssues := api.ProjectSpecYAMLShape(spec)
 	protoIssues = append(protoIssues, api.LegacyNetworkProtocolIssues(spec.GetAgents())...)
@@ -328,7 +345,11 @@ func validationIssueFromProto(item *agentcomposev2.ProjectValidationIssue) proje
 	if item.GetSeverity() == agentcomposev2.ProjectValidationSeverity_PROJECT_VALIDATION_SEVERITY_WARNING {
 		severity = projects.ValidationSeverityWarning
 	}
-	return projects.ValidationIssue{Severity: severity, Path: item.GetPath(), Message: item.GetMessage()}
+	reason := api.ReasonFromProto(item.GetReason())
+	if reason == apierror.ReasonUnspecified && severity == projects.ValidationSeverityError {
+		reason = apierror.ReasonProjectSpecInvalid
+	}
+	return projects.ValidationIssue{Severity: severity, Path: item.GetPath(), Message: item.GetMessage(), Reason: reason}
 }
 
 func validationIssuesToProto(items []projects.ValidationIssue) []*agentcomposev2.ProjectValidationIssue {
@@ -338,6 +359,13 @@ func validationIssuesToProto(items []projects.ValidationIssue) []*agentcomposev2
 		if item.Severity == projects.ValidationSeverityWarning {
 			issue.Severity = agentcomposev2.ProjectValidationSeverity_PROJECT_VALIDATION_SEVERITY_WARNING
 		}
+		reason := item.Reason
+		if reason == apierror.ReasonUnspecified && item.Severity != projects.ValidationSeverityWarning {
+			// The proto contract requires a reason on error-severity issues;
+			// an unspecified reason is the spec-invalid default.
+			reason = apierror.ReasonProjectSpecInvalid
+		}
+		issue.Reason = api.ReasonToProto(reason)
 		issues = append(issues, issue)
 	}
 	return issues
@@ -376,20 +404,8 @@ func projectConnectError(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, errNetworkPolicyRejected):
-		return connect.NewError(connect.CodeInvalidArgument, err)
-	case errors.Is(err, projects.ErrRevisionConflict):
-		return connect.NewError(connect.CodeAborted, err)
-	case errors.Is(err, projects.ErrInvalidRequest), errors.Is(err, domain.ErrRequired), errors.Is(err, domain.ErrAmbiguous), errors.Is(err, domain.ErrInvalidArgument):
-		return connect.NewError(connect.CodeInvalidArgument, err)
-	case errors.Is(err, projects.ErrUnavailable):
-		return connect.NewError(connect.CodeUnavailable, err)
-	case errors.Is(err, projects.ErrUnimplemented), errors.Is(err, domain.ErrUnsupported):
-		return connect.NewError(connect.CodeUnimplemented, err)
-	case errors.Is(err, sql.ErrNoRows), errors.Is(err, domain.ErrNotFound):
-		return connect.NewError(connect.CodeNotFound, err)
-	default:
-		return connect.NewError(connect.CodeInternal, err)
+	if errors.Is(err, errNetworkPolicyRejected) {
+		return api.NewOperationError(connect.CodeInvalidArgument, apierror.ReasonNetworkPolicyRejected, apierror.EffectFor(err), err)
 	}
+	return api.ConnectErrorForProject(err)
 }

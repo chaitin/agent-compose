@@ -3,6 +3,7 @@ package projects
 import (
 	"fmt"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/projectdef"
 
 	"gopkg.in/yaml.v3"
@@ -14,14 +15,14 @@ const secretRedactionMarker = "********"
 // user-facing redaction markers replaced from the current persisted spec.
 func RestoreProjectSecrets(current *projectdef.NormalizedProjectSpec, submitted *projectdef.ProjectSpec) (*projectdef.ProjectSpec, []ValidationIssue, error) {
 	if submitted == nil {
-		return nil, []ValidationIssue{{Path: "spec", Message: "project spec is required"}}, nil
+		return nil, []ValidationIssue{{Path: "spec", Message: "project spec is required", Reason: apierror.ReasonProjectSpecInvalid}}, nil
 	}
 	cloned, err := cloneProjectSpec(submitted)
 	if err != nil {
 		return nil, nil, err
 	}
 	if current == nil {
-		return cloned, []ValidationIssue{{Path: "spec", Message: "current project spec is required"}}, nil
+		return cloned, []ValidationIssue{{Path: "spec", Message: "current project spec is required", Reason: apierror.ReasonProjectSpecInvalid}}, nil
 	}
 
 	var issues []ValidationIssue
@@ -83,7 +84,7 @@ func restoreEnvSecrets(path string, current, submitted map[string]projectdef.Env
 		}
 		existing, found := current[name]
 		if !found {
-			*issues = append(*issues, ValidationIssue{Path: path + "." + name + ".value", Message: "redacted value marker has no existing value to preserve"})
+			*issues = append(*issues, ValidationIssue{Path: path + "." + name + ".value", Message: "redacted value marker has no existing value to preserve", Reason: apierror.ReasonProjectSpecInvalid})
 			continue
 		}
 		value.Value = existing.Value
@@ -121,7 +122,7 @@ func restoreOctoBusSecrets(current map[string]projectdef.NormalizedOctoBusServer
 		}
 		existing, found := current[name]
 		if !found || existing.Token == "" {
-			*issues = append(*issues, ValidationIssue{Path: "octobus_servers." + name + ".token", Message: "redacted secret marker has no existing token to preserve"})
+			*issues = append(*issues, ValidationIssue{Path: "octobus_servers." + name + ".token", Message: "redacted secret marker has no existing token to preserve", Reason: apierror.ReasonProjectSpecInvalid})
 			continue
 		}
 		server.Token = existing.Token
@@ -186,7 +187,7 @@ func restoreSourceCredentialMarker(path, current string, submitted *string, issu
 		return
 	}
 	if current == "" {
-		*issues = append(*issues, ValidationIssue{Path: path, Message: "redacted secret marker has no existing credential to preserve"})
+		*issues = append(*issues, ValidationIssue{Path: path, Message: "redacted secret marker has no existing credential to preserve", Reason: apierror.ReasonProjectSpecInvalid})
 		return
 	}
 	*submitted = current

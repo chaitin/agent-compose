@@ -11,10 +11,12 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
+	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 func TestV2SandboxLifecycleActions(t *testing.T) {
@@ -423,10 +425,84 @@ func TestV2SandboxRemoveValidationAndStoreErrors(t *testing.T) {
 	}
 }
 
+func TestV2SandboxRemoveReportsWriteEffect(t *testing.T) {
+	// A pre-write rejection changed nothing, so it must report NOT_APPLIED.
+	prewriteID := identity.NewID(identity.ResourceSandbox, "characterization", "prewrite")
+	prewrite := NewSandboxHandler(SandboxHandlerDeps{
+		Delegate: &characterizationSessionDelegate{},
+		Store: &characterizationSandboxStore{
+			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: prewriteID, VMStatus: domain.VMStatusRunning}},
+		},
+		Remover:   &characterizationSandboxRemover{},
+		Dashboard: nil,
+	})
+	_, err := prewrite.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: prewriteID}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("prewrite code = %v, want failed_precondition (err=%v)", connect.CodeOf(err), err)
+	}
+	if detail, ok := errdetail.From(err); !ok || detail.Effect != EffectToProto(apierror.EffectNotApplied) {
+		t.Fatalf("prewrite detail = %#v, %v; want not_applied", detail, ok)
+	}
+
+	// A runtime removal failure has entered the delete flow, so the effect is
+	// UNKNOWN: the sandbox may have been partially removed.
+	inflightID := identity.NewID(identity.ResourceSandbox, "characterization", "inflight")
+	inflight := NewSandboxHandler(SandboxHandlerDeps{
+		Delegate: &characterizationSessionDelegate{},
+		Store: &characterizationSandboxStore{
+			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: inflightID, VMStatus: domain.VMStatusStopped}},
+		},
+		Remover:   &characterizationSandboxRemover{err: errors.New("runtime remove failed")},
+		Dashboard: nil,
+	})
+	_, err = inflight.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: inflightID}))
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("inflight code = %v, want internal (err=%v)", connect.CodeOf(err), err)
+	}
+	if detail, ok := errdetail.From(err); !ok || detail.Effect != EffectToProto(apierror.EffectUnknown) {
+		t.Fatalf("inflight detail = %#v, %v; want unknown", detail, ok)
+	}
+}
+
+func TestV2SandboxRemoveReportsUnknownForSubStepFailure(t *testing.T) {
+	// A failed pre-remove stop may still have transitioned the sandbox's
+	// runtime state, so the effect is UNKNOWN, not NOT_APPLIED.
+	stopID := identity.NewID(identity.ResourceSandbox, "characterization", "stop-fail")
+	stopFail := NewSandboxHandler(SandboxHandlerDeps{
+		Delegate: &characterizationSessionDelegate{stopErr: errors.New("stop failed")},
+		Store: &characterizationSandboxStore{
+			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: stopID, VMStatus: domain.VMStatusRunning}},
+		},
+		Remover:   &characterizationSandboxRemover{},
+		Dashboard: nil,
+	})
+	_, err := stopFail.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: stopID, Force: true}))
+	if detail, ok := errdetail.From(err); !ok || detail.Effect != EffectToProto(apierror.EffectUnknown) {
+		t.Fatalf("stop-fail detail = %#v, %v; want unknown (err=%v)", detail, ok, err)
+	}
+
+	// A failed reconcile before remove may have partially mutated runtime
+	// state, so the effect is UNKNOWN as well.
+	reconcileID := identity.NewID(identity.ResourceSandbox, "characterization", "reconcile-fail")
+	reconcileFail := NewSandboxHandler(SandboxHandlerDeps{
+		Delegate: &characterizationReconcilingDelegate{reconcileErr: errors.New("reconcile failed")},
+		Store: &characterizationSandboxStore{
+			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: reconcileID, VMStatus: domain.VMStatusStopped}},
+		},
+		Remover:   &characterizationSandboxRemover{},
+		Dashboard: nil,
+	})
+	_, err = reconcileFail.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: reconcileID}))
+	if detail, ok := errdetail.From(err); !ok || detail.Effect != EffectToProto(apierror.EffectUnknown) {
+		t.Fatalf("reconcile-fail detail = %#v, %v; want unknown (err=%v)", detail, ok, err)
+	}
+}
+
 type characterizationSessionDelegate struct {
 	stopSessionIDs   []string
 	resumeSessionIDs []string
 	proxyCalls       int
+	stopErr          error
 }
 
 func (d *characterizationSessionDelegate) ResumeSandbox(_ context.Context, sandboxID string) (*domain.Sandbox, error) {
@@ -436,12 +512,29 @@ func (d *characterizationSessionDelegate) ResumeSandbox(_ context.Context, sandb
 
 func (d *characterizationSessionDelegate) StopSandbox(_ context.Context, sandboxID string) (*domain.Sandbox, error) {
 	d.stopSessionIDs = append(d.stopSessionIDs, sandboxID)
+	if d.stopErr != nil {
+		return nil, d.stopErr
+	}
 	return &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusStopped}}, nil
 }
 
 func (d *characterizationSessionDelegate) GetSandboxProxy(context.Context, string) (SandboxProxy, error) {
 	d.proxyCalls++
 	return SandboxProxy{}, nil
+}
+
+// characterizationReconcilingDelegate is a lifecycle delegate that also acts as
+// a runtime reconciler so the reconcile-before-remove path can be exercised.
+type characterizationReconcilingDelegate struct {
+	characterizationSessionDelegate
+	reconcileErr error
+}
+
+func (d *characterizationReconcilingDelegate) ReconcileRuntimeState(context.Context, *domain.Sandbox) (*domain.Sandbox, error) {
+	if d.reconcileErr != nil {
+		return nil, d.reconcileErr
+	}
+	return &domain.Sandbox{}, nil
 }
 
 type characterizationSandboxStore struct {

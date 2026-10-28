@@ -4,6 +4,7 @@ package agentcompose.v2;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "agentcompose/v2/errors.proto";
 
 option go_package = "github.com/chaitin/agent-compose/proto/agentcompose/v2;agentcomposev2";
 
@@ -463,6 +464,10 @@ message ApplyProjectResponse {
   // deployment's EGRESS_UNENFORCEABLE_POLICY. Agents that declared no policy are
   // omitted: undeclared is not deny, so there is nothing to enforce or report.
   repeated AgentNetworkPolicyReport network_policies = 7;
+  // Meaningful only when applied is false. UNSPECIFIED means the daemon did
+  // not classify the outcome, which clients must treat as UNKNOWN. Successful
+  // responses keep it UNSPECIFIED.
+  OperationEffect effect = 8;
 }
 
 // AgentNetworkPolicyReport is one agent's declared outbound network policy and
@@ -597,6 +602,11 @@ message RemoveProjectRequest {
 message RemoveProjectResponse {
   Project project = 1;
   repeated ProjectChange changes = 2;
+  // Set only when a cleanup failure was tolerated: the schedulers were
+  // disabled and some sandboxes may remain, but the project record was not
+  // marked removed. UNSPECIFIED means no such failure was tolerated.
+  OperationEffect effect = 3;
+  OperationErrorReason reason = 4;
 }
 
 message WatchProjectRequest {
@@ -971,6 +981,9 @@ message ProjectValidationIssue {
   ProjectValidationSeverity severity = 1;
   string path = 2;
   string message = 3;
+  // Required for severity ERROR; allowed to stay UNSPECIFIED for WARNING.
+  // Gives callers a stable machine-readable category without parsing message.
+  OperationErrorReason reason = 4;
 }
 
 message ProjectChange {

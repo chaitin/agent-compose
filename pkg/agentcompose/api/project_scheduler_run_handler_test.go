@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,9 +16,11 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/chaitin/agent-compose/internal/projects"
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
+	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 func TestProjectHandlerRunSchedulerSupportsMainAndTerminalStatuses(t *testing.T) {
@@ -259,6 +263,86 @@ func TestListSchedulerEventsResolvesCommandCompletedFromArtifact(t *testing.T) {
 	}
 }
 
+func TestListSchedulerEventsClassifiesStoreErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		code   connect.Code
+		reason apierror.Reason
+	}{
+		{name: "generic store error", err: errors.New("store down"), code: connect.CodeInternal, reason: apierror.ReasonInternal},
+		{name: "canceled", err: context.Canceled, code: connect.CodeCanceled, reason: apierror.ReasonOperationCanceled},
+		{name: "deadline exceeded", err: context.DeadlineExceeded, code: connect.CodeDeadlineExceeded, reason: apierror.ReasonOperationTimeout},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _, handler := newSchedulerRunHandlerFixture()
+			store.eventsErr = tc.err
+			_, err := handler.ListSchedulerEvents(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulerEventsRequest{
+				Project:   &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: store.project.ID}},
+				AgentName: store.scheduler.AgentName,
+			}))
+			if connect.CodeOf(err) != tc.code {
+				t.Fatalf("code = %s, want %s (err=%v)", connect.CodeOf(err), tc.code, err)
+			}
+			detail, ok := errdetail.From(err)
+			if !ok {
+				t.Fatal("ListSchedulerEvents error carries no detail")
+			}
+			if ReasonFromProto(detail.Reason) != tc.reason {
+				t.Fatalf("reason = %d, want %d", ReasonFromProto(detail.Reason), tc.reason)
+			}
+			if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
+				t.Fatalf("effect = %v, want unspecified (read)", EffectFromProto(detail.Effect))
+			}
+		})
+	}
+}
+
+func TestGetSchedulerPreservesStoreErrorClassification(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		code   connect.Code
+		reason apierror.Reason
+	}{
+		{name: "generic store error", err: errors.New("store down"), code: connect.CodeInternal, reason: apierror.ReasonInternal},
+		{name: "canceled", err: context.Canceled, code: connect.CodeCanceled, reason: apierror.ReasonOperationCanceled},
+		{name: "deadline exceeded", err: context.DeadlineExceeded, code: connect.CodeDeadlineExceeded, reason: apierror.ReasonOperationTimeout},
+		{name: "not found", err: sql.ErrNoRows, code: connect.CodeNotFound, reason: apierror.ReasonSchedulerNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &apiProjectRunStore{
+				projects: []domain.ProjectRecord{{ID: "project-1", Name: "Project", SourcePath: "/repo/agent-compose.yml", CurrentRevision: 1}},
+				schedulers: []domain.ProjectSchedulerRecord{
+					{ProjectID: "project-1", SchedulerID: "scheduler-1", AgentName: "worker", ID: "scheduler-1", Revision: 1, Enabled: true, SpecJSON: `{"script":"run()"}`},
+				},
+				schedulerDefinitions: map[string]domain.Scheduler{"scheduler-1": {Summary: domain.SchedulerSummary{ID: "scheduler-1", Enabled: true}}},
+				getSchedulerErr:      tc.err,
+			}
+			handler := NewProjectHandler(nil, store, nil)
+			_, err := handler.GetScheduler(context.Background(), connect.NewRequest(&agentcomposev2.GetSchedulerRequest{
+				Project:   &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: "project-1"}},
+				AgentName: "worker",
+			}))
+			if connect.CodeOf(err) != tc.code {
+				t.Fatalf("code = %s, want %s (err=%v)", connect.CodeOf(err), tc.code, err)
+			}
+			detail, ok := errdetail.From(err)
+			if !ok {
+				t.Fatal("GetScheduler error carries no detail")
+			}
+			if ReasonFromProto(detail.Reason) != tc.reason {
+				t.Fatalf("reason = %d, want %d", ReasonFromProto(detail.Reason), tc.reason)
+			}
+			if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
+				t.Fatalf("effect = %v, want unspecified (read)", EffectFromProto(detail.Effect))
+			}
+		})
+	}
+}
+
 // TestNewProjectHandlerWithSandboxDirsInjectsResolver builds two separate
 // handlers from independent fixtures — one left plain, one with
 // WithSandboxDirs chained immediately after construction — rather than
@@ -455,6 +539,7 @@ type schedulerRunProjectStoreFake struct {
 	schedulers            []domain.ProjectSchedulerRecord
 	runs                  []domain.SchedulerRunSummary
 	events                []domain.SchedulerEvent
+	eventsErr             error
 	sandboxIDs            map[schedulers.SchedulerRunKey][]string
 	lastRunFilter         schedulers.SchedulerRunPageFilter
 	batchRunsBySandbox    map[string]domain.SchedulerRunSummary
@@ -463,6 +548,9 @@ type schedulerRunProjectStoreFake struct {
 }
 
 func (s *schedulerRunProjectStoreFake) ListSchedulerEventsPage(_ context.Context, filter schedulers.SchedulerEventPageFilter) ([]domain.SchedulerEvent, error) {
+	if s.eventsErr != nil {
+		return nil, s.eventsErr
+	}
 	items := make([]domain.SchedulerEvent, 0, len(s.events))
 	for _, event := range s.events {
 		if !slices.Contains(filter.SchedulerIDs, event.SchedulerID) || (filter.RequireTrigger && event.TriggerID == "") ||

@@ -22,7 +22,7 @@ func (h *ProjectHandler) enrichProjectAgentModels(ctx context.Context, record do
 	}
 	resolutions, err := h.agentModels.ResolveProjectAgentModels(ctx, record, agents)
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, fmt.Errorf("resolve project agent models: %w", err))
+		return ErrorForCode(connect.CodeInternal, ResourceProject, fmt.Errorf("resolve project agent models: %w", err))
 	}
 	for _, agent := range project.GetAgents() {
 		resolution, ok := resolutions[agent.GetAgentName()]

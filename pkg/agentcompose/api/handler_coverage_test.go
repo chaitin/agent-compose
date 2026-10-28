@@ -1474,6 +1474,7 @@ type apiProjectRunStore struct {
 	runEvents            []domain.ProjectRunEventRecord
 	schedulerDefinitions map[string]domain.Scheduler
 	getSchedulerCalls    int
+	getSchedulerErr      error
 }
 
 func (s *apiProjectRunStore) GetProject(_ context.Context, projectID string) (domain.ProjectRecord, error) {
@@ -1539,6 +1540,9 @@ func (s *apiProjectRunStore) GetManagedAgentDefinition(context.Context, string) 
 
 func (s *apiProjectRunStore) GetScheduler(_ context.Context, schedulerID string) (domain.Scheduler, error) {
 	s.getSchedulerCalls++
+	if s.getSchedulerErr != nil {
+		return domain.Scheduler{}, s.getSchedulerErr
+	}
 	scheduler, ok := s.schedulerDefinitions[schedulerID]
 	if !ok {
 		return domain.Scheduler{}, sql.ErrNoRows
