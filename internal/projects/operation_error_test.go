@@ -363,3 +363,100 @@ agents:
 		t.Fatal("partial pull across agents was marked not-applied, want unknown")
 	}
 }
+
+// partialPullByCategoryImagesBackend succeeds the first agent's pull and fails
+// the second with a canned backend error, so the multi-agent effect can be
+// asserted for each failure category.
+type partialPullByCategoryImagesBackend struct {
+	secondPullErr error
+}
+
+func (b partialPullByCategoryImagesBackend) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {
+	return images.ListResult{}, nil
+}
+
+func (b partialPullByCategoryImagesBackend) InspectImage(_ context.Context, req images.InspectRequest) (images.InspectResult, error) {
+	return images.InspectResult{}, imageNotFoundError("inspect image", req.ImageRef)
+}
+
+func (b partialPullByCategoryImagesBackend) PullImage(_ context.Context, req images.PullRequest) (images.PullResult, error) {
+	if req.ImageRef == "guest:first" {
+		return images.PullResult{}, nil
+	}
+	return images.PullResult{}, b.secondPullErr
+}
+
+func (b partialPullByCategoryImagesBackend) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
+	return images.RemoveResult{}, nil
+}
+
+// TestImageEnsurePartialPullByCategoryIsUnknown verifies that a not-found or
+// invalid-reference failure on a later agent does not claim NOT_APPLIED once an
+// earlier agent's image may already have been pulled.
+func TestImageEnsurePartialPullByCategoryIsUnknown(t *testing.T) {
+	tests := []struct {
+		name      string
+		secondErr error
+		wantWrap  error
+	}{
+		{
+			name:      "second image not found",
+			secondErr: imageNotFoundError("pull image", "guest:second"),
+			wantWrap:  images.ErrImageNotFound,
+		},
+		{
+			name:      "second image reference invalid",
+			secondErr: imageInvalidReferenceError("pull image", "guest:second"),
+			wantWrap:  images.ErrInvalidReference,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			raw, err := compose.Parse([]byte(`
+name: partial-pull-by-category
+agents:
+  first:
+    provider: codex
+    image: guest:first
+    driver:
+      docker: {}
+  second:
+    provider: codex
+    image: guest:second
+    driver:
+      docker: {}
+`))
+			if err != nil {
+				t.Fatalf("Parse returned error: %v", err)
+			}
+			spec, err := compose.Normalize(raw, compose.NormalizeOptions{ProjectDir: t.TempDir()})
+			if err != nil {
+				t.Fatalf("Normalize returned error: %v", err)
+			}
+			hash, err := spec.Hash()
+			if err != nil {
+				t.Fatalf("Hash returned error: %v", err)
+			}
+			controller := NewController(ControllerDependencies{
+				Config:  &appconfig.Config{RuntimeDriver: driverpkg.RuntimeDriverDocker},
+				Store:   &pr551Store{},
+				Images:  partialPullByCategoryImagesBackend{secondPullErr: tc.secondErr},
+				Volumes: pr551NoopVolumeManager{},
+			})
+			_, err = controller.ApplyProject(ctx, ApplyRequest{Normalized: NormalizedProject{Spec: spec, SpecHash: hash, SourcePath: "/projects/partial-pull-by-category"}})
+			if err == nil {
+				t.Fatal("ApplyProject returned nil error, want failure on the second agent")
+			}
+			if !errors.Is(err, tc.wantWrap) {
+				t.Fatalf("error does not wrap %v: %v", tc.wantWrap, err)
+			}
+			if !errors.Is(err, images.ErrImageEnsurePartial) {
+				t.Fatalf("error does not wrap images.ErrImageEnsurePartial: %v", err)
+			}
+			if apierror.IsNotApplied(err) {
+				t.Fatal("partial pull across agents was marked not-applied, want unknown")
+			}
+		})
+	}
+}

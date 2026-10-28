@@ -21,6 +21,13 @@ var (
 	ErrInvalidReference = errors.New("image reference invalid")
 )
 
+// ErrImageEnsurePartial marks an image-ensure failure that happened after an
+// earlier agent was ensured successfully. That earlier ensure may have pulled
+// an image into the local cache, so a later not-found or invalid-reference
+// failure can no longer prove nothing changed: the caller must not claim
+// NOT_APPLIED on an error wrapping this sentinel.
+var ErrImageEnsurePartial = errors.New("image ensure failed after an earlier agent succeeded")
+
 type EnsureRequest struct {
 	Driver      string
 	ImageRef    string
@@ -39,9 +46,13 @@ func EnsureProjectAgentImages(ctx context.Context, config *appconfig.Config, bac
 	if config == nil {
 		return fmt.Errorf("image ensure config is required")
 	}
+	succeeded := false
 	for _, agent := range req.Agents {
 		driver, err := driverpkg.ResolveSandboxRuntimeDriver(agent.Driver, config.RuntimeDriver)
 		if err != nil {
+			if succeeded {
+				return fmt.Errorf("%w: ensure image for project %s agent %s: %w", ErrImageEnsurePartial, req.ProjectName, agent.AgentName, err)
+			}
 			return fmt.Errorf("ensure image for project %s agent %s: %w", req.ProjectName, agent.AgentName, err)
 		}
 		imageRef := driverpkg.ResolveSandboxGuestImage(agent.Image, driverpkg.DefaultGuestImageForDriver(config, driver))
@@ -51,8 +62,12 @@ func EnsureProjectAgentImages(ctx context.Context, config *appconfig.Config, bac
 			ProjectName: req.ProjectName,
 			AgentName:   agent.AgentName,
 		}); err != nil {
+			if succeeded {
+				return fmt.Errorf("%w: %w", ErrImageEnsurePartial, err)
+			}
 			return err
 		}
+		succeeded = true
 	}
 	return nil
 }

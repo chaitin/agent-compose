@@ -348,13 +348,16 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 		ProjectName: normalized.Spec.Name,
 		Agents:      agentRecords,
 	}); err != nil {
-		// Image ensure happens before the first write, but only a not-found or
-		// invalid reference proves nothing was pulled: a pull may have been
-		// interrupted mid-transfer (leaving partial layers), and an earlier
-		// agent may already have pulled successfully. Those stay UNKNOWN,
-		// matching the image service's write mapper.
+		// Image ensure happens before the first write. A not-found or invalid
+		// reference proves nothing was pulled — but only when it is the first
+		// agent to fail: once an earlier agent was ensured successfully, that
+		// ensure may already have pulled its image into the local cache, so the
+		// failure can no longer prove NOT_APPLIED. A pull may also have been
+		// interrupted mid-transfer (leaving partial layers). Those stay
+		// UNKNOWN, matching the image service's write mapper.
 		applyErr := fmt.Errorf("%w: apply project %s: %w", ErrUnavailable, normalized.Spec.Name, err)
-		if errors.Is(err, images.ErrImageNotFound) || errors.Is(err, images.ErrInvalidReference) {
+		if !errors.Is(err, images.ErrImageEnsurePartial) &&
+			(errors.Is(err, images.ErrImageNotFound) || errors.Is(err, images.ErrInvalidReference)) {
 			applyErr = apierror.NotApplied(applyErr)
 		}
 		return ApplyResult{}, applyErr
