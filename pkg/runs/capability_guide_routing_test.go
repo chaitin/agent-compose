@@ -58,8 +58,26 @@ func TestProjectRunCapabilityGuideRoutesManagedScopeAndMergesBestEffort(t *testi
 	if provider.scope != (capabilities.GuideScope{ProjectID: "project-1", AgentID: "agent-1"}) {
 		t.Fatalf("scope = %#v", provider.scope)
 	}
-	if content := string(guide); !strings.Contains(content, "global legacy") || !strings.Contains(content, "scoped internal/dev") {
+	if content := string(guide); !strings.Contains(content, "scoped legacy") || !strings.Contains(content, "scoped internal/dev") {
 		t.Fatalf("merged guide = %s", content)
+	}
+}
+
+func TestWriteCapabilityGuideCarriesTrustedUsername(t *testing.T) {
+	provider := &scopedRunGuideProvider{}
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{
+		ID:            "run-sandbox",
+		WorkspacePath: filepath.Join(t.TempDir(), "workspace"),
+		Tags:          []domain.SandboxTag{{Name: "project", Value: "project-1"}},
+	}}
+	ctx := domain.NewContextWithTrustedHeaders(context.Background(), []domain.TrustedHeader{
+		{Name: "x-mpi-user-id", Value: "user-1"},
+		{Name: "x-mpi-username", Value: "alice"},
+	})
+
+	WriteCapabilityGuide(ctx, CapabilityGuideDeps{Provider: provider}, sandbox, []string{"dev"})
+	if provider.scope != (capabilities.GuideScope{ProjectID: "project-1", Username: "alice"}) {
+		t.Fatalf("scope = %#v", provider.scope)
 	}
 }
 

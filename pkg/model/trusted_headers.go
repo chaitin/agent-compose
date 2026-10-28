@@ -1,6 +1,9 @@
 package model
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 type trustedHeadersContextKey struct{}
 
@@ -21,6 +24,22 @@ func NewContextWithTrustedHeaders(ctx context.Context, items []TrustedHeader) co
 func TrustedHeadersFromContext(ctx context.Context) []TrustedHeader {
 	items, _ := ctx.Value(trustedHeadersContextKey{}).([]TrustedHeader)
 	return cloneTrustedHeaders(items)
+}
+
+// TrustedHeaderValue returns the first non-empty value stored for name. Names
+// are matched case-insensitively because the trusted ingress stores them
+// lowercased. It returns "" when the header is absent.
+func TrustedHeaderValue(ctx context.Context, name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return ""
+	}
+	for _, item := range TrustedHeadersFromContext(ctx) {
+		if strings.ToLower(item.Name) == name && item.Value != "" {
+			return item.Value
+		}
+	}
+	return ""
 }
 
 func cloneTrustedHeaders(items []TrustedHeader) []TrustedHeader {

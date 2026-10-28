@@ -42,20 +42,48 @@ func (p *guideTestProvider) CapabilityGuideForScope(_ context.Context, scope Gui
 	return []byte("scoped"), nil
 }
 
-func TestCapabilityGuideForScopePreservesLegacyAndRoutesQualifiedDeclarations(t *testing.T) {
+func TestCapabilityGuideForScopeRoutesEveryDeclarationThroughScopedProvider(t *testing.T) {
 	provider := &guideTestProvider{}
-	scope := GuideScope{ProjectID: "project-1", AgentID: "agent-1"}
+	scope := GuideScope{ProjectID: "project-1", AgentID: "agent-1", Username: "alice"}
 	if _, err := CapabilityGuideForScope(context.Background(), provider, scope, "legacy"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := CapabilityGuideForScope(context.Background(), provider, scope, "internal/dev"); err != nil {
 		t.Fatal(err)
 	}
-	if len(provider.globalCalls) != 1 || provider.globalCalls[0] != "legacy" {
+	if len(provider.globalCalls) != 0 {
 		t.Fatalf("global calls = %#v", provider.globalCalls)
 	}
-	if len(provider.scopedCalls) != 1 || provider.scopedCalls[0] != "internal/dev" || provider.scope != scope {
+	if len(provider.scopedCalls) != 2 || provider.scopedCalls[0] != "legacy" || provider.scopedCalls[1] != "internal/dev" || provider.scope != scope {
 		t.Fatalf("scoped calls = %#v scope=%#v", provider.scopedCalls, provider.scope)
+	}
+}
+
+type legacyGuideProvider struct {
+	globalCalls []string
+}
+
+func (*legacyGuideProvider) Status(context.Context) capability.Status { return capability.Status{} }
+func (*legacyGuideProvider) ListCapsets(context.Context) ([]capability.Capset, error) {
+	return nil, nil
+}
+func (*legacyGuideProvider) Catalog(context.Context, string) (capability.Catalog, error) {
+	return capability.Catalog{}, nil
+}
+func (*legacyGuideProvider) ProxyTarget() string { return "" }
+func (p *legacyGuideProvider) CapabilityGuide(_ context.Context, id string) ([]byte, error) {
+	p.globalCalls = append(p.globalCalls, id)
+	return []byte("global"), nil
+}
+
+func TestCapabilityGuideForScopeFallsBackToLegacyProvider(t *testing.T) {
+	provider := &legacyGuideProvider{}
+	guide, err := CapabilityGuideForScope(context.Background(), provider, GuideScope{ProjectID: "project-1"}, "legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(guide) != "global" || len(provider.globalCalls) != 1 || provider.globalCalls[0] != "legacy" {
+		t.Fatalf("guide = %q global calls = %#v", guide, provider.globalCalls)
 	}
 }
 

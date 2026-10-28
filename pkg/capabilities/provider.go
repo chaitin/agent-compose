@@ -2,6 +2,7 @@ package capabilities
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -22,11 +23,14 @@ type Provider interface {
 	ProxyTarget() string
 }
 
-// GuideScope identifies the project agent whose project-scoped OctoBus
-// declarations may be used while rendering a sandbox capability guide.
+// GuideScope identifies who a capability guide is rendered for: the project
+// agent whose project-scoped OctoBus declarations may be used, and optionally
+// the user the current run acts for. Upstream gateways resolve a project to
+// its owner themselves, so Username may stay empty.
 type GuideScope struct {
 	ProjectID string
 	AgentID   string
+	Username  string
 }
 
 // GuideScopeFromSandbox derives the canonical project and agent scope shared
@@ -59,20 +63,31 @@ type ScopedGuideProvider interface {
 	CapabilityGuideForScope(context.Context, GuideScope, string) ([]byte, error)
 }
 
-// CapabilityGuideForScope routes qualified declarations through a scoped
-// provider and preserves the legacy global provider behavior otherwise.
+// errProjectOctoBusNotConfigured reports that a qualified capset declaration
+// selects a project OctoBus server, but the provider in use has no
+// project-server resolver: a legacy Provider or a bare DynamicProvider used
+// without the project-aware adapter.
+var errProjectOctoBusNotConfigured = errors.New("project OctoBus capability guide provider is not configured")
+
+// CapabilityGuideForScope routes every declaration through a scoped provider
+// when one is available: qualified declarations select a project OctoBus
+// server, unqualified ones keep using the daemon-wide gateway but carry the
+// scope. Providers without scope support keep the legacy global behavior.
 func CapabilityGuideForScope(ctx context.Context, provider Provider, scope GuideScope, declaration string) ([]byte, error) {
 	declaration = strings.TrimSpace(declaration)
 	parsed, err := capability.ParseCapsetDeclaration(declaration)
 	if err != nil {
 		return nil, fmt.Errorf("invalid capset declaration: %w", err)
 	}
+	scoped, ok := provider.(ScopedGuideProvider)
 	if !parsed.Qualified() {
+		if ok {
+			return scoped.CapabilityGuideForScope(ctx, scope, declaration)
+		}
 		return provider.CapabilityGuide(ctx, declaration)
 	}
-	scoped, ok := provider.(ScopedGuideProvider)
 	if !ok {
-		return nil, fmt.Errorf("project OctoBus capability guide provider is not configured")
+		return nil, errProjectOctoBusNotConfigured
 	}
 	return scoped.CapabilityGuideForScope(ctx, scope, declaration)
 }
@@ -102,6 +117,12 @@ func NewDynamicProvider(source GatewaySource, proxyTarget string) *DynamicProvid
 // client builds an OctoBus client from the current settings. ok is false when
 // the gateway is not configured (empty addr) or settings are unreadable.
 func (p *DynamicProvider) client(ctx context.Context) (*capability.Client, bool) {
+	return p.clientWithScope(ctx, capability.Scope{})
+}
+
+// clientWithScope is client with the optional project/user context a directory
+// read attaches. A zero scope sends no context headers.
+func (p *DynamicProvider) clientWithScope(ctx context.Context, scope capability.Scope) (*capability.Client, bool) {
 	if p == nil || p.source == nil {
 		return nil, false
 	}
@@ -109,7 +130,7 @@ func (p *DynamicProvider) client(ctx context.Context) (*capability.Client, bool)
 	if err != nil || strings.TrimSpace(settings.Addr) == "" {
 		return nil, false
 	}
-	return capability.NewClient(capability.Config{Addr: settings.Addr, Token: settings.Token}), true
+	return capability.NewClient(capability.Config{Addr: settings.Addr, Token: settings.Token, Scope: scope}), true
 }
 
 func (p *DynamicProvider) Status(ctx context.Context) capability.Status {
@@ -142,6 +163,25 @@ func (p *DynamicProvider) CapabilityGuide(ctx context.Context, capsetID string) 
 		return nil, capability.ErrNotConfigured
 	}
 	return client.CatalogMarkdown(ctx, capsetID)
+}
+
+// CapabilityGuideForScope renders an unqualified capset guide through the
+// daemon-wide gateway while carrying the sandbox's project and user context.
+// Qualified declarations never belong to the gateway, so they keep failing the
+// same way they did before this provider gained scope support.
+func (p *DynamicProvider) CapabilityGuideForScope(ctx context.Context, scope GuideScope, declaration string) ([]byte, error) {
+	parsed, err := capability.ParseCapsetDeclaration(declaration)
+	if err != nil {
+		return nil, fmt.Errorf("invalid capset declaration: %w", err)
+	}
+	if parsed.Qualified() {
+		return nil, errProjectOctoBusNotConfigured
+	}
+	client, ok := p.clientWithScope(ctx, capability.Scope{ProjectID: scope.ProjectID, Username: scope.Username})
+	if !ok {
+		return nil, capability.ErrNotConfigured
+	}
+	return client.CatalogMarkdown(ctx, parsed.CapsetID)
 }
 
 func (p *DynamicProvider) ProxyTarget() string {

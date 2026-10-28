@@ -20,3 +20,23 @@ func TestTrustedHeadersContextCopiesValues(t *testing.T) {
 		t.Fatalf("stored trusted headers were mutated: %#v", second)
 	}
 }
+
+func TestTrustedHeaderValueMatchesFirstNonEmptyValue(t *testing.T) {
+	ctx := NewContextWithTrustedHeaders(context.Background(), []TrustedHeader{
+		{Name: "x-mpi-user-id", Value: "user-1"},
+		{Name: "x-mpi-username", Value: "alice"},
+		{Name: "x-mpi-username", Value: "bob"},
+	})
+	if got := TrustedHeaderValue(ctx, "X-MPI-Username"); got != "alice" {
+		t.Fatalf("username = %q, want alice", got)
+	}
+	if got := TrustedHeaderValue(ctx, "x-mpi-user-id"); got != "user-1" {
+		t.Fatalf("user id = %q, want user-1", got)
+	}
+	if got := TrustedHeaderValue(ctx, "x-mpi-missing"); got != "" {
+		t.Fatalf("missing header = %q, want empty", got)
+	}
+	if got := TrustedHeaderValue(context.Background(), "x-mpi-username"); got != "" {
+		t.Fatalf("absent context = %q, want empty", got)
+	}
+}
