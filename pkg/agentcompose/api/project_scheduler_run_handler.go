@@ -92,7 +92,7 @@ func (h *ProjectHandler) RunScheduler(ctx context.Context, req *connect.Request[
 
 func (h *ProjectHandler) StartSchedulerRun(ctx context.Context, req *connect.Request[agentcomposev2.StartSchedulerRunRequest]) (*connect.Response[agentcomposev2.StartSchedulerRunResponse], error) {
 	if strings.TrimSpace(req.Msg.GetTriggerId()) == "" {
-		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectNotApplied, fmt.Errorf("scheduler trigger id is required"))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeInvalidArgument, ResourceScheduler, fmt.Errorf("scheduler trigger id is required"))
 	}
 	_, scheduler, err := h.resolveProjectScheduler(ctx, req.Msg.GetProject(), req.Msg.GetAgentName())
 	if err != nil {

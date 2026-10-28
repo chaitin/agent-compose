@@ -83,6 +83,16 @@ func WriteErrorForCode(code connect.Code, kind ResourceKind, cause error) error 
 	return NewOperationError(code, reasonForConnectCode(code, kind), apierror.EffectUnknown, cause)
 }
 
+// WriteErrorNotAppliedForCode builds a write-RPC error that provably changed
+// nothing. It derives the reason from the code and resource kind like
+// WriteErrorForCode, but the effect is NOT_APPLIED and is routed through the
+// apierror marker so EffectFor and IsNotApplied remain the single source of
+// truth for the not-applied claim.
+func WriteErrorNotAppliedForCode(code connect.Code, kind ResourceKind, cause error) error {
+	marked := apierror.NotApplied(cause)
+	return NewOperationError(code, reasonForConnectCode(code, kind), apierror.EffectFor(marked), marked)
+}
+
 // preserveOrUpgradeDetail keeps a detail an inner boundary attached, but a
 // write boundary must not put UNSPECIFIED on the wire: the effect is upgraded
 // while the inner reason (which may be more precise) is preserved. A

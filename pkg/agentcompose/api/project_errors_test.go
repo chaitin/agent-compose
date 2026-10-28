@@ -131,6 +131,28 @@ func TestCodeHelpersPickTheRightEffect(t *testing.T) {
 	}
 }
 
+func TestWriteErrorNotAppliedForCodeRoutesThroughMarker(t *testing.T) {
+	// The helper claims NOT_APPLIED only via the apierror marker so that
+	// EffectFor and IsNotApplied stay the single source of truth.
+	err := WriteErrorNotAppliedForCode(connect.CodeInvalidArgument, ResourceImage, errors.New("image_ref is required"))
+	if !apierror.IsNotApplied(err) {
+		t.Fatal("error must carry the not-applied marker")
+	}
+	detail, ok := errdetail.From(err)
+	if !ok {
+		t.Fatal("error carries no detail")
+	}
+	if detail.Effect != EffectToProto(apierror.EffectNotApplied) {
+		t.Fatalf("effect = %s, want not_applied", detail.Effect)
+	}
+	if ReasonFromProto(detail.Reason) != apierror.ReasonInvalidRequest {
+		t.Fatalf("reason = %d, want invalid_request", ReasonFromProto(detail.Reason))
+	}
+	if got := connect.CodeOf(err); got != connect.CodeInvalidArgument {
+		t.Fatalf("code = %s, want invalid_argument", got)
+	}
+}
+
 func TestConnectErrorForProjectContextCancellation(t *testing.T) {
 	// A cancellation that got wrapped into an image sentinel by the ensure path
 	// must still surface as CANCELED, not as an image backend failure.

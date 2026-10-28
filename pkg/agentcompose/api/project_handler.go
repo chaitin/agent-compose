@@ -295,7 +295,7 @@ func (h *ProjectHandler) SetSchedulerTriggerEnabled(ctx context.Context, req *co
 	}
 	triggerID := strings.TrimSpace(req.Msg.GetTriggerId())
 	if triggerID == "" {
-		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectNotApplied, fmt.Errorf("trigger id is required"))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeInvalidArgument, ResourceScheduler, fmt.Errorf("trigger id is required"))
 	}
 	definition, err := h.schedulerRuntime.SetSchedulerTriggerEnabled(ctx, scheduler.ID, triggerID, req.Msg.GetEnabled())
 	if err != nil {

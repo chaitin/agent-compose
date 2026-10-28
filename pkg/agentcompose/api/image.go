@@ -51,7 +51,7 @@ func (h *ImageHandler) ListImages(ctx context.Context, req *connect.Request[agen
 func (h *ImageHandler) PullImage(ctx context.Context, req *connect.Request[agentcomposev2.PullImageRequest]) (*connect.Response[agentcomposev2.PullImageResponse], error) {
 	imageRef := strings.TrimSpace(req.Msg.GetImageRef())
 	if imageRef == "" {
-		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectNotApplied, fmt.Errorf("image_ref is required"))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeInvalidArgument, ResourceImage, fmt.Errorf("image_ref is required"))
 	}
 	backend, err := h.backends.ImageBackendForStore(req.Msg.GetStore())
 	if err != nil {
@@ -116,7 +116,7 @@ func (h *ImageHandler) InspectImage(ctx context.Context, req *connect.Request[ag
 func (h *ImageHandler) RemoveImage(ctx context.Context, req *connect.Request[agentcomposev2.RemoveImageRequest]) (*connect.Response[agentcomposev2.RemoveImageResponse], error) {
 	imageRef := strings.TrimSpace(req.Msg.GetImageRef())
 	if imageRef == "" {
-		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectNotApplied, fmt.Errorf("image_ref is required"))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeInvalidArgument, ResourceImage, fmt.Errorf("image_ref is required"))
 	}
 	backend, err := h.backends.ImageBackendForStore(req.Msg.GetStore())
 	if err != nil {

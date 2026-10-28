@@ -339,7 +339,7 @@ func (h *SandboxHandler) StopSandbox(ctx context.Context, req *connect.Request[a
 	retryRelease := sandbox.Summary.VMStatus == domain.VMStatusStopped &&
 		policy == domain.StoppedRuntimePolicyRemove && state == domain.StoppedRuntimeStateReleasePending
 	if sandbox.Summary.VMStatus != domain.VMStatusRunning && !retryRelease {
-		return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, fmt.Errorf("sandbox %s cannot be stopped from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeFailedPrecondition, ResourceSandbox, fmt.Errorf("sandbox %s cannot be stopped from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
 	}
 	if options.Mode != sandboxes.StopModeGraceful {
 		stopped, stopErr := h.delegate.StopSandbox(ctx, sandbox.Summary.ID)
@@ -350,7 +350,7 @@ func (h *SandboxHandler) StopSandbox(ctx context.Context, req *connect.Request[a
 	}
 	graceful, ok := h.delegate.(SandboxGracefulLifecycleDelegate)
 	if !ok {
-		return nil, NewOperationError(connect.CodeUnimplemented, apierror.ReasonUnsupported, apierror.EffectNotApplied, fmt.Errorf("graceful sandbox stop is unsupported"))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeUnimplemented, ResourceSandbox, fmt.Errorf("graceful sandbox stop is unsupported"))
 	}
 	outcome, stopErr := graceful.StopSandboxWithOptions(ctx, sandbox.Summary.ID, options)
 	if stopErr != nil {
@@ -406,10 +406,10 @@ func (h *SandboxHandler) ResumeSandbox(ctx context.Context, req *connect.Request
 		return connect.NewResponse(&agentcomposev2.ResumeSandboxResponse{Sandbox: h.sandboxToV2(ctx, sandbox)}), nil
 	}
 	if sandbox.Summary.VMStatus != domain.VMStatusStopped {
-		return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, fmt.Errorf("sandbox %s cannot be resumed from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeFailedPrecondition, ResourceSandbox, fmt.Errorf("sandbox %s cannot be resumed from state %s", sandbox.Summary.ID, sandbox.Summary.VMStatus))
 	}
 	if domain.SandboxWorkspaceUnavailable(sandbox) {
-		return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, fmt.Errorf("sandbox %s workspace was reclaimed and cannot be resumed", sandbox.Summary.ID))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeFailedPrecondition, ResourceSandbox, fmt.Errorf("sandbox %s workspace was reclaimed and cannot be resumed", sandbox.Summary.ID))
 	}
 	resumed, err := h.delegate.ResumeSandbox(ctx, sandbox.Summary.ID)
 	if err != nil {
@@ -513,7 +513,7 @@ func (h *SandboxHandler) RemoveSandbox(ctx context.Context, req *connect.Request
 		result, err := h.removal.Remove(ctx, sandboxID, req.Msg.GetForce())
 		if err != nil {
 			if errors.Is(err, sandboxes.ErrSandboxRunning) || errors.Is(err, sandboxes.ErrOwnershipUnknown) || errors.Is(err, sandboxes.ErrUnsafeResidue) {
-				return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, err)
+				return nil, WriteErrorNotAppliedForCode(connect.CodeFailedPrecondition, ResourceSandbox, err)
 			}
 			return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
 		}
@@ -524,28 +524,32 @@ func (h *SandboxHandler) RemoveSandbox(ctx context.Context, req *connect.Request
 	}
 	session, err := h.store.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return nil, NewOperationError(connect.CodeNotFound, apierror.ReasonSandboxNotFound, apierror.EffectNotApplied, err)
+		return nil, WriteErrorNotAppliedForCode(connect.CodeNotFound, ResourceSandbox, err)
 	}
 	if h.reconciler != nil {
 		reconciled, recErr := h.reconciler.ReconcileRuntimeState(ctx, session)
 		if recErr != nil {
 			slog.Warn("failed to reconcile sandbox runtime state before remove", "sandbox_id", sandboxID, "error", recErr)
-			return nil, ConnectErrorForDomainWrite(apierror.NotApplied(recErr), ResourceSandbox)
+			// Reconcile may have partially mutated runtime state, so this is not
+			// proof that nothing happened: UNKNOWN, not NOT_APPLIED.
+			return nil, ConnectErrorForDomainWrite(recErr, ResourceSandbox)
 		}
 		session = reconciled
 	}
 	stopped := false
 	if session.Summary.VMStatus == domain.VMStatusRunning {
 		if !req.Msg.GetForce() {
-			return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, fmt.Errorf("sandbox %s is running", sandboxID))
+			return nil, WriteErrorNotAppliedForCode(connect.CodeFailedPrecondition, ResourceSandbox, fmt.Errorf("sandbox %s is running", sandboxID))
 		}
 		if _, err := h.delegate.StopSandbox(ctx, sandboxID); err != nil {
-			return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceSandbox)
+			// A failed stop may still have transitioned the sandbox's runtime
+			// state, so this is not proof that nothing happened: UNKNOWN.
+			return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
 		}
 		stopped = true
 	}
 	if h.remover == nil {
-		return nil, NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectNotApplied, fmt.Errorf("sandbox runtime remover is required"))
+		return nil, WriteErrorNotAppliedForCode(connect.CodeInternal, ResourceSandbox, fmt.Errorf("sandbox runtime remover is required"))
 	}
 	if err := h.remover.RemoveSandboxVM(ctx, session); err != nil {
 		return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
