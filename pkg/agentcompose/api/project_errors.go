@@ -25,6 +25,13 @@ func ConnectErrorForProject(err error) error {
 	if detail, ok := errdetail.From(err); ok {
 		return preserveOrUpgradeDetail(err, detail, effect)
 	}
+	// Handlers and adapters often return an already mapped *connect.Error
+	// without a detail. Preserve its code instead of reclassifying the wrapped
+	// cause as Internal, mirroring the read-side mapper.
+	var connectErr *connect.Error
+	if errors.As(err, &connectErr) {
+		return NewOperationError(connectErr.Code(), reasonForConnectCode(connectErr.Code(), ResourceProject), effect, connectErr)
+	}
 	code, reason := classifyProjectError(err)
 	return NewOperationError(code, reason, effect, err)
 }

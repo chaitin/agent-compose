@@ -187,13 +187,16 @@ func networkPolicyConnectError(err error) error {
 }
 
 // networkPolicyApplyError classifies a report derivation failure on the apply
-// path. The effect follows the apply result: NOT_APPLIED for a dry-run or a
-// pre-write rejection, UNKNOWN once the project state may be durable.
+// path. The cause is still the declaration or its layering under the daemon
+// policy, both of which the caller can fix, so the code stays InvalidArgument
+// like the read path; only the effect follows the apply result: NOT_APPLIED
+// for a dry-run or a pre-write rejection, UNKNOWN once the project state may
+// be durable.
 func networkPolicyApplyError(err error, effect apierror.Effect) error {
 	if effect == apierror.EffectUnspecified {
 		effect = apierror.EffectUnknown
 	}
-	return api.NewOperationError(connect.CodeInternal, apierror.ReasonInternal, effect, err)
+	return api.NewOperationError(connect.CodeInvalidArgument, apierror.ReasonNetworkPolicyRejected, effect, err)
 }
 
 // networkPolicyReports accounts for the declared network policies of a spec the

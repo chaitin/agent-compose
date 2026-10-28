@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
@@ -158,6 +159,12 @@ func TestControllerRemoveProjectKeepsProjectActiveWhenSandboxStopFails(t *testin
 	}
 	if len(volumeManager.removedProjects) != 0 {
 		t.Fatalf("partial down removed volume links: %#v", volumeManager.removedProjects)
+	}
+	if result.Effect != apierror.EffectUnknown {
+		t.Fatalf("partial down effect = %v, want unknown", result.Effect)
+	}
+	if result.Reason != apierror.ReasonSandboxStopFailed {
+		t.Fatalf("partial down reason = %d, want sandbox_stop_failed", result.Reason)
 	}
 	failureReported := false
 	for _, change := range result.Changes {

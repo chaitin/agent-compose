@@ -617,7 +617,11 @@ func (c *Controller) RemoveProject(ctx context.Context, req RemoveRequest) (Remo
 			Schedulers: schedulers,
 			Changes:    changes,
 			Effect:     apierror.EffectUnknown,
-			Reason:     apierror.ReasonSandboxStopFailed,
+			// DownChangesHaveFailures currently tolerates only a sandbox stop
+			// failure (scheduler disable failures return a hard error above),
+			// so ReasonSandboxStopFailed is exact. Revisit this reason if another
+			// cleanup class is ever added to the tolerated branch.
+			Reason: apierror.ReasonSandboxStopFailed,
 		}, nil
 	}
 	if project.RemovedAt.IsZero() {

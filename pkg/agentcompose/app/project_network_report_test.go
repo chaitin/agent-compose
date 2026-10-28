@@ -7,9 +7,11 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/egress"
+	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 type staticMediation struct {
@@ -244,5 +246,37 @@ func TestNetworkPolicyConnectErrorClassifiesTheDeclaration(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "outside the daemon-wide policy") {
 		t.Fatalf("error = %v, want the declaration failure preserved", err)
+	}
+}
+
+// TestNetworkPolicyApplyErrorClassifiesTheDeclaration pins that the apply path
+// keeps the declaration code (InvalidArgument) like the read path and only
+// varies the effect with the apply result.
+func TestNetworkPolicyApplyErrorClassifiesTheDeclaration(t *testing.T) {
+	cause := errors.New(`agent "worker": allowance api.example.com:443 is outside the daemon-wide policy`)
+	tests := []struct {
+		name   string
+		effect apierror.Effect
+	}{
+		{name: "dry run not applied", effect: apierror.EffectNotApplied},
+		{name: "applied unknown", effect: apierror.EffectUnknown},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := networkPolicyApplyError(cause, tc.effect)
+			if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+				t.Fatalf("connect code = %v, want %v", code, connect.CodeInvalidArgument)
+			}
+			detail, ok := errdetail.From(err)
+			if !ok {
+				t.Fatal("apply error carries no detail")
+			}
+			if apierror.Reason(detail.Reason) != apierror.ReasonNetworkPolicyRejected {
+				t.Fatalf("reason = %d, want network_policy_rejected", detail.Reason)
+			}
+			if apierror.Effect(detail.Effect) != tc.effect {
+				t.Fatalf("effect = %d, want %d", detail.Effect, tc.effect)
+			}
+		})
 	}
 }

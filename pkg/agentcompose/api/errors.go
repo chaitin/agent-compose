@@ -88,9 +88,11 @@ func WriteErrorForCode(code connect.Code, kind ResourceKind, cause error) error 
 // while the inner reason (which may be more precise) is preserved. A
 // NOT_APPLIED marker on the outer error wins over an inner boundary's
 // UNKNOWN, because the marker is the only way to claim NOT_APPLIED and must
-// not be silently downgraded.
+// not be silently downgraded. Conversely, an inner NOT_APPLIED is never kept
+// on trust: without the marker it is upgraded to the outer effect (UNKNOWN),
+// since only code that provably wrote nothing may claim NOT_APPLIED.
 func preserveOrUpgradeDetail(err error, detail errdetail.Detail, effect apierror.Effect) error {
-	if EffectFromProto(detail.Effect) != apierror.EffectUnspecified && effect != apierror.EffectNotApplied {
+	if EffectFromProto(detail.Effect) == apierror.EffectUnknown && effect == apierror.EffectUnknown {
 		return err
 	}
 	reason := ReasonFromProto(detail.Reason)

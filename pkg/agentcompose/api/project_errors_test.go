@@ -187,3 +187,48 @@ func TestConnectErrorForDomainKinds(t *testing.T) {
 		t.Fatalf("pre-mapped detail = %#v, %v", detail, ok)
 	}
 }
+
+func TestConnectErrorForProjectPreservesPremappedCode(t *testing.T) {
+	// A controller chain may return an already mapped *connect.Error without a
+	// detail; the write mapper must keep its code instead of reclassifying the
+	// wrapped cause as Internal.
+	premapped := connect.NewError(connect.CodeFailedPrecondition, errors.New("conflict"))
+	mapped := ConnectErrorForProject(premapped)
+	if got := connect.CodeOf(mapped); got != connect.CodeFailedPrecondition {
+		t.Fatalf("code = %s, want failed_precondition", got)
+	}
+	detail, ok := errdetail.From(mapped)
+	if !ok {
+		t.Fatal("mapped error carries no detail")
+	}
+	if ReasonFromProto(detail.Reason) != apierror.ReasonPreconditionFailed {
+		t.Fatalf("reason = %d, want precondition_failed", ReasonFromProto(detail.Reason))
+	}
+	if detail.Effect != EffectToProto(apierror.EffectUnknown) {
+		t.Fatalf("effect = %s, want unknown (no marker)", detail.Effect)
+	}
+}
+
+func TestConnectErrorForProjectDoesNotTrustUnmarkedNotApplied(t *testing.T) {
+	// An inner boundary attached NOT_APPLIED without the marker; the write
+	// mapper must upgrade it to UNKNOWN because the marker is the only way to
+	// claim NOT_APPLIED.
+	inner := NewOperationError(connect.CodeNotFound, apierror.ReasonProjectNotFound, apierror.EffectNotApplied, errors.New("boom"))
+	if apierror.IsNotApplied(inner) {
+		t.Fatal("test setup: inner error must carry no marker")
+	}
+	mapped := ConnectErrorForProject(inner)
+	detail, ok := errdetail.From(mapped)
+	if !ok {
+		t.Fatal("mapped error carries no detail")
+	}
+	if detail.Effect != EffectToProto(apierror.EffectUnknown) {
+		t.Fatalf("effect = %s, want unknown (marker absent)", detail.Effect)
+	}
+	if ReasonFromProto(detail.Reason) != apierror.ReasonProjectNotFound {
+		t.Fatalf("reason = %d, want project_not_found", ReasonFromProto(detail.Reason))
+	}
+	if connect.CodeOf(mapped) != connect.CodeNotFound {
+		t.Fatalf("code = %s, want not_found", connect.CodeOf(mapped))
+	}
+}

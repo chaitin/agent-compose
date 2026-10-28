@@ -7,9 +7,11 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
+	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 type projectAgentModelResolverStub struct {
@@ -53,6 +55,16 @@ func TestEnrichProjectAgentModelsReturnsInternalResolverError(t *testing.T) {
 	err := handler.enrichProjectAgentModels(context.Background(), domain.ProjectRecord{ID: "project"}, nil, &agentcomposev2.Project{})
 	if connect.CodeOf(err) != connect.CodeInternal || !errors.Is(err, wantErr) {
 		t.Fatalf("error = %v, want internal wrapping %v", err, wantErr)
+	}
+	detail, ok := errdetail.From(err)
+	if !ok {
+		t.Fatal("enrichment error carries no detail")
+	}
+	if ReasonFromProto(detail.Reason) != apierror.ReasonInternal {
+		t.Fatalf("reason = %d, want internal", ReasonFromProto(detail.Reason))
+	}
+	if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
+		t.Fatalf("effect = %v, want unspecified (read)", EffectFromProto(detail.Effect))
 	}
 }
 

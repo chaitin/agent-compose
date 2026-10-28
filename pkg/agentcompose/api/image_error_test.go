@@ -60,6 +60,24 @@ func TestConnectErrorForImageBackendWriteContextCancellation(t *testing.T) {
 	}
 }
 
+func TestConnectErrorForImageBackendWritePullFailureIsUnknown(t *testing.T) {
+	pullFailed := images.OpError{Op: "pull image", ImageRef: "guest:latest", Err: imagecache.NewError(imagecache.ErrorKindUnavailable, "pull", "guest:latest", errors.New("registry down"))}
+	mapped := ConnectErrorForImageBackendWrite("pull image", "guest:latest", apierror.ReasonImagePullFailed, pullFailed)
+	if got := connect.CodeOf(mapped); got != connect.CodeUnavailable {
+		t.Fatalf("code = %s, want unavailable", got)
+	}
+	detail, ok := errdetail.From(mapped)
+	if !ok {
+		t.Fatal("mapped error carries no detail")
+	}
+	if ReasonFromProto(detail.Reason) != apierror.ReasonImagePullFailed {
+		t.Fatalf("reason = %d, want image_pull_failed", ReasonFromProto(detail.Reason))
+	}
+	if detail.Effect != EffectToProto(apierror.EffectUnknown) {
+		t.Fatalf("effect = %s, want unknown (may have partially pulled)", detail.Effect)
+	}
+}
+
 func TestImageHandlersReportReasonForMissingRef(t *testing.T) {
 	handler := NewImageHandler(fakeImageSelector{})
 	tests := []struct {
