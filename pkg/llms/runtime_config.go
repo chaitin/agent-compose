@@ -123,7 +123,8 @@ network_access = true
 
 [shell_environment_policy]
 inherit = "all"
-ignore_default_excludes = false
+# Sandbox credentials such as CAP_TOKEN must also reach agent shell commands.
+ignore_default_excludes = true
 
 [history]
 persistence = "save-all"

@@ -38,6 +38,42 @@ func TestWriteCodexRuntimeConfigRendersRetryPolicy(t *testing.T) {
 	}
 }
 
+func TestCodexShellEnvironmentInheritsSandboxCredentials(t *testing.T) {
+	sandbox := &domain.Sandbox{
+		Summary:  domain.SandboxSummary{ID: "sandbox-1", WorkspacePath: filepath.Join(t.TempDir(), "workspace")},
+		EnvItems: []domain.SandboxEnvVar{{Name: "CAP_TOKEN", Value: "sandbox-capability-token", Secret: true}},
+	}
+	if err := WriteCodexRuntimeConfig(sandbox, CodexRuntimeConfig{
+		Model: "gpt-test", BaseURL: "http://runtime/openai/v1", WireAPI: APIProtocolResponses,
+		Policy: CodexRuntimePolicyFromConfig(nil),
+	}); err != nil {
+		t.Fatalf("write Codex runtime config: %v", err)
+	}
+	for name, path := range map[string]string{
+		"runtime": filepath.Join(execution.HostSandboxHome(sandbox), ".codex", "config.toml"),
+		"image":   filepath.Join("..", "..", "assets", ".codex", "config.toml"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read Codex config: %v", err)
+			}
+			config := string(data)
+			_, policy, ok := strings.Cut(config, "[shell_environment_policy]\n")
+			if !ok {
+				t.Fatal("Codex config has no shell environment policy")
+			}
+			policy, _, _ = strings.Cut(policy, "\n[")
+			if !strings.Contains(policy, "inherit = \"all\"") || !strings.Contains(policy, "ignore_default_excludes = true") {
+				t.Fatal("Codex shell policy must preserve sandbox credentials, including CAP_TOKEN")
+			}
+			if strings.Contains(config, sandbox.EnvItems[0].Value) {
+				t.Fatal("Codex config must inherit credentials without writing their values to disk")
+			}
+		})
+	}
+}
+
 func TestCodexRuntimePolicyFromConfigUsesDefaultsAndBoundsValues(t *testing.T) {
 	defaults := CodexRuntimePolicyFromConfig(nil)
 	if defaults.RequestMaxRetries != 1 || defaults.StreamMaxRetries != 1 || defaults.StreamIdleTimeout != time.Minute {

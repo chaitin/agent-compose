@@ -176,6 +176,21 @@ A sandbox created with `capset_ids: [dev]` has:
 - A **`capset=dev`** tag recording the authorization.
 - A capability guide rendered into the MPI catalog at `runtime/mpi/catalog.md` (guest path `/data/runtime/mpi/catalog.md`), listing each gRPC method with the `x-octobus-capset` / `x-octobus-instance` metadata to send. The agent runtime reads this catalog into the agent's system context automatically, so the agent knows its capabilities at startup without reading any file itself.
 
+Agent shell commands inherit `CAP_GRPC_TARGET` and `CAP_TOKEN`. The managed Codex
+configuration sets `shell_environment_policy.inherit = "all"` and
+`shell_environment_policy.ignore_default_excludes = true` so names containing
+`TOKEN`, `KEY`, or `SECRET` remain available to shell tools. Claude, OpenCode, Pi,
+and DSH receive the sandbox environment through their SDK or subprocess launch.
+Inside the agent's Bash tool, verify injection without printing the token:
+
+```bash
+test -n "$CAP_GRPC_TARGET" && test -n "$CAP_TOKEN" && echo 'capability environment ready'
+```
+
+For an existing Codex process, update the `[shell_environment_policy]` section in
+its `$HOME/.codex/config.toml` and start a new agent process. Update the daemon as
+well, because it regenerates managed Codex configuration when preparing a run.
+
 Injection is **best-effort by design**: if OctoBus is temporarily unreachable when the sandbox is created, the sandbox still starts; the failure is recorded as a sandbox event, and capability calls simply error at runtime until OctoBus is back.
 
 ## Step 6 — Call a capability
