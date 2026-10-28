@@ -176,6 +176,21 @@ agent-compose inspect <sandbox-id> --json
 - 一个 **`capset=dev`** 标签，记录授权关系。
 - 一份渲染好的能力指南，写入 MPI catalog 的 `runtime/mpi/catalog.md`（guest 内路径 `/data/runtime/mpi/catalog.md`），列出每个 gRPC 方法以及调用时要带的 `x-octobus-capset` / `x-octobus-instance` 元数据。Agent 运行时会自动把这份 catalog 读进系统上下文，所以 agent 一启动就知道自己有哪些能力，不需要自己去读文件。
 
+Agent 的 shell 命令会继承 `CAP_GRPC_TARGET` 和 `CAP_TOKEN`。托管的 Codex
+配置设置 `shell_environment_policy.inherit = "all"` 和
+`shell_environment_policy.ignore_default_excludes = true`，让名称包含 `TOKEN`、
+`KEY` 或 `SECRET` 的变量也能传给 shell 工具。Claude、OpenCode、Pi 和 DSH
+通过 SDK 或子进程启动参数接收沙箱环境。在 agent 的 Bash 工具中执行以下命令，
+可以验证注入而不输出 token：
+
+```bash
+test -n "$CAP_GRPC_TARGET" && test -n "$CAP_TOKEN" && echo 'capability environment ready'
+```
+
+对于已经启动的 Codex 进程，修改其 `$HOME/.codex/config.toml` 中的
+`[shell_environment_policy]` 段后，需重新启动 agent 进程。同时更新 daemon，
+因为它会在准备运行时重新生成托管的 Codex 配置。
+
 注入在设计上**尽力而为（best-effort）**：如果创建沙箱时 OctoBus 暂时不可达，沙箱仍会正常启动；失败会记录为沙箱事件，能力调用在 OctoBus 恢复前会在运行时报错。
 
 ## 第 6 步 — 调用一个能力
