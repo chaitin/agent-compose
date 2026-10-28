@@ -348,11 +348,13 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 		ProjectName: normalized.Spec.Name,
 		Agents:      agentRecords,
 	}); err != nil {
-		// Image ensure happens before the first write, but a cancellation or
-		// timeout is never proof that nothing happened: a pull may have been
-		// interrupted mid-transfer. Those stay UNKNOWN instead of NOT_APPLIED.
+		// Image ensure happens before the first write, but only a not-found or
+		// invalid reference proves nothing was pulled: a pull may have been
+		// interrupted mid-transfer (leaving partial layers), and an earlier
+		// agent may already have pulled successfully. Those stay UNKNOWN,
+		// matching the image service's write mapper.
 		applyErr := fmt.Errorf("%w: apply project %s: %w", ErrUnavailable, normalized.Spec.Name, err)
-		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, images.ErrImageNotFound) || errors.Is(err, images.ErrInvalidReference) {
 			applyErr = apierror.NotApplied(applyErr)
 		}
 		return ApplyResult{}, applyErr

@@ -9,6 +9,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
+	"github.com/chaitin/agent-compose/pkg/imagecache"
 	"github.com/chaitin/agent-compose/pkg/images"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
@@ -176,5 +177,189 @@ agents:
 	}
 	if apierror.IsNotApplied(err) {
 		t.Fatal("image ensure cancellation was marked not-applied, want unknown")
+	}
+}
+
+// imageNotFoundError returns a backend error the images package classifies as
+// not-found, so EnsureDriverImage proceeds from inspect to pull.
+func imageNotFoundError(op, ref string) error {
+	return images.OpError{
+		Op:       op,
+		ImageRef: ref,
+		Err:      imagecache.NewError(imagecache.ErrorKindNotFound, op, ref, errors.New("missing")),
+	}
+}
+
+// imageInvalidReferenceError returns a backend error the images package
+// classifies as an invalid reference.
+func imageInvalidReferenceError(op, ref string) error {
+	return images.OpError{
+		Op:       op,
+		ImageRef: ref,
+		Err:      imagecache.NewError(imagecache.ErrorKindInvalidReference, op, ref, errors.New("invalid reference")),
+	}
+}
+
+// ensureFailureImagesBackend returns canned inspect/pull errors for a single
+// agent, so the effect of each image ensure failure category can be tested in
+// isolation.
+type ensureFailureImagesBackend struct {
+	inspectErr error
+	pullErr    error
+}
+
+func (b ensureFailureImagesBackend) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {
+	return images.ListResult{}, nil
+}
+
+func (b ensureFailureImagesBackend) InspectImage(context.Context, images.InspectRequest) (images.InspectResult, error) {
+	return images.InspectResult{}, b.inspectErr
+}
+
+func (b ensureFailureImagesBackend) PullImage(context.Context, images.PullRequest) (images.PullResult, error) {
+	return images.PullResult{}, b.pullErr
+}
+
+func (b ensureFailureImagesBackend) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
+	return images.RemoveResult{}, nil
+}
+
+func TestImageEnsureEffectBoundary(t *testing.T) {
+	const singleAgentYAML = `
+name: image-effect-boundary
+agents:
+  worker:
+    provider: codex
+    image: guest:latest
+    driver:
+      docker: {}
+`
+	tests := []struct {
+		name     string
+		backend  images.Backend
+		wantMark bool
+	}{
+		{
+			name: "not found",
+			backend: ensureFailureImagesBackend{
+				inspectErr: imageNotFoundError("inspect image", "guest:latest"),
+				pullErr:    imageNotFoundError("pull image", "guest:latest"),
+			},
+			wantMark: true,
+		},
+		{
+			name: "invalid reference",
+			backend: ensureFailureImagesBackend{
+				inspectErr: imageInvalidReferenceError("inspect image", "guest:latest"),
+			},
+			wantMark: true,
+		},
+		{
+			name: "pull failed",
+			backend: ensureFailureImagesBackend{
+				inspectErr: imageNotFoundError("inspect image", "guest:latest"),
+				pullErr:    errors.New("registry unavailable"),
+			},
+			wantMark: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			raw, err := compose.Parse([]byte(singleAgentYAML))
+			if err != nil {
+				t.Fatalf("Parse returned error: %v", err)
+			}
+			spec, err := compose.Normalize(raw, compose.NormalizeOptions{ProjectDir: t.TempDir()})
+			if err != nil {
+				t.Fatalf("Normalize returned error: %v", err)
+			}
+			hash, err := spec.Hash()
+			if err != nil {
+				t.Fatalf("Hash returned error: %v", err)
+			}
+			controller := NewController(ControllerDependencies{
+				Config:  &appconfig.Config{RuntimeDriver: driverpkg.RuntimeDriverDocker},
+				Store:   &pr551Store{},
+				Images:  tc.backend,
+				Volumes: pr551NoopVolumeManager{},
+			})
+			_, err = controller.ApplyProject(ctx, ApplyRequest{Normalized: NormalizedProject{Spec: spec, SpecHash: hash, SourcePath: "/projects/image-effect-boundary"}})
+			if err == nil {
+				t.Fatal("ApplyProject returned nil error, want image ensure failure")
+			}
+			if got := apierror.IsNotApplied(err); got != tc.wantMark {
+				t.Fatalf("ApplyProject error marked not-applied = %v, want %v (err=%v)", got, tc.wantMark, err)
+			}
+		})
+	}
+}
+
+// partialPullImagesBackend succeeds the pull for one agent and fails the pull
+// for every other agent, modelling a multi-agent apply where the first pull
+// mutates the image cache before a later pull fails.
+type partialPullImagesBackend struct{}
+
+func (partialPullImagesBackend) ListImages(context.Context, images.ListRequest) (images.ListResult, error) {
+	return images.ListResult{}, nil
+}
+
+func (partialPullImagesBackend) InspectImage(_ context.Context, req images.InspectRequest) (images.InspectResult, error) {
+	return images.InspectResult{}, imageNotFoundError("inspect image", req.ImageRef)
+}
+
+func (partialPullImagesBackend) PullImage(_ context.Context, req images.PullRequest) (images.PullResult, error) {
+	if req.ImageRef == "guest:first" {
+		return images.PullResult{}, nil
+	}
+	return images.PullResult{}, errors.New("registry unavailable")
+}
+
+func (partialPullImagesBackend) RemoveImage(context.Context, images.RemoveRequest) (images.RemoveResult, error) {
+	return images.RemoveResult{}, nil
+}
+
+func TestImageEnsurePartialPullAcrossAgentsIsUnknown(t *testing.T) {
+	ctx := context.Background()
+	raw, err := compose.Parse([]byte(`
+name: partial-pull
+agents:
+  first:
+    provider: codex
+    image: guest:first
+    driver:
+      docker: {}
+  second:
+    provider: codex
+    image: guest:second
+    driver:
+      docker: {}
+`))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	spec, err := compose.Normalize(raw, compose.NormalizeOptions{ProjectDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	hash, err := spec.Hash()
+	if err != nil {
+		t.Fatalf("Hash returned error: %v", err)
+	}
+	controller := NewController(ControllerDependencies{
+		Config:  &appconfig.Config{RuntimeDriver: driverpkg.RuntimeDriverDocker},
+		Store:   &pr551Store{},
+		Images:  partialPullImagesBackend{},
+		Volumes: pr551NoopVolumeManager{},
+	})
+	_, err = controller.ApplyProject(ctx, ApplyRequest{Normalized: NormalizedProject{Spec: spec, SpecHash: hash, SourcePath: "/projects/partial-pull"}})
+	if err == nil {
+		t.Fatal("ApplyProject returned nil error, want pull failure on the second agent")
+	}
+	if !errors.Is(err, images.ErrPullFailed) {
+		t.Fatalf("error does not wrap images.ErrPullFailed: %v", err)
+	}
+	if apierror.IsNotApplied(err) {
+		t.Fatal("partial pull across agents was marked not-applied, want unknown")
 	}
 }
