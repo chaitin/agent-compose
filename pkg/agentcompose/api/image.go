@@ -28,7 +28,7 @@ func NewImageHandler(backends ImageBackendSelector) *ImageHandler {
 func (h *ImageHandler) ListImages(ctx context.Context, req *connect.Request[agentcomposev2.ListImagesRequest]) (*connect.Response[agentcomposev2.ListImagesResponse], error) {
 	backend, err := h.backends.ImageBackendForStore(req.Msg.GetStore())
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainKind(err, ResourceImage)
 	}
 	result, err := backend.ListImages(ctx, images.ListRequest{
 		Query: strings.TrimSpace(req.Msg.GetQuery()),
@@ -51,11 +51,11 @@ func (h *ImageHandler) ListImages(ctx context.Context, req *connect.Request[agen
 func (h *ImageHandler) PullImage(ctx context.Context, req *connect.Request[agentcomposev2.PullImageRequest]) (*connect.Response[agentcomposev2.PullImageResponse], error) {
 	imageRef := strings.TrimSpace(req.Msg.GetImageRef())
 	if imageRef == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("image_ref is required"))
+		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectNotApplied, fmt.Errorf("image_ref is required"))
 	}
 	backend, err := h.backends.ImageBackendForStore(req.Msg.GetStore())
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceImage)
 	}
 	inspect, err := backend.InspectImage(ctx, images.InspectRequest{ImageRef: imageRef})
 	if err == nil {
@@ -97,11 +97,11 @@ func firstNonEmptyImageRef(values ...string) string {
 func (h *ImageHandler) InspectImage(ctx context.Context, req *connect.Request[agentcomposev2.InspectImageRequest]) (*connect.Response[agentcomposev2.InspectImageResponse], error) {
 	imageRef := strings.TrimSpace(req.Msg.GetImageRef())
 	if imageRef == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("image_ref is required"))
+		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectUnspecified, fmt.Errorf("image_ref is required"))
 	}
 	backend, err := h.backends.ImageBackendForStore(req.Msg.GetStore())
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainKind(err, ResourceImage)
 	}
 	result, err := backend.InspectImage(ctx, images.InspectRequest{ImageRef: imageRef})
 	if err != nil {
@@ -116,11 +116,11 @@ func (h *ImageHandler) InspectImage(ctx context.Context, req *connect.Request[ag
 func (h *ImageHandler) RemoveImage(ctx context.Context, req *connect.Request[agentcomposev2.RemoveImageRequest]) (*connect.Response[agentcomposev2.RemoveImageResponse], error) {
 	imageRef := strings.TrimSpace(req.Msg.GetImageRef())
 	if imageRef == "" {
-		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("image_ref is required"))
+		return nil, NewOperationError(connect.CodeInvalidArgument, apierror.ReasonInvalidRequest, apierror.EffectNotApplied, fmt.Errorf("image_ref is required"))
 	}
 	backend, err := h.backends.ImageBackendForStore(req.Msg.GetStore())
 	if err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceImage)
 	}
 	result, err := backend.RemoveImage(ctx, images.RemoveRequest{
 		ImageRef:      imageRef,

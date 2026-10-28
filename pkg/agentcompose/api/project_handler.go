@@ -250,16 +250,16 @@ func (h *ProjectHandler) ListSchedulerEvents(ctx context.Context, req *connect.R
 	}
 	store, ok := h.store.(ProjectSchedulerEventStore)
 	if !ok {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("scheduler runtime store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, fmt.Errorf("scheduler runtime store is required"))
 	}
 	filter := schedulers.SchedulerEventPageFilter{SchedulerIDs: []string{scheduler.ID}, Offset: offset, Limit: limit}
 	events, err := store.ListSchedulerEventsPage(ctx, filter)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
 	}
 	total, err := store.CountSchedulerEventsPage(ctx, filter)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
 	}
 	response := &agentcomposev2.ListSchedulerEventsResponse{Total: uint32(total)}
 	for _, event := range events {

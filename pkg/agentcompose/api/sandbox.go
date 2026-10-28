@@ -173,7 +173,7 @@ func (h *SandboxHandler) ListSandboxes(ctx context.Context, req *connect.Request
 	}
 	statusValues, err := sandboxStatusesFromProto(req.Msg.GetStatus())
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceSandbox, err)
 	}
 	statuses, err := sandboxes.NormalizeVMStatuses(statusValues)
 	if err != nil {
@@ -181,7 +181,7 @@ func (h *SandboxHandler) ListSandboxes(ctx context.Context, req *connect.Request
 	}
 	store, ok := h.store.(SandboxListStore)
 	if !ok {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("sandbox list store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceSandbox, fmt.Errorf("sandbox list store is required"))
 	}
 	result, err := store.ListSandboxes(ctx, domain.SandboxListOptions{
 		ProjectID:  strings.TrimSpace(req.Msg.GetProjectId()),
@@ -210,7 +210,7 @@ func (h *SandboxHandler) ListSandboxHistory(ctx context.Context, req *connect.Re
 	}
 	store, ok := h.store.(SandboxHistoryStore)
 	if !ok {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("sandbox history store is required"))
+		return nil, ErrorForCode(connect.CodeInternal, ResourceSandbox, fmt.Errorf("sandbox history store is required"))
 	}
 	cells, err := store.ListCells(ctx, sandboxID)
 	if err != nil {

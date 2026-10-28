@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,9 +15,11 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/chaitin/agent-compose/internal/projects"
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
+	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 func TestProjectHandlerRunSchedulerSupportsMainAndTerminalStatuses(t *testing.T) {
@@ -259,6 +262,28 @@ func TestListSchedulerEventsResolvesCommandCompletedFromArtifact(t *testing.T) {
 	}
 }
 
+func TestListSchedulerEventsReportsInternalReason(t *testing.T) {
+	store, _, handler := newSchedulerRunHandlerFixture()
+	store.eventsErr = errors.New("scheduler event store down")
+	_, err := handler.ListSchedulerEvents(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulerEventsRequest{
+		Project:   &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: store.project.ID}},
+		AgentName: store.scheduler.AgentName,
+	}))
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("code = %s, want internal (err=%v)", connect.CodeOf(err), err)
+	}
+	detail, ok := errdetail.From(err)
+	if !ok {
+		t.Fatal("ListSchedulerEvents error carries no detail")
+	}
+	if ReasonFromProto(detail.Reason) != apierror.ReasonInternal {
+		t.Fatalf("reason = %d, want internal", ReasonFromProto(detail.Reason))
+	}
+	if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
+		t.Fatalf("effect = %v, want unspecified (read)", EffectFromProto(detail.Effect))
+	}
+}
+
 // TestNewProjectHandlerWithSandboxDirsInjectsResolver builds two separate
 // handlers from independent fixtures — one left plain, one with
 // WithSandboxDirs chained immediately after construction — rather than
@@ -455,6 +480,7 @@ type schedulerRunProjectStoreFake struct {
 	schedulers            []domain.ProjectSchedulerRecord
 	runs                  []domain.SchedulerRunSummary
 	events                []domain.SchedulerEvent
+	eventsErr             error
 	sandboxIDs            map[schedulers.SchedulerRunKey][]string
 	lastRunFilter         schedulers.SchedulerRunPageFilter
 	batchRunsBySandbox    map[string]domain.SchedulerRunSummary
@@ -463,6 +489,9 @@ type schedulerRunProjectStoreFake struct {
 }
 
 func (s *schedulerRunProjectStoreFake) ListSchedulerEventsPage(_ context.Context, filter schedulers.SchedulerEventPageFilter) ([]domain.SchedulerEvent, error) {
+	if s.eventsErr != nil {
+		return nil, s.eventsErr
+	}
 	items := make([]domain.SchedulerEvent, 0, len(s.events))
 	for _, event := range s.events {
 		if !slices.Contains(filter.SchedulerIDs, event.SchedulerID) || (filter.RequireTrigger && event.TriggerID == "") ||
