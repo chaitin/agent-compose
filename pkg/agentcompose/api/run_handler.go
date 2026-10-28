@@ -119,7 +119,7 @@ func (h *RunHandler) ListRunEvents(ctx context.Context, req *connect.Request[age
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
 			return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, err)
 		}
-		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceRun)
 	}
 	offset, limit, err := listPagination(req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
@@ -131,15 +131,15 @@ func (h *RunHandler) ListRunEvents(ctx context.Context, req *connect.Request[age
 	}
 	events, err := store.ListProjectRunEventsPage(ctx, runID, offset, limit)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceRun)
 	}
 	historyAvailable, err := store.HasProjectRunEvents(ctx, runID)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceRun)
 	}
 	total, err := store.CountProjectRunEvents(ctx, runID)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceRun)
 	}
 	response := &agentcomposev2.ListRunEventsResponse{HistoryAvailable: historyAvailable, Total: uint32(total)}
 	for _, event := range events {
@@ -208,7 +208,7 @@ func (h *RunHandler) GetRun(ctx context.Context, req *connect.Request[agentcompo
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, err)
 		}
-		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceRun)
 	}
 	if projectID := strings.TrimSpace(req.Msg.GetProjectId()); projectID != "" && run.ProjectID != projectID {
 		return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, fmt.Errorf("project run %s not found in project %s", runID, projectID))
@@ -256,7 +256,7 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, err)
 		}
-		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceRun)
 	}
 	items := make([]*agentcomposev2.RunSummary, 0, len(result.Runs))
 	for _, run := range result.Runs {
@@ -267,7 +267,7 @@ func (h *RunHandler) ListRuns(ctx context.Context, req *connect.Request[agentcom
 		if errors.Is(err, domain.ErrNotFound) {
 			return nil, ErrorForCode(connect.CodeNotFound, ResourceRun, err)
 		}
-		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceRun)
 	}
 	return connect.NewResponse(&agentcomposev2.ListRunsResponse{Runs: items, Total: uint32(total), EventScopeTruncated: eventScopeTruncated}), nil
 }
@@ -554,7 +554,7 @@ func (h *RunHandler) StopRun(ctx context.Context, req *connect.Request[agentcomp
 		// from their own turn state; command sessions retain cancellation.
 		stopped, err := h.stopper.StopActiveRun(ctx, runID, req.Msg.GetReason())
 		if err != nil {
-			return nil, WriteErrorForCode(connect.CodeInternal, ResourceRun, err)
+			return nil, ConnectErrorForDomainWrite(err, ResourceRun)
 		}
 		if stopped {
 			run, err := h.store.GetProjectRun(ctx, runID)
@@ -564,7 +564,7 @@ func (h *RunHandler) StopRun(ctx context.Context, req *connect.Request[agentcomp
 					// nothing about whether it did.
 					return nil, WriteErrorForCode(connect.CodeNotFound, ResourceRun, err)
 				}
-				return nil, WriteErrorForCode(connect.CodeInternal, ResourceRun, err)
+				return nil, ConnectErrorForDomainWrite(err, ResourceRun)
 			}
 			return connect.NewResponse(&agentcomposev2.StopRunResponse{
 				Run:           ProjectRunDetailToProto(run),
@@ -577,7 +577,7 @@ func (h *RunHandler) StopRun(ctx context.Context, req *connect.Request[agentcomp
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ConnectErrorForDomainWrite(apierror.NotApplied(connect.NewError(connect.CodeNotFound, err)), ResourceRun)
 		}
-		return nil, WriteErrorForCode(connect.CodeInternal, ResourceRun, err)
+		return nil, ConnectErrorForDomainWrite(err, ResourceRun)
 	}
 	if runs.StatusIsTerminal(current.Status) {
 		return connect.NewResponse(&agentcomposev2.StopRunResponse{

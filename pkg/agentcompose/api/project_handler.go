@@ -196,7 +196,7 @@ func (h *ProjectHandler) GetScheduler(ctx context.Context, req *connect.Request[
 	}
 	response, err := h.schedulerResponse(ctx, scheduler)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceScheduler)
 	}
 	return connect.NewResponse(response), nil
 }
@@ -423,21 +423,21 @@ func (h *ProjectHandler) GetProject(ctx context.Context, req *connect.Request[ag
 		if errors.Is(err, domain.ErrRequired) || errors.Is(err, domain.ErrAmbiguous) {
 			return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceProject, err)
 		}
-		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceProject)
 	}
 	agents, err := h.store.ListProjectAgents(ctx, project.ID)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceProject)
 	}
 	schedulers, err := h.store.ListProjectSchedulers(ctx, project.ID)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceProject)
 	}
 	var spec *agentcomposev2.ProjectSpec
 	if req.Msg.GetIncludeSpec() && project.CurrentRevision > 0 {
 		revision, err := h.store.GetProjectRevision(ctx, project.ID, project.CurrentRevision)
 		if err != nil {
-			return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
+			return nil, ConnectErrorForDomainKind(err, ResourceProject)
 		}
 		spec, err = runs.DecodeRevisionSpec(revision.SpecJSON)
 		if err != nil {
@@ -462,7 +462,7 @@ func (h *ProjectHandler) enrichProjectAgentRuns(ctx context.Context, project *ag
 	}
 	states, err := store.ListProjectAgentRunStates(ctx, project.GetSummary().GetProjectId())
 	if err != nil {
-		return ErrorForCode(connect.CodeInternal, ResourceProject, err)
+		return ConnectErrorForDomainKind(err, ResourceProject)
 	}
 	statesByAgent := make(map[string]domain.ProjectAgentRunState, len(states))
 	for _, state := range states {
@@ -501,7 +501,7 @@ func (h *ProjectHandler) ListProjects(ctx context.Context, req *connect.Request[
 		Limit:          limit,
 	})
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceProject, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceProject)
 	}
 	resp := &agentcomposev2.ListProjectsResponse{
 		Total: uint32(result.TotalCount),
