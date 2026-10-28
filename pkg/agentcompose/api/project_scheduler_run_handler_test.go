@@ -262,25 +262,39 @@ func TestListSchedulerEventsResolvesCommandCompletedFromArtifact(t *testing.T) {
 	}
 }
 
-func TestListSchedulerEventsReportsInternalReason(t *testing.T) {
-	store, _, handler := newSchedulerRunHandlerFixture()
-	store.eventsErr = errors.New("scheduler event store down")
-	_, err := handler.ListSchedulerEvents(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulerEventsRequest{
-		Project:   &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: store.project.ID}},
-		AgentName: store.scheduler.AgentName,
-	}))
-	if connect.CodeOf(err) != connect.CodeInternal {
-		t.Fatalf("code = %s, want internal (err=%v)", connect.CodeOf(err), err)
+func TestListSchedulerEventsClassifiesStoreErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		code   connect.Code
+		reason apierror.Reason
+	}{
+		{name: "generic store error", err: errors.New("store down"), code: connect.CodeInternal, reason: apierror.ReasonInternal},
+		{name: "canceled", err: context.Canceled, code: connect.CodeCanceled, reason: apierror.ReasonOperationCanceled},
+		{name: "deadline exceeded", err: context.DeadlineExceeded, code: connect.CodeDeadlineExceeded, reason: apierror.ReasonOperationTimeout},
 	}
-	detail, ok := errdetail.From(err)
-	if !ok {
-		t.Fatal("ListSchedulerEvents error carries no detail")
-	}
-	if ReasonFromProto(detail.Reason) != apierror.ReasonInternal {
-		t.Fatalf("reason = %d, want internal", ReasonFromProto(detail.Reason))
-	}
-	if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
-		t.Fatalf("effect = %v, want unspecified (read)", EffectFromProto(detail.Effect))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _, handler := newSchedulerRunHandlerFixture()
+			store.eventsErr = tc.err
+			_, err := handler.ListSchedulerEvents(context.Background(), connect.NewRequest(&agentcomposev2.ListSchedulerEventsRequest{
+				Project:   &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: store.project.ID}},
+				AgentName: store.scheduler.AgentName,
+			}))
+			if connect.CodeOf(err) != tc.code {
+				t.Fatalf("code = %s, want %s (err=%v)", connect.CodeOf(err), tc.code, err)
+			}
+			detail, ok := errdetail.From(err)
+			if !ok {
+				t.Fatal("ListSchedulerEvents error carries no detail")
+			}
+			if ReasonFromProto(detail.Reason) != tc.reason {
+				t.Fatalf("reason = %d, want %d", ReasonFromProto(detail.Reason), tc.reason)
+			}
+			if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
+				t.Fatalf("effect = %v, want unspecified (read)", EffectFromProto(detail.Effect))
+			}
+		})
 	}
 }
 

@@ -213,11 +213,11 @@ func (h *ProjectHandler) ListSchedulers(ctx context.Context, req *connect.Reques
 	}
 	schedulers, err := pageStore.ListProjectSchedulersPage(ctx, query, offset, limit)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceScheduler)
 	}
 	total, err := pageStore.CountProjectSchedulers(ctx, query)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceScheduler)
 	}
 	summaries := make([]*agentcomposev2.SchedulerSummary, 0, len(schedulers))
 	for _, scheduler := range schedulers {
@@ -255,11 +255,11 @@ func (h *ProjectHandler) ListSchedulerEvents(ctx context.Context, req *connect.R
 	filter := schedulers.SchedulerEventPageFilter{SchedulerIDs: []string{scheduler.ID}, Offset: offset, Limit: limit}
 	events, err := store.ListSchedulerEventsPage(ctx, filter)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceScheduler)
 	}
 	total, err := store.CountSchedulerEventsPage(ctx, filter)
 	if err != nil {
-		return nil, ErrorForCode(connect.CodeInternal, ResourceScheduler, err)
+		return nil, ConnectErrorForDomainKind(err, ResourceScheduler)
 	}
 	response := &agentcomposev2.ListSchedulerEventsResponse{Total: uint32(total)}
 	for _, event := range events {
