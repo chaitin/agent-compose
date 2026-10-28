@@ -17,6 +17,7 @@ const defaultTimeout = 5 * time.Second
 type Client struct {
 	addr       string
 	token      string
+	scope      Scope
 	httpClient *http.Client
 }
 
@@ -26,8 +27,12 @@ func NewClient(config Config) *Client {
 		timeout = defaultTimeout
 	}
 	return &Client{
-		addr:       strings.TrimRight(strings.TrimSpace(config.Addr), "/"),
-		token:      strings.TrimSpace(config.Token),
+		addr:  strings.TrimRight(strings.TrimSpace(config.Addr), "/"),
+		token: strings.TrimSpace(config.Token),
+		scope: Scope{
+			ProjectID: strings.TrimSpace(config.Scope.ProjectID),
+			Username:  strings.TrimSpace(config.Scope.Username),
+		},
 		httpClient: &http.Client{Timeout: timeout},
 	}
 }
@@ -93,13 +98,9 @@ func (c *Client) CatalogMarkdown(ctx context.Context, capsetID string) ([]byte, 
 		return nil, fmt.Errorf("%w: capset_id is required", ErrInvalidCatalog)
 	}
 	path := "/admin/v1/catalog/" + url.PathEscape(capsetID) + "?format=md&grpc=true"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.addr+path, nil)
+	req, err := c.newRequest(ctx, path, "text/markdown")
 	if err != nil {
 		return nil, err
-	}
-	req.Header.Set("Accept", "text/markdown")
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -116,14 +117,50 @@ func (c *Client) CatalogMarkdown(ctx context.Context, capsetID string) ([]byte, 
 	return body, nil
 }
 
-func (c *Client) getJSON(ctx context.Context, path string, target any) error {
+// newRequest builds a directory-read request with the configured credential
+// and, when set, the project and user context headers. A zero Scope adds no
+// headers at all, so existing deployments send exactly what they sent before.
+func (c *Client) newRequest(ctx context.Context, path, accept string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.addr+path, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", accept)
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	setScopeHeader(req.Header, ProjectScopeHeader, c.scope.ProjectID)
+	setScopeHeader(req.Header, ExtUsernameHeader, c.scope.Username)
+	return req, nil
+}
+
+// setScopeHeader sets a context header unless the value is missing or is not a
+// valid HTTP field value. Skipping an invalid value degrades to the gateway's
+// project-owner fallback instead of failing guide rendering.
+func setScopeHeader(header http.Header, name, value string) {
+	if value == "" || !validHeaderFieldValue(value) {
+		return
+	}
+	header.Set(name, value)
+}
+
+// validHeaderFieldValue reports whether value contains only bytes that are safe
+// to send in an HTTP field value: printable ASCII (0x20-0x7e) and obs-text
+// (0x80-0xff). Control bytes and DEL are rejected so setScopeHeader can skip
+// the value instead of letting net/http fail the whole request.
+func validHeaderFieldValue(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if b := value[i]; b < 0x20 || b == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Client) getJSON(ctx context.Context, path string, target any) error {
+	req, err := c.newRequest(ctx, path, "application/json")
+	if err != nil {
+		return err
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

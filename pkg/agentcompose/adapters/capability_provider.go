@@ -8,7 +8,7 @@ import (
 )
 
 type projectAwareCapabilityProvider struct {
-	capabilities.Provider
+	*capabilities.DynamicProvider
 	targets ProjectOctoBusServerResolver
 }
 
@@ -18,6 +18,13 @@ type ProjectOctoBusServerResolver interface {
 }
 
 func (p *projectAwareCapabilityProvider) CapabilityGuideForScope(ctx context.Context, scope capabilities.GuideScope, declaration string) ([]byte, error) {
+	parsed, err := capability.ParseCapsetDeclaration(declaration)
+	if err != nil {
+		return nil, err
+	}
+	if !parsed.Qualified() {
+		return p.DynamicProvider.CapabilityGuideForScope(ctx, scope, parsed.CapsetID)
+	}
 	target, err := p.targets.ResolveOctoBusServer(ctx, scope.ProjectID, scope.AgentID, declaration)
 	if err != nil {
 		return nil, err
@@ -31,5 +38,5 @@ func (p *projectAwareCapabilityProvider) CapabilityGuideForScope(ctx context.Con
 
 func NewCapabilityProvider(source capabilities.GatewaySource, targets ProjectOctoBusServerResolver, proxyTarget string) capabilities.Provider {
 	global := capabilities.NewDynamicProvider(source, proxyTarget)
-	return &projectAwareCapabilityProvider{Provider: global, targets: targets}
+	return &projectAwareCapabilityProvider{DynamicProvider: global, targets: targets}
 }

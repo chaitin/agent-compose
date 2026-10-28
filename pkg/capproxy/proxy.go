@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/chaitin/agent-compose/pkg/capability"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 
 	"google.golang.org/grpc"
@@ -30,8 +31,9 @@ const (
 	// engine project id) to the daemon-wide capability gateway, so the platform
 	// egress can attribute calls that arrive without a caller identity. capproxy
 	// owns it: it strips any guest-supplied value and only sets it on the
-	// gateway path, never for project-scoped octobus_servers entries.
-	projectScopeMetadata = "x-octobus-project-id"
+	// gateway path, never for project-scoped octobus_servers entries. The
+	// capability client uses the same header for its own directory reads.
+	projectScopeMetadata = capability.ProjectScopeHeader
 )
 
 type SandboxBinding struct {

@@ -17,6 +17,12 @@ import (
 	"github.com/google/uuid"
 )
 
+// trustedUsernameHeader is the trusted-ingress form of the user identity that
+// a capability guide request forwards downstream as x-octobus-ext-username.
+// It is best-effort: internal triggers have no caller identity and leave the
+// scope empty, so the upstream gateway falls back to the project owner.
+const trustedUsernameHeader = "x-mpi-username"
+
 // CapabilityGuideDeps groups the dependencies WriteCapabilityGuide and
 // recordCapabilityGuideWarning need to render a guide and report failures.
 // Exported so drivers outside this package (pkg/agentcompose/adapters) can
@@ -47,8 +53,10 @@ func WriteCapabilityGuide(ctx context.Context, deps CapabilityGuideDeps, sandbox
 	}
 	var b strings.Builder
 	rendered := false
+	scope := capabilities.GuideScopeFromSandbox(sandbox)
+	scope.Username = domain.TrustedHeaderValue(ctx, trustedUsernameHeader)
 	for _, id := range ids {
-		guide, err := capabilities.CapabilityGuideForScope(ctx, deps.Provider, capabilities.GuideScopeFromSandbox(sandbox), id)
+		guide, err := capabilities.CapabilityGuideForScope(ctx, deps.Provider, scope, id)
 		if err != nil {
 			slog.Warn("capability guide render skipped", "capset", id, "sandbox_id", sandbox.Summary.ID, "error", err)
 			recordCapabilityGuideWarning(ctx, deps, sandbox.Summary.ID, fmt.Sprintf("capability guide render skipped for capset %s", id))

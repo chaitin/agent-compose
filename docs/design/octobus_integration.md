@@ -283,6 +283,20 @@ and uses only the `grpc` section. **If OctoBus is
 unreachable or rendering fails, record an event and continue; sandbox/scheduler
 starts normally.**
 
+Guide requests carry the sandbox's project and user context when available, so
+an upstream gateway can pick that user's own credentials:
+
+```text
+x-octobus-project-id: <engine project id from the sandbox project tag>
+x-octobus-ext-username: <trusted-ingress x-mpi-username, optional>
+```
+
+Neither header is sent when the scope is empty, so direct OctoBus deployments and
+older gateways keep their existing behavior. Qualified declarations
+(`<server>/<capset>`) never carry these headers; they select a project-scoped
+`octobus_servers` entry instead. A gateway that receives only the project id
+falls back to the project owner.
+
 Coverage: every current guest runner receives the composed `systemContext`,
 which contains the MPI catalog. Codex and Claude use native system/developer
 context channels; OpenCode prepends it to the user prompt, Pi passes it through

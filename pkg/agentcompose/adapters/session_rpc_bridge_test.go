@@ -536,11 +536,9 @@ func TestSandboxRPCBridgeCapabilityGuideRoutesManagedScopeAndMergesBestEffort(t 
 	bridge.cap = scopedTestCapabilityProvider{
 		testCapabilityProvider: testCapabilityProvider{
 			target: "agent-compose:9100",
-			guide: func(_ context.Context, capsetID string) ([]byte, error) {
-				if capsetID != "legacy" {
-					t.Fatalf("global capset = %q, want legacy", capsetID)
-				}
-				return []byte("global guide"), nil
+			guide: func(context.Context, string) ([]byte, error) {
+				t.Fatalf("unqualified capset must route through the scoped provider")
+				return nil, nil
 			},
 		},
 		guideForScope: func(_ context.Context, scope capabilities.GuideScope, declaration string) ([]byte, error) {
@@ -570,7 +568,7 @@ func TestSandboxRPCBridgeCapabilityGuideRoutesManagedScopeAndMergesBestEffort(t 
 	if gotScope != (capabilities.GuideScope{ProjectID: "project-1", AgentID: "agent-1"}) {
 		t.Fatalf("guide scope = %#v", gotScope)
 	}
-	if content := string(guide); !strings.Contains(content, "global guide") || !strings.Contains(content, "project guide for internal/dev") {
+	if content := string(guide); !strings.Contains(content, "project guide for legacy") || !strings.Contains(content, "project guide for internal/dev") {
 		t.Fatalf("merged guide = %s", content)
 	}
 }
