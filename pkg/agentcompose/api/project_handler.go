@@ -390,7 +390,7 @@ func (h *ProjectHandler) schedulerResponse(ctx context.Context, scheduler domain
 	}
 	definition, err := schedulerStore.GetScheduler(ctx, scheduler.ID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, err
 	}
 	response.Scheduler.Enabled = definition.Summary.Enabled
 	response.Overridden = definition.Summary.Enabled != response.Spec.Enabled

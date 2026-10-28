@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -287,6 +288,50 @@ func TestListSchedulerEventsClassifiesStoreErrors(t *testing.T) {
 			detail, ok := errdetail.From(err)
 			if !ok {
 				t.Fatal("ListSchedulerEvents error carries no detail")
+			}
+			if ReasonFromProto(detail.Reason) != tc.reason {
+				t.Fatalf("reason = %d, want %d", ReasonFromProto(detail.Reason), tc.reason)
+			}
+			if EffectFromProto(detail.Effect) != apierror.EffectUnspecified {
+				t.Fatalf("effect = %v, want unspecified (read)", EffectFromProto(detail.Effect))
+			}
+		})
+	}
+}
+
+func TestGetSchedulerPreservesStoreErrorClassification(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		code   connect.Code
+		reason apierror.Reason
+	}{
+		{name: "generic store error", err: errors.New("store down"), code: connect.CodeInternal, reason: apierror.ReasonInternal},
+		{name: "canceled", err: context.Canceled, code: connect.CodeCanceled, reason: apierror.ReasonOperationCanceled},
+		{name: "deadline exceeded", err: context.DeadlineExceeded, code: connect.CodeDeadlineExceeded, reason: apierror.ReasonOperationTimeout},
+		{name: "not found", err: sql.ErrNoRows, code: connect.CodeNotFound, reason: apierror.ReasonSchedulerNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &apiProjectRunStore{
+				projects: []domain.ProjectRecord{{ID: "project-1", Name: "Project", SourcePath: "/repo/agent-compose.yml", CurrentRevision: 1}},
+				schedulers: []domain.ProjectSchedulerRecord{
+					{ProjectID: "project-1", SchedulerID: "scheduler-1", AgentName: "worker", ID: "scheduler-1", Revision: 1, Enabled: true, SpecJSON: `{"script":"run()"}`},
+				},
+				schedulerDefinitions: map[string]domain.Scheduler{"scheduler-1": {Summary: domain.SchedulerSummary{ID: "scheduler-1", Enabled: true}}},
+				getSchedulerErr:      tc.err,
+			}
+			handler := NewProjectHandler(nil, store, nil)
+			_, err := handler.GetScheduler(context.Background(), connect.NewRequest(&agentcomposev2.GetSchedulerRequest{
+				Project:   &agentcomposev2.ProjectRef{Selector: &agentcomposev2.ProjectRef_ProjectId{ProjectId: "project-1"}},
+				AgentName: "worker",
+			}))
+			if connect.CodeOf(err) != tc.code {
+				t.Fatalf("code = %s, want %s (err=%v)", connect.CodeOf(err), tc.code, err)
+			}
+			detail, ok := errdetail.From(err)
+			if !ok {
+				t.Fatal("GetScheduler error carries no detail")
 			}
 			if ReasonFromProto(detail.Reason) != tc.reason {
 				t.Fatalf("reason = %d, want %d", ReasonFromProto(detail.Reason), tc.reason)
