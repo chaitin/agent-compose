@@ -507,18 +507,15 @@ func (h *SandboxHandler) resolveSandboxTargets(ctx context.Context, sandboxes []
 func (h *SandboxHandler) RemoveSandbox(ctx context.Context, req *connect.Request[agentcomposev2.RemoveSandboxRequest]) (*connect.Response[agentcomposev2.RemoveSandboxResponse], error) {
 	sandboxID := strings.TrimSpace(req.Msg.GetSandboxId())
 	if err := validateSandboxID(sandboxID); err != nil {
-		return nil, err
+		return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceSandbox)
 	}
 	if h.removal != nil {
 		result, err := h.removal.Remove(ctx, sandboxID, req.Msg.GetForce())
 		if err != nil {
-			if errors.Is(err, sandboxes.ErrSandboxRunning) {
-				return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+			if errors.Is(err, sandboxes.ErrSandboxRunning) || errors.Is(err, sandboxes.ErrOwnershipUnknown) || errors.Is(err, sandboxes.ErrUnsafeResidue) {
+				return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, err)
 			}
-			if errors.Is(err, sandboxes.ErrOwnershipUnknown) || errors.Is(err, sandboxes.ErrUnsafeResidue) {
-				return nil, connect.NewError(connect.CodeFailedPrecondition, err)
-			}
-			return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
+			return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
 		}
 		if h.dashboard != nil {
 			h.dashboard.Notify("sandbox_removed")
@@ -527,34 +524,34 @@ func (h *SandboxHandler) RemoveSandbox(ctx context.Context, req *connect.Request
 	}
 	session, err := h.store.GetSandbox(ctx, sandboxID)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+		return nil, NewOperationError(connect.CodeNotFound, apierror.ReasonSandboxNotFound, apierror.EffectNotApplied, err)
 	}
 	if h.reconciler != nil {
 		reconciled, recErr := h.reconciler.ReconcileRuntimeState(ctx, session)
 		if recErr != nil {
 			slog.Warn("failed to reconcile sandbox runtime state before remove", "sandbox_id", sandboxID, "error", recErr)
-			return nil, ConnectErrorForDomain(recErr)
+			return nil, ConnectErrorForDomainWrite(apierror.NotApplied(recErr), ResourceSandbox)
 		}
 		session = reconciled
 	}
 	stopped := false
 	if session.Summary.VMStatus == domain.VMStatusRunning {
 		if !req.Msg.GetForce() {
-			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("sandbox %s is running", sandboxID))
+			return nil, NewOperationError(connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed, apierror.EffectNotApplied, fmt.Errorf("sandbox %s is running", sandboxID))
 		}
 		if _, err := h.delegate.StopSandbox(ctx, sandboxID); err != nil {
-			return nil, err
+			return nil, ConnectErrorForDomainWrite(apierror.NotApplied(err), ResourceSandbox)
 		}
 		stopped = true
 	}
 	if h.remover == nil {
-		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("sandbox runtime remover is required"))
+		return nil, NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectNotApplied, fmt.Errorf("sandbox runtime remover is required"))
 	}
 	if err := h.remover.RemoveSandboxVM(ctx, session); err != nil {
-		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
+		return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
 	}
 	if err := h.store.RemoveSandbox(ctx, sandboxID); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, ConnectErrorForDomainWrite(err, ResourceSandbox)
 	}
 	if h.dashboard != nil {
 		h.dashboard.Notify("sandbox_removed")

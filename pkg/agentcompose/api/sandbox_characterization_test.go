@@ -11,10 +11,12 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
+	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 func TestV2SandboxLifecycleActions(t *testing.T) {
@@ -420,6 +422,45 @@ func TestV2SandboxRemoveValidationAndStoreErrors(t *testing.T) {
 	})
 	if _, err := failing.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: removeID})); connect.CodeOf(err) != connect.CodeInternal {
 		t.Fatalf("RemoveSandbox remove error code = %v, want internal (err=%v)", connect.CodeOf(err), err)
+	}
+}
+
+func TestV2SandboxRemoveReportsWriteEffect(t *testing.T) {
+	// A pre-write rejection changed nothing, so it must report NOT_APPLIED.
+	prewriteID := identity.NewID(identity.ResourceSandbox, "characterization", "prewrite")
+	prewrite := NewSandboxHandler(SandboxHandlerDeps{
+		Delegate: &characterizationSessionDelegate{},
+		Store: &characterizationSandboxStore{
+			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: prewriteID, VMStatus: domain.VMStatusRunning}},
+		},
+		Remover:   &characterizationSandboxRemover{},
+		Dashboard: nil,
+	})
+	_, err := prewrite.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: prewriteID}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("prewrite code = %v, want failed_precondition (err=%v)", connect.CodeOf(err), err)
+	}
+	if detail, ok := errdetail.From(err); !ok || detail.Effect != EffectToProto(apierror.EffectNotApplied) {
+		t.Fatalf("prewrite detail = %#v, %v; want not_applied", detail, ok)
+	}
+
+	// A runtime removal failure has entered the delete flow, so the effect is
+	// UNKNOWN: the sandbox may have been partially removed.
+	inflightID := identity.NewID(identity.ResourceSandbox, "characterization", "inflight")
+	inflight := NewSandboxHandler(SandboxHandlerDeps{
+		Delegate: &characterizationSessionDelegate{},
+		Store: &characterizationSandboxStore{
+			session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: inflightID, VMStatus: domain.VMStatusStopped}},
+		},
+		Remover:   &characterizationSandboxRemover{err: errors.New("runtime remove failed")},
+		Dashboard: nil,
+	})
+	_, err = inflight.RemoveSandbox(context.Background(), connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: inflightID}))
+	if connect.CodeOf(err) != connect.CodeInternal {
+		t.Fatalf("inflight code = %v, want internal (err=%v)", connect.CodeOf(err), err)
+	}
+	if detail, ok := errdetail.From(err); !ok || detail.Effect != EffectToProto(apierror.EffectUnknown) {
+		t.Fatalf("inflight detail = %#v, %v; want unknown", detail, ok)
 	}
 }
 
