@@ -177,7 +177,129 @@ Unix socket 路径上限约 108 字节；如果 `<SANDBOX_ROOT>/<id>/init-contro
 
 ---
 
-## 7. 安全与边界
+### 6.5 多 driver 接入设计
+
+Stage 1 只把 Docker 接入了 init；其他 driver 的 `Exec`/`OpenInteraction` 仍然走原有路径。为了后续不再改协议，driver 的接入能力已经抽成：
+
+```go
+type SandboxInitCapability struct {
+    Driver      string
+    Mode        SandboxInitMode     // pid1 | guest-supervisor | unsupported
+    Control     SandboxInitControl  // unix-socket | guest-exec | none
+    Supported   bool
+    Limitations []string
+}
+```
+
+当前状态（`pkg/driver/sandbox_init_capability.go`）：
+
+| Driver | Stage 1 状态 | 目标模式 | 控制通道 | 需要补的工作 |
+| --- | --- | --- | --- | --- |
+| docker | 已接入 | init 是容器 PID 1 | host bind mount 上的 Unix socket | 已完成 |
+| k8s | 未接入，保持 legacy | init 是 Pod 容器 PID 1 | `pods/exec` 上的 `agent-compose-init client` 桥 | Pod command/args、init client 模式、exec 桥、Pod 启动/就绪探测 |
+| microsandbox | 未接入，保持 legacy | `WithInit(Init.Cmd(...))` 让 init 成为 guest PID 1 | host bind mount 上的 Unix socket（或 SDK exec 桥） | control dir mount、`WithInit` 验证、SDK agent/exec 在自定义 PID1 下的行为 |
+| boxlite | 未接入，保持 legacy | BoxLite entrypoint 改为 init | host bind mount 上的 Unix socket（或 exec 桥） | entrypoint/cmd、control dir bind mount、真机验证 |
+
+设计原则：
+
+1. **控制协议不变。** 无论控制通道是 Unix socket 还是 stdio 桥，帧格式和 session 语义保持一致；driver 只负责 transport。
+2. **init 不依赖 Driver API。** init 只依赖自己的控制协议和 guest 内的 `/proc`、pidfd、wait4；driver 不需要把 Docker/K8s 的概念传进 init。
+3. **未验证的 driver 不悄悄启用。** `SANDBOX_INIT_ENABLED=true` 但 driver 不在 `Supported` 列表时，daemon 记录 capability 警告并继续 legacy 路径；不会改变该 driver 的进程模型。
+4. **每个 driver 的接入必须带真机测试。** 尤其是 Microsandbox/BoxLite 的 PID1 handoff 和 SDK exec 行为，没有 KVM 验证不能算完成。
+5. **后续抽象。** 目标是把 `EnsureSandbox` 的“启动 workload”拆成“创建 runtime + 启动 init + init 启动 workload”，daemon 只依赖 init 控制协议，不依赖 `docker exec`/SDK exec 的 workload 语义。
+
+K8s 的推荐实现是 **guest-exec bridge**：daemon 通过 Kubernetes `pods/exec` 运行 `agent-compose-init client`，client 在 guest 内连接 `/run/agent-compose/init.sock`，把 JSON 帧通过 stdin/stdout 转发。这样不需要 Pod 端口、Service 或 hostPath；所有 workload 进程仍然是 init 子进程，client 只是控制 shim。
+
+Microsandbox/BoxLite 的推荐实现是 **host bind mount + Unix socket**：把 `<sandbox>/init-control` 挂到 guest `/run/agent-compose`，init 监听 socket，daemon 直接连接。前提是这两个 runtime 的 bind mount 在 sandbox-host 侧可见且路径映射正确；接入前必须验证 shutdown、restart、根文件系统缓存和 SDK exec 的行为。
+
+---
+
+## 7. Stage 2：seccomp / Landlock / 进程边界（设计，未实现）
+
+Stage 1 只建立进程所有权。Stage 2 的目标是在 init 的 child launch 路径上增加隔离，而不是另起一套 executor。
+
+### 7.1 扩展点
+
+`pkg/sandboxinit.Hooks` 已经预留：
+
+```go
+type Hooks struct {
+    Prepare    func(*exec.Cmd) error
+    AfterStart func(pid int) error
+}
+```
+
+Stage 2 的 `Prepare` 会在 `fork/exec` 前完成：
+
+1. 校验并解析一份 driver 提供的、guest 不可篡改的 security profile；
+2. 设置 child 的 UID/GID、补充组、`no_new_privs`；
+3. 打开 Landlock ruleset 的 path FDs，安装 Landlock；
+4. 安装 seccomp BPF（或 audit 模式）；
+5. 设置 cgroup（pids/CPU/memory）、rlimit、core dump、dumpable；
+6. 记录实际生效的 profile（audit/OCSF），失败则拒绝启动。
+
+`AfterStart` 用于在 child 启动后做验证/观测，例如读取 `/proc/<pid>/status` 确认 `NoNewPrivs`、`CapEff`、`Seccomp`，不一致则杀掉 child 并报错。
+
+### 7.2 Profile 来源与信任边界
+
+- profile 由 daemon 生成，随 sandbox 创建写入 control dir（只读挂载）或通过控制协议下发；
+- init 只接受 daemon 签名的/带 sandbox ID 的 profile，guest 内的 agent 不能修改；
+- profile 变更需要新 init generation 或显式 `reload`；不能由 workload 进程发请求；
+- 如果 profile 缺失/解析失败：`enforce` 模式下拒绝启动；`audit` 模式下允许但记录 high-severity finding。
+
+### 7.3 seccomp 设计
+
+- 默认继承现有 Docker/K8s 的 seccomp，不立刻替换；Stage 2 增加自己的 allowlist filter；
+- 只允许 workload 需要的 syscall（按 agent runtime 家族：codex/pi/JS runtime 的差异通过 profile 选择）；
+- 强制阻断：`ptrace`、`process_vm_*`、`pidfd_getfd`、`bpf`、`mount`、`unshare(CLONE_NEWUSER)`、`io_uring`、`userfaultfd`、`perf_event_open`、`memfd_create`（或按 profile）；
+- 支持 `audit`（记录但放行，使用 `SECCOMP_RET_LOG` 或用户态审计）和 `enforce`（`EPERM`/`ENOSYS`）；
+- 非特权安装：`PR_SET_NO_NEW_PRIVS`；
+- 架构：x86_64 + aarch64 分别编译 filter；未知架构 fail closed；
+- 失败语义：filter 安装失败不能退回无 seccomp；拒绝启动。
+
+### 7.4 Landlock 设计
+
+- 要求 Linux Landlock ABI ≥ 3；不满足时按 profile 的 `hard_requirement` 拒绝启动，或 `best_effort` 记录 finding；
+- baseline：只读系统路径 + workspace 读写；
+- 额外规则：项目声明的只读/读写路径；
+- 规则在 child 的 `pre_exec` 中 `restrict_self`；path FDs 在 `Prepare` 中打开；
+- 不能访问 `/.openshell`、控制 socket、init binary 所在目录（如果它们不在 baseline）；
+- 失败语义：`enforce` 拒绝启动；`audit` 记录但不回退到“无规则”。
+
+### 7.5 进程身份与 cgroup
+
+- init 已经知道每个 exec 的 leader、进程组和 marker；Stage 2 可把 `(pid, exe, digest, cgroup)` 作为 `started` 帧的扩展字段；
+- 每个 workload session 放入独立 cgroup（或统一 sandbox cgroup 的子组），限制 pids/CPU/memory；init 负责清理；
+- 进程退出/孤儿清理时移除 cgroup；容器/VM 停止时兜底。
+
+### 7.6 配置与灰度
+
+建议新增（默认关闭）：
+
+```text
+SANDBOX_INIT_SECCOMP=off|audit|enforce
+SANDBOX_INIT_LANDLOCK=off|audit|enforce
+SANDBOX_INIT_CGROUP=off|on
+SANDBOX_INIT_PROFILE=/run/agent-compose/security.json
+```
+
+- Stage 2 首版默认 `off`，不影响 Stage 1；
+- 先在 Docker 上 `audit`，收集 1–2 个版本的真实 syscall/路径数据，再切 `enforce`；
+- Microsandbox/BoxLite/K8s 在接入 init 后按同样顺序验证；
+- 每次 profile 变更都有 digest/命令审计；失败时 fail closed；
+- 与 egress/credential 的集成仍由 daemon 侧负责，init 只做进程边界。
+
+### 7.7 Stage 2 测试
+
+- 单元：profile 校验、filter 编译、Landlock ruleset、cgroup 路径、失败语义；
+- 集成：allow/deny syscall probe、文件读写 probe、fork/exec、pids limit、进程退出清理；
+- 真机：Docker/K8s/Microsandbox/BoxLite 各自跑 agent/codex/pi/JS runtime 的 smoke；
+- 负向：`ptrace` 被拒、读 `/.openshell` 被拒、超出 cgroup 被拒、profile 篡改被拒；
+- 性能：seccomp/Landlock 对 exec/启动延迟的影响。
+
+---
+
+## 8. 安全与边界
 
 - Stage 1 的 init 与当前 sandbox 一样以容器用户运行；它不是新的权限边界，只是**进程所有权/控制面**。
 - 控制 socket 在 sandbox 内可见；agent 本来就能 `exec`/kill 自己的进程，因此不构成额外提权。目录 0700 + socket 0666 是为了让非 root 的 native daemon 能连接 root init 创建的 socket。
@@ -186,7 +308,7 @@ Unix socket 路径上限约 108 字节；如果 `<SANDBOX_ROOT>/<id>/init-contro
 
 ---
 
-## 8. 构建与镜像
+## 9. 构建与镜像
 
 - `cmd/agent-compose-init`：Linux 静态二进制；`task build:sandbox-init` 生成 `build/agent-compose-init`。
 - `guest-images/Dockerfile.agent-compose-guest` 与 Arch 版本新增 `sandbox-init-builder` stage，把二进制装到 `/usr/local/bin/agent-compose-init`。
@@ -195,7 +317,7 @@ Unix socket 路径上限约 108 字节；如果 `<SANDBOX_ROOT>/<id>/init-contro
 
 ---
 
-## 9. 测试
+## 10. 测试
 
 Stage 1 已包含：
 
@@ -217,7 +339,7 @@ Stage 1 已包含：
 
 ---
 
-## 10. 后续阶段
+## 11. 后续阶段
 
 1. **Seccomp/Landlock hook**：在 `Hooks.Prepare`/`AfterStart` 中接入，先 audit 再 enforce；init 负责把策略传给 child。
 2. **进程身份**：init 已知每个 exec 的 leader/进程树，可在后续与 `/proc`/cgroup 结合，提供 binary identity。
@@ -227,7 +349,7 @@ Stage 1 已包含：
 
 ---
 
-## 11. 代码地图
+## 12. 代码地图
 
 | 主题 | 文件 |
 | --- | --- |
@@ -235,6 +357,7 @@ Stage 1 已包含：
 | 协议/客户端 | `pkg/sandboxinit/{protocol,client}.go` |
 | Linux 进程/回收/PTY | `pkg/sandboxinit/{process_linux,server_linux}.go` |
 | Docker 集成 | `pkg/driver/docker_sandbox_init.go`、`pkg/driver/docker_runtime.go` |
+| Driver capability | `pkg/driver/sandbox_init_capability.go` |
 | 配置开关 | `pkg/config/config.go`（`SandboxInitEnabled`/`SandboxInitBinary`） |
 | 镜像 | `guest-images/Dockerfile.agent-compose-guest` |
 | 构建 | `Taskfile.yml` `build:sandbox-init` |
