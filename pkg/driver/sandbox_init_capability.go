@@ -25,6 +25,9 @@ const (
 	// SandboxInitControlGuestExec means the daemon runs a small init client
 	// through the driver's native exec and bridges the protocol over stdio.
 	SandboxInitControlGuestExec SandboxInitControl = "guest-exec"
+	// SandboxInitControlVSock means a host supervisor reaches init over a
+	// virtio-vsock channel, as in OpenShell's microVM design.
+	SandboxInitControlVSock SandboxInitControl = "vsock"
 	// SandboxInitControlNone means there is no control transport.
 	SandboxInitControlNone SandboxInitControl = "none"
 )
@@ -69,7 +72,7 @@ func SandboxInitCapabilityFor(driver string) SandboxInitCapability {
 		return SandboxInitCapability{
 			Driver:    RuntimeDriverMicrosandbox,
 			Mode:      SandboxInitModePID1,
-			Control:   SandboxInitControlUnixSocket,
+			Control:   SandboxInitControlVSock,
 			Supported: false,
 			Limitations: []string{
 				"stage 1 has not wired microsandbox.WithInit or the control bind mount",
@@ -80,7 +83,7 @@ func SandboxInitCapabilityFor(driver string) SandboxInitCapability {
 		return SandboxInitCapability{
 			Driver:    RuntimeDriverBoxlite,
 			Mode:      SandboxInitModePID1,
-			Control:   SandboxInitControlUnixSocket,
+			Control:   SandboxInitControlVSock,
 			Supported: false,
 			Limitations: []string{
 				"stage 1 has not wired the BoxLite entrypoint or control bind mount",

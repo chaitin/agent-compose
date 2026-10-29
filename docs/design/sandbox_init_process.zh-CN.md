@@ -197,8 +197,8 @@ type SandboxInitCapability struct {
 | --- | --- | --- | --- | --- |
 | docker | 已接入 | init 是容器 PID 1 | host bind mount 上的 Unix socket | 已完成 |
 | k8s | 未接入，保持 legacy | init 是 Pod 容器 PID 1 | `pods/exec` 上的 `ac-init client` 桥 | Pod command/args、init client 模式、exec 桥、Pod 启动/就绪探测 |
-| microsandbox | 未接入，保持 legacy | `WithInit(Init.Cmd(...))` 让 init 成为 guest PID 1 | host bind mount 上的 Unix socket（或 SDK exec 桥） | control dir mount、`WithInit` 验证、SDK agent/exec 在自定义 PID1 下的行为 |
-| boxlite | 未接入，保持 legacy | BoxLite entrypoint 改为 init | host bind mount 上的 Unix socket（或 exec 桥） | entrypoint/cmd、control dir bind mount、真机验证 |
+| microsandbox | 未接入，保持 legacy | `WithInit(Init.Cmd(...))` 让 init 成为 guest PID 1 | virtio-vsock（host supervisor） | control dir mount、`WithInit` 验证、SDK agent/exec 在自定义 PID1 下的行为 |
+| boxlite | 未接入，保持 legacy | BoxLite entrypoint 改为 init | virtio-vsock（host supervisor） | entrypoint/cmd、control dir bind mount、真机验证 |
 
 设计原则：
 
@@ -210,7 +210,7 @@ type SandboxInitCapability struct {
 
 K8s 的推荐实现是 **guest-exec bridge**：daemon 通过 Kubernetes `pods/exec` 运行 `ac-init client`，client 在 guest 内连接 `/run/agent-compose/init.sock`，把 JSON 帧通过 stdin/stdout 转发。这样不需要 Pod 端口、Service 或 hostPath；所有 workload 进程仍然是 init 子进程，client 只是控制 shim。
 
-Microsandbox/BoxLite 的推荐实现是 **host bind mount + Unix socket**：把 `$SANDBOX_INIT_SOCKET_DIR/<sandbox-id>` 挂到 guest `/run/agent-compose`，init 监听 socket，daemon 直接连接。前提是这两个 runtime 的 bind mount 在 sandbox-host 侧可见且路径映射正确；接入前必须验证 shutdown、restart、根文件系统缓存和 SDK exec 的行为。
+Microsandbox/BoxLite 的推荐实现优先采用 **virtio-vsock**：sandbox-host 是 host 侧 supervisor，VM 内的 ac-init 监听 vsock 端口，sandbox-host 负责连接和转发；host bind mount 只作为本地开发 fallback。前提是这两个 runtime 能提供稳定的 vsock 端口/连接语义，接入前必须验证 shutdown、restart、根文件系统缓存和 SDK exec 的行为。
 
 参考 OpenShell 的 microVM 实现：受信任的 supervisor 留在 host，guest 内只有 capability-free 的 sandbox/init；控制与 relay 走 virtio-vsock，而不是把 host 的 Unix socket 直接暴露给 VM。agent-compose 的对应关系是：
 
