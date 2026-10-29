@@ -62,33 +62,21 @@ func SandboxInitCapabilityFor(driver string) SandboxInitCapability {
 			Driver:    RuntimeDriverK8s,
 			Mode:      SandboxInitModePID1,
 			Control:   SandboxInitControlGuestExec,
-			Supported: false,
-			Limitations: []string{
-				"stage 1 has no Pod command/init-client integration",
-				"the control socket is not host-visible; a guest-exec bridge is required",
-			},
+			Supported: true,
 		}
 	case RuntimeDriverMicrosandbox:
 		return SandboxInitCapability{
 			Driver:    RuntimeDriverMicrosandbox,
 			Mode:      SandboxInitModePID1,
-			Control:   SandboxInitControlVSock,
-			Supported: false,
-			Limitations: []string{
-				"stage 1 has not wired microsandbox.WithInit or the control bind mount",
-				"the SDK agent/exec behavior with a custom PID 1 is unverified",
-			},
+			Control:   SandboxInitControlUnixSocket,
+			Supported: true,
 		}
 	case RuntimeDriverBoxlite:
 		return SandboxInitCapability{
 			Driver:    RuntimeDriverBoxlite,
 			Mode:      SandboxInitModePID1,
-			Control:   SandboxInitControlVSock,
-			Supported: false,
-			Limitations: []string{
-				"stage 1 has not wired the BoxLite entrypoint or control bind mount",
-				"the host bind-mount/control transport is unverified on real KVM",
-			},
+			Control:   SandboxInitControlUnixSocket,
+			Supported: true,
 		}
 	default:
 		return SandboxInitCapability{

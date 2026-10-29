@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -411,5 +412,70 @@ func TestInitExitsWithTheMainProcessStatus(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("init did not exit with the main process")
+	}
+}
+
+func TestBridgeCarriesTheProtocolOverStdio(t *testing.T) {
+	_, socket := startTestInit(t, "")
+	stdinR, stdinW := io.Pipe()
+	stdoutR, stdoutW := io.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Bridge(ctx, socket, stdinR, stdoutW)
+	}()
+	if _, err := io.WriteString(stdinW, `{"version":1,"type":"ping"}`+"\n"); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	decoder := json.NewDecoder(stdoutR)
+	var frame Frame
+	if err := decoder.Decode(&frame); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if frame.Type != FramePong {
+		t.Fatalf("frame = %#v, want pong", frame)
+	}
+	_ = stdinW.Close()
+	_ = stdoutR.Close()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("bridge did not stop after stdin closed")
+	}
+}
+
+func TestInitRunsWithoutAMainShell(t *testing.T) {
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "init.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{ControlSocket: socket, MainShell: ""})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(socket); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("init socket did not appear")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	client := NewClient(socket)
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer pingCancel()
+	if err := client.Ping(pingCtx); err != nil {
+		t.Fatalf("Ping() error = %v", err)
+	}
+	if err := client.Shutdown(pingCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("init with no main did not stop after Shutdown")
 	}
 }

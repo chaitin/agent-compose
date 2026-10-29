@@ -10,9 +10,9 @@ func TestSandboxInitCapabilityForEveryDriver(t *testing.T) {
 		control   SandboxInitControl
 	}{
 		{driver: RuntimeDriverDocker, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlUnixSocket},
-		{driver: RuntimeDriverK8s, supported: false, mode: SandboxInitModePID1, control: SandboxInitControlGuestExec},
-		{driver: RuntimeDriverMicrosandbox, supported: false, mode: SandboxInitModePID1, control: SandboxInitControlVSock},
-		{driver: RuntimeDriverBoxlite, supported: false, mode: SandboxInitModePID1, control: SandboxInitControlVSock},
+		{driver: RuntimeDriverK8s, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlGuestExec},
+		{driver: RuntimeDriverMicrosandbox, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlUnixSocket},
+		{driver: RuntimeDriverBoxlite, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlUnixSocket},
 		{driver: "unknown", supported: false, mode: SandboxInitModeUnsupported, control: SandboxInitControlNone},
 	} {
 		t.Run(test.driver, func(t *testing.T) {

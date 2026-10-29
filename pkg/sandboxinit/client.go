@@ -13,12 +13,19 @@ import (
 // DefaultDialTimeout bounds one control-socket connection attempt.
 const DefaultDialTimeout = 5 * time.Second
 
+// Dialer opens one control connection. A nil Dialer means the client dials
+// SocketPath over a Unix socket.
+type Dialer func(context.Context) (net.Conn, error)
+
 // Client is a portable control-socket client. It is safe to use from multiple
 // goroutines: each operation opens its own connection, while an Exec Session
 // has its own encoder lock and one reader.
 type Client struct {
 	SocketPath  string
 	DialTimeout time.Duration
+	// Dialer lets a driver bridge the protocol through its native exec API.
+	// It is called once per operation; the returned conn must be full duplex.
+	Dialer Dialer
 }
 
 // NewClient returns a client for socketPath. An empty path is an error at call
@@ -28,8 +35,24 @@ func NewClient(socketPath string) *Client {
 	return &Client{SocketPath: socketPath, DialTimeout: DefaultDialTimeout}
 }
 
+// NewClientWithDialer returns a client whose connections are opened by dial.
+// The sandbox ID and socket path are still useful for diagnostics.
+func NewClientWithDialer(socketPath string, dial Dialer) *Client {
+	return &Client{SocketPath: socketPath, DialTimeout: DefaultDialTimeout, Dialer: dial}
+}
+
 func (c *Client) dial(ctx context.Context) (net.Conn, error) {
-	if c == nil || c.SocketPath == "" {
+	if c == nil {
+		return nil, errors.New("sandbox init client is nil")
+	}
+	if c.Dialer != nil {
+		conn, err := c.Dialer(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return conn, nil
+	}
+	if c.SocketPath == "" {
 		return nil, errors.New("sandbox init socket path is empty")
 	}
 	timeout := c.DialTimeout

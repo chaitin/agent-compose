@@ -958,10 +958,14 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	name := r.containerName(sandbox, vmState)
 	var exposedPorts nat.PortSet
 	var portBindings nat.PortMap
-	cmdText := "tail -f /dev/null"
+	cmdText := ""
 	if jupyterEnabled(proxyState) {
 		exposedPorts, portBindings = dockerJupyterPortConfig(proxyState.GuestPort)
 		cmdText = jupyterLaunchCommand(r.config, proxyState, false)
+	} else if !initEnabled {
+		// The legacy path still needs a keepalive process. With init enabled,
+		// PID 1 itself is the keepalive and commands are real children.
+		cmdText = "tail -f /dev/null"
 	}
 	env, err := r.containerEnv(ctx, sandbox, proxyState)
 	if err != nil {
@@ -975,7 +979,10 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	command := []string{cmdText}
 	if initEnabled {
 		entrypoint = []string{r.sandboxInitBinary()}
-		command = []string{"--control-socket", sandboxInitGuestSocket, "--main-shell", cmdText}
+		command = []string{"--control-socket", sandboxInitGuestSocket}
+		if cmdText != "" {
+			command = append(command, "--main-shell", cmdText)
+		}
 		labels[dockerSandboxInitLabel] = "true"
 	}
 	containerConfig := &containerapi.Config{

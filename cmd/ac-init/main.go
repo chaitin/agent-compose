@@ -27,6 +27,7 @@ func main() {
 	var (
 		controlSocket = flag.String("control-socket", defaultControlSocket, "Unix socket the daemon uses to control this init process")
 		mainShell     = flag.String("main-shell", "", "Shell command to run as the sandbox main process (via /bin/sh -lc)")
+		clientMode    = flag.Bool("client", false, "Bridge stdin/stdout to the control socket instead of running as init")
 		logLevel      = flag.String("log-level", "info", "Log level (debug, info, warn, error)")
 	)
 	flag.Parse()
@@ -44,6 +45,14 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
+
+	if *clientMode {
+		if err := sandboxinit.Bridge(ctx, *controlSocket, os.Stdin, os.Stdout); err != nil {
+			slog.Error("sandbox init client stopped", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	err := sandboxinit.Run(ctx, sandboxinit.Options{
 		ControlSocket: *controlSocket,

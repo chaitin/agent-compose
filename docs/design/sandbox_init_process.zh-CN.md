@@ -2,28 +2,27 @@
 
 > 状态：Stage 1 实现草案
 >
-> 关联：`docs/design/openshell-sandbox-network-internals.zh-CN.md`（OpenShell 的边界/PID1 调研）
->
-> 目标：先给 agent-compose 的 Docker sandbox 一个真正的 PID 1，统一管理 agent 的 JS runtime、codex/pi 等 harness 以及它们启动的所有子进程；暂不改变网络代理/密钥模型。该 init 预留 seccomp/Landlock 等后续能力的接入点。
+> 目标：在启用实验开关后，让 `ac-init` 成为所有 sandbox driver 的 PID 1，统一管理 agent 的 JS runtime、codex/pi 等 harness 以及它们启动的所有子进程；init 退出即 sandbox 退出。Stage 1 不改变网络代理/密钥模型，只为后续 seccomp/Landlock 预留扩展点。
 
 ---
 
 ## 1. 背景与问题
 
-当前 Docker sandbox 的进程模型是：
+改造前，各 driver 都没有统一的 sandbox PID 1；以 Docker 为例：
 
 - 容器配置 `Entrypoint: ["sh", "-lc"]`、`Cmd: ["tail -f /dev/null"]`（或 Jupyter 启动命令），并设置 `HostConfig.Init = true`。
 - DAEMON 通过 `docker exec` 启动 agent、codex/pi harness、scheduler 命令和交互式 attach。
 - `docker exec` 进程由 Docker/runc 创建，不在一个受 sandbox 控制的进程树里；没有统一的父进程、回收器、信号转发、资源统计或后续 seccomp 注入点。
 - agent 的子进程、后台进程、孤儿进程散落在容器 PID namespace 中；daemon 只能靠 marker/`docker exec` 做 best-effort 清理。
 
-Stage 1 的目标不是立刻复制 OpenShell 的完整 boundary，而是先建立**进程所有权**：
+Stage 1 先建立**统一的进程所有权**，而不是只解决某一个 driver：
 
-1. 容器 PID 1 是一个专门的 init 进程；
-2. 所有 workload 进程（main、exec、interactive attach）都由 init `fork/exec`；
+1. 每个 sandbox 的 PID 1 都是同一个 `ac-init`；
+2. 所有 workload 进程（命令、交互式 attach、Jupyter main）都由 init `fork/exec`，不再依赖 driver 原生 exec 创建 workload；
 3. init 负责回收孤儿、转发终止信号、维护进程表；
-4. daemon 不再用 `docker exec` 启动 workload 进程，而是通过 Unix socket 控制 init；
-5. 通过 daemon feature flag 灰度：关闭时完全保留现有 `docker exec` + `docker-init` 行为。
+4. daemon 只通过控制协议操作 init，不依赖 `docker exec`/SDK exec 的 workload 语义；
+5. init 被杀死时，sandbox 必须随之退出，不能留下一个没有 init 的 workload 树；
+6. feature flag 关闭时完全保留现有 driver 行为。
 
 ---
 
@@ -31,8 +30,7 @@ Stage 1 的目标不是立刻复制 OpenShell 的完整 boundary，而是先建�
 
 - 不改变网络/egress 模型（仍走现有 daemon forward proxy）。
 - 不实现 seccomp/Landlock/namespace/cgroup 的强制；只保留 `Hooks` 扩展点。
-- 不实现 OpenShell 的 boundary TLS/gRPC、policy DNS、TLS MITM、credential broker。
-- 不改变 Docker 之外的 driver（BoxLite/Microsandbox/k8s）。init 二进制目前只在 Docker 路径使用。
+- 不实现完整的 boundary TLS/gRPC、policy DNS、TLS MITM、credential broker。
 - 不改变 sandbox 的 root 用户/能力；Stage 1 的 init 与当前容器一样以容器用户运行。后续阶段再讨论降权/seccomp。
 
 ---
@@ -41,21 +39,22 @@ Stage 1 的目标不是立刻复制 OpenShell 的完整 boundary，而是先建�
 
 ```text
 daemon
-  │  Unix socket（host bind mount）
+  │  control transport（Unix socket / pod exec bridge / VM transport）
   ▼
-container PID 1: ac-init
+sandbox PID 1: ac-init
   ├─ accept loop / JSON protocol
   ├─ process manager / reaper（wait4）
-  ├─ main process（tail/Jupyter，由 --main-shell 指定）
+  ├─ optional main process（仅 Jupyter 等真实 main）
   └─ exec sessions（agent、codex/pi、scheduler、attach）
         ├─ stdout/stderr frames
         ├─ stdin / resize / signal
         └─ exit status
 ```
 
-- init 先创建控制 socket，再启动 main；daemon 在 `ContainerStart` 之后 `Ping` 到 socket 才算 sandbox ready。
-- daemon 的 `Exec`/`ExecStream`/`OpenInteraction` 在容器带 init label 时走 init 协议；否则走原 `docker exec`。
-- `TerminateProcessTree` 在 init 容器上走 init 的 `kill_tree`；`SignalGuestRuntime` 也通过 init exec，保证控制进程也在 init 树内。
+- init 先创建控制入口，再进入 accept loop；daemon 在 sandbox 启动后能 `Ping` 到 init 才算 ready。
+- init 不依赖 keepalive 命令：没有 Jupyter 时，init 自己保持 sandbox 存活，真正的命令由 daemon 通过控制协议启动。
+- daemon 的 `Exec`/`ExecStream`/`OpenInteraction` 在 init sandbox 上走 init 协议；legacy sandbox 才走 driver 原生 exec。
+- `TerminateProcessTree` 和 `SignalGuestRuntime` 也通过 init，避免控制进程落在 init 树之外。
 
 ---
 
@@ -105,10 +104,11 @@ Unix socket 上使用 newline-delimited JSON。选择 JSON 而不是 gRPC 是为
 
 ### 5.1 main 进程
 
-- init 启动时先监听 socket，再启动 `--main-shell` 指定的 `/bin/sh -lc <command>`。
-- main 的 stdout/stderr 直接继承 init 的 stdout/stderr，所以 `docker logs` 仍然可见。
-- main 退出后 init 执行 graceful shutdown，并以 main 的 exit code 退出；容器生命周期与旧行为一致。
-- 如果 main 是 Jupyter，init 只是父进程，Jupyter 的端口绑定/健康检查不变。
+- `--main-shell` 是**可选的**：普通 sandbox 不启动 tail/sleep 之类的 keepalive，init 自己就是 sandbox 的长期进程。
+- 只有需要真实 main 的场景（当前是 Jupyter）才由 init 启动 `/bin/sh -lc <command>`；Jupyter 的 stdout/stderr 直接继承 init，端口绑定/健康检查不变。
+- 没有 main 时，init 的 accept loop 保持 sandbox 存活；所有命令都是 init 的 `exec` 子进程。
+- main 退出后 init 执行 graceful shutdown，并以 main 的 exit code 退出。
+- **init 自身被杀死时，sandbox 必须退出**：`ac-init` 是 PID 1，内核会终止 PID namespace 中剩余进程；daemon 不得在 init 退出后继续把该 sandbox 当作可用。
 
 ### 5.2 exec/attach
 
@@ -134,35 +134,68 @@ Unix socket 上使用 newline-delimited JSON。选择 JSON 而不是 gRPC 是为
 ```text
 SANDBOX_INIT_ENABLED=false            # 默认关闭
 SANDBOX_INIT_BINARY=/.agent-compose/ac-init
+SANDBOX_INIT_SOCKET_DIR=/run/agent-compose  # 可选
 ```
 
-- `SANDBOX_INIT_ENABLED=true` 只影响**新创建**的 Docker 容器；已存在的容器按 label 决定控制方式。
-- 容器带 `agent-compose.sandbox_init=true` label 时，即使 daemon 后来关闭 flag，`Exec`/`OpenInteraction`/`TerminateProcessTree` 仍走 init（否则运行中的 sandbox 会被破坏）。
-- 关闭 flag 后新建容器回到 `docker-init + sh/tail + docker exec`，行为与旧版本一致。
-- 启用 flag 但镜像没有 init binary 时，容器会启动失败；`EnsureSandbox` 在 `SandboxStartTimeout` 内等待 socket 后报错。部署必须使用包含 `/.agent-compose/ac-init` 的 guest image。
+- `SANDBOX_INIT_ENABLED=true` 影响**新创建**的 Docker/K8s/BoxLite/Microsandbox sandbox；已有 sandbox 按创建时记录的 init 标记决定控制方式。
+- Docker/K8s 用 label/annotation 记录 init 模式；VM driver 用 sandbox 的 control 目录/init 标记记录，关闭 flag 不会破坏已经运行的 init sandbox。
+- 关闭 flag 后新建 sandbox 回到各 driver 原有路径；运行中的 init sandbox 仍走 init。
+- 启用 flag 但 guest image 没有 `/.agent-compose/ac-init` 时，sandbox 启动失败并快速报错；不会静默回退。
 
-### 6.2 容器创建
+### 6.2 各 driver 启动
 
-启用时：
+**Docker**
 
 ```text
 Entrypoint = /.agent-compose/ac-init
 Cmd        = --control-socket /run/agent-compose/init.sock
-             --main-shell <tail 或 jupyter 命令>
+             [--main-shell <jupyter command>]   # 仅 Jupyter
 HostConfig.Init = false
 Labels[agent-compose.sandbox_init] = true
 Mount $SANDBOX_INIT_SOCKET_DIR/<sandbox-id> -> /run/agent-compose (rw)
 ```
 
-host 侧 control dir 由 daemon 创建（0700），socket 由 init 创建为 `init.sock`（0666，目录是访问门禁）。`SANDBOX_INIT_SOCKET_DIR` 默认遵循 Linux runtime-state 约定：`$XDG_RUNTIME_DIR/agent-compose`，否则 `/run/agent-compose`；Compose 部署把它设为 `/data/run/agent-compose`，因为 daemon 容器的 `/run` 不是 Docker Engine host 的 `/run`。
+没有 Jupyter 时不传 `--main-shell`，init 自己保持容器存活；不创建 `tail -f /dev/null`。
 
-socket 文件名固定为 `init.sock`，不需要 hash；sandbox ID 只用于父目录。Unix socket 路径上限约 108 字节，如果配置的 runtime dir 使路径过长，driver 直接报错并提示设置更短的 `SANDBOX_INIT_SOCKET_DIR`，不会悄悄生成 hash 文件。
+**Kubernetes**
+
+```text
+Pod container Command = [/.agent-compose/ac-init]
+Args = --control-socket /run/agent-compose/init.sock
+       [--main-shell <jupyter command>]
+Labels[agent-compose.sandbox_init] = true
+```
+
+Pod 内不暴露 host 路径；daemon 通过 `pods/exec` 运行 `/.agent-compose/ac-init --client --control-socket ...`，把 JSON 帧经 stdin/stdout 桥接到 init。control client 只是控制 shim，不是 workload；命令仍由 init fork/exec。
+
+**BoxLite**
+
+```text
+Entrypoint = /.agent-compose/ac-init
+Cmd        = --control-socket /.agent-compose/run/init.sock
+             [--main-shell <jupyter command>]
+Bind mount $SANDBOX_INIT_SOCKET_DIR/<sandbox-id> -> /.agent-compose/run (rw)
+```
+
+**Microsandbox**
+
+```text
+WithInit(Init.Cmd("/.agent-compose/ac-init", Args:
+  --control-socket /.agent-compose/run/init.sock
+  [--main-shell <jupyter command>]))
+Bind mount $SANDBOX_INIT_SOCKET_DIR/<sandbox-id> -> /.agent-compose/run (rw)
+```
+
+Microsandbox 的 `/run` 是 per-VM tmpfs，所以 VM driver 把控制 socket 放到受保护的 `/.agent-compose/run/`，避免与 tmpfs 挂载冲突；Docker/K8s 仍使用标准的 `/run/agent-compose/init.sock`。
+
+所有 driver 的 host 控制目录都由 daemon/sandbox-host 创建为 0700，socket 为 `init.sock`（0666，目录是访问门禁）。`SANDBOX_INIT_SOCKET_DIR` 默认 `$XDG_RUNTIME_DIR/agent-compose`，否则 `/run/agent-compose`；路径超限直接报错，不使用 hash/symlink 回退。
 
 ### 6.3 Ready 与错误
 
-- `EnsureSandbox` 在容器启动后 `Ping` init socket，直到 `SANDBOX_START_TIMEOUT`。
-- socket 未出现/协议不匹配 → 清理本次 attempt（新建容器）并返回错误；不会静默回退到 `docker exec`，因为那会把“已启用 init”变成“实际上没有 init”。
-- 旧容器（无 label）不等待，不受影响。
+- `EnsureSandbox` 在 sandbox 启动后 `Ping` init，直到 `SANDBOX_START_TIMEOUT`。
+- Docker/K8s 的 init 进程/Pod 提前退出、socket 未出现、协议版本不匹配 → 清理本次 attempt 并返回错误；不会静默回退到原生 exec。
+- VM driver 的 init 退出等同于 VM/sandbox 退出；`EnsureSandbox`/`Exec` 返回明确错误，不能继续复用。
+- 旧 sandbox（没有 init 标记）不等待，不受影响。
 
 ### 6.4 Exec 路径
 
@@ -177,52 +210,28 @@ socket 文件名固定为 `init.sock`，不需要 hash；sandbox ID 只用于父
 
 ---
 
-### 6.5 多 driver 接入设计
+### 6.5 多 driver 一致性
 
-Stage 1 只把 Docker 接入了 init；其他 driver 的 `Exec`/`OpenInteraction` 仍然走原有路径。为了后续不再改协议，driver 的接入能力已经抽成：
+Stage 1 的契约对所有 driver 相同：
 
-```go
-type SandboxInitCapability struct {
-    Driver      string
-    Mode        SandboxInitMode     // pid1 | guest-supervisor | unsupported
-    Control     SandboxInitControl  // unix-socket | guest-exec | none
-    Supported   bool
-    Limitations []string
-}
-```
-
-当前状态（`pkg/driver/sandbox_init_capability.go`）：
-
-| Driver | Stage 1 状态 | 目标模式 | 控制通道 | 需要补的工作 |
-| --- | --- | --- | --- | --- |
-| docker | 已接入 | init 是容器 PID 1 | host bind mount 上的 Unix socket | 已完成 |
-| k8s | 未接入，保持 legacy | init 是 Pod 容器 PID 1 | `pods/exec` 上的 `ac-init client` 桥 | Pod command/args、init client 模式、exec 桥、Pod 启动/就绪探测 |
-| microsandbox | 未接入，保持 legacy | `WithInit(Init.Cmd(...))` 让 init 成为 guest PID 1 | virtio-vsock（host supervisor） | control dir mount、`WithInit` 验证、SDK agent/exec 在自定义 PID1 下的行为 |
-| boxlite | 未接入，保持 legacy | BoxLite entrypoint 改为 init | virtio-vsock（host supervisor） | entrypoint/cmd、control dir bind mount、真机验证 |
+| Driver | init 角色 | 控制 transport | sandbox 退出条件 |
+| --- | --- | --- | --- |
+| docker | 容器 PID 1 | host bind mount 上的 Unix socket | init 退出 / 容器 stop |
+| k8s | Pod 容器 PID 1 | `pods/exec` 上的 `ac-init --client` 桥 | init 退出 / Pod 终止 |
+| boxlite | VM guest PID 1 | sandbox-host 与 guest 的控制通道（Unix socket/vsock） | init 退出 / VM 停止 |
+| microsandbox | VM guest PID 1 | sandbox-host 与 guest 的控制通道（Unix socket/vsock） | init 退出 / VM 停止 |
 
 设计原则：
 
-1. **控制协议不变。** 无论控制通道是 Unix socket 还是 stdio 桥，帧格式和 session 语义保持一致；driver 只负责 transport。
-2. **init 不依赖 Driver API。** init 只依赖自己的控制协议和 guest 内的 `/proc`、pidfd、wait4；driver 不需要把 Docker/K8s 的概念传进 init。
-3. **未验证的 driver 不悄悄启用。** `SANDBOX_INIT_ENABLED=true` 但 driver 不在 `Supported` 列表时，daemon 记录 capability 警告并继续 legacy 路径；不会改变该 driver 的进程模型。
-4. **每个 driver 的接入必须带真机测试。** 尤其是 Microsandbox/BoxLite 的 PID1 handoff 和 SDK exec 行为，没有 KVM 验证不能算完成。
-5. **后续抽象。** 目标是把 `EnsureSandbox` 的“启动 workload”拆成“创建 runtime + 启动 init + init 启动 workload”，daemon 只依赖 init 控制协议，不依赖 `docker exec`/SDK exec 的 workload 语义。
+1. **控制协议不变。** 帧格式、session、stdin/resize/signal 语义在所有 driver 完全相同；driver 只负责 transport。
+2. **init 不依赖 Driver API。** init 只依赖控制协议、`/proc`、`wait4`；Docker/K8s/VM 的概念不进入 init。
+3. **同一个二进制。** 所有 driver 使用 `/.agent-compose/ac-init`；不允许某个 driver 有自己的 init 变体。
+4. **没有 keepalive。** 没有 Jupyter 时 init 自身保持 sandbox 存活，不启动 `tail`/`sleep` 占位进程。
+5. **init 死亡即 sandbox 死亡。** init 是 PID 1；daemon 检测到 init 退出后必须把 sandbox 标记为失败，不能把仍存在的进程当作可用。
+6. **所有 workload 都是 init 子进程。** 原生 `docker exec`/SDK exec 只用于调试或控制 shim（如 K8s `--client`），不作为 workload 启动路径。
+7. **daemon 与 sandbox 解耦。** daemon 只依赖 `sandboxinit.Client` 和 driver 的 transport 适配器；后续新增 driver 只实现 control transport 和 sandbox 启动参数。
 
-K8s 的推荐实现是 **guest-exec bridge**：daemon 通过 Kubernetes `pods/exec` 运行 `ac-init client`，client 在 guest 内连接 `/run/agent-compose/init.sock`，把 JSON 帧通过 stdin/stdout 转发。这样不需要 Pod 端口、Service 或 hostPath；所有 workload 进程仍然是 init 子进程，client 只是控制 shim。
-
-Microsandbox/BoxLite 的推荐实现优先采用 **virtio-vsock**：sandbox-host 是 host 侧 supervisor，VM 内的 ac-init 监听 vsock 端口，sandbox-host 负责连接和转发；host bind mount 只作为本地开发 fallback。前提是这两个 runtime 能提供稳定的 vsock 端口/连接语义，接入前必须验证 shutdown、restart、根文件系统缓存和 SDK exec 的行为。
-
-参考 OpenShell 的 microVM 实现：受信任的 supervisor 留在 host，guest 内只有 capability-free 的 sandbox/init；控制与 relay 走 virtio-vsock，而不是把 host 的 Unix socket 直接暴露给 VM。agent-compose 的对应关系是：
-
-- **sandbox-host** 承担 OpenShell supervisor 的角色，持有 VM 生命周期和 host 侧控制入口；
-- VM 内 **ac-init** 是 PID 1，拥有所有 workload 进程；
-- 控制协议应优先通过 **vsock** 传输（sandbox-host 监听/转发，init 在 guest 侧 listen），而不是长期依赖 host bind mount；Unix socket 只作为 Docker/K8s 或本地开发的 transport；
-- Microsandbox 可用 `WithInit(Init.Cmd(...))` 指定 init，BoxLite 可用 entrypoint 指定 init；但两者在自定义 PID1 下的 agentd/SDK exec、shutdown、rootfs 复用语义必须真机验证，不能仅凭 API 存在就标记 supported；
-- K8s 用 `pods/exec` 的 `ac-init client` 桥，避免 Pod 端口/hostPath。
-
-因此当前 `SandboxInitCapability` 仍把这三个 driver 标为 unsupported；接入顺序应先实现 vsock/exec transport 和真机 smoke，再打开 capability。这样不会把“可以指定 init”误报成“已经安全接入”。
-
----
+K8s 的 `--client` shim 是唯一允许的“额外 guest 进程”例外：它由 daemon 通过 `pods/exec` 启动，只负责把 stdio 转发给 init，不是 workload；所有真实命令仍由 init 启动并回收。
 
 ## 7. Stage 2：seccomp / Landlock / 进程边界（设计，未实现）
 
@@ -273,7 +282,7 @@ Stage 2 的 `Prepare` 会在 `fork/exec` 前完成：
 - baseline：只读系统路径 + workspace 读写；
 - 额外规则：项目声明的只读/读写路径；
 - 规则在 child 的 `pre_exec` 中 `restrict_self`；path FDs 在 `Prepare` 中打开；
-- 不能访问 `/.openshell`、控制 socket、init binary 所在目录（如果它们不在 baseline）；
+- 不能访问控制 socket、`/.agent-compose` 下的 init binary/profile（如果它们不在 baseline）；
 - 失败语义：`enforce` 拒绝启动；`audit` 记录但不回退到“无规则”。
 
 ### 7.5 进程身份与 cgroup
@@ -304,7 +313,7 @@ SANDBOX_INIT_PROFILE=/.agent-compose/security.json
 - 单元：profile 校验、filter 编译、Landlock ruleset、cgroup 路径、失败语义；
 - 集成：allow/deny syscall probe、文件读写 probe、fork/exec、pids limit、进程退出清理；
 - 真机：Docker/K8s/Microsandbox/BoxLite 各自跑 agent/codex/pi/JS runtime 的 smoke；
-- 负向：`ptrace` 被拒、读 `/.openshell` 被拒、超出 cgroup 被拒、profile 篡改被拒；
+- 负向：`ptrace` 被拒、读 `/.agent-compose` 被拒、超出 cgroup 被拒、profile 篡改被拒；
 - 性能：seccomp/Landlock 对 exec/启动延迟的影响。
 
 ---
@@ -316,7 +325,7 @@ SANDBOX_INIT_PROFILE=/.agent-compose/security.json
 - 直接 `docker exec` / `docker compose exec` 不使用 init 控制协议：Docker 仍能进入容器，但该进程的 PPID 在容器 PID namespace 中显示为 0，不属于 init 的 workload 树；调试可以用，daemon 的正式 exec 路径不会走它。
 - 控制 socket 在 sandbox 内可见；agent 本来就能 `exec`/kill 自己的进程，因此不构成额外提权。目录 0700 + socket 0666 是为了让非 root 的 native daemon 能连接 root init 创建的 socket。
 - 控制协议没有额外认证：能访问 socket 等价于能控制该 sandbox 的进程；socket 只在 sandbox 的 bind mount 内。
-- 后续阶段可在 `Hooks.Prepare` 中注入 seccomp/Landlock/资源限制；那时 init 会成为与 OpenShell 类似的 boundary，需要重新评估 socket 认证、降权和进程身份。
+- 后续阶段可在 `Hooks.Prepare` 中注入 seccomp/Landlock/资源限制；那时 init 会成为真正的 boundary，需要重新评估 socket 认证、降权和进程身份。
 
 ---
 
@@ -347,7 +356,7 @@ Stage 1 已包含：
   - 已加入一个 opt-in 的 `TestDockerSandboxInitContainerLifecycle`：验证 init label/entrypoint、`Exec`、`Exec` 的 PPid=1、交互式 stdin。设置 `AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE` 运行。
 - 交互式 attach 的 stdin/resize/signal e2e。
 - 并发 exec、大量子进程、孤儿回收、marker 清理。
-- 与现有 `docker exec` 路径的对照（同一套 run/命令结果一致）。
+- 与现有 `docker exec` 调试路径的对照（同一套 run/命令结果一致；正式 workload 不走它）。
 
 ---
 
@@ -369,8 +378,11 @@ Stage 1 已包含：
 | 协议/客户端 | `pkg/sandboxinit/{protocol,client}.go` |
 | Linux 进程/回收/PTY | `pkg/sandboxinit/{process_linux,server_linux}.go` |
 | Docker 集成 | `pkg/driver/docker_sandbox_init.go`、`pkg/driver/docker_runtime.go` |
+| K8s 集成 | `pkg/driver/k8s_sandbox_init.go`、`pkg/driver/k8s_runtime.go` |
+| BoxLite/Microsandbox 集成 | `pkg/driver/{boxlite,microsandbox}_runtime.go`、`pkg/driver/sandbox_init_runtime.go` |
 | Driver capability | `pkg/driver/sandbox_init_capability.go` |
-| 配置开关 | `pkg/config/config.go`（`SandboxInitEnabled`/`SandboxInitBinary`） |
+| 通用 exec/interaction | `pkg/driver/sandbox_init_exec.go`、`pkg/driver/sandbox_init_interaction.go` |
+| 配置开关 | `pkg/config/config.go`（`SandboxInitEnabled`/`SandboxInitBinary`/`SandboxInitSocketDir`） |
 | 镜像 | `guest-images/Dockerfile.agent-compose-guest` |
 | 构建 | `Taskfile.yml` `build:ac-init` |
 
@@ -384,7 +396,7 @@ Stage 1 已包含：
 
 | 场景 | 结果 |
 | --- | --- |
-| `SANDBOX_INIT_ENABLED=true` 创建 Docker sandbox | 容器 PID1 为 `ac-init`，`docker top` 中 main/exec 都是其子进程 |
+| `SANDBOX_INIT_ENABLED=true` 创建 Docker sandbox | 容器 PID1 为 `ac-init`；普通 sandbox 没有 tail/sleep keepalive；exec 都是其子进程 |
 | 普通 command exec | `Exec` 成功，`/proc/$$/status` 的 PPid 为 1 |
 | 直接 `docker exec` | 仍可进入容器执行 `/bin/sh`；PPid 显示 0，绕过 init，仅用于调试 |
 | 交互式 stdin exec | `agent-compose exec -i --command 'read ...'` 收到 stdin，Node 正常运行 |
@@ -399,8 +411,8 @@ Stage 1 已包含：
 | stop / rm | init 收到 SIGTERM，exec 会话取消，容器/记录清理正常 |
 | `SANDBOX_INIT_ENABLED=false` | 回到 `docker-init + sh/tail + docker exec`，行为与旧版本一致 |
 | 启用 flag 但镜像无 init binary | Docker 启动立即失败并返回明确错误，无残留容器 |
-| K8s driver 开启 flag | daemon 记录 capability warning，保持 legacy 进程模型，不崩溃 |
-| 未编译的 VM driver | 由构建 capability 决定；未在本次环境验证 |
+| K8s 初始化 Pod | `createPod` 单测验证 Command/Args 为 ac-init + control socket，无 tail；exec bridge 编译通过 |
+| BoxLite/Microsandbox 初始化 | 启动参数/控制通道代码路径和带 tag 编译通过；本机没有可启动的 VM 环境，未做真机 smoke |
 
 ### 13.2 验证中发现并修复的问题
 
@@ -411,10 +423,9 @@ Stage 1 已包含：
 3. **PTY `Ctty` 兼容性。**
    `pty.StartWithSize` 在当前 Go 版本下报 `Setctty set but Ctty not valid in child`；改为 `pty.Open` + `Ctty=0` 后 TTY 测试通过。
 
-### 13.3 未覆盖
+### 13.3 未在本机做真机验证
 
-- VM 真机 smoke：本次 `task test:runtime-smoke` 已尝试，`TestSmokeBoxLiteRuntimeRetentionAndRelease` 报 `The VM failed to start`，Microsandbox 用例未继续执行；因此不把 Microsandbox/BoxLite 标为 supported。
-- 真实 K8s 集群的 Pod init + exec bridge；
-- Microsandbox/BoxLite 的 PID1 handoff 与 control bind mount（当前环境未准备 SDK/KVM runtime artifacts）；
+- BoxLite/Microsandbox：本机 `task test:runtime-smoke` 的 BoxLite VM 启动失败，Microsandbox 未继续；启动/控制/exec 路径已按 Stage 1 实现并通过带 tag 编译，但发布前必须在有 KVM 的条件跑真机 smoke。
+- 真实 K8s 集群：Pod init + `pods/exec` bridge 已实现并通过单测/编译，未在集群内执行。
 - 容器/VM 重启、长时间运行、资源压力、网络策略与 init 的组合；
 - Jupyter 浏览器端到端（仅验证进程启动和命令执行）。

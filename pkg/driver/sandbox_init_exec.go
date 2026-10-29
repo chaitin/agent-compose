@@ -1,0 +1,77 @@
+//go:build k8scompose || microsandboxcgo || boxlitecgo
+
+package driver
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
+)
+
+// runSandboxInitExec is the driver-neutral buffered/streaming exec adapter.
+// Drivers only provide a sandboxinit.Client; the frame-to-ExecResult mapping,
+// UTF-8 filtering, and cancellation cleanup stay identical.
+func runSandboxInitExec(ctx context.Context, client *sandboxinit.Client, sandboxID, defaultCwd string, spec ExecSpec, stream ExecStreamWriter) (ExecResult, error) {
+	command := strings.TrimSpace(spec.Command)
+	if command == "" {
+		return ExecResult{}, fmt.Errorf("sandbox init exec command is required")
+	}
+	marker := strings.TrimSpace(spec.Marker)
+	if marker == "" {
+		marker = newDockerExecMarker()
+	}
+	session, err := client.Exec(ctx, sandboxinit.Request{
+		Command: command,
+		Args:    append([]string(nil), spec.Args...),
+		Env:     spec.Env,
+		Cwd:     firstNonEmpty(spec.Cwd, defaultCwd),
+		Marker:  marker,
+	})
+	if err != nil {
+		return ExecResult{}, fmt.Errorf("start sandbox init exec for sandbox %s: %w", sandboxID, err)
+	}
+	defer func() { _ = session.Close() }()
+
+	collector := &dockerExecCollector{stream: stream, filter: newExecOutputFilter()}
+	for {
+		frame, err := session.Next(ctx)
+		if err != nil {
+			collector.finish()
+			if ctx.Err() != nil {
+				killSandboxInitSession(client, session.ID, !spec.KillOnlyOnCancel)
+				return ExecResult{}, ctx.Err()
+			}
+			return ExecResult{}, fmt.Errorf("read sandbox init exec %s: %w", session.ID, err)
+		}
+		switch frame.Type {
+		case sandboxinit.FrameStdout:
+			collector.writeBytes(frame.Data, StdioStdout)
+		case sandboxinit.FrameStderr:
+			collector.writeBytes(frame.Data, StdioStderr)
+		case sandboxinit.FrameError:
+			collector.finish()
+			killSandboxInitSession(client, session.ID, true)
+			return ExecResult{}, fmt.Errorf("sandbox init exec %s: %s", session.ID, frame.Message)
+		case sandboxinit.FrameExit:
+			collector.finish()
+			result := ExecResult{
+				ExitCode:      frame.Code,
+				Stdout:        collector.stdout.String(),
+				Stderr:        collector.stderr.String(),
+				Output:        collector.output.String(),
+				SecurityFacts: collector.filter.SecurityFacts(),
+			}
+			result.Success = result.ExitCode == 0
+			return result, nil
+		}
+	}
+}
+
+func killSandboxInitSession(client *sandboxinit.Client, sessionID string, tree bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = client.Kill(ctx, sessionID, tree)
+}

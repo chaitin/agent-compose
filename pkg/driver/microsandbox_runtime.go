@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 	"log/slog"
 	"net"
 	"os"
@@ -398,6 +399,55 @@ func (c *microsandboxExecCollector) appendChunk(chunk ExecChunk) {
 	c.stdout.WriteString(chunk.Text)
 }
 
+const (
+	microsandboxInitGuestDir    = "/.agent-compose/run"
+	microsandboxInitGuestSocket = microsandboxInitGuestDir + "/init.sock"
+)
+
+func (r *microsandboxRuntime) sandboxInitEnabled() bool {
+	return r != nil && r.config != nil && r.config.SandboxInitEnabled
+}
+
+func (r *microsandboxRuntime) sandboxInitClient(session *Sandbox) *sandboxinit.Client {
+	return sandboxinit.NewClient(sandboxInitHostSocket(r.config, session.Summary.ID))
+}
+
+func (r *microsandboxRuntime) sandboxInitConfigured(session *Sandbox) bool {
+	if session == nil {
+		return false
+	}
+	_, err := os.Stat(sandboxInitHostDir(r.config, session.Summary.ID))
+	return err == nil
+}
+
+func (r *microsandboxRuntime) waitForSandboxInit(ctx context.Context, session *Sandbox) error {
+	timeout := 2 * time.Minute
+	if r.config != nil && r.config.SandboxStartTimeout > 0 {
+		timeout = r.config.SandboxStartTimeout
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client := r.sandboxInitClient(session)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		if err := client.Ping(waitCtx); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-waitCtx.Done():
+			if lastErr == nil {
+				lastErr = waitCtx.Err()
+			}
+			return fmt.Errorf("microsandbox init did not become ready within %s: %w", timeout, lastErr)
+		case <-ticker.C:
+		}
+	}
+}
+
 func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
 	if err := RequireSandboxNetworkEnforcement(RuntimeDriverMicrosandbox, session.Summary.ID, session.NetworkPolicy, r.config.EgressUnenforceablePolicy); err != nil {
 		return SandboxVMInfo{}, err
@@ -416,11 +466,20 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
 
-	if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
+	usesInit := r.sandboxInitConfigured(session)
+	if usesInit {
+		if err := r.waitForSandboxInit(ctx, session); err != nil {
+			return SandboxVMInfo{}, err
+		}
+		bootstrap := directoryOnlyGuestSandboxBootstrapExecSpecForSandbox(r.config, session)
+		if _, err := runSandboxInitExec(ctx, r.sandboxInitClient(session), session.Summary.ID, "/", bootstrap, nil); err != nil {
+			return SandboxVMInfo{}, err
+		}
+	} else if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
 		return SandboxVMInfo{}, err
 	}
 
-	needLaunch := created || restarted
+	needLaunch := (created || restarted) && !usesInit
 	if jupyterEnabled(proxyState) && !needLaunch {
 		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		probeErr := waitForJupyterProxy(probeCtx, proxyState)
@@ -522,6 +581,7 @@ func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbo
 	if err := r.removeRootfsDiskFiles(session.Summary.ID); err != nil {
 		return err
 	}
+	_ = os.RemoveAll(sandboxInitHostDir(r.config, session.Summary.ID))
 	return nil
 }
 
@@ -536,6 +596,9 @@ func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmStat
 		return ExecResult{}, err
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
+	if r.sandboxInitConfigured(session) {
+		return runSandboxInitExec(ctx, r.sandboxInitClient(session), session.Summary.ID, r.config.GuestWorkspacePath, spec, nil)
+	}
 	return executeUserCommandAfterBootstrap(
 		func() error {
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
@@ -579,6 +642,9 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 		return ExecResult{}, err
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
+	if r.sandboxInitConfigured(session) {
+		return runSandboxInitExec(ctx, r.sandboxInitClient(session), session.Summary.ID, r.config.GuestWorkspacePath, spec, stream)
+	}
 	return executeUserCommandAfterBootstrap(
 		func() error {
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
@@ -1050,6 +1116,9 @@ func (r *microsandboxRuntime) TerminateProcessTree(ctx context.Context, session 
 	if !alive {
 		return nil
 	}
+	if r.sandboxInitConfigured(session) {
+		return r.sandboxInitClient(session).KillTree(ctx, marker)
+	}
 	name := r.sandboxName(session, vmState)
 	sandbox, err := r.connectSandbox(ctx, session, vmState, false)
 	if err != nil {
@@ -1139,6 +1208,14 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 		return nil, err
 	}
 	mounts := r.microsandboxCreateMounts(manifest, name)
+	initEnabled := r.sandboxInitEnabled()
+	if initEnabled {
+		initDir, err := ensureSandboxInitHostDir(r.config, session.Summary.ID)
+		if err != nil {
+			return nil, fmt.Errorf("create microsandbox init control directory: %w", err)
+		}
+		mounts[microsandboxInitGuestDir] = microsandbox.Mount.Bind(initDir, microsandbox.MountOptions{})
+	}
 	imageRef := resolveSandboxGuestImage(vmState.Image, session.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverMicrosandbox))
 	imagePullTimeout := r.config.ImagePullTimeout
 	if imagePullTimeout <= 0 {
@@ -1215,6 +1292,16 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	}
 	if jupyterEnabled(proxyState) && proxyState.HostPort > 0 {
 		options = append(options, microsandbox.WithPorts(map[uint16]uint16{uint16(proxyState.HostPort): uint16(proxyState.GuestPort)}))
+	}
+	if initEnabled {
+		args := []string{"--control-socket", microsandboxInitGuestSocket}
+		if jupyterEnabled(proxyState) {
+			args = append(args, "--main-shell", jupyterLaunchCommand(r.config, proxyState, false))
+		}
+		options = append(options, microsandbox.WithInit(microsandbox.Init.Cmd(
+			sandboxInitBinaryPath(r.config),
+			microsandbox.InitOptions{Args: args},
+		)))
 	}
 	sandbox, err := microsandbox.CreateSandbox(ctx, name, options...)
 	if err != nil {

@@ -68,6 +68,19 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		_ = os.RemoveAll(config.SandboxInitSocketDir)
 	})
 
+	dockerClient, err := runtime.newClient()
+	if err != nil {
+		t.Fatalf("new docker client: %v", err)
+	}
+	defer func() { _ = dockerClient.Close() }()
+	info, ok, err := runtime.findContainer(ctx, dockerClient, sandbox, VMState{})
+	if err != nil || !ok {
+		t.Fatalf("findContainer() = %v, %v; want a running init container", ok, err)
+	}
+	if len(info.Config.Cmd) != 2 || info.Config.Cmd[0] != "--control-socket" {
+		t.Fatalf("container command = %+v, want only the init control socket (no keepalive)", info.Config.Cmd)
+	}
+
 	// The second ensure and the liveness check must see the init control mount
 	// as expected, not as an extra stale bind. If they do not, the driver
 	// removes the running container and the next exec fails with EOF.
