@@ -1,6 +1,10 @@
 package driver
 
-import "strings"
+import (
+	"strings"
+
+	appconfig "github.com/chaitin/agent-compose/pkg/config"
+)
 
 // SandboxInitMode describes how the init process owns the workload.
 type SandboxInitMode string
@@ -44,10 +48,9 @@ type SandboxInitCapability struct {
 }
 
 // SandboxInitCapabilityFor returns the Stage-1 capability of one runtime
-// driver. Docker is the only driver wired end to end today. The other drivers
-// have a documented integration path but are deliberately reported as
-// unsupported until their launch/control transport is implemented and tested:
-// a feature flag must not silently change their process model.
+// driver. Docker uses a host-visible unix socket; Kubernetes and Microsandbox
+// bridge the protocol through a guest exec running `ac-init --client`; BoxLite
+// keeps its host-visible socket path until its own runtime smoke is available.
 func SandboxInitCapabilityFor(driver string) SandboxInitCapability {
 	switch resolveRuntimeDriver(driver) {
 	case RuntimeDriverDocker:
@@ -68,7 +71,7 @@ func SandboxInitCapabilityFor(driver string) SandboxInitCapability {
 		return SandboxInitCapability{
 			Driver:    RuntimeDriverMicrosandbox,
 			Mode:      SandboxInitModePID1,
-			Control:   SandboxInitControlUnixSocket,
+			Control:   SandboxInitControlGuestExec,
 			Supported: true,
 		}
 	case RuntimeDriverBoxlite:
@@ -96,4 +99,36 @@ func SandboxInitCapabilityFor(driver string) SandboxInitCapability {
 // accepting a flag that has no effect on the selected driver.
 func SandboxInitSupported(driver string) bool {
 	return SandboxInitCapabilityFor(driver).Supported
+}
+
+// Persisted sandbox init states. The value belongs to the runtime, not to the
+// daemon's current flag: a sandbox created with init keeps using it after the
+// flag is turned off, and a legacy sandbox that is stopped and recreated keeps
+// its legacy process model after the flag is turned on.
+const (
+	SandboxInitStateEnabled  = "enabled"
+	SandboxInitStateDisabled = "disabled"
+)
+
+// SandboxInitStateFor resolves the process model a driver should use for a
+// sandbox. A recorded state wins; an empty state falls back to the daemon flag,
+// which is the only answer available for runtimes created before the state was
+// persisted.
+func SandboxInitStateFor(config *appconfig.Config, vmState VMState) string {
+	switch strings.TrimSpace(vmState.SandboxInitState) {
+	case SandboxInitStateEnabled:
+		return SandboxInitStateEnabled
+	case SandboxInitStateDisabled:
+		return SandboxInitStateDisabled
+	}
+	if config != nil && config.SandboxInitEnabled {
+		return SandboxInitStateEnabled
+	}
+	return SandboxInitStateDisabled
+}
+
+// SandboxInitEnabledFor reports whether a runtime should use init under the
+// recorded or configured state.
+func SandboxInitEnabledFor(config *appconfig.Config, vmState VMState) bool {
+	return SandboxInitStateFor(config, vmState) == SandboxInitStateEnabled
 }

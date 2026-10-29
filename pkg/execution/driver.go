@@ -59,6 +59,7 @@ func ToDriverVMState(state domain.VMState) driverpkg.VMState {
 	return driverpkg.VMState{
 		Driver:           state.Driver,
 		Mode:             state.Mode,
+		SandboxInitState: state.SandboxInitState,
 		BoxName:          state.BoxName,
 		BoxID:            state.BoxID,
 		Image:            state.Image,
@@ -78,6 +79,7 @@ func FromDriverVMState(state driverpkg.VMState) domain.VMState {
 	return domain.VMState{
 		Driver:           state.Driver,
 		Mode:             state.Mode,
+		SandboxInitState: state.SandboxInitState,
 		BoxName:          state.BoxName,
 		BoxID:            state.BoxID,
 		Image:            state.Image,
@@ -118,7 +120,7 @@ func ToDriverExecSpec(spec domain.ExecSpec) driverpkg.ExecSpec {
 }
 
 func FromDriverSandboxVMInfo(info driverpkg.SandboxVMInfo) domain.SandboxVMInfo {
-	result := domain.SandboxVMInfo{BoxID: info.BoxID, JupyterURL: info.JupyterURL, RuntimeCreated: info.RuntimeCreated}
+	result := domain.SandboxVMInfo{BoxID: info.BoxID, JupyterURL: info.JupyterURL, RuntimeCreated: info.RuntimeCreated, SandboxInitState: info.SandboxInitState}
 	if info.ProxyState != nil {
 		proxyState := FromDriverProxyState(*info.ProxyState)
 		result.ProxyState = &proxyState

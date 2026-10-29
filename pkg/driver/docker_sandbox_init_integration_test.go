@@ -157,6 +157,42 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		t.Fatalf("interaction result = %#v output=%q", interactionResult, output.String())
 	}
 
+	// Canceling an exec must terminate detached descendants, not just the
+	// session leader. The workload runtime starts real commands in their own
+	// process group, so this uses setsid to reproduce that shape and checks the
+	// marker-tree cleanup path.
+	cancelCtx, cancelExec := context.WithCancel(ctx)
+	execDone := make(chan error, 1)
+	go func() {
+		_, execErr := runtime.Exec(cancelCtx, sandbox, VMState{}, ExecSpec{
+			Command: "/bin/sh",
+			Args:    []string{"-c", "setsid /bin/sleep 300 & echo $! > /tmp/init-cancel-child.pid; wait"},
+			Cwd:     "/",
+		})
+		execDone <- execErr
+	}()
+	time.Sleep(750 * time.Millisecond)
+	cancelExec()
+	select {
+	case err := <-execDone:
+		if err == nil {
+			t.Fatal("canceled exec returned no error")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("canceled exec did not return")
+	}
+	child, err := runtime.Exec(ctx, sandbox, VMState{}, ExecSpec{
+		Command: "/bin/sh",
+		Args:    []string{"-c", "pid=$(cat /tmp/init-cancel-child.pid); kill -0 $pid 2>/dev/null && echo ALIVE || echo GONE"},
+		Cwd:     "/",
+	})
+	if err != nil {
+		t.Fatalf("Exec(cancellation check) error = %v", err)
+	}
+	if strings.TrimSpace(child.Stdout) != "GONE" {
+		t.Fatalf("detached child after canceled exec = %q, want GONE", strings.TrimSpace(child.Stdout))
+	}
+
 	// ac-init is PID 1: killing it must terminate the sandbox, not leave a
 	// workload tree behind. This is the Stage 1 kill-resilience contract.
 	if err := dockerClient.ContainerKill(ctx, info.ID, "KILL"); err != nil {

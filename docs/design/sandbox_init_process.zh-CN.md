@@ -121,7 +121,7 @@ Unix socket 上使用 newline-delimited JSON。选择 JSON 而不是 gRPC 是为
 ### 5.3 断连
 
 - exec 连接断开时，init 不杀进程；输出被 drain 到 `io.Discard`，避免子进程因 pipe 满阻塞。
-- daemon 的 `Exec`/`ExecStream` 在 context 取消时调用 `kill`（tree 与否取决于 `KillOnlyOnCancel`）。
+- daemon 的 `Exec`/`ExecStream` 在 context 取消时调用 `kill`（tree 与否取决于 `KillOnlyOnCancel`）；非 `KillOnlyOnCancel` 时还会按 marker 调用 `kill_tree`，清理 `agent-compose-runtime` 放到独立进程组的真实命令及其后代。
 - 交互式 `OpenInteraction` 的 cancel 先发 TERM，再关闭 session；最终由 init/容器停止兜底。
 - `docker stop` 给 PID 1 发 SIGTERM；init 把 TERM 转发给所有进程组，并在 PID 1 身份下向整个 PID namespace 发 TERM（回收未登记的孤儿），等待 5s，再 SIGKILL。
 
@@ -137,10 +137,11 @@ SANDBOX_INIT_BINARY=/.agent-compose/ac-init
 SANDBOX_INIT_SOCKET_DIR=/run/agent-compose  # 可选
 ```
 
-- `SANDBOX_INIT_ENABLED=true` 影响**新创建**的 Docker/K8s/BoxLite/Microsandbox sandbox；已有 sandbox 按创建时记录的 init 标记决定控制方式。
-- Docker/K8s 用 label/annotation 记录 init 模式；VM driver 用 sandbox 的 control 目录/init 标记记录，关闭 flag 不会破坏已经运行的 init sandbox。
-- 关闭 flag 后新建 sandbox 回到各 driver 原有路径；运行中的 init sandbox 仍走 init。
+- `SANDBOX_INIT_ENABLED=true` 影响**新创建**的 Docker/K8s/BoxLite/Microsandbox sandbox。
+- 创建时的进程模型会写入 sandbox 的 `VMState.SandboxInitState` 并与运行时一起持久化。停止/重启/resume 重造 runtime 时以记录为准，因此切换 flag 不会改变已有 sandbox 的模型；Docker/K8s 的 live label/annotation 仍用于判定现有 runtime 的真实控制方式。
+- 关闭 flag 后新建 sandbox 回到各 driver 原有路径；运行中（或已停止但记录了 init）的 init sandbox 仍走 init。
 - 启用 flag 但 guest image 没有 `/.agent-compose/ac-init` 时，sandbox 启动失败并快速报错；不会静默回退。
+- 启用 flag 时 daemon 启动阶段会按最长 64 字节 sandbox ID 校验 `SANDBOX_INIT_SOCKET_DIR` 的最坏路径长度，避免运行到 resume 才失败。
 
 ### 6.2 各 driver 启动
 
@@ -183,12 +184,14 @@ Bind mount $SANDBOX_INIT_SOCKET_DIR/<sandbox-id> -> /.agent-compose/run (rw)
 WithInit(Init.Cmd("/.agent-compose/ac-init", Args:
   --control-socket /.agent-compose/run/init.sock
   [--main-shell <jupyter command>]))
-Bind mount $SANDBOX_INIT_SOCKET_DIR/<sandbox-id> -> /.agent-compose/run (rw)
+Control: sandbox-host 通过 microsandbox exec 运行
+         /.agent-compose/ac-init --client --control-socket /.agent-compose/run/init.sock，
+         把 JSON 帧经 stdin/stdout 桥接到 init。
 ```
 
-Microsandbox 的 `/run` 是 per-VM tmpfs，所以 VM driver 把控制 socket 放到受保护的 `/.agent-compose/run/`，避免与 tmpfs 挂载冲突；Docker/K8s 仍使用标准的 `/run/agent-compose/init.sock`。
+Microsandbox 的 virtiofs 共享目录不会把 guest 内创建的 Unix socket 暴露给宿主（宿主看到的是普通文件），因此不能使用 host bind socket。控制 socket 只存在于 guest 的 `/.agent-compose/run/init.sock`，daemon/sandbox-host 通过 guest exec 的 `ac-init --client` 访问；workload 仍由 init fork/exec。Docker/BoxLite 使用 host-visible socket；K8s 也使用 guest-exec 桥。
 
-所有 driver 的 host 控制目录都由 daemon/sandbox-host 创建为 0700，socket 为 `init.sock`（0666，目录是访问门禁）。`SANDBOX_INIT_SOCKET_DIR` 默认 `$XDG_RUNTIME_DIR/agent-compose`，否则 `/run/agent-compose`；路径超限直接报错，不使用 hash/symlink 回退。
+Docker/BoxLite 的 host 控制目录由 daemon/sandbox-host 创建为 0700，socket 为 `init.sock`（0666，目录是访问门禁）。`SANDBOX_INIT_SOCKET_DIR` 默认 `$XDG_RUNTIME_DIR/agent-compose`，否则 `/run/agent-compose`；启用 flag 时启动阶段按最长 sandbox ID 校验路径，运行期仍做兜底检查，超限直接报错，不使用 hash/symlink 回退。
 
 ### 6.3 Ready 与错误
 
@@ -219,7 +222,7 @@ Stage 1 的契约对所有 driver 相同：
 | docker | 容器 PID 1 | host bind mount 上的 Unix socket | init 退出 / 容器 stop |
 | k8s | Pod 容器 PID 1 | `pods/exec` 上的 `ac-init --client` 桥 | init 退出 / Pod 终止 |
 | boxlite | VM guest PID 1 | sandbox-host 与 guest 的控制通道（Unix socket/vsock） | init 退出 / VM 停止 |
-| microsandbox | VM guest PID 1 | sandbox-host 与 guest 的控制通道（Unix socket/vsock） | init 退出 / VM 停止 |
+| microsandbox | VM guest PID 1 | guest exec 上的 `ac-init --client` stdio 桥 | init 退出 / VM 停止 |
 
 设计原则：
 
@@ -348,7 +351,7 @@ Stage 1 已包含：
   - TTY；
   - marker `kill_tree`。
 - `pkg/config`：默认关闭、环境读取、非法值/相对路径拒绝。
-- `pkg/driver`：init label 识别、control dir/socket 路径、mount 创建、默认 binary。
+- `pkg/driver`：init label 识别、control dir/socket 路径、mount 创建、默认 binary、VMState 进程模型持久化、exec 取消时的 marker tree 清理。
 
 建议后续补：
 

@@ -29,11 +29,6 @@ const (
 	sandboxInitGuestSocket = "/run/agent-compose/init.sock"
 )
 
-// sandboxInitEnabled reports whether new Docker sandboxes should use init.
-func (r *dockerRuntime) sandboxInitEnabled() bool {
-	return r != nil && r.config != nil && r.config.SandboxInitEnabled
-}
-
 func (r *dockerRuntime) sandboxInitBinary() string {
 	if r != nil && r.config != nil && strings.TrimSpace(r.config.SandboxInitBinary) != "" {
 		return strings.TrimSpace(r.config.SandboxInitBinary)
@@ -78,8 +73,8 @@ func (r *dockerRuntime) prepareSandboxInitMount(ctx context.Context, dockerClien
 	// Linux sun_path is 108 bytes including the trailing NUL. A configured
 	// runtime root that makes the file longer than this cannot work; fail
 	// with the path instead of silently falling back to a hash-named socket.
-	if len(socket) > 100 {
-		return mountapi.Mount{}, fmt.Errorf("sandbox init socket path is too long (%d bytes, limit is about 107): %s; set SANDBOX_INIT_SOCKET_DIR to a shorter runtime directory", len(socket), socket)
+	if len(socket) > appconfig.MaxSandboxInitSocketPathLength {
+		return mountapi.Mount{}, fmt.Errorf("sandbox init socket path is too long (%d bytes, limit %d): %s; set SANDBOX_INIT_SOCKET_DIR to a shorter runtime directory", len(socket), appconfig.MaxSandboxInitSocketPathLength, socket)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return mountapi.Mount{}, fmt.Errorf("create sandbox init control directory %s: %w", dir, err)
@@ -177,6 +172,9 @@ func (r *dockerRuntime) initExecWithStream(ctx context.Context, sandbox *Sandbox
 			collector.finish()
 			if ctx.Err() != nil {
 				r.killInitSession(sandbox, session.ID, !spec.KillOnlyOnCancel)
+				if !spec.KillOnlyOnCancel {
+					r.killInitTree(sandbox, marker)
+				}
 				return ExecResult{}, ctx.Err()
 			}
 			return ExecResult{}, fmt.Errorf("read sandbox init exec %s: %w", session.ID, err)
@@ -189,6 +187,7 @@ func (r *dockerRuntime) initExecWithStream(ctx context.Context, sandbox *Sandbox
 		case sandboxinit.FrameError:
 			collector.finish()
 			r.killInitSession(sandbox, session.ID, true)
+			r.killInitTree(sandbox, marker)
 			return ExecResult{}, fmt.Errorf("sandbox init exec %s: %s", session.ID, frame.Message)
 		case sandboxinit.FrameExit:
 			collector.finish()
@@ -211,6 +210,15 @@ func (r *dockerRuntime) killInitSession(sandbox *Sandbox, sessionID string, tree
 	_ = r.sandboxInitClient(sandbox).Kill(ctx, sessionID, tree)
 }
 
+func (r *dockerRuntime) killInitTree(sandbox *Sandbox, marker string) {
+	if strings.TrimSpace(marker) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = r.sandboxInitClient(sandbox).KillTree(ctx, marker)
+}
+
 // initOpenInteraction creates a live init-backed interactive session.
 func (r *dockerRuntime) initOpenInteraction(ctx context.Context, sandbox *Sandbox, spec RuntimeStartSpec) (RuntimeInteraction, error) {
 	return openSandboxInitInteraction(ctx, r.sandboxInitClient(sandbox), sandbox, r.config.GuestWorkspacePath, spec)
@@ -223,6 +231,7 @@ type initCommandInteraction struct {
 	client  *sandboxinit.Client
 	sandbox *Sandbox
 	session *sandboxinit.Session
+	marker  string
 
 	operationID string
 	tty         bool
@@ -251,6 +260,7 @@ func (i *initCommandInteraction) Send(frame RuntimeInputFrame) error {
 	case RuntimeInputCancel:
 		i.cancel()
 		_ = i.session.Signal(context.Background(), "TERM")
+		killSandboxInitTree(i.client, i.marker)
 		return nil
 	default:
 		return ErrRuntimeInteractionUnsupported
@@ -286,6 +296,7 @@ func (i *initCommandInteraction) run() {
 		if err != nil {
 			if i.ctx.Err() != nil {
 				_ = i.session.Signal(context.Background(), "TERM")
+				killSandboxInitTree(i.client, i.marker)
 				i.fail(i.ctx.Err())
 				return
 			}

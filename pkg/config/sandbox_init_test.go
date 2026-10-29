@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSandboxInitConfigDefaultsOff(t *testing.T) {
 	t.Setenv("SANDBOX_INIT_ENABLED", "")
@@ -69,5 +72,17 @@ func TestSandboxInitConfigRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("loadSandboxInitConfig() error = %v, wantError %v", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestSandboxInitConfigRejectsAnOverlongRuntimeRoot(t *testing.T) {
+	t.Setenv("SANDBOX_INIT_ENABLED", "true")
+	t.Setenv("SANDBOX_INIT_SOCKET_DIR", "/"+strings.Repeat("x", MaxSandboxInitSocketPathLength))
+	if _, err := loadSandboxInitConfig(); err == nil {
+		t.Fatal("loadSandboxInitConfig accepted a runtime root whose worst-case socket exceeds the limit")
+	}
+	t.Setenv("SANDBOX_INIT_ENABLED", "false")
+	if _, err := loadSandboxInitConfig(); err != nil {
+		t.Fatalf("loadSandboxInitConfig rejected the path while init is disabled: %v", err)
 	}
 }

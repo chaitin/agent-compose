@@ -861,6 +861,16 @@ type sandboxInitConfig struct {
 // deployment that mounts the binary elsewhere sets SANDBOX_INIT_BINARY.
 const DefaultSandboxInitBinary = "/.agent-compose/ac-init"
 
+// MaxSandboxInitSocketPathLength is the longest Linux sun_path this project
+// accepts for a control socket (sun_path itself is 108 bytes including the
+// trailing NUL; 100 leaves room for a future hash/alias suffix).
+const MaxSandboxInitSocketPathLength = 100
+
+// sandboxIDHexLength is the length of the SHA-256 hex sandbox IDs the daemon
+// generates. Startup validation uses it to reject a runtime root that cannot
+// hold the longest possible socket before any sandbox is created.
+const sandboxIDHexLength = 64
+
 func loadSandboxInitConfig() (sandboxInitConfig, error) {
 	config := sandboxInitConfig{Binary: DefaultSandboxInitBinary}
 	raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_ENABLED"))
@@ -884,6 +894,10 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 		}
 		if !filepath.IsAbs(socketDir) {
 			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_SOCKET_DIR must be an absolute host path, got %q", socketDir)
+		}
+		worstCaseSocket := filepath.Join(socketDir, strings.Repeat("0", sandboxIDHexLength), "init.sock")
+		if len(worstCaseSocket) > MaxSandboxInitSocketPathLength {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_SOCKET_DIR is too long: the longest sandbox socket %q is %d bytes (limit %d); set a shorter runtime directory", worstCaseSocket, len(worstCaseSocket), MaxSandboxInitSocketPathLength)
 		}
 	}
 	config.SocketDir = socketDir

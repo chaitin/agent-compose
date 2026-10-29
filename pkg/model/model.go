@@ -519,8 +519,12 @@ type RuntimeCommandResult struct {
 type ExecStreamWriter func(ExecChunk)
 
 type VMState struct {
-	Driver           string    `json:"driver"`
-	Mode             string    `json:"mode,omitempty"`
+	Driver string `json:"driver"`
+	Mode   string `json:"mode,omitempty"`
+	// SandboxInitState records whether the runtime was created with ac-init as
+	// its PID 1 (see pkg/driver/sandbox_init_capability.go). It is persisted
+	// with the runtime so a restart or resume keeps the process model.
+	SandboxInitState string    `json:"sandbox_init_state,omitempty"`
 	BoxName          string    `json:"box_name,omitempty"`
 	BoxID            string    `json:"box_id,omitempty"`
 	Image            string    `json:"image,omitempty"`
@@ -576,6 +580,9 @@ type SandboxVMInfo struct {
 	BoxID      string
 	JupyterURL string
 	ProxyState *ProxyState
+	// SandboxInitState reports the process model of the runtime that is
+	// running now (see driver.SandboxInitStateEnabled/Disabled).
+	SandboxInitState string
 	// EgressPolicy is the egress fact the runtime was created with. The driver
 	// boundary resolves the policy, so it is the only layer that can report it,
 	// and the caller persists it beside the rest of the runtime state.

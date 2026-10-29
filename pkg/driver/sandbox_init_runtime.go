@@ -3,7 +3,6 @@
 package driver
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -24,21 +23,9 @@ func sandboxInitHostDir(config *appconfig.Config, sandboxID string) string {
 	return filepath.Join(sandboxInitSocketRoot(config), sandboxID)
 }
 
-func sandboxInitHostSocket(config *appconfig.Config, sandboxID string) string {
-	return filepath.Join(sandboxInitHostDir(config, sandboxID), "init.sock")
-}
-
 func sandboxInitBinaryPath(config *appconfig.Config) string {
 	if config != nil && strings.TrimSpace(config.SandboxInitBinary) != "" {
 		return strings.TrimSpace(config.SandboxInitBinary)
 	}
 	return appconfig.DefaultSandboxInitBinary
-}
-
-func ensureSandboxInitHostDir(config *appconfig.Config, sandboxID string) (string, error) {
-	dir := sandboxInitHostDir(config, sandboxID)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", err
-	}
-	return dir, nil
 }

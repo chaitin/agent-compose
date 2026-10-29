@@ -214,7 +214,7 @@ func (s *initServer) handleExec(ctx context.Context, conn net.Conn, decoder *fra
 		_ = encoder.Encode(Frame{Type: FrameError, Message: err.Error()})
 		return
 	}
-	if err := encoder.Encode(Frame{Type: FrameStarted, SessionID: p.id, Processes: []ProcessInfo{{ID: p.id, PID: p.pid}}}); err != nil {
+	if err := encoder.Encode(Frame{Type: FrameStarted, SessionID: p.id, Processes: []ProcessInfo{p.info()}}); err != nil {
 		p.detach()
 		return
 	}

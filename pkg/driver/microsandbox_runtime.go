@@ -404,30 +404,47 @@ const (
 	microsandboxInitGuestSocket = microsandboxInitGuestDir + "/init.sock"
 )
 
-func (r *microsandboxRuntime) sandboxInitEnabled() bool {
-	return r != nil && r.config != nil && r.config.SandboxInitEnabled
+func (r *microsandboxRuntime) sandboxInitClient(session *Sandbox, vmState VMState) *sandboxinit.Client {
+	return sandboxinit.NewClientWithDialer(microsandboxInitGuestSocket, func(ctx context.Context) (net.Conn, error) {
+		name := r.sandboxName(session, vmState)
+		sandbox, err := r.connectSandbox(ctx, session, vmState, false)
+		if err != nil {
+			return nil, fmt.Errorf("connect microsandbox init sandbox: %w", err)
+		}
+		conn, err := newMicrosandboxInitConn(ctx, sandbox, sandboxInitBinaryPath(r.config), microsandboxInitGuestSocket)
+		if err != nil {
+			r.releaseSandboxHandle(name, sandbox)
+			return nil, err
+		}
+		conn.onClose = func() { r.releaseSandboxHandle(name, sandbox) }
+		return conn, nil
+	})
 }
 
-func (r *microsandboxRuntime) sandboxInitClient(session *Sandbox) *sandboxinit.Client {
-	return sandboxinit.NewClient(sandboxInitHostSocket(r.config, session.Summary.ID))
-}
-
-func (r *microsandboxRuntime) sandboxInitConfigured(session *Sandbox) bool {
+func (r *microsandboxRuntime) sandboxInitConfigured(session *Sandbox, vmState VMState) bool {
 	if session == nil {
 		return false
 	}
-	_, err := os.Stat(sandboxInitHostDir(r.config, session.Summary.ID))
-	return err == nil
+	// States written before SandboxInitState existed can still be identified
+	// by the host directory the old bind-mount transport created. Prefer that
+	// marker over the current flag so a running init sandbox survives a flag
+	// flip during an upgrade.
+	if strings.TrimSpace(vmState.SandboxInitState) == "" {
+		if _, err := os.Stat(sandboxInitHostDir(r.config, session.Summary.ID)); err == nil {
+			return true
+		}
+	}
+	return SandboxInitEnabledFor(r.config, vmState)
 }
 
-func (r *microsandboxRuntime) waitForSandboxInit(ctx context.Context, session *Sandbox) error {
+func (r *microsandboxRuntime) waitForSandboxInit(ctx context.Context, session *Sandbox, vmState VMState) error {
 	timeout := 2 * time.Minute
 	if r.config != nil && r.config.SandboxStartTimeout > 0 {
 		timeout = r.config.SandboxStartTimeout
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	client := r.sandboxInitClient(session)
+	client := r.sandboxInitClient(session, vmState)
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	var lastErr error
@@ -466,13 +483,13 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
 
-	usesInit := r.sandboxInitConfigured(session)
+	usesInit := r.sandboxInitConfigured(session, vmState)
 	if usesInit {
-		if err := r.waitForSandboxInit(ctx, session); err != nil {
+		if err := r.waitForSandboxInit(ctx, session, vmState); err != nil {
 			return SandboxVMInfo{}, err
 		}
 		bootstrap := directoryOnlyGuestSandboxBootstrapExecSpecForSandbox(r.config, session)
-		if _, err := runSandboxInitExec(ctx, r.sandboxInitClient(session), session.Summary.ID, "/", bootstrap, nil); err != nil {
+		if _, err := runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, "/", bootstrap, nil); err != nil {
 			return SandboxVMInfo{}, err
 		}
 	} else if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
@@ -505,9 +522,14 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 			}
 		}
 	}
+	initState := SandboxInitStateDisabled
+	if usesInit {
+		initState = SandboxInitStateEnabled
+	}
 	return SandboxVMInfo{
-		BoxID:      name,
-		JupyterURL: jupyterDirectURL(proxyState),
+		BoxID:            name,
+		JupyterURL:       jupyterDirectURL(proxyState),
+		SandboxInitState: initState,
 	}, nil
 }
 
@@ -596,8 +618,8 @@ func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmStat
 		return ExecResult{}, err
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
-	if r.sandboxInitConfigured(session) {
-		return runSandboxInitExec(ctx, r.sandboxInitClient(session), session.Summary.ID, r.config.GuestWorkspacePath, spec, nil)
+	if r.sandboxInitConfigured(session, vmState) {
+		return runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, r.config.GuestWorkspacePath, spec, nil)
 	}
 	return executeUserCommandAfterBootstrap(
 		func() error {
@@ -642,8 +664,8 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 		return ExecResult{}, err
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
-	if r.sandboxInitConfigured(session) {
-		return runSandboxInitExec(ctx, r.sandboxInitClient(session), session.Summary.ID, r.config.GuestWorkspacePath, spec, stream)
+	if r.sandboxInitConfigured(session, vmState) {
+		return runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, r.config.GuestWorkspacePath, spec, stream)
 	}
 	return executeUserCommandAfterBootstrap(
 		func() error {
@@ -1116,8 +1138,8 @@ func (r *microsandboxRuntime) TerminateProcessTree(ctx context.Context, session 
 	if !alive {
 		return nil
 	}
-	if r.sandboxInitConfigured(session) {
-		return r.sandboxInitClient(session).KillTree(ctx, marker)
+	if r.sandboxInitConfigured(session, vmState) {
+		return r.sandboxInitClient(session, vmState).KillTree(ctx, marker)
 	}
 	name := r.sandboxName(session, vmState)
 	sandbox, err := r.connectSandbox(ctx, session, vmState, false)
@@ -1208,14 +1230,7 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 		return nil, err
 	}
 	mounts := r.microsandboxCreateMounts(manifest, name)
-	initEnabled := r.sandboxInitEnabled()
-	if initEnabled {
-		initDir, err := ensureSandboxInitHostDir(r.config, session.Summary.ID)
-		if err != nil {
-			return nil, fmt.Errorf("create microsandbox init control directory: %w", err)
-		}
-		mounts[microsandboxInitGuestDir] = microsandbox.Mount.Bind(initDir, microsandbox.MountOptions{})
-	}
+	initEnabled := SandboxInitEnabledFor(r.config, vmState)
 	imageRef := resolveSandboxGuestImage(vmState.Image, session.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverMicrosandbox))
 	imagePullTimeout := r.config.ImagePullTimeout
 	if imagePullTimeout <= 0 {

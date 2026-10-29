@@ -1,6 +1,10 @@
 package driver
 
-import "testing"
+import (
+	"testing"
+
+	appconfig "github.com/chaitin/agent-compose/pkg/config"
+)
 
 func TestSandboxInitCapabilityForEveryDriver(t *testing.T) {
 	for _, test := range []struct {
@@ -11,7 +15,7 @@ func TestSandboxInitCapabilityForEveryDriver(t *testing.T) {
 	}{
 		{driver: RuntimeDriverDocker, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlUnixSocket},
 		{driver: RuntimeDriverK8s, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlGuestExec},
-		{driver: RuntimeDriverMicrosandbox, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlUnixSocket},
+		{driver: RuntimeDriverMicrosandbox, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlGuestExec},
 		{driver: RuntimeDriverBoxlite, supported: true, mode: SandboxInitModePID1, control: SandboxInitControlUnixSocket},
 		{driver: "unknown", supported: false, mode: SandboxInitModeUnsupported, control: SandboxInitControlNone},
 	} {
@@ -24,5 +28,22 @@ func TestSandboxInitCapabilityForEveryDriver(t *testing.T) {
 				t.Fatalf("unsupported capability %#v does not explain why", capability)
 			}
 		})
+	}
+}
+
+func TestSandboxInitStateForPrefersThePersistedRuntimeState(t *testing.T) {
+	config := &appconfig.Config{SandboxInitEnabled: true}
+	if got := SandboxInitStateFor(config, VMState{SandboxInitState: SandboxInitStateDisabled}); got != SandboxInitStateDisabled {
+		t.Fatalf("state = %q, want the persisted disabled state to win over the flag", got)
+	}
+	config.SandboxInitEnabled = false
+	if got := SandboxInitStateFor(config, VMState{SandboxInitState: SandboxInitStateEnabled}); got != SandboxInitStateEnabled {
+		t.Fatalf("state = %q, want the persisted enabled state to win over the flag", got)
+	}
+	if got := SandboxInitStateFor(&appconfig.Config{SandboxInitEnabled: true}, VMState{}); got != SandboxInitStateEnabled {
+		t.Fatalf("state = %q, want the flag fallback for an unrecorded runtime", got)
+	}
+	if got := SandboxInitStateFor(&appconfig.Config{}, VMState{}); got != SandboxInitStateDisabled {
+		t.Fatalf("state = %q, want disabled when the flag is off", got)
 	}
 }

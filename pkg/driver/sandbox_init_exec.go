@@ -42,6 +42,13 @@ func runSandboxInitExec(ctx context.Context, client *sandboxinit.Client, sandbox
 			collector.finish()
 			if ctx.Err() != nil {
 				killSandboxInitSession(client, session.ID, !spec.KillOnlyOnCancel)
+				if !spec.KillOnlyOnCancel {
+					// The workload runtime starts the real command in its own
+					// process group, so killing the session leader's group is not
+					// enough. Kill the marker-tagged tree as well, exactly like
+					// the run-level TerminateProcessTree path.
+					killSandboxInitTree(client, marker)
+				}
 				return ExecResult{}, ctx.Err()
 			}
 			return ExecResult{}, fmt.Errorf("read sandbox init exec %s: %w", session.ID, err)
@@ -54,6 +61,7 @@ func runSandboxInitExec(ctx context.Context, client *sandboxinit.Client, sandbox
 		case sandboxinit.FrameError:
 			collector.finish()
 			killSandboxInitSession(client, session.ID, true)
+			killSandboxInitTree(client, marker)
 			return ExecResult{}, fmt.Errorf("sandbox init exec %s: %s", session.ID, frame.Message)
 		case sandboxinit.FrameExit:
 			collector.finish()

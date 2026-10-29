@@ -60,6 +60,19 @@ type process struct {
 	waitErr   error
 }
 
+func (p *process) info() ProcessInfo {
+	return ProcessInfo{
+		ID:        p.id,
+		PID:       p.pid,
+		Command:   p.command,
+		Args:      append([]string(nil), p.args...),
+		Marker:    p.marker,
+		TTY:       p.tty,
+		StartedAt: p.startedAt,
+		Main:      p.main,
+	}
+}
+
 func (p *process) detach() {
 	p.once.Do(func() { close(p.discard) })
 }

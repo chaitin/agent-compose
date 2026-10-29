@@ -358,8 +358,12 @@ func (r *k8sRuntime) ensureSandboxResult(ctx context.Context, clientset kubernet
 			return SandboxVMInfo{}, err
 		}
 	}
+	initState := SandboxInitStateDisabled
+	if k8sPodUsesInit(pod) {
+		initState = SandboxInitStateEnabled
+	}
 	if !jupyterEnabled(effective) {
-		return SandboxVMInfo{BoxID: pod.Name}, nil
+		return SandboxVMInfo{BoxID: pod.Name, SandboxInitState: initState}, nil
 	}
 	effective = k8sJupyterProxyStateForPod(effective, pod)
 	readyCtx, cancel := context.WithTimeout(ctx, r.config.JupyterReadyTimeout)
@@ -394,7 +398,7 @@ func (r *k8sRuntime) ensureSandboxResult(ctx context.Context, clientset kubernet
 		}
 		return SandboxVMInfo{}, cause
 	}
-	return SandboxVMInfo{BoxID: pod.Name, ProxyState: &effective}, nil
+	return SandboxVMInfo{BoxID: pod.Name, ProxyState: &effective, SandboxInitState: initState}, nil
 }
 
 // k8sJupyterProxyStateForPod finalizes proxyState's connect target once pod
@@ -461,7 +465,7 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 	// decision on the Pod itself so a later EnsureSandbox call can detect
 	// whether it's stale (see k8sPodNeedsRecreate) without having to infer
 	// it from the live Command string.
-	initEnabled := r.config != nil && r.config.SandboxInitEnabled
+	initEnabled := SandboxInitEnabledFor(r.config, vmState)
 	cmdText := ""
 	var containerPorts []corev1.ContainerPort
 	if jupyterEnabled(effective) {

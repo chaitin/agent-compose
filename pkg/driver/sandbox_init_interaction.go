@@ -27,6 +27,7 @@ func openSandboxInitInteraction(ctx context.Context, client *sandboxinit.Client,
 	if spec.TimeoutMs > 0 {
 		childCtx, cancel = context.WithTimeout(ctx, time.Duration(spec.TimeoutMs)*time.Millisecond)
 	}
+	marker := newDockerExecMarker()
 	session, err := client.Exec(childCtx, sandboxinit.Request{
 		Command: command.Command,
 		Args:    append([]string(nil), command.Args...),
@@ -35,7 +36,7 @@ func openSandboxInitInteraction(ctx context.Context, client *sandboxinit.Client,
 		TTY:     spec.TTY,
 		Rows:    uint16(spec.Rows),
 		Cols:    uint16(spec.Cols),
-		Marker:  newDockerExecMarker(),
+		Marker:  marker,
 	})
 	if err != nil {
 		cancel()
@@ -47,6 +48,7 @@ func openSandboxInitInteraction(ctx context.Context, client *sandboxinit.Client,
 		client:      client,
 		sandbox:     sandbox,
 		session:     session,
+		marker:      marker,
 		operationID: spec.OperationID,
 		tty:         spec.TTY,
 		startedAt:   time.Now(),
