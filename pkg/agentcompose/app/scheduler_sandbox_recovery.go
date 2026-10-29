@@ -23,6 +23,7 @@ type schedulerRunReader interface {
 	GetSchedulerRun(context.Context, string, string) (domain.SchedulerRunSummary, error)
 	BatchGetLatestSchedulerRunsBySandboxIDs(context.Context, []string, []string) (map[string]domain.SchedulerRunSummary, error)
 	GetSchedulerBindingForSandbox(context.Context, string) (domain.SchedulerBinding, bool, error)
+	GetScheduler(context.Context, string) (domain.Scheduler, error)
 }
 
 // schedulerSandboxStopper releases the runtime of an orphaned sandbox.
@@ -68,14 +69,22 @@ func reconcileOrphanedSchedulerSandboxes(
 		if sandboxpkg.EffectiveStoppedRuntimePolicy(sandbox) != domain.StoppedRuntimePolicyRemove {
 			continue
 		}
-		if _, bound, err := runs.GetSchedulerBindingForSandbox(ctx, sandbox.Summary.ID); err != nil {
+		if binding, bound, err := runs.GetSchedulerBindingForSandbox(ctx, sandbox.Summary.ID); err != nil {
 			warnings = append(warnings, fmt.Sprintf("look up scheduler binding for sandbox %s: %v", sandbox.Summary.ID, err))
 			continue
 		} else if bound {
-			// A sticky binding keeps the sandbox for reuse. Its scheduler_run_id
-			// tag still names the run that created it, so the binding, not the
-			// tag, decides ownership here.
-			continue
+			// A binding only protects the sandbox while it is still a valid
+			// sticky target. A removed trigger, a policy switch to new, or a
+			// changed config leaves a stale row behind and must not exempt an
+			// otherwise orphaned runtime forever.
+			valid, err := schedulerBindingStillValid(ctx, runs, binding)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("validate scheduler binding for sandbox %s: %v", sandbox.Summary.ID, err))
+				continue
+			}
+			if valid {
+				continue
+			}
 		}
 		schedulerID := strings.TrimSpace(schedulerSandboxTag(sandbox, "scheduler_id"))
 		runID := strings.TrimSpace(schedulerSandboxTag(sandbox, "scheduler_run_id"))
@@ -132,6 +141,47 @@ func orphanedSchedulerSandbox(
 		return false, fmt.Sprintf("sandbox %s has no scheduler_run_id tag and no linked scheduler run; leaving it for manual review", sandboxID)
 	}
 	return schedulerRunLostOwner(run, startedAt), ""
+}
+
+// schedulerBindingStillValid reports whether a binding still points at a
+// sandbox the scheduler would reuse. Stale rows survive trigger removal, a
+// switch from sticky to new, and config changes, so the binding alone cannot
+// exempt a sandbox from reclamation.
+func schedulerBindingStillValid(ctx context.Context, runs schedulerRunReader, binding domain.SchedulerBinding) (bool, error) {
+	scheduler, err := runs.GetScheduler(ctx, binding.SchedulerID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if schedulers.NormalizeSandboxPolicy(scheduler.Summary.SandboxPolicy) != domain.SchedulerSandboxPolicySticky {
+		return false, nil
+	}
+	if triggerID := strings.TrimSpace(binding.TriggerID); triggerID != "" {
+		found := false
+		for _, trigger := range scheduler.Triggers {
+			if trigger.ID == triggerID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false, nil
+		}
+	}
+	// A legacy binding may predate the hash and is claimed on the next reuse;
+	// only compare the hash when the row already carries one.
+	if hash := strings.TrimSpace(binding.SandboxConfigHash); hash != "" {
+		currentHash, err := schedulers.SchedulerSandboxConfigHash(scheduler)
+		if err != nil {
+			return false, err
+		}
+		if currentHash != hash {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // schedulerRunLostOwner reports whether the run can no longer own its sandbox.

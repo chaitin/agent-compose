@@ -22,12 +22,14 @@ func (f *fakeSchedulerSandboxLister) ListSandboxes(_ context.Context, options do
 }
 
 type fakeSchedulerRunReader struct {
-	runs     map[string]domain.SchedulerRunSummary
-	batch    map[string]domain.SchedulerRunSummary
-	bound    map[string]bool
-	err      error
-	batchErr error
-	bindErr  error
+	runs       map[string]domain.SchedulerRunSummary
+	batch      map[string]domain.SchedulerRunSummary
+	bindings   map[string]domain.SchedulerBinding
+	schedulers map[string]domain.Scheduler
+	err        error
+	batchErr   error
+	bindErr    error
+	schedErr   error
 }
 
 func (f *fakeSchedulerRunReader) GetSchedulerRun(_ context.Context, schedulerID, runID string) (domain.SchedulerRunSummary, error) {
@@ -53,10 +55,22 @@ func (f *fakeSchedulerRunReader) GetSchedulerBindingForSandbox(_ context.Context
 	if f.bindErr != nil {
 		return domain.SchedulerBinding{}, false, f.bindErr
 	}
-	if f.bound[sandboxID] {
-		return domain.SchedulerBinding{SandboxID: sandboxID}, true, nil
+	binding, ok := f.bindings[sandboxID]
+	if !ok {
+		return domain.SchedulerBinding{}, false, nil
 	}
-	return domain.SchedulerBinding{}, false, nil
+	return binding, true, nil
+}
+
+func (f *fakeSchedulerRunReader) GetScheduler(_ context.Context, schedulerID string) (domain.Scheduler, error) {
+	if f.schedErr != nil {
+		return domain.Scheduler{}, f.schedErr
+	}
+	scheduler, ok := f.schedulers[schedulerID]
+	if !ok {
+		return domain.Scheduler{}, domain.ResourceError(domain.ErrNotFound, "scheduler", schedulerID, "scheduler "+schedulerID+" not found", nil)
+	}
+	return scheduler, nil
 }
 
 type fakeSchedulerSandboxStopper struct {
@@ -102,7 +116,8 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 		sandboxes   []*domain.Sandbox
 		runs        map[string]domain.SchedulerRunSummary
 		batch       map[string]domain.SchedulerRunSummary
-		bound       map[string]bool
+		bindings    map[string]domain.SchedulerBinding
+		schedulers  map[string]domain.Scheduler
 		failOn      map[string]error
 		wantStopped []string
 		wantWarning string
@@ -139,7 +154,44 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 			name:      "sticky binding is kept even with remove policy",
 			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-bound", "scheduler", "sched", "run-failed", "remove", before)},
 			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
-			bound:     map[string]bool{"sb-bound": true},
+			bindings:  map[string]domain.SchedulerBinding{"sb-bound": {SchedulerID: "sched", TriggerID: "trigger-a", SandboxID: "sb-bound"}},
+			schedulers: map[string]domain.Scheduler{"sched": {
+				Summary:  domain.SchedulerSummary{ID: "sched", SandboxPolicy: domain.SchedulerSandboxPolicySticky},
+				Triggers: []domain.SchedulerTrigger{{ID: "trigger-a", SchedulerID: "sched"}},
+			}},
+		},
+		{
+			name:      "stale binding after policy switch is reclaimed",
+			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-stale-policy", "scheduler", "sched", "run-failed", "remove", before)},
+			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
+			bindings:  map[string]domain.SchedulerBinding{"sb-stale-policy": {SchedulerID: "sched", TriggerID: "trigger-a", SandboxID: "sb-stale-policy"}},
+			schedulers: map[string]domain.Scheduler{"sched": {
+				Summary:  domain.SchedulerSummary{ID: "sched", SandboxPolicy: "new"},
+				Triggers: []domain.SchedulerTrigger{{ID: "trigger-a", SchedulerID: "sched"}},
+			}},
+			wantStopped: []string{"sb-stale-policy"},
+		},
+		{
+			name:      "stale binding after trigger removal is reclaimed",
+			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-stale-trigger", "scheduler", "sched", "run-failed", "remove", before)},
+			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
+			bindings:  map[string]domain.SchedulerBinding{"sb-stale-trigger": {SchedulerID: "sched", TriggerID: "trigger-gone", SandboxID: "sb-stale-trigger"}},
+			schedulers: map[string]domain.Scheduler{"sched": {
+				Summary:  domain.SchedulerSummary{ID: "sched", SandboxPolicy: domain.SchedulerSandboxPolicySticky},
+				Triggers: []domain.SchedulerTrigger{{ID: "trigger-a", SchedulerID: "sched"}},
+			}},
+			wantStopped: []string{"sb-stale-trigger"},
+		},
+		{
+			name:      "stale binding after config change is reclaimed",
+			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-stale-hash", "scheduler", "sched", "run-failed", "remove", before)},
+			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
+			bindings:  map[string]domain.SchedulerBinding{"sb-stale-hash": {SchedulerID: "sched", TriggerID: "trigger-a", SandboxID: "sb-stale-hash", SandboxConfigHash: "stale-hash"}},
+			schedulers: map[string]domain.Scheduler{"sched": {
+				Summary:  domain.SchedulerSummary{ID: "sched", SandboxPolicy: domain.SchedulerSandboxPolicySticky},
+				Triggers: []domain.SchedulerTrigger{{ID: "trigger-a", SchedulerID: "sched"}},
+			}},
+			wantStopped: []string{"sb-stale-hash"},
 		},
 		{
 			name:      "non-scheduler origin is ignored",
@@ -182,7 +234,7 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			lister := &fakeSchedulerSandboxLister{listed: domain.SandboxListResult{Sandboxes: tc.sandboxes}}
-			reader := &fakeSchedulerRunReader{runs: tc.runs, batch: tc.batch, bound: tc.bound}
+			reader := &fakeSchedulerRunReader{runs: tc.runs, batch: tc.batch, bindings: tc.bindings, schedulers: tc.schedulers}
 			stopper := &fakeSchedulerSandboxStopper{failOn: tc.failOn}
 
 			warnings := reconcileOrphanedSchedulerSandboxes(context.Background(), lister, reader, stopper, startedAt)
