@@ -230,6 +230,7 @@ func (h *RuntimeHost) CallSandboxRPC(ctx context.Context, method, requestJSON st
 
 func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.SchedulerAgentRequest) (domain.SchedulerAgentResult, error) {
 	request.BindingTriggerID = h.execution.TriggerID
+	request.RunID = h.execution.ID
 	if h.useProjectAgentRun(request) {
 		return h.ProjectAgent(ctx, prompt, request)
 	}
@@ -340,6 +341,7 @@ func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerComma
 		SandboxEnv:       CommandSandboxEnv(request),
 		Volumes:          request.Volumes,
 		BindingTriggerID: h.execution.TriggerID,
+		RunID:            h.execution.ID,
 	}
 	session, eventType, err := h.ensureCommandSession(ctx, agentRequest, cleanupSession)
 	if err != nil {

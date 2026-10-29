@@ -237,6 +237,11 @@ func (r *SchedulerSandboxRunner) createSchedulerSandbox(ctx context.Context, sch
 		{Name: "scheduler_name", Value: scheduler.Summary.Name},
 		{Name: domain.AgentSandboxTagProvider, Value: cfg.AgentConfig.Provider},
 	}
+	// Persist the owning run so startup reconciliation can tell an orphaned
+	// sandbox (run terminal or gone) from one whose run is still active.
+	if runID := strings.TrimSpace(request.RunID); runID != "" {
+		tags = append(tags, domain.SandboxTag{Name: "scheduler_run_id", Value: runID})
+	}
 	if strings.TrimSpace(scheduler.Summary.ProjectID) != "" {
 		projectID := strings.TrimSpace(scheduler.Summary.ProjectID)
 		tags = append(tags,

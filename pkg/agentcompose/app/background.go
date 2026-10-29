@@ -24,6 +24,7 @@ const staleProjectRunError = "daemon interrupted project run before reaching ter
 
 type runtimeReconciler interface {
 	ReconcileRuntimeState(context.Context, *domain.Sandbox) (*domain.Sandbox, error)
+	StopSandbox(context.Context, string) (*domain.Sandbox, error)
 }
 
 type backgroundSchedulerController interface {
@@ -66,6 +67,11 @@ func startBackgroundManagers(ctx context.Context, deps backgroundManagersDeps) e
 	}
 	if err := deps.Schedulers.RecoverInterruptedRuns(reconcileCtx, startedAt); err != nil {
 		slog.Warn("failed to recover interrupted scheduler runs", "error", err)
+	}
+	if deps.Sandboxes != nil && deps.ConfigDB != nil && deps.Bridge != nil {
+		for _, warning := range reconcileOrphanedSchedulerSandboxes(reconcileCtx, deps.Sandboxes, deps.ConfigDB, deps.Bridge, startedAt) {
+			slog.Warn("scheduler sandbox recovery", "warning", warning)
+		}
 	}
 	if err := deps.Completions.Start(ctx); err != nil {
 		return err
