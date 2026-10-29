@@ -361,3 +361,46 @@ Stage 1 已包含：
 | 配置开关 | `pkg/config/config.go`（`SandboxInitEnabled`/`SandboxInitBinary`） |
 | 镜像 | `guest-images/Dockerfile.agent-compose-guest` |
 | 构建 | `Taskfile.yml` `build:sandbox-init` |
+
+---
+
+## 13. Stage 1 功能验证记录（2026-10-29）
+
+环境：Linux arm64、Docker、guest image 基于 `chaitin/agent-compose-guest:latest` 注入 `agent-compose-init`；LLM 使用 `deepseek-flash` 通过 daemon facade 访问外部 OpenAI Responses / Anthropic Messages 兼容端点。
+
+### 13.1 已验证
+
+| 场景 | 结果 |
+| --- | --- |
+| `SANDBOX_INIT_ENABLED=true` 创建 Docker sandbox | 容器 PID1 为 `agent-compose-init`，`docker top` 中 main/exec 都是其子进程 |
+| 普通 command exec | `Exec` 成功，`/proc/$$/status` 的 PPid 为 1 |
+| 交互式 stdin exec | `agent-compose exec -i --command 'read ...'` 收到 stdin，Node 正常运行 |
+| 并发 exec / 大输出 / 立即退出 | `pkg/sandboxinit` 单测通过（含 `-race`） |
+| Codex prompt | 成功，facade 请求 200，返回 `OK` |
+| Pi prompt | 成功，返回 `OK` |
+| Claude / Anthropic Messages prompt | 成功，返回 `ANTHROPIC_OK` |
+| Node.js runtime | `node -p process.version` 在 sandbox 内正常 |
+| Jupyter main | Jupyter 作为 init 子进程启动，命令执行成功 |
+| detached run | 提交、日志 follow、完成清理均正常 |
+| daemon 重启后继续 exec | 运行中的 init sandbox 在 daemon 重启后仍可执行命令 |
+| stop / rm | init 收到 SIGTERM，exec 会话取消，容器/记录清理正常 |
+| `SANDBOX_INIT_ENABLED=false` | 回到 `docker-init + sh/tail + docker exec`，行为与旧版本一致 |
+| 启用 flag 但镜像无 init binary | Docker 启动立即失败并返回明确错误，无残留容器 |
+| K8s driver 开启 flag | daemon 记录 capability warning，保持 legacy 进程模型，不崩溃 |
+| 未编译的 VM driver | 由构建 capability 决定；未在本次环境验证 |
+
+### 13.2 验证中发现并修复的问题
+
+1. **严格 mount 比较把 init control mount 当作 extra stale bind。**
+   第二次 `EnsureSandbox` 或 `IsSandboxAlive` 会因此删除运行中的容器，下一次 exec 得到 EOF。修复：init 容器在比较时把 control mount 加入 expected；stale 删除时清理短 socket symlink。
+2. **Unix socket 路径过长。**
+   `<SANDBOX_ROOT>/<date>/<sandbox-id>/init-control/init.sock` 可超过 108 字节；daemon 使用 `/tmp/agent-compose-init-<uid>/<hash>.sock` 短 symlink 连接。已通过真实 daemon 验证。
+3. **PTY `Ctty` 兼容性。**
+   `pty.StartWithSize` 在当前 Go 版本下报 `Setctty set but Ctty not valid in child`；改为 `pty.Open` + `Ctty=0` 后 TTY 测试通过。
+
+### 13.3 未覆盖
+
+- 真实 K8s 集群的 Pod init + exec bridge；
+- Microsandbox/BoxLite 的 PID1 handoff 与 control bind mount（当前环境未准备 SDK/KVM runtime artifacts）；
+- 容器/VM 重启、长时间运行、资源压力、网络策略与 init 的组合；
+- Jupyter 浏览器端到端（仅验证进程启动和命令执行）。
