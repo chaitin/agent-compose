@@ -11,7 +11,7 @@ import (
 
 func (s *schedulerStore) ListInterruptedSchedulerRuns(ctx context.Context, startedBefore time.Time) ([]domain.SchedulerRunSummary, error) {
 	rows, err := s.db.QueryContext(ctx, schedulers.SelectSchedulerRunSQL()+`
-		WHERE trigger_id <> '' AND status = ? AND started_at < ?
+		WHERE status = ? AND started_at < ?
 		ORDER BY started_at ASC, scheduler_id ASC, run_id ASC`,
 		domain.SchedulerRunStatusRunning, startedBefore.UTC().UnixMilli(),
 	)

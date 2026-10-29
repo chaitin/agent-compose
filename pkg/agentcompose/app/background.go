@@ -21,9 +21,11 @@ import (
 
 const stalePendingSandboxLastError = "sandbox startup interrupted before runtime reached running state"
 const staleProjectRunError = "daemon interrupted project run before reaching terminal state"
+const schedulerSandboxRecoveryTimeout = 30 * time.Second
 
 type runtimeReconciler interface {
 	ReconcileRuntimeState(context.Context, *domain.Sandbox) (*domain.Sandbox, error)
+	StopSandbox(context.Context, string) (*domain.Sandbox, error)
 }
 
 type backgroundSchedulerController interface {
@@ -78,6 +80,16 @@ func startBackgroundManagers(ctx context.Context, deps backgroundManagersDeps) e
 		StartedAt:   startedAt,
 	}); err != nil {
 		slog.Warn("failed to reconcile persisted project runs", "error", err)
+	}
+	if deps.Sandboxes != nil && deps.ConfigDB != nil && deps.Bridge != nil {
+		// Keep the scheduler sweep on its own budget: stopping a runtime can
+		// take seconds, and it must not starve the project-run re-attachment
+		// above of its startup window.
+		recoveryCtx, cancelRecovery := context.WithTimeout(context.Background(), schedulerSandboxRecoveryTimeout)
+		for _, warning := range reconcileOrphanedSchedulerSandboxes(recoveryCtx, deps.Sandboxes, deps.ConfigDB, deps.Bridge, startedAt) {
+			slog.Warn("scheduler sandbox recovery", "warning", warning)
+		}
+		cancelRecovery()
 	}
 	deps.Schedulers.Start()
 	deps.Events.Start()

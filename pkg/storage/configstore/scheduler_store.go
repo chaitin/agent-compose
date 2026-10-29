@@ -569,6 +569,22 @@ func (s *schedulerStore) GetSchedulerBinding(ctx context.Context, schedulerID, t
 	return item, true, nil
 }
 
+// GetSchedulerBindingForSandbox reports whether a sandbox is currently bound
+// for sticky scheduler reuse. A bound sandbox must not be reclaimed as an
+// orphan even when its stopped-runtime policy is remove: the scheduler keeps
+// the binding so the next run can resume it.
+func (s *schedulerStore) GetSchedulerBindingForSandbox(ctx context.Context, sandboxID string) (domain.SchedulerBinding, bool, error) {
+	row := s.db.QueryRowContext(ctx, schedulers.SelectSchedulerBindingSQL()+` WHERE sandbox_id = ? LIMIT 1`, strings.TrimSpace(sandboxID))
+	item, err := schedulers.ScanSchedulerBinding(row.Scan)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.SchedulerBinding{}, false, nil
+		}
+		return domain.SchedulerBinding{}, false, err
+	}
+	return item, true, nil
+}
+
 func (s *schedulerStore) UpsertSchedulerBinding(ctx context.Context, binding domain.SchedulerBinding) error {
 	binding.SchedulerID = strings.TrimSpace(binding.SchedulerID)
 	binding.TriggerID = strings.TrimSpace(binding.TriggerID)
