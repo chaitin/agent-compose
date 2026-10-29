@@ -53,6 +53,9 @@ func NewSchedulerController(di do.Injector) (*schedulers.Controller, error) {
 		Publisher:          bus,
 		Notifier:           notifier,
 		Artifacts:          schedulers.FSArtifacts{DataRoot: config.DataRoot},
+		// Resolved here, not inside HostFactory, so startup recovery can stop
+		// sandboxes before any run builds a host.
+		InterruptedSandboxes: do.MustInvoke[*adapters.SchedulerSandboxRunner](di),
 		ReserveSlots: func(event domain.SchedulerTopicEvent, count int) ([]*webhooks.Reservation, bool) {
 			return reserveSchedulerEventQueueSlots(config, &queue, event, count)
 		},

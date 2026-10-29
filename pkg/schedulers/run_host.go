@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -121,6 +122,8 @@ type RuntimeHost struct {
 	commandSessionIDs       map[string]struct{}
 	commandSessionIDOrder   []string
 	commandReusableSession  *domain.Sandbox
+	stopPendingMu           sync.Mutex
+	stopPending             map[string]struct{}
 	projectAgentRunSequence atomic.Uint64
 }
 
@@ -233,10 +236,11 @@ func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.S
 	if h.useProjectAgentRun(request) {
 		return h.ProjectAgent(ctx, prompt, request)
 	}
-	session, eventType, err := h.deps.Sessions.Ensure(ctx, h.scheduler, request, true)
+	session, eventType, err := h.deps.Sessions.Ensure(h.withSandboxStopPending(ctx), h.scheduler, request, true)
 	if err != nil {
 		return domain.SchedulerAgentResult{}, err
 	}
+	h.recordSandboxStopPending(ctx, session.Summary.ID)
 	if eventType != "" {
 		_ = h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
 			EventType:       eventType,
@@ -502,11 +506,16 @@ func (h *RuntimeHost) ensureCommandSession(ctx context.Context, request domain.S
 			return loaded, "", nil
 		}
 	}
-	session, eventType, err := h.deps.Sessions.Ensure(ctx, h.scheduler, request, false)
+	ensureCtx := ctx
+	if cleanupSession {
+		ensureCtx = h.withSandboxStopPending(ctx)
+	}
+	session, eventType, err := h.deps.Sessions.Ensure(ensureCtx, h.scheduler, request, false)
 	if err != nil {
 		return nil, "", err
 	}
 	if cleanupSession {
+		h.recordSandboxStopPending(ctx, session.Summary.ID)
 		h.commandReusableSession = session
 	}
 	return session, eventType, nil
@@ -525,6 +534,67 @@ func (h *RuntimeHost) trackCommandSession(sessionID string, cleanup bool) {
 	}
 	h.commandSessionIDs[sessionID] = struct{}{}
 	h.commandSessionIDOrder = append(h.commandSessionIDOrder, sessionID)
+}
+
+// SandboxStopPendingEventType marks a sandbox that its run stops when the run
+// ends. The stop happens in this process, so a daemon restart mid-run would
+// skip it; RecoverInterruptedRuns reads this event to stop the sandbox on the
+// next startup instead.
+const SandboxStopPendingEventType = "scheduler.sandbox.stop_pending"
+
+type sandboxAcquiredHookKey struct{}
+
+// WithSandboxAcquiredHook asks the sandbox runner serving ctx to report each
+// sandbox it acquires, before it starts that sandbox's runtime.
+func WithSandboxAcquiredHook(ctx context.Context, hook func(sandboxID string)) context.Context {
+	return context.WithValue(ctx, sandboxAcquiredHookKey{}, hook)
+}
+
+// NotifySandboxAcquired reports a sandbox to the hook ctx carries, if any. A
+// sandbox runner calls it once the sandbox has an ID and before its runtime
+// starts, so the caller's record of the sandbox can never trail a running
+// runtime.
+func NotifySandboxAcquired(ctx context.Context, sandboxID string) {
+	if hook, ok := ctx.Value(sandboxAcquiredHookKey{}).(func(string)); ok && hook != nil {
+		hook(sandboxID)
+	}
+}
+
+// withSandboxStopPending records the pending stop of every sandbox acquired
+// under the returned context.
+func (h *RuntimeHost) withSandboxStopPending(ctx context.Context) context.Context {
+	return WithSandboxAcquiredHook(ctx, func(sandboxID string) {
+		h.recordSandboxStopPending(ctx, sandboxID)
+	})
+}
+
+// recordSandboxStopPending records the pending stop once per sandbox and run.
+// A sandbox counts as recorded only once its event is written, so a failed
+// write is retried by the next call for the same sandbox.
+func (h *RuntimeHost) recordSandboxStopPending(ctx context.Context, sandboxID string) {
+	sandboxID = strings.TrimSpace(sandboxID)
+	if sandboxID == "" {
+		return
+	}
+	h.stopPendingMu.Lock()
+	defer h.stopPendingMu.Unlock()
+	if _, recorded := h.stopPending[sandboxID]; recorded {
+		return
+	}
+	if err := h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
+		EventType:       SandboxStopPendingEventType,
+		Level:           "info",
+		Message:         "scheduler sandbox will be stopped after run",
+		Payload:         map[string]any{"sandboxId": sandboxID},
+		LinkedSandboxID: sandboxID,
+	}); err != nil {
+		slog.Warn("failed to record pending scheduler sandbox stop", "scheduler_id", h.scheduler.Summary.ID, "run_id", h.execution.ID, "sandbox_id", sandboxID, "error", err)
+		return
+	}
+	if h.stopPending == nil {
+		h.stopPending = map[string]struct{}{}
+	}
+	h.stopPending[sandboxID] = struct{}{}
 }
 
 // SchedulerEventInput describes one scheduler event to record, for both the
