@@ -409,6 +409,7 @@ Stage 1 已包含：
 | detached run | 提交、日志 follow、完成清理均正常 |
 | daemon 重启后继续 exec | 运行中的 init sandbox 在 daemon 重启后仍可执行命令 |
 | stop / rm | init 收到 SIGTERM，exec 会话取消，容器/记录清理正常 |
+| kill init | Docker integration 直接 KILL PID1，容器退出；没有残留 workload 树 |
 | `SANDBOX_INIT_ENABLED=false` | 回到 `docker-init + sh/tail + docker exec`，行为与旧版本一致 |
 | 启用 flag 但镜像无 init binary | Docker 启动立即失败并返回明确错误，无残留容器 |
 | K8s 初始化 Pod | `createPod` 单测验证 Command/Args 为 ac-init + control socket，无 tail；exec bridge 编译通过 |

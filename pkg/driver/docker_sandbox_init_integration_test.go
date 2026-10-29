@@ -156,4 +156,21 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 	if interactionResult.ExitCode != 0 || !strings.Contains(output.String(), "stdin-ok") {
 		t.Fatalf("interaction result = %#v output=%q", interactionResult, output.String())
 	}
+
+	// ac-init is PID 1: killing it must terminate the sandbox, not leave a
+	// workload tree behind. This is the Stage 1 kill-resilience contract.
+	if err := dockerClient.ContainerKill(ctx, info.ID, "KILL"); err != nil {
+		t.Fatalf("ContainerKill(init) error = %v", err)
+	}
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		current, inspectErr := dockerClient.ContainerInspect(ctx, info.ID)
+		if inspectErr == nil && current.State != nil && !current.State.Running {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("sandbox did not exit after ac-init was killed")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
