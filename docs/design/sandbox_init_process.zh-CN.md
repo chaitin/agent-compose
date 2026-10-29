@@ -410,6 +410,7 @@ Stage 1 已包含：
 
 ### 13.3 未覆盖
 
+- VM 真机 smoke：本次 `task test:runtime-smoke` 已尝试，`TestSmokeBoxLiteRuntimeRetentionAndRelease` 报 `The VM failed to start`，Microsandbox 用例未继续执行；因此不把 Microsandbox/BoxLite 标为 supported。
 - 真实 K8s 集群的 Pod init + exec bridge；
 - Microsandbox/BoxLite 的 PID1 handoff 与 control bind mount（当前环境未准备 SDK/KVM runtime artifacts）；
 - 容器/VM 重启、长时间运行、资源压力、网络策略与 init 的组合；
