@@ -316,10 +316,16 @@ func streamedFinalTextOverlap(logged, finalText string) int {
 }
 
 func (p *promptAttachProjector) AppendHumanMessage(message string) error {
-	return p.AppendHumanMessageFrame(message, "")
+	_, err := p.AppendHumanMessageFrame(message, "")
+	return err
 }
 
-func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID string) error {
+// AppendHumanMessageFrame records a human message frame and reports whether it
+// was newly recorded. It returns false when the same frame was already
+// persisted (idempotent retry), so callers can skip re-feeding the agent.
+// Frames that are not persisted (empty message or no event store) report true
+// to preserve the previous always-forward behavior.
+func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID string) (bool, error) {
 	text := promptAttachHumanLogText(message)
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -329,17 +335,20 @@ func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID s
 			text = "\n" + text
 		}
 		if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if p.events == nil || strings.TrimSpace(message) == "" {
-		return nil
+		return true, nil
 	}
 	p.humanIndex++
-	_, _, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
+	_, created, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
 		ID: attachedHumanEventID(p.run.RunID, clientFrameID, uint64(p.humanIndex), message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
 	})
-	return err
+	if err != nil {
+		return false, err
+	}
+	return created, nil
 }
 
 func (p *promptAttachProjector) AppendStderr(text string) error {
