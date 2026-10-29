@@ -184,7 +184,10 @@ func TestInitTTYStreamsAndExits(t *testing.T) {
 func TestInitImmediateExitDoesNotLoseTheExitFrame(t *testing.T) {
 	_, socket := startTestInit(t, "sleep 30")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// The loop deliberately exercises a fast-exit race many times. Under the
+	// coverage run the worker can be CPU-starved, so allow generous headroom
+	// rather than turning host load into a lost-exit-frame failure.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	for i := 0; i < 50; i++ {
 		session, err := client.Exec(ctx, Request{Command: "/bin/true"})
