@@ -4,6 +4,7 @@ package sandboxinit
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,5 +198,175 @@ func TestInitImmediateExitDoesNotLoseTheExitFrame(t *testing.T) {
 			}
 		}
 		_ = session.Close()
+	}
+}
+
+func TestInitConcurrentExecSessions(t *testing.T) {
+	_, socket := startTestInit(t, "sleep 30")
+	client := NewClient(socket)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	const workers = 8
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			session, err := client.Exec(ctx, Request{
+				Command: "/bin/sh",
+				Args:    []string{"-c", "printf ok"},
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer func() { _ = session.Close() }()
+			var output strings.Builder
+			for {
+				frame, err := session.Next(ctx)
+				if err != nil {
+					errs <- err
+					return
+				}
+				if frame.Type == FrameStdout {
+					output.Write(frame.Data)
+				}
+				if frame.Type == FrameExit {
+					if frame.Code != 0 || output.String() != "ok" {
+						errs <- errors.New("unexpected exec output or exit")
+						return
+					}
+					errs <- nil
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent exec error = %v", err)
+		}
+	}
+}
+
+func TestInitInteractiveStdinEcho(t *testing.T) {
+	_, socket := startTestInit(t, "sleep 30")
+	client := NewClient(socket)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := client.Exec(ctx, Request{Command: "/bin/cat"})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	defer func() { _ = session.Close() }()
+	if err := session.SendStdin(ctx, []byte("hello\n")); err != nil {
+		t.Fatalf("SendStdin() error = %v", err)
+	}
+	if err := session.CloseStdin(ctx); err != nil {
+		t.Fatalf("CloseStdin() error = %v", err)
+	}
+	var output strings.Builder
+	for {
+		frame, err := session.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next() error = %v", err)
+		}
+		if frame.Type == FrameStdout {
+			output.Write(frame.Data)
+		}
+		if frame.Type == FrameExit {
+			break
+		}
+	}
+	if !strings.Contains(output.String(), "hello") {
+		t.Fatalf("stdin echo output = %q", output.String())
+	}
+}
+
+func TestInitSignalTerminatesSession(t *testing.T) {
+	_, socket := startTestInit(t, "sleep 30")
+	client := NewClient(socket)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := client.Exec(ctx, Request{Command: "/bin/sleep", Args: []string{"30"}})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	defer func() { _ = session.Close() }()
+	if err := session.Signal(ctx, "KILL"); err != nil {
+		t.Fatalf("Signal() error = %v", err)
+	}
+	for {
+		frame, err := session.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next() after signal error = %v", err)
+		}
+		if frame.Type == FrameExit {
+			if frame.Code == 0 {
+				t.Fatal("signaled session exited with code 0")
+			}
+			break
+		}
+	}
+}
+
+func TestInitLargeOutputDoesNotDeadlock(t *testing.T) {
+	_, socket := startTestInit(t, "sleep 30")
+	client := NewClient(socket)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	session, err := client.Exec(ctx, Request{
+		Command: "/bin/sh",
+		Args:    []string{"-c", "head -c 1048576 /dev/zero"},
+	})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	defer func() { _ = session.Close() }()
+	var size int
+	for {
+		frame, err := session.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next() error = %v", err)
+		}
+		if frame.Type == FrameStdout {
+			size += len(frame.Data)
+		}
+		if frame.Type == FrameExit {
+			break
+		}
+	}
+	if size != 1048576 {
+		t.Fatalf("stdout size = %d, want 1048576", size)
+	}
+}
+
+func TestInitShutdownStopsTheMainProcess(t *testing.T) {
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "init.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{ControlSocket: socket, MainShell: "sleep 30"})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(socket); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("init socket did not appear")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	client := NewClient(socket)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := client.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("init did not stop after Shutdown")
 	}
 }
