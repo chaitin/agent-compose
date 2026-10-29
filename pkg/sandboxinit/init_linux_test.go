@@ -4,7 +4,9 @@ package sandboxinit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -368,5 +370,46 @@ func TestInitShutdownStopsTheMainProcess(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("init did not stop after Shutdown")
+	}
+}
+
+func TestInitRejectsUnsupportedProtocolVersion(t *testing.T) {
+	_, socket := startTestInit(t, "sleep 30")
+	conn, err := net.Dial("unix", socket)
+	if err != nil {
+		t.Fatalf("dial init socket: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	encoder := json.NewEncoder(conn)
+	decoder := json.NewDecoder(conn)
+	if err := encoder.Encode(Request{Version: 999, Type: RequestPing}); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+	var frame Frame
+	if err := decoder.Decode(&frame); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if frame.Type != FrameError || !strings.Contains(frame.Message, "protocol version") {
+		t.Fatalf("response = %#v, want a protocol version error", frame)
+	}
+}
+
+func TestInitExitsWithTheMainProcessStatus(t *testing.T) {
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "init.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{ControlSocket: socket, MainShell: "exit 7"})
+	}()
+	select {
+	case err := <-done:
+		var exitErr *ExitError
+		if !errors.As(err, &exitErr) || exitErr.Code != 7 {
+			t.Fatalf("Run() error = %v, want ExitError{Code:7}", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("init did not exit with the main process")
 	}
 }

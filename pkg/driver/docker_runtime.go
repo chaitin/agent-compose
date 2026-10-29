@@ -298,11 +298,19 @@ func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vm
 	if err != nil {
 		return false, err
 	}
+	if dockerSandboxUsesInit(containerInfo) {
+		initMount, mountErr := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+		if mountErr != nil {
+			return false, mountErr
+		}
+		expectedMounts = append(expectedMounts, initMount)
+	}
 	if !r.dockerSandboxMountsMatch(containerInfo, expectedMounts, sandbox) {
 		slog.Warn("docker sandbox mounts no longer match the active data root; retiring stale runtime for safe recreation", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
 		if err := removeDockerContainerWithStaleMounts(ctx, dockerClient, containerInfo.ID); err != nil {
 			return false, err
 		}
+		cleanupSandboxInitClientPath(sandbox)
 		return false, nil
 	}
 	return containerInfo.State != nil && containerInfo.State.Running, nil
@@ -913,6 +921,13 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState); err != nil {
 		return containerapi.InspectResponse{}, false, err
 	} else if ok {
+		if dockerSandboxUsesInit(containerInfo) {
+			initMount, mountErr := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+			if mountErr != nil {
+				return containerapi.InspectResponse{}, false, mountErr
+			}
+			mounts = append(mounts, initMount)
+		}
 		if r.dockerSandboxMountsMatch(containerInfo, mounts, sandbox) {
 			return containerInfo, false, nil
 		}

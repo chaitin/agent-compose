@@ -67,6 +67,17 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		_ = runtime.RemoveSandbox(cleanupCtx, sandbox, VMState{})
 	})
 
+	// The second ensure and the liveness check must see the init control mount
+	// as expected, not as an extra stale bind. If they do not, the driver
+	// removes the running container and the next exec fails with EOF.
+	if _, err := runtime.EnsureSandbox(ctx, sandbox, VMState{}, ProxyState{}); err != nil {
+		t.Fatalf("second EnsureSandbox() error = %v", err)
+	}
+	alive, err := runtime.IsSandboxAlive(ctx, sandbox, VMState{})
+	if err != nil || !alive {
+		t.Fatalf("IsSandboxAlive() = %v, %v; want true, nil", alive, err)
+	}
+
 	result, err := runtime.Exec(ctx, sandbox, VMState{}, ExecSpec{
 		Command: "/bin/sh",
 		Args:    []string{"-c", "printf init-exec-ok"},
