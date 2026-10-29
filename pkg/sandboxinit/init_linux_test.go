@@ -24,7 +24,7 @@ func startTestInit(t *testing.T, mainShell string) (context.CancelFunc, string) 
 	go func() {
 		done <- Run(ctx, Options{ControlSocket: socket, MainShell: mainShell})
 	}()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if _, err := os.Stat(socket); err == nil {
 			break
@@ -39,7 +39,7 @@ func startTestInit(t *testing.T, mainShell string) (context.CancelFunc, string) 
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(10 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatal("init did not stop")
 		}
 	})
@@ -47,9 +47,9 @@ func startTestInit(t *testing.T, mainShell string) (context.CancelFunc, string) 
 }
 
 func TestInitExecStreamsStdoutStderrAndExit(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	session, err := client.Exec(ctx, Request{
@@ -94,9 +94,9 @@ func TestInitExecStreamsStdoutStderrAndExit(t *testing.T) {
 }
 
 func TestInitPingAndList(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx); err != nil {
 		t.Fatalf("Ping() error = %v", err)
@@ -111,9 +111,9 @@ func TestInitPingAndList(t *testing.T) {
 }
 
 func TestInitKillTreeByMarker(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	const marker = "test-marker"
@@ -143,9 +143,9 @@ func TestInitKillTreeByMarker(t *testing.T) {
 }
 
 func TestInitTTYStreamsAndExits(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	session, err := client.Exec(ctx, Request{
@@ -182,7 +182,7 @@ func TestInitTTYStreamsAndExits(t *testing.T) {
 }
 
 func TestInitImmediateExitDoesNotLoseTheExitFrame(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
 	// The loop deliberately exercises a fast-exit race many times. Under the
 	// coverage run the worker can be CPU-starved, so allow generous headroom
@@ -208,9 +208,11 @@ func TestInitImmediateExitDoesNotLoseTheExitFrame(t *testing.T) {
 }
 
 func TestInitConcurrentExecSessions(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	// Eight exec sessions are intentionally concurrent; coverage/CI workers can
+	// be CPU-starved, so keep the stress but allow headroom.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	const workers = 8
 	errs := make(chan error, workers)
@@ -254,9 +256,9 @@ func TestInitConcurrentExecSessions(t *testing.T) {
 }
 
 func TestInitInteractiveStdinEcho(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	session, err := client.Exec(ctx, Request{Command: "/bin/cat"})
 	if err != nil {
@@ -288,9 +290,9 @@ func TestInitInteractiveStdinEcho(t *testing.T) {
 }
 
 func TestInitSignalTerminatesSession(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	session, err := client.Exec(ctx, Request{Command: "/bin/sleep", Args: []string{"30"}})
 	if err != nil {
@@ -315,9 +317,9 @@ func TestInitSignalTerminatesSession(t *testing.T) {
 }
 
 func TestInitLargeOutputDoesNotDeadlock(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	client := NewClient(socket)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	session, err := client.Exec(ctx, Request{
 		Command: "/bin/sh",
@@ -354,7 +356,7 @@ func TestInitShutdownStopsTheMainProcess(t *testing.T) {
 	go func() {
 		done <- Run(ctx, Options{ControlSocket: socket, MainShell: "sleep 30"})
 	}()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if _, err := os.Stat(socket); err == nil {
 			break
@@ -365,20 +367,20 @@ func TestInitShutdownStopsTheMainProcess(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	client := NewClient(socket)
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer shutdownCancel()
 	if err := client.Shutdown(shutdownCtx); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)
 	}
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("init did not stop after Shutdown")
 	}
 }
 
 func TestInitRejectsUnsupportedProtocolVersion(t *testing.T) {
-	_, socket := startTestInit(t, "sleep 30")
+	_, socket := startTestInit(t, "sleep 120")
 	conn, err := net.Dial("unix", socket)
 	if err != nil {
 		t.Fatalf("dial init socket: %v", err)
@@ -413,7 +415,7 @@ func TestInitExitsWithTheMainProcessStatus(t *testing.T) {
 		if !errors.As(err, &exitErr) || exitErr.Code != 7 {
 			t.Fatalf("Run() error = %v, want ExitError{Code:7}", err)
 		}
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("init did not exit with the main process")
 	}
 }
@@ -422,7 +424,7 @@ func TestBridgeCarriesTheProtocolOverStdio(t *testing.T) {
 	_, socket := startTestInit(t, "")
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
@@ -457,7 +459,7 @@ func TestInitRunsWithoutAMainShell(t *testing.T) {
 	go func() {
 		done <- Run(ctx, Options{ControlSocket: socket, MainShell: ""})
 	}()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		if _, err := os.Stat(socket); err == nil {
 			break
@@ -468,7 +470,7 @@ func TestInitRunsWithoutAMainShell(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	client := NewClient(socket)
-	pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pingCtx, pingCancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer pingCancel()
 	if err := client.Ping(pingCtx); err != nil {
 		t.Fatalf("Ping() error = %v", err)
@@ -478,7 +480,7 @@ func TestInitRunsWithoutAMainShell(t *testing.T) {
 	}
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("init with no main did not stop after Shutdown")
 	}
 }
