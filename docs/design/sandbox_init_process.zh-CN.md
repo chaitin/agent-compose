@@ -43,7 +43,7 @@ Stage 1 的目标不是立刻复制 OpenShell 的完整 boundary，而是先建�
 daemon
   │  Unix socket（host bind mount）
   ▼
-container PID 1: agent-compose-init
+container PID 1: ac-init
   ├─ accept loop / JSON protocol
   ├─ process manager / reaper（wait4）
   ├─ main process（tail/Jupyter，由 --main-shell 指定）
@@ -133,30 +133,30 @@ Unix socket 上使用 newline-delimited JSON。选择 JSON 而不是 gRPC 是为
 
 ```text
 SANDBOX_INIT_ENABLED=false            # 默认关闭
-SANDBOX_INIT_BINARY=/usr/local/bin/agent-compose-init
+SANDBOX_INIT_BINARY=/usr/local/bin/ac-init
 ```
 
 - `SANDBOX_INIT_ENABLED=true` 只影响**新创建**的 Docker 容器；已存在的容器按 label 决定控制方式。
 - 容器带 `agent-compose.sandbox_init=true` label 时，即使 daemon 后来关闭 flag，`Exec`/`OpenInteraction`/`TerminateProcessTree` 仍走 init（否则运行中的 sandbox 会被破坏）。
 - 关闭 flag 后新建容器回到 `docker-init + sh/tail + docker exec`，行为与旧版本一致。
-- 启用 flag 但镜像没有 init binary 时，容器会启动失败；`EnsureSandbox` 在 `SandboxStartTimeout` 内等待 socket 后报错。部署必须使用包含 `/usr/local/bin/agent-compose-init` 的 guest image。
+- 启用 flag 但镜像没有 init binary 时，容器会启动失败；`EnsureSandbox` 在 `SandboxStartTimeout` 内等待 socket 后报错。部署必须使用包含 `/usr/local/bin/ac-init` 的 guest image。
 
 ### 6.2 容器创建
 
 启用时：
 
 ```text
-Entrypoint = /usr/local/bin/agent-compose-init
+Entrypoint = /usr/local/bin/ac-init
 Cmd        = --control-socket /run/agent-compose/init.sock
              --main-shell <tail 或 jupyter 命令>
 HostConfig.Init = false
 Labels[agent-compose.sandbox_init] = true
-Mount <sandbox>/init-control -> /run/agent-compose (rw)
+Mount $SANDBOX_INIT_SOCKET_DIR/<sandbox-id> -> /run/agent-compose (rw)
 ```
 
-host 侧 control dir 由 daemon 创建（0700），socket 由 init 创建（0666，目录是访问门禁）。daemon 通过 `bindRuntimeMountSource` 处理 containerized daemon 的 host path 映射。
+host 侧 control dir 由 daemon 创建（0700），socket 由 init 创建为 `init.sock`（0666，目录是访问门禁）。`SANDBOX_INIT_SOCKET_DIR` 默认遵循 Linux runtime-state 约定：`$XDG_RUNTIME_DIR/agent-compose`，否则 `/run/agent-compose`；Compose 部署把它设为 `/data/run/agent-compose`，因为 daemon 容器的 `/run` 不是 Docker Engine host 的 `/run`。
 
-Unix socket 路径上限约 108 字节；如果 `<SANDBOX_ROOT>/<id>/init-control/init.sock` 过长，daemon 会在自己的临时目录创建一个短 symlink（`/tmp/agent-compose-init-<uid>/<hash>.sock`）指向真实 socket，并用短路径连接。guest 侧路径始终是 `/run/agent-compose/init.sock`。
+socket 文件名固定为 `init.sock`，不需要 hash；sandbox ID 只用于父目录。Unix socket 路径上限约 108 字节，如果配置的 runtime dir 使路径过长，driver 直接报错并提示设置更短的 `SANDBOX_INIT_SOCKET_DIR`，不会悄悄生成 hash 文件。
 
 ### 6.3 Ready 与错误
 
@@ -196,7 +196,7 @@ type SandboxInitCapability struct {
 | Driver | Stage 1 状态 | 目标模式 | 控制通道 | 需要补的工作 |
 | --- | --- | --- | --- | --- |
 | docker | 已接入 | init 是容器 PID 1 | host bind mount 上的 Unix socket | 已完成 |
-| k8s | 未接入，保持 legacy | init 是 Pod 容器 PID 1 | `pods/exec` 上的 `agent-compose-init client` 桥 | Pod command/args、init client 模式、exec 桥、Pod 启动/就绪探测 |
+| k8s | 未接入，保持 legacy | init 是 Pod 容器 PID 1 | `pods/exec` 上的 `ac-init client` 桥 | Pod command/args、init client 模式、exec 桥、Pod 启动/就绪探测 |
 | microsandbox | 未接入，保持 legacy | `WithInit(Init.Cmd(...))` 让 init 成为 guest PID 1 | host bind mount 上的 Unix socket（或 SDK exec 桥） | control dir mount、`WithInit` 验证、SDK agent/exec 在自定义 PID1 下的行为 |
 | boxlite | 未接入，保持 legacy | BoxLite entrypoint 改为 init | host bind mount 上的 Unix socket（或 exec 桥） | entrypoint/cmd、control dir bind mount、真机验证 |
 
@@ -208,9 +208,19 @@ type SandboxInitCapability struct {
 4. **每个 driver 的接入必须带真机测试。** 尤其是 Microsandbox/BoxLite 的 PID1 handoff 和 SDK exec 行为，没有 KVM 验证不能算完成。
 5. **后续抽象。** 目标是把 `EnsureSandbox` 的“启动 workload”拆成“创建 runtime + 启动 init + init 启动 workload”，daemon 只依赖 init 控制协议，不依赖 `docker exec`/SDK exec 的 workload 语义。
 
-K8s 的推荐实现是 **guest-exec bridge**：daemon 通过 Kubernetes `pods/exec` 运行 `agent-compose-init client`，client 在 guest 内连接 `/run/agent-compose/init.sock`，把 JSON 帧通过 stdin/stdout 转发。这样不需要 Pod 端口、Service 或 hostPath；所有 workload 进程仍然是 init 子进程，client 只是控制 shim。
+K8s 的推荐实现是 **guest-exec bridge**：daemon 通过 Kubernetes `pods/exec` 运行 `ac-init client`，client 在 guest 内连接 `/run/agent-compose/init.sock`，把 JSON 帧通过 stdin/stdout 转发。这样不需要 Pod 端口、Service 或 hostPath；所有 workload 进程仍然是 init 子进程，client 只是控制 shim。
 
-Microsandbox/BoxLite 的推荐实现是 **host bind mount + Unix socket**：把 `<sandbox>/init-control` 挂到 guest `/run/agent-compose`，init 监听 socket，daemon 直接连接。前提是这两个 runtime 的 bind mount 在 sandbox-host 侧可见且路径映射正确；接入前必须验证 shutdown、restart、根文件系统缓存和 SDK exec 的行为。
+Microsandbox/BoxLite 的推荐实现是 **host bind mount + Unix socket**：把 `$SANDBOX_INIT_SOCKET_DIR/<sandbox-id>` 挂到 guest `/run/agent-compose`，init 监听 socket，daemon 直接连接。前提是这两个 runtime 的 bind mount 在 sandbox-host 侧可见且路径映射正确；接入前必须验证 shutdown、restart、根文件系统缓存和 SDK exec 的行为。
+
+参考 OpenShell 的 microVM 实现：受信任的 supervisor 留在 host，guest 内只有 capability-free 的 sandbox/init；控制与 relay 走 virtio-vsock，而不是把 host 的 Unix socket 直接暴露给 VM。agent-compose 的对应关系是：
+
+- **sandbox-host** 承担 OpenShell supervisor 的角色，持有 VM 生命周期和 host 侧控制入口；
+- VM 内 **ac-init** 是 PID 1，拥有所有 workload 进程；
+- 控制协议应优先通过 **vsock** 传输（sandbox-host 监听/转发，init 在 guest 侧 listen），而不是长期依赖 host bind mount；Unix socket 只作为 Docker/K8s 或本地开发的 transport；
+- Microsandbox 可用 `WithInit(Init.Cmd(...))` 指定 init，BoxLite 可用 entrypoint 指定 init；但两者在自定义 PID1 下的 agentd/SDK exec、shutdown、rootfs 复用语义必须真机验证，不能仅凭 API 存在就标记 supported；
+- K8s 用 `pods/exec` 的 `ac-init client` 桥，避免 Pod 端口/hostPath。
+
+因此当前 `SandboxInitCapability` 仍把这三个 driver 标为 unsupported；接入顺序应先实现 vsock/exec transport 和真机 smoke，再打开 capability。这样不会把“可以指定 init”误报成“已经安全接入”。
 
 ---
 
@@ -310,8 +320,8 @@ SANDBOX_INIT_PROFILE=/run/agent-compose/security.json
 
 ## 9. 构建与镜像
 
-- `cmd/agent-compose-init`：Linux 静态二进制；`task build:sandbox-init` 生成 `build/agent-compose-init`。
-- `guest-images/Dockerfile.agent-compose-guest` 与 Arch 版本新增 `sandbox-init-builder` stage，把二进制装到 `/usr/local/bin/agent-compose-init`。
+- `cmd/ac-init`：Linux 静态二进制；`task build:ac-init` 生成 `build/ac-init`。
+- `guest-images/Dockerfile.agent-compose-guest` 与 Arch 版本新增 `sandbox-init-builder` stage，把二进制装到 `/usr/local/bin/ac-init`。
 - `SANDBOX_INIT_BINARY` 可覆盖 guest 路径，便于测试镜像/自定义镜像。
 - `task build` 不依赖 init binary；只有 guest image 与 init 相关测试需要。
 
@@ -353,26 +363,26 @@ Stage 1 已包含：
 
 | 主题 | 文件 |
 | --- | --- |
-| init 入口 | `cmd/agent-compose-init/main.go` |
+| init 入口 | `cmd/ac-init/main.go` |
 | 协议/客户端 | `pkg/sandboxinit/{protocol,client}.go` |
 | Linux 进程/回收/PTY | `pkg/sandboxinit/{process_linux,server_linux}.go` |
 | Docker 集成 | `pkg/driver/docker_sandbox_init.go`、`pkg/driver/docker_runtime.go` |
 | Driver capability | `pkg/driver/sandbox_init_capability.go` |
 | 配置开关 | `pkg/config/config.go`（`SandboxInitEnabled`/`SandboxInitBinary`） |
 | 镜像 | `guest-images/Dockerfile.agent-compose-guest` |
-| 构建 | `Taskfile.yml` `build:sandbox-init` |
+| 构建 | `Taskfile.yml` `build:ac-init` |
 
 ---
 
 ## 13. Stage 1 功能验证记录（2026-10-29）
 
-环境：Linux arm64、Docker、guest image 基于 `chaitin/agent-compose-guest:latest` 注入 `agent-compose-init`；LLM 使用 `deepseek-flash` 通过 daemon facade 访问外部 OpenAI Responses / Anthropic Messages 兼容端点。
+环境：Linux arm64、Docker、guest image 基于 `chaitin/agent-compose-guest:latest` 注入 `ac-init`；LLM 使用 `deepseek-flash` 通过 daemon facade 访问外部 OpenAI Responses / Anthropic Messages 兼容端点。
 
 ### 13.1 已验证
 
 | 场景 | 结果 |
 | --- | --- |
-| `SANDBOX_INIT_ENABLED=true` 创建 Docker sandbox | 容器 PID1 为 `agent-compose-init`，`docker top` 中 main/exec 都是其子进程 |
+| `SANDBOX_INIT_ENABLED=true` 创建 Docker sandbox | 容器 PID1 为 `ac-init`，`docker top` 中 main/exec 都是其子进程 |
 | 普通 command exec | `Exec` 成功，`/proc/$$/status` 的 PPid 为 1 |
 | 交互式 stdin exec | `agent-compose exec -i --command 'read ...'` 收到 stdin，Node 正常运行 |
 | 并发 exec / 大输出 / 立即退出 | `pkg/sandboxinit` 单测通过（含 `-race`） |
@@ -392,9 +402,9 @@ Stage 1 已包含：
 ### 13.2 验证中发现并修复的问题
 
 1. **严格 mount 比较把 init control mount 当作 extra stale bind。**
-   第二次 `EnsureSandbox` 或 `IsSandboxAlive` 会因此删除运行中的容器，下一次 exec 得到 EOF。修复：init 容器在比较时把 control mount 加入 expected；stale 删除时清理短 socket symlink。
+   第二次 `EnsureSandbox` 或 `IsSandboxAlive` 会因此删除运行中的容器，下一次 exec 得到 EOF。修复：init 容器在比较时把 control mount 加入 expected；stale 删除时清理 per-sandbox runtime 目录。
 2. **Unix socket 路径过长。**
-   `<SANDBOX_ROOT>/<date>/<sandbox-id>/init-control/init.sock` 可超过 108 字节；daemon 使用 `/tmp/agent-compose-init-<uid>/<hash>.sock` 短 symlink 连接。已通过真实 daemon 验证。
+   原实现把 socket 放在 `<SANDBOX_ROOT>/<date>/<sandbox-id>/init-control/init.sock`，会超过 108 字节；现改为标准 runtime dir `$XDG_RUNTIME_DIR/agent-compose` 或 `/run/agent-compose` 下的 `<sandbox-id>/init.sock`，不再使用 hash 或短 symlink。
 3. **PTY `Ctty` 兼容性。**
    `pty.StartWithSize` 在当前 Go 版本下报 `Setctty set but Ctty not valid in child`；改为 `pty.Open` + `Ctty=0` 后 TTY 测试通过。
 

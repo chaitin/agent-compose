@@ -1,6 +1,6 @@
 //go:build linux
 
-// Command agent-compose-init is the stage-1 sandbox init process.
+// Command ac-init is the stage-1 sandbox init process.
 //
 // It runs as PID 1, owns every workload process, reaps orphaned descendants,
 // and serves the daemon's control socket so commands no longer need docker

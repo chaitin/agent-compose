@@ -2,8 +2,6 @@ package driver
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -50,56 +48,38 @@ func dockerSandboxUsesInit(info containerapi.InspectResponse) bool {
 	return info.Config != nil && info.Config.Labels != nil && info.Config.Labels[dockerSandboxInitLabel] == "true"
 }
 
-func sandboxInitControlHostDir(sandbox *Sandbox) string {
-	return filepath.Join(hostSandboxDir(sandbox), "init-control")
+func (r *dockerRuntime) sandboxInitControlHostDir(sandbox *Sandbox) string {
+	root := "/run/agent-compose"
+	if r != nil && r.config != nil && strings.TrimSpace(r.config.SandboxInitSocketDir) != "" {
+		root = strings.TrimSpace(r.config.SandboxInitSocketDir)
+	}
+	return filepath.Join(root, sandbox.Summary.ID)
 }
 
-func sandboxInitSocketHostPath(sandbox *Sandbox) string {
-	return filepath.Join(sandboxInitControlHostDir(sandbox), "init.sock")
+func (r *dockerRuntime) sandboxInitSocketHostPath(sandbox *Sandbox) string {
+	return filepath.Join(r.sandboxInitControlHostDir(sandbox), "init.sock")
 }
 
-// sandboxInitClientPath is the path the daemon dials. Unix socket path length
-// is limited to about 108 bytes; a deeply nested DATA_ROOT can exceed it even
-// though the guest-side path is short. In that case the daemon dials a short
-// symlink in its own temporary directory, which the kernel resolves to the
-// real socket. The symlink is created lazily because the socket itself only
-// exists after the container starts.
-func sandboxInitClientPath(sandbox *Sandbox) string {
-	socket := sandboxInitSocketHostPath(sandbox)
-	if len(socket) <= 100 {
-		return socket
-	}
-	dir := filepath.Join(os.TempDir(), fmt.Sprintf("agent-compose-init-%d", os.Getuid()))
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return socket
-	}
-	digest := sha256.Sum256([]byte(filepath.Clean(socket)))
-	link := filepath.Join(dir, hex.EncodeToString(digest[:8])+".sock")
-	if current, err := os.Readlink(link); err == nil && current == socket {
-		return link
-	}
-	_ = os.Remove(link)
-	if err := os.Symlink(socket, link); err != nil {
-		return socket
-	}
-	return link
-}
-
-// cleanupSandboxInitClientPath removes the short symlink, if one was created.
-func cleanupSandboxInitClientPath(sandbox *Sandbox) {
-	socket := sandboxInitSocketHostPath(sandbox)
-	link := sandboxInitClientPath(sandbox)
-	if link != socket {
-		_ = os.Remove(link)
-	}
+// cleanupSandboxInitRuntime removes the per-sandbox runtime directory. The
+// socket name is always init.sock; the sandbox ID is the only uniqueness the
+// path needs.
+func (r *dockerRuntime) cleanupSandboxInitRuntime(sandbox *Sandbox) {
+	_ = os.RemoveAll(r.sandboxInitControlHostDir(sandbox))
 }
 
 // prepareSandboxInitMount creates the host-side control directory and returns
 // the bind mount the container needs. The socket itself is created by init.
 func (r *dockerRuntime) prepareSandboxInitMount(ctx context.Context, dockerClient *client.Client, sandbox *Sandbox) (mountapi.Mount, error) {
-	dir := sandboxInitControlHostDir(sandbox)
+	dir := r.sandboxInitControlHostDir(sandbox)
 	if strings.TrimSpace(dir) == "" {
 		return mountapi.Mount{}, errors.New("sandbox init control directory is empty")
+	}
+	socket := filepath.Join(dir, "init.sock")
+	// Linux sun_path is 108 bytes including the trailing NUL. A configured
+	// runtime root that makes the file longer than this cannot work; fail
+	// with the path instead of silently falling back to a hash-named socket.
+	if len(socket) > 100 {
+		return mountapi.Mount{}, fmt.Errorf("sandbox init socket path is too long (%d bytes, limit is about 107): %s; set SANDBOX_INIT_SOCKET_DIR to a shorter runtime directory", len(socket), socket)
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return mountapi.Mount{}, fmt.Errorf("create sandbox init control directory %s: %w", dir, err)
@@ -116,7 +96,7 @@ func (r *dockerRuntime) prepareSandboxInitMount(ctx context.Context, dockerClien
 }
 
 func (r *dockerRuntime) sandboxInitClient(sandbox *Sandbox) *sandboxinit.Client {
-	return sandboxinit.NewClient(sandboxInitClientPath(sandbox))
+	return sandboxinit.NewClient(r.sandboxInitSocketHostPath(sandbox))
 }
 
 // waitForSandboxInit blocks until the init control socket answers Ping. It is

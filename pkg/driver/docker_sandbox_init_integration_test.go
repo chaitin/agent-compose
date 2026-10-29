@@ -15,14 +15,15 @@ import (
 )
 
 // TestDockerSandboxInitContainerLifecycle is an opt-in smoke test. It needs a
-// Docker daemon and a guest image that contains /usr/local/bin/agent-compose-init
+// Docker daemon and a guest image that contains /usr/local/bin/ac-init
 // (the published guest image does). Set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE.
 func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 	image := strings.TrimSpace(os.Getenv("AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE"))
 	if image == "" {
-		t.Skip("set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE to a guest image with agent-compose-init")
+		t.Skip("set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE to a guest image with ac-init")
 	}
 	root := t.TempDir()
+	id := uuid.NewString()
 	config := &appconfig.Config{
 		DataRoot:            root,
 		SandboxRoot:         filepath.Join(root, "sandboxes"),
@@ -33,14 +34,13 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		GuestLogRoot:        "/data/logs",
 		DockerDefaultImage:  image,
 		SandboxInitEnabled:  true,
-		SandboxInitBinary:   "/usr/local/bin/agent-compose-init",
+		SandboxInitBinary:   "/usr/local/bin/ac-init",
 		SandboxStartTimeout: 2 * time.Minute,
 		SandboxStopTimeout:  30 * time.Second,
 		JupyterReadyTimeout: time.Second,
 		JupyterGuestPort:    8888,
 	}
 	appconfig.ApplyDefaultGuestPaths(config)
-	id := uuid.NewString()
 	workspace := filepath.Join(config.SandboxRoot, id, "workspace")
 	if err := os.MkdirAll(workspace, 0o755); err != nil {
 		t.Fatal(err)
@@ -65,6 +65,7 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		defer cleanupCancel()
 		_, _ = runtime.StopSandbox(cleanupCtx, sandbox, VMState{})
 		_ = runtime.RemoveSandbox(cleanupCtx, sandbox, VMState{})
+		_ = os.RemoveAll(config.SandboxInitSocketDir)
 	})
 
 	// The second ensure and the liveness check must see the init control mount

@@ -133,7 +133,11 @@ type Config struct {
 	SandboxInitEnabled bool
 	// SandboxInitBinary is the guest path of the init binary. It is only used
 	// when SandboxInitEnabled is true.
-	SandboxInitBinary          string
+	SandboxInitBinary string
+	// SandboxInitSocketDir is the host runtime directory containing one
+	// <sandbox-id>/init.sock per init-enabled sandbox. It defaults to
+	// $XDG_RUNTIME_DIR/agent-compose or /run/agent-compose.
+	SandboxInitSocketDir       string
 	MicrosandboxHome           string
 	MicrosandboxMSBPath        string
 	MicrosandboxLibPath        string
@@ -403,6 +407,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		DockerSandboxNetwork:       drivers.DockerSandboxNetwork,
 		SandboxInitEnabled:         sources.SandboxInit.Enabled,
 		SandboxInitBinary:          sources.SandboxInit.Binary,
+		SandboxInitSocketDir:       sources.SandboxInit.SocketDir,
 		DockerDefaultImage:         images.DockerDefaultImage,
 		MicrosandboxHome:           normalized.MicrosandboxHome,
 		MicrosandboxMSBPath:        normalized.MicrosandboxMSBPath,
@@ -847,13 +852,14 @@ type imageEnvConfig struct {
 
 // sandboxInitConfig holds the experimental sandbox init switch.
 type sandboxInitConfig struct {
-	Enabled bool
-	Binary  string
+	Enabled   bool
+	Binary    string
+	SocketDir string
 }
 
 // DefaultSandboxInitBinary is the guest path shipped by the guest image. A
 // deployment that mounts the binary elsewhere sets SANDBOX_INIT_BINARY.
-const DefaultSandboxInitBinary = "/usr/local/bin/agent-compose-init"
+const DefaultSandboxInitBinary = "/usr/local/bin/ac-init"
 
 func loadSandboxInitConfig() (sandboxInitConfig, error) {
 	config := sandboxInitConfig{Binary: DefaultSandboxInitBinary}
@@ -868,10 +874,31 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 	if binary := strings.TrimSpace(os.Getenv("SANDBOX_INIT_BINARY")); binary != "" {
 		config.Binary = binary
 	}
-	if config.Enabled && !filepath.IsAbs(config.Binary) {
-		return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_BINARY must be an absolute guest path, got %q", config.Binary)
+	socketDir := strings.TrimSpace(os.Getenv("SANDBOX_INIT_SOCKET_DIR"))
+	if socketDir == "" {
+		socketDir = defaultSandboxInitSocketDir()
 	}
+	if config.Enabled {
+		if !filepath.IsAbs(config.Binary) {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_BINARY must be an absolute guest path, got %q", config.Binary)
+		}
+		if !filepath.IsAbs(socketDir) {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_SOCKET_DIR must be an absolute host path, got %q", socketDir)
+		}
+	}
+	config.SocketDir = socketDir
 	return config, nil
+}
+
+// defaultSandboxInitSocketDir follows the Linux runtime-state convention:
+// $XDG_RUNTIME_DIR when the daemon has a user session, /run otherwise. A
+// containerized daemon overrides it with a path under DATA_ROOT because its own
+// /run is not the Docker Engine host's /run.
+func defaultSandboxInitSocketDir() string {
+	if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {
+		return filepath.Join(runtimeDir, "agent-compose")
+	}
+	return "/run/agent-compose"
 }
 
 func loadImageEnvConfig(dataRoot string) (imageEnvConfig, error) {

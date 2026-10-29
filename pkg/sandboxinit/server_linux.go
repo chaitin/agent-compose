@@ -46,7 +46,7 @@ func (e *ExitError) Error() string {
 
 // Run starts the init server, launches the main process, and blocks until the
 // main process exits or ctx is canceled. It is the entry point for
-// cmd/agent-compose-init.
+// cmd/ac-init.
 func Run(ctx context.Context, opts Options) error {
 	socketPath := strings.TrimSpace(opts.ControlSocket)
 	if socketPath == "" {

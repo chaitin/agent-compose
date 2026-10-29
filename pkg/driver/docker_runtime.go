@@ -310,7 +310,7 @@ func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vm
 		if err := removeDockerContainerWithStaleMounts(ctx, dockerClient, containerInfo.ID); err != nil {
 			return false, err
 		}
-		cleanupSandboxInitClientPath(sandbox)
+		r.cleanupSandboxInitRuntime(sandbox)
 		return false, nil
 	}
 	return containerInfo.State != nil && containerInfo.State.Running, nil
@@ -399,7 +399,7 @@ func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return err
 	}
 	if !ok {
-		cleanupSandboxInitClientPath(sandbox)
+		r.cleanupSandboxInitRuntime(sandbox)
 		return nil
 	}
 	removeCtx, cancel := dockerFallbackContextIfDone(ctx)
@@ -407,7 +407,7 @@ func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err := dockerClient.ContainerRemove(removeCtx, containerInfo.ID, containerapi.RemoveOptions{Force: true}); err != nil && !isDockerNotFound(err) {
 		return fmt.Errorf("remove docker container %s: %w", containerInfo.ID, err)
 	}
-	cleanupSandboxInitClientPath(sandbox)
+	r.cleanupSandboxInitRuntime(sandbox)
 	return nil
 }
 

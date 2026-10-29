@@ -42,9 +42,9 @@ COPY go.mod go.sum ./
 COPY proto/go.mod ./proto/go.mod
 RUN GOPROXY="${GOPROXY}" go mod download
 COPY pkg/sandboxinit ./pkg/sandboxinit
-COPY cmd/agent-compose-init ./cmd/agent-compose-init
+COPY cmd/ac-init ./cmd/ac-init
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-amd64}" \
-    go build -trimpath -ldflags='-s -w' -o /out/agent-compose-init ./cmd/agent-compose-init
+    go build -trimpath -ldflags='-s -w' -o /out/ac-init ./cmd/ac-init
 
 FROM ${REGISTRY_MIRROR}/library/archlinux:${ARCHLINUX_TAG}
 ARG ARCHLINUX_MIRROR
@@ -69,7 +69,7 @@ ARG GUEST_ABI=1
 LABEL io.agent-compose.guest-abi="${GUEST_ABI}"
 
 COPY --from=grpcurl-builder /out/grpcurl /usr/local/bin/grpcurl
-COPY --from=sandbox-init-builder /out/agent-compose-init /usr/local/bin/agent-compose-init
+COPY --from=sandbox-init-builder /out/ac-init /usr/local/bin/ac-init
 
 RUN if [ -n "${BUILDPLATFORM}" ] && [ "${BUILDPLATFORM}" != "${TARGETPLATFORM}" ]; then \
       sed -i 's/^#DisableSandboxSyscalls/DisableSandboxSyscalls/' /etc/pacman.conf; \

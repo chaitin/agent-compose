@@ -30,7 +30,7 @@ const (
 )
 
 // SandboxInitCapability is the driver-neutral description of whether and how
-// a driver can run agent-compose-init. The zero value is unsupported: a driver
+// a driver can run ac-init. The zero value is unsupported: a driver
 // must opt in explicitly rather than inherit a claimed capability.
 type SandboxInitCapability struct {
 	Driver      string
