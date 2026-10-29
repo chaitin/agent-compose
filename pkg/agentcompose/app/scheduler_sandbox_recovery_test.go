@@ -82,7 +82,7 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 	startedAt := time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)
 	before := startedAt.Add(-time.Hour)
 	after := startedAt.Add(time.Minute)
-	runningRun := domain.SchedulerRunSummary{ID: "run-running", SchedulerID: "sched", Status: domain.SchedulerRunStatusRunning}
+	runningRun := domain.SchedulerRunSummary{ID: "run-running", SchedulerID: "sched", Status: domain.SchedulerRunStatusRunning, StartedAt: startedAt.Add(time.Minute)}
 	failedRun := domain.SchedulerRunSummary{ID: "run-failed", SchedulerID: "sched", Status: domain.SchedulerRunStatusFailed}
 
 	tests := []struct {
@@ -98,6 +98,12 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 			name:      "running owner is kept",
 			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-running", "scheduler", "sched", "run-running", "remove", before)},
 			runs:      map[string]domain.SchedulerRunSummary{"sched/run-running": runningRun},
+		},
+		{
+			name:        "stale running manual run is stopped",
+			sandboxes:   []*domain.Sandbox{schedulerSandboxFixture("sb-manual", "scheduler", "sched", "run-manual", "remove", before)},
+			runs:        map[string]domain.SchedulerRunSummary{"sched/run-manual": {ID: "run-manual", SchedulerID: "sched", Status: domain.SchedulerRunStatusRunning, StartedAt: before}},
+			wantStopped: []string{"sb-manual"},
 		},
 		{
 			name:        "terminal owner is stopped",

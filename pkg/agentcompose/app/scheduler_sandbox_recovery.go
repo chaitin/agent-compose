@@ -69,7 +69,7 @@ func reconcileOrphanedSchedulerSandboxes(
 		}
 		schedulerID := strings.TrimSpace(schedulerSandboxTag(sandbox, "scheduler_id"))
 		runID := strings.TrimSpace(schedulerSandboxTag(sandbox, "scheduler_run_id"))
-		orphaned, warning := orphanedSchedulerSandbox(ctx, runs, sandbox.Summary.ID, schedulerID, runID)
+		orphaned, warning := orphanedSchedulerSandbox(ctx, runs, sandbox.Summary.ID, schedulerID, runID, startedAt)
 		if warning != "" {
 			warnings = append(warnings, warning)
 			continue
@@ -98,11 +98,12 @@ func orphanedSchedulerSandbox(
 	ctx context.Context,
 	runs schedulerRunReader,
 	sandboxID, schedulerID, runID string,
+	startedAt time.Time,
 ) (bool, string) {
 	if runID != "" {
 		run, err := runs.GetSchedulerRun(ctx, schedulerID, runID)
 		if err == nil {
-			return schedulers.SchedulerRunStatusIsTerminal(run.Status), ""
+			return schedulerRunLostOwner(run, startedAt), ""
 		}
 		if errors.Is(err, domain.ErrNotFound) {
 			return true, ""
@@ -120,7 +121,19 @@ func orphanedSchedulerSandbox(
 	if !ok {
 		return false, fmt.Sprintf("sandbox %s has no scheduler_run_id tag and no linked scheduler run; leaving it for manual review", sandboxID)
 	}
-	return schedulers.SchedulerRunStatusIsTerminal(run.Status), ""
+	return schedulerRunLostOwner(run, startedAt), ""
+}
+
+// schedulerRunLostOwner reports whether the run can no longer own its sandbox.
+// A terminal run is done. A run still marked running when the daemon starts is
+// stale as well: scheduler orchestration lives in daemon memory, so it cannot
+// survive the restart. That second case covers manual runs without a trigger
+// id, which startup recovery does not mark failed.
+func schedulerRunLostOwner(run domain.SchedulerRunSummary, startedAt time.Time) bool {
+	if schedulers.SchedulerRunStatusIsTerminal(run.Status) {
+		return true
+	}
+	return !run.StartedAt.After(startedAt)
 }
 
 func schedulerSandboxTag(sandbox *domain.Sandbox, name string) string {

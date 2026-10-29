@@ -8,7 +8,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-func TestListInterruptedSchedulerRunsOnlyReturnsOlderTriggerRuns(t *testing.T) {
+func TestListInterruptedSchedulerRunsReturnsOlderRunningRuns(t *testing.T) {
 	ctx := context.Background()
 	store := FromDB(newMemoryDB(t))
 	if err := store.initSchema(ctx); err != nil {
@@ -30,7 +30,7 @@ func TestListInterruptedSchedulerRunsOnlyReturnsOlderTriggerRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list interrupted runs: %v", err)
 	}
-	if len(runs) != 1 || runs[0].ID != "old-trigger" {
-		t.Fatalf("interrupted runs=%#v", runs)
+	if len(runs) != 2 || runs[0].ID != "old-empty-trigger" || runs[1].ID != "old-trigger" {
+		t.Fatalf("interrupted runs=%#v, want old-empty-trigger and old-trigger", runs)
 	}
 }
