@@ -15,7 +15,7 @@ import (
 )
 
 // TestDockerSandboxInitContainerLifecycle is an opt-in smoke test. It needs a
-// Docker daemon and a guest image that contains /usr/local/bin/ac-init
+// Docker daemon and a guest image that contains /.agent-compose/ac-init
 // (the published guest image does). Set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE.
 func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 	image := strings.TrimSpace(os.Getenv("AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE"))
@@ -34,7 +34,7 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		GuestLogRoot:        "/data/logs",
 		DockerDefaultImage:  image,
 		SandboxInitEnabled:  true,
-		SandboxInitBinary:   "/usr/local/bin/ac-init",
+		SandboxInitBinary:   "/.agent-compose/ac-init",
 		SandboxStartTimeout: 2 * time.Minute,
 		SandboxStopTimeout:  30 * time.Second,
 		JupyterReadyTimeout: time.Second,

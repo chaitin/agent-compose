@@ -65,7 +65,7 @@ func TestSandboxInitPathsUseTheRuntimeDirectoryAndSandboxID(t *testing.T) {
 
 func TestDockerSandboxInitBinaryDefaults(t *testing.T) {
 	runtime := &dockerRuntime{config: &appconfig.Config{}}
-	if got := runtime.sandboxInitBinary(); got != "/usr/local/bin/ac-init" {
+	if got := runtime.sandboxInitBinary(); got != "/.agent-compose/ac-init" {
 		t.Fatalf("binary = %q, want the guest default", got)
 	}
 	runtime.config.SandboxInitBinary = "/opt/init"

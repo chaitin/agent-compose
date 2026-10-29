@@ -69,7 +69,8 @@ ARG GUEST_ABI=1
 LABEL io.agent-compose.guest-abi="${GUEST_ABI}"
 
 COPY --from=grpcurl-builder /out/grpcurl /usr/local/bin/grpcurl
-COPY --from=sandbox-init-builder /out/ac-init /usr/local/bin/ac-init
+COPY --from=sandbox-init-builder /out/ac-init /.agent-compose/ac-init
+RUN chmod 0700 /.agent-compose && chmod 0755 /.agent-compose/ac-init
 
 RUN if [ -n "${BUILDPLATFORM}" ] && [ "${BUILDPLATFORM}" != "${TARGETPLATFORM}" ]; then \
       sed -i 's/^#DisableSandboxSyscalls/DisableSandboxSyscalls/' /etc/pacman.conf; \

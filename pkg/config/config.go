@@ -859,7 +859,7 @@ type sandboxInitConfig struct {
 
 // DefaultSandboxInitBinary is the guest path shipped by the guest image. A
 // deployment that mounts the binary elsewhere sets SANDBOX_INIT_BINARY.
-const DefaultSandboxInitBinary = "/usr/local/bin/ac-init"
+const DefaultSandboxInitBinary = "/.agent-compose/ac-init"
 
 func loadSandboxInitConfig() (sandboxInitConfig, error) {
 	config := sandboxInitConfig{Binary: DefaultSandboxInitBinary}

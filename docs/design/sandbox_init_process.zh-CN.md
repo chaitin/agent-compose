@@ -133,20 +133,20 @@ Unix socket 上使用 newline-delimited JSON。选择 JSON 而不是 gRPC 是为
 
 ```text
 SANDBOX_INIT_ENABLED=false            # 默认关闭
-SANDBOX_INIT_BINARY=/usr/local/bin/ac-init
+SANDBOX_INIT_BINARY=/.agent-compose/ac-init
 ```
 
 - `SANDBOX_INIT_ENABLED=true` 只影响**新创建**的 Docker 容器；已存在的容器按 label 决定控制方式。
 - 容器带 `agent-compose.sandbox_init=true` label 时，即使 daemon 后来关闭 flag，`Exec`/`OpenInteraction`/`TerminateProcessTree` 仍走 init（否则运行中的 sandbox 会被破坏）。
 - 关闭 flag 后新建容器回到 `docker-init + sh/tail + docker exec`，行为与旧版本一致。
-- 启用 flag 但镜像没有 init binary 时，容器会启动失败；`EnsureSandbox` 在 `SandboxStartTimeout` 内等待 socket 后报错。部署必须使用包含 `/usr/local/bin/ac-init` 的 guest image。
+- 启用 flag 但镜像没有 init binary 时，容器会启动失败；`EnsureSandbox` 在 `SandboxStartTimeout` 内等待 socket 后报错。部署必须使用包含 `/.agent-compose/ac-init` 的 guest image。
 
 ### 6.2 容器创建
 
 启用时：
 
 ```text
-Entrypoint = /usr/local/bin/ac-init
+Entrypoint = /.agent-compose/ac-init
 Cmd        = --control-socket /run/agent-compose/init.sock
              --main-shell <tail 或 jupyter 命令>
 HostConfig.Init = false
@@ -290,7 +290,7 @@ Stage 2 的 `Prepare` 会在 `fork/exec` 前完成：
 SANDBOX_INIT_SECCOMP=off|audit|enforce
 SANDBOX_INIT_LANDLOCK=off|audit|enforce
 SANDBOX_INIT_CGROUP=off|on
-SANDBOX_INIT_PROFILE=/run/agent-compose/security.json
+SANDBOX_INIT_PROFILE=/.agent-compose/security.json
 ```
 
 - Stage 2 首版默认 `off`，不影响 Stage 1；
@@ -312,6 +312,8 @@ SANDBOX_INIT_PROFILE=/run/agent-compose/security.json
 ## 8. 安全与边界
 
 - Stage 1 的 init 与当前 sandbox 一样以容器用户运行；它不是新的权限边界，只是**进程所有权/控制面**。
+- init 二进制放在 `/.agent-compose/ac-init`（目录 0700、文件 0755），不在 PATH 中；Stage 2 的 profile 也规划放在 `/.agent-compose/`，避免和普通 workload 文件混在一起。Stage 1 仍以容器用户运行 init，所以这只是目录规整，不是安全边界。
+- 直接 `docker exec` / `docker compose exec` 不使用 init 控制协议：Docker 仍能进入容器，但该进程的 PPID 在容器 PID namespace 中显示为 0，不属于 init 的 workload 树；调试可以用，daemon 的正式 exec 路径不会走它。
 - 控制 socket 在 sandbox 内可见；agent 本来就能 `exec`/kill 自己的进程，因此不构成额外提权。目录 0700 + socket 0666 是为了让非 root 的 native daemon 能连接 root init 创建的 socket。
 - 控制协议没有额外认证：能访问 socket 等价于能控制该 sandbox 的进程；socket 只在 sandbox 的 bind mount 内。
 - 后续阶段可在 `Hooks.Prepare` 中注入 seccomp/Landlock/资源限制；那时 init 会成为与 OpenShell 类似的 boundary，需要重新评估 socket 认证、降权和进程身份。
@@ -321,7 +323,7 @@ SANDBOX_INIT_PROFILE=/run/agent-compose/security.json
 ## 9. 构建与镜像
 
 - `cmd/ac-init`：Linux 静态二进制；`task build:ac-init` 生成 `build/ac-init`。
-- `guest-images/Dockerfile.agent-compose-guest` 与 Arch 版本新增 `sandbox-init-builder` stage，把二进制装到 `/usr/local/bin/ac-init`。
+- `guest-images/Dockerfile.agent-compose-guest` 与 Arch 版本新增 `sandbox-init-builder` stage，把二进制装到 `/.agent-compose/ac-init`。
 - `SANDBOX_INIT_BINARY` 可覆盖 guest 路径，便于测试镜像/自定义镜像。
 - `task build` 不依赖 init binary；只有 guest image 与 init 相关测试需要。
 
@@ -376,7 +378,7 @@ Stage 1 已包含：
 
 ## 13. Stage 1 功能验证记录（2026-10-29）
 
-环境：Linux arm64、Docker、guest image 基于 `chaitin/agent-compose-guest:latest` 注入 `ac-init`；LLM 使用 `deepseek-flash` 通过 daemon facade 访问外部 OpenAI Responses / Anthropic Messages 兼容端点。
+环境：Linux arm64、Docker、guest image 基于 `chaitin/agent-compose-guest:latest` 注入 `/.agent-compose/ac-init`；LLM 使用 `deepseek-flash` 通过 daemon facade 访问外部 OpenAI Responses / Anthropic Messages 兼容端点。
 
 ### 13.1 已验证
 
@@ -384,6 +386,7 @@ Stage 1 已包含：
 | --- | --- |
 | `SANDBOX_INIT_ENABLED=true` 创建 Docker sandbox | 容器 PID1 为 `ac-init`，`docker top` 中 main/exec 都是其子进程 |
 | 普通 command exec | `Exec` 成功，`/proc/$$/status` 的 PPid 为 1 |
+| 直接 `docker exec` | 仍可进入容器执行 `/bin/sh`；PPid 显示 0，绕过 init，仅用于调试 |
 | 交互式 stdin exec | `agent-compose exec -i --command 'read ...'` 收到 stdin，Node 正常运行 |
 | 并发 exec / 大输出 / 立即退出 | `pkg/sandboxinit` 单测通过（含 `-race`） |
 | Codex prompt | 成功，facade 请求 200，返回 `OK` |

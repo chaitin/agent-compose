@@ -73,7 +73,8 @@ ARG GUEST_ABI=1
 LABEL io.agent-compose.guest-abi="${GUEST_ABI}"
 
 COPY --from=grpcurl-builder /out/grpcurl /usr/local/bin/grpcurl
-COPY --from=sandbox-init-builder /out/ac-init /usr/local/bin/ac-init
+COPY --from=sandbox-init-builder /out/ac-init /.agent-compose/ac-init
+RUN chmod 0700 /.agent-compose && chmod 0755 /.agent-compose/ac-init
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends python3 python3-pip git curl ca-certificates tini gnupg build-essential pkg-config protobuf-compiler && \
