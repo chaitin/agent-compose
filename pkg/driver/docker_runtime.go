@@ -239,6 +239,11 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err != nil {
 		return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, fmt.Errorf("inspect started docker container %s: %w", containerInfo.ID, err))
 	}
+	if dockerSandboxUsesInit(containerInfo) {
+		if err := r.waitForSandboxInit(ctx, dockerClient, containerInfo.ID, sandbox); err != nil {
+			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
+		}
+	}
 	containerInfo, proxyState, err = r.waitForDockerJupyterProxyState(
 		ctx,
 		dockerClient.ContainerInspect,
@@ -386,6 +391,7 @@ func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return err
 	}
 	if !ok {
+		cleanupSandboxInitClientPath(sandbox)
 		return nil
 	}
 	removeCtx, cancel := dockerFallbackContextIfDone(ctx)
@@ -393,6 +399,7 @@ func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err := dockerClient.ContainerRemove(removeCtx, containerInfo.ID, containerapi.RemoveOptions{Force: true}); err != nil && !isDockerNotFound(err) {
 		return fmt.Errorf("remove docker container %s: %w", containerInfo.ID, err)
 	}
+	cleanupSandboxInitClientPath(sandbox)
 	return nil
 }
 
@@ -455,6 +462,10 @@ func (r *dockerRuntime) OpenInteraction(ctx context.Context, sandbox *Sandbox, v
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		cancel()
 		return nil, fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
+	}
+	if dockerSandboxUsesInit(containerInfo) {
+		cancel()
+		return r.initOpenInteraction(ctx, sandbox, spec)
 	}
 
 	execOptions, err := dockerCommandExecOptions(spec, r.config.GuestWorkspacePath)
@@ -556,6 +567,9 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		return ExecResult{}, fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
 	}
+	if dockerSandboxUsesInit(containerInfo) {
+		return r.initExecWithStream(ctx, sandbox, spec, stream)
+	}
 
 	execMarker := spec.Marker
 	if execMarker == "" {
@@ -640,6 +654,11 @@ func (r *dockerRuntime) TerminateProcessTree(ctx context.Context, sandbox *Sandb
 	}
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		return fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
+	}
+	if dockerSandboxUsesInit(containerInfo) {
+		killCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return r.sandboxInitClient(sandbox).KillTree(killCtx, marker)
 	}
 	return r.terminateDockerProcessTree(ctx, dockerClient, containerInfo.ID, marker)
 }
@@ -913,6 +932,14 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 		slog.Warn("recreating missing legacy docker runtime from persisted mounts; container writable layer is not recoverable", "sandbox_id", sandbox.Summary.ID, "image", firstNonEmpty(vmState.Image, sandbox.Summary.GuestImage))
 	}
 
+	initEnabled := r.sandboxInitEnabled()
+	if initEnabled {
+		initMount, err := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+		if err != nil {
+			return containerapi.InspectResponse{}, false, err
+		}
+		mounts = append(mounts, initMount)
+	}
 	name := r.containerName(sandbox, vmState)
 	var exposedPorts nat.PortSet
 	var portBindings nat.PortMap
@@ -925,19 +952,31 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if err != nil {
 		return containerapi.InspectResponse{}, false, err
 	}
+	labels := map[string]string{
+		dockerSandboxLabelID:     sandbox.Summary.ID,
+		dockerSandboxLabelDriver: RuntimeDriverDocker,
+	}
+	entrypoint := []string{"sh", "-lc"}
+	command := []string{cmdText}
+	if initEnabled {
+		entrypoint = []string{r.sandboxInitBinary()}
+		command = []string{"--control-socket", sandboxInitGuestSocket, "--main-shell", cmdText}
+		labels[dockerSandboxInitLabel] = "true"
+	}
 	containerConfig := &containerapi.Config{
 		Image:        resolveSandboxGuestImage(vmState.Image, sandbox.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverDocker)),
 		WorkingDir:   r.config.GuestWorkspacePath,
 		Env:          env,
-		Entrypoint:   []string{"sh", "-lc"},
-		Cmd:          []string{cmdText},
+		Entrypoint:   entrypoint,
+		Cmd:          command,
 		ExposedPorts: exposedPorts,
-		Labels: map[string]string{
-			dockerSandboxLabelID:     sandbox.Summary.ID,
-			dockerSandboxLabelDriver: RuntimeDriverDocker,
-		},
+		Labels:       labels,
 	}
 	hostConfig := dockerSandboxHostConfig(mounts, portBindings, networkMode)
+	if initEnabled {
+		useInit := false
+		hostConfig.Init = &useInit
+	}
 	createResp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, name)
 	if err != nil {
 		return containerapi.InspectResponse{}, false, fmt.Errorf("create docker container for sandbox %s: %w", sandbox.Summary.ID, err)
