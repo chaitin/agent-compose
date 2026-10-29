@@ -24,8 +24,10 @@ func (f *fakeSchedulerSandboxLister) ListSandboxes(_ context.Context, options do
 type fakeSchedulerRunReader struct {
 	runs     map[string]domain.SchedulerRunSummary
 	batch    map[string]domain.SchedulerRunSummary
+	bound    map[string]bool
 	err      error
 	batchErr error
+	bindErr  error
 }
 
 func (f *fakeSchedulerRunReader) GetSchedulerRun(_ context.Context, schedulerID, runID string) (domain.SchedulerRunSummary, error) {
@@ -45,6 +47,16 @@ func (f *fakeSchedulerRunReader) BatchGetLatestSchedulerRunsBySandboxIDs(_ conte
 		return nil, f.batchErr
 	}
 	return f.batch, nil
+}
+
+func (f *fakeSchedulerRunReader) GetSchedulerBindingForSandbox(_ context.Context, sandboxID string) (domain.SchedulerBinding, bool, error) {
+	if f.bindErr != nil {
+		return domain.SchedulerBinding{}, false, f.bindErr
+	}
+	if f.bound[sandboxID] {
+		return domain.SchedulerBinding{SandboxID: sandboxID}, true, nil
+	}
+	return domain.SchedulerBinding{}, false, nil
 }
 
 type fakeSchedulerSandboxStopper struct {
@@ -90,6 +102,7 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 		sandboxes   []*domain.Sandbox
 		runs        map[string]domain.SchedulerRunSummary
 		batch       map[string]domain.SchedulerRunSummary
+		bound       map[string]bool
 		failOn      map[string]error
 		wantStopped []string
 		wantWarning string
@@ -121,6 +134,12 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 			name:      "sticky sandbox is kept",
 			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-sticky", "scheduler", "sched", "run-failed", "retain", before)},
 			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
+		},
+		{
+			name:      "sticky binding is kept even with remove policy",
+			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-bound", "scheduler", "sched", "run-failed", "remove", before)},
+			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
+			bound:     map[string]bool{"sb-bound": true},
 		},
 		{
 			name:      "non-scheduler origin is ignored",
@@ -163,7 +182,7 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			lister := &fakeSchedulerSandboxLister{listed: domain.SandboxListResult{Sandboxes: tc.sandboxes}}
-			reader := &fakeSchedulerRunReader{runs: tc.runs, batch: tc.batch}
+			reader := &fakeSchedulerRunReader{runs: tc.runs, batch: tc.batch, bound: tc.bound}
 			stopper := &fakeSchedulerSandboxStopper{failOn: tc.failOn}
 
 			warnings := reconcileOrphanedSchedulerSandboxes(context.Background(), lister, reader, stopper, startedAt)

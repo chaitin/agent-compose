@@ -22,6 +22,7 @@ type schedulerSandboxLister interface {
 type schedulerRunReader interface {
 	GetSchedulerRun(context.Context, string, string) (domain.SchedulerRunSummary, error)
 	BatchGetLatestSchedulerRunsBySandboxIDs(context.Context, []string, []string) (map[string]domain.SchedulerRunSummary, error)
+	GetSchedulerBindingForSandbox(context.Context, string) (domain.SchedulerBinding, bool, error)
 }
 
 // schedulerSandboxStopper releases the runtime of an orphaned sandbox.
@@ -65,6 +66,15 @@ func reconcileOrphanedSchedulerSandboxes(
 			continue
 		}
 		if sandboxpkg.EffectiveStoppedRuntimePolicy(sandbox) != domain.StoppedRuntimePolicyRemove {
+			continue
+		}
+		if _, bound, err := runs.GetSchedulerBindingForSandbox(ctx, sandbox.Summary.ID); err != nil {
+			warnings = append(warnings, fmt.Sprintf("look up scheduler binding for sandbox %s: %v", sandbox.Summary.ID, err))
+			continue
+		} else if bound {
+			// A sticky binding keeps the sandbox for reuse. Its scheduler_run_id
+			// tag still names the run that created it, so the binding, not the
+			// tag, decides ownership here.
 			continue
 		}
 		schedulerID := strings.TrimSpace(schedulerSandboxTag(sandbox, "scheduler_id"))
@@ -127,8 +137,9 @@ func orphanedSchedulerSandbox(
 // schedulerRunLostOwner reports whether the run can no longer own its sandbox.
 // A terminal run is done. A run still marked running when the daemon starts is
 // stale as well: scheduler orchestration lives in daemon memory, so it cannot
-// survive the restart. That second case covers manual runs without a trigger
-// id, which startup recovery does not mark failed.
+// survive the restart. Startup recovery normally marks those runs failed first;
+// the StartedAt check remains a safety net for a recovery failure or a run that
+// recovery missed.
 func schedulerRunLostOwner(run domain.SchedulerRunSummary, startedAt time.Time) bool {
 	if schedulers.SchedulerRunStatusIsTerminal(run.Status) {
 		return true
