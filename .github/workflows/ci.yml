@@ -113,7 +113,7 @@ jobs:
 
   go-test:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: Go tests
+    name: Go k8scompose tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -125,16 +125,27 @@ jobs:
         run: go install github.com/bufbuild/buf/cmd/buf@v1.68.1
       - name: Generate Protobuf sources
         run: buf generate
-      # k8scompose gates every k8s-runtime-driver test (see
-      # pkg/driver/k8s_runtime_test.go and friends) - without it, this step
-      # silently ran zero of them.
-      - run: go test -tags k8scompose ./cmd/... ./pkg/...
-      # A dedicated -race pass scoped to pkg/driver: the k8s driver hands
+      # The Coverage gate job already runs every test - it partitions them into
+      # unit / integration / e2e shapes - but it builds without tags, so the
+      # k8scompose sources are not compiled there at all. This job runs exactly
+      # that configuration, once: pkg/driver and pkg/volumes are the only
+      # packages whose k8scompose files carry tests, and the check below keeps
+      # that true instead of letting a new one go unrun.
+      #
+      # It is also the -race pass: the k8s driver hands
       # remotecommand.StreamWithContext two writers (Stdout/Stderr) that its
-      # real SPDY executor fills from two concurrent goroutines, unlike the
-      # sequential fake used above - see TestK8sExecConcurrentStdoutStderrRace.
-      # Scoped rather than -race on the whole matrix above to keep this fast.
-      - run: go test -tags k8scompose -race ./pkg/driver/...
+      # real SPDY executor fills from two concurrent goroutines - see
+      # TestK8sExecConcurrentStdoutStderrRace.
+      - name: Run k8scompose tests under -race
+        run: |
+          set -euo pipefail
+          unexpected=$(grep -rl --include='*_test.go' 'go:build k8scompose' pkg cmd internal 2>/dev/null \
+            | xargs -r -n1 dirname | sort -u | grep -vxE 'pkg/(driver|volumes)' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::k8scompose tests live in packages this step does not run: $unexpected"
+            exit 1
+          fi
+          go test -tags k8scompose -race ./pkg/driver/... ./pkg/volumes/...
 
   # The installer, the two JavaScript runtimes and the scheduler each finished
   # in well under a minute, but every one of them paid for its own checkout,
