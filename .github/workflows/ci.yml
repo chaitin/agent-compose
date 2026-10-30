@@ -8,6 +8,13 @@ on:
       - main
     tags:
       - "v*"
+    # A main commit that only edits documentation cannot change anything this
+    # workflow builds, and its pull request already ran the suite. GitHub does
+    # not evaluate path filters for tag pushes, so a release tag still runs
+    # everything here even though the trigger also matches `v*`.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
 
 permissions:
   contents: read
@@ -31,10 +38,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Both tools are version-pinned static binaries, and compiling them from
+      # source costs about a minute per run - golangci-lint alone was 51s of a
+      # 4.5-minute job. Restore them from the cache and only build what is
+      # missing; the guard is `command -v`, so a cache saved without one of
+      # them (say, a run whose install timed out) heals on the next run.
+      # The key carries both versions: bump it together with the go install
+      # lines below, so a stale binary can never be restored.
+      - name: Restore lint tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/bin/golangci-lint
+            ~/go/bin/task
+          key: lint-tools-${{ runner.os }}-${{ runner.arch }}-golangci-lint-v2.5.0-task-v3.40.1
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
+        run: command -v golangci-lint >/dev/null || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
       - name: Install Task
-        run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
+        run: command -v task >/dev/null || go install github.com/go-task/task/v3/cmd/task@v3.40.1
       - name: Install Buf
         run: go install github.com/bufbuild/buf/cmd/buf@v1.68.1
       # The generated sources are committed so proto/ can be consumed as a
@@ -92,7 +113,7 @@ jobs:
 
   go-test:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: Go tests
+    name: Go k8scompose tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -104,20 +125,36 @@ jobs:
         run: go install github.com/bufbuild/buf/cmd/buf@v1.68.1
       - name: Generate Protobuf sources
         run: buf generate
-      # k8scompose gates every k8s-runtime-driver test (see
-      # pkg/driver/k8s_runtime_test.go and friends) - without it, this step
-      # silently ran zero of them.
-      - run: go test -tags k8scompose ./cmd/... ./pkg/...
-      # A dedicated -race pass scoped to pkg/driver: the k8s driver hands
+      # The Coverage gate job already runs every test - it partitions them into
+      # unit / integration / e2e shapes - but it builds without tags, so the
+      # k8scompose sources are not compiled there at all. This job runs exactly
+      # that configuration, once: pkg/driver and pkg/volumes are the only
+      # packages whose k8scompose files carry tests, and the check below keeps
+      # that true instead of letting a new one go unrun.
+      #
+      # It is also the -race pass: the k8s driver hands
       # remotecommand.StreamWithContext two writers (Stdout/Stderr) that its
-      # real SPDY executor fills from two concurrent goroutines, unlike the
-      # sequential fake used above - see TestK8sExecConcurrentStdoutStderrRace.
-      # Scoped rather than -race on the whole matrix above to keep this fast.
-      - run: go test -tags k8scompose -race ./pkg/driver/...
+      # real SPDY executor fills from two concurrent goroutines - see
+      # TestK8sExecConcurrentStdoutStderrRace.
+      - name: Run k8scompose tests under -race
+        run: |
+          set -euo pipefail
+          unexpected=$(grep -rl --include='*_test.go' 'go:build k8scompose' pkg cmd internal 2>/dev/null \
+            | xargs -r -n1 dirname | sort -u | grep -vxE 'pkg/(driver|volumes)' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::k8scompose tests live in packages this step does not run: $unexpected"
+            exit 1
+          fi
+          go test -tags k8scompose -race ./pkg/driver/... ./pkg/volumes/...
 
-  installer-build:
+  # The installer, the two JavaScript runtimes and the scheduler each finished
+  # in well under a minute, but every one of them paid for its own checkout,
+  # toolchain setup and runner slot. They share one job instead - three fewer
+  # runners per run - and keep their own step groups and working directories.
+  # The Go chat SDK stays separate: it has to run on its own go.mod's toolchain.
+  fast-checks:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: Installer binaries
+    name: Fast checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -128,6 +165,13 @@ jobs:
           cache-dependency-path: |
             go.sum
             cmd/installer/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            runtime/agent-compose-runtime-sdk/package-lock.json
+            runtime/javascript/package-lock.json
       - name: Test installer module
         run: go -C cmd/installer test ./...
       - name: Build and verify linux installer assets
@@ -138,6 +182,17 @@ jobs:
           (cd installer-assets && sha256sum -c SHASUMS256.txt)
           readelf -h installer-assets/agent-compose-installer-linux-amd64 | grep -F 'Advanced Micro Devices X86-64'
           readelf -h installer-assets/agent-compose-installer-linux-arm64 | grep -F 'AArch64'
+      - name: Runtime SDK tests
+        working-directory: runtime/agent-compose-runtime-sdk
+        run: |
+          npm ci
+          npm test
+          npm run test:packaging
+      - name: Scheduler runtime tests
+        working-directory: runtime/javascript
+        run: |
+          npm ci
+          npm run test:unit
 
   go-sdk:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -189,41 +244,6 @@ jobs:
         run: ./scripts/tests/test-coverage-contract.sh
       - name: Run coverage thresholds
         run: ./scripts/test-coverage.sh
-
-  runtime-sdk:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: Runtime SDK
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: runtime/agent-compose-runtime-sdk
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: runtime/agent-compose-runtime-sdk/package-lock.json
-      - run: npm ci
-      - run: npm test
-      - run: npm run test:packaging
-
-  scheduler-runtime:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    name: Scheduler runtime
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: runtime/javascript
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: runtime/javascript/package-lock.json
-      - run: npm ci
-      - run: npm run test:unit
 
   binary-matrix:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
@@ -374,8 +394,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Restore Task
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/task
+          key: task-cli-${{ runner.os }}-${{ runner.arch }}-v3.40.1
       - name: Install Task
-        run: go install github.com/go-task/task/v3/cmd/task@v3.40.1
+        run: command -v task >/dev/null || go install github.com/go-task/task/v3/cmd/task@v3.40.1
       - name: Install Buf
         run: go install github.com/bufbuild/buf/cmd/buf@v1.68.1
       - name: Assert Linux full profile
