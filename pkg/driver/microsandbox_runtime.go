@@ -425,16 +425,17 @@ func (r *microsandboxRuntime) sandboxInitConfigured(session *Sandbox, vmState VM
 	if session == nil {
 		return false
 	}
-	// States written before SandboxInitState existed can still be identified
-	// by the host directory the old bind-mount transport created. Prefer that
-	// marker over the current flag so a running init sandbox survives a flag
-	// flip during an upgrade.
-	if strings.TrimSpace(vmState.SandboxInitState) == "" {
-		if _, err := os.Stat(sandboxInitHostDir(r.config, session.Summary.ID)); err == nil {
-			return true
-		}
+	// A recorded state is authoritative. The old host directory identifies an
+	// init VM created before that state existed. Without either, an existing VM
+	// is legacy even when the flag is now on; treating it as init would wait
+	// for a guest socket that was never created.
+	if state := strings.TrimSpace(vmState.SandboxInitState); state != "" {
+		return state == SandboxInitStateEnabled
 	}
-	return SandboxInitEnabledFor(r.config, vmState)
+	if _, err := os.Stat(sandboxInitHostDir(r.config, session.Summary.ID)); err == nil {
+		return true
+	}
+	return vmState.StartedAt.IsZero() && SandboxInitEnabledFor(r.config, vmState)
 }
 
 func (r *microsandboxRuntime) waitForSandboxInit(ctx context.Context, session *Sandbox, vmState VMState) error {

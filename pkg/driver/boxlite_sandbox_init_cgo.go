@@ -29,14 +29,17 @@ func (r *cgoSandboxRuntime) sandboxInitConfigured(sandbox *Sandbox, vmState VMSt
 	if sandbox == nil {
 		return false
 	}
-	// The host directory is the marker for runtimes created before the
-	// persisted state existed. Prefer the recorded state when present.
-	if strings.TrimSpace(vmState.SandboxInitState) == "" {
-		if _, err := os.Stat(sandboxInitHostDir(r.config, sandbox.Summary.ID)); err == nil {
-			return true
-		}
+	// A recorded state is authoritative. Without one, the host directory is
+	// the marker for an init runtime created before the state existed. If
+	// neither is present, an existing box is legacy even when the daemon flag is
+	// now on: reusing it as init would wait for a socket that was never created.
+	if state := strings.TrimSpace(vmState.SandboxInitState); state != "" {
+		return state == SandboxInitStateEnabled
 	}
-	return SandboxInitEnabledFor(r.config, vmState)
+	if _, err := os.Stat(sandboxInitHostDir(r.config, sandbox.Summary.ID)); err == nil {
+		return true
+	}
+	return vmState.StartedAt.IsZero() && SandboxInitEnabledFor(r.config, vmState)
 }
 
 func (r *cgoSandboxRuntime) waitForSandboxInit(ctx context.Context, sandbox *Sandbox) error {
