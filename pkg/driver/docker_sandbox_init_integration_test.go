@@ -23,22 +23,35 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		t.Skip("set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE to a guest image with ac-init")
 	}
 	root := t.TempDir()
+	initDirA, err := os.MkdirTemp("", "ac-init-a-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	initDirB, err := os.MkdirTemp("", "ac-init-b-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(initDirA)
+		_ = os.RemoveAll(initDirB)
+	})
 	id := uuid.NewString()
 	config := &appconfig.Config{
-		DataRoot:            root,
-		SandboxRoot:         filepath.Join(root, "sandboxes"),
-		GuestWorkspacePath:  "/workspace",
-		GuestHomePath:       "/root",
-		GuestStateRoot:      "/data/state",
-		GuestRuntimeRoot:    "/data/runtime",
-		GuestLogRoot:        "/data/logs",
-		DockerDefaultImage:  image,
-		SandboxInitEnabled:  true,
-		SandboxInitBinary:   "/.agent-compose/ac-init",
-		SandboxStartTimeout: 2 * time.Minute,
-		SandboxStopTimeout:  30 * time.Second,
-		JupyterReadyTimeout: time.Second,
-		JupyterGuestPort:    8888,
+		DataRoot:             root,
+		SandboxRoot:          filepath.Join(root, "sandboxes"),
+		GuestWorkspacePath:   "/workspace",
+		GuestHomePath:        "/root",
+		GuestStateRoot:       "/data/state",
+		GuestRuntimeRoot:     "/data/runtime",
+		GuestLogRoot:         "/data/logs",
+		DockerDefaultImage:   image,
+		SandboxInitEnabled:   true,
+		SandboxInitBinary:    "/.agent-compose/ac-init",
+		SandboxInitSocketDir: initDirA,
+		SandboxStartTimeout:  2 * time.Minute,
+		SandboxStopTimeout:   30 * time.Second,
+		JupyterReadyTimeout:  time.Second,
+		JupyterGuestPort:     8888,
 	}
 	appconfig.ApplyDefaultGuestPaths(config)
 	workspace := filepath.Join(config.SandboxRoot, id, "workspace")
@@ -87,6 +100,29 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 	if _, err := runtime.EnsureSandbox(ctx, sandbox, VMState{}, ProxyState{}); err != nil {
 		t.Fatalf("second EnsureSandbox() error = %v", err)
 	}
+
+	// A changed control directory makes the existing container's mount stale.
+	// Recreating it must produce exactly one control mount; appending the init
+	// mount to the shared slice and then appending it again on create would make
+	// Docker reject the duplicate target.
+	config.SandboxInitSocketDir = initDirB
+	if _, err := runtime.EnsureSandbox(ctx, sandbox, VMState{}, ProxyState{}); err != nil {
+		t.Fatalf("EnsureSandbox() after control-dir change error = %v", err)
+	}
+	recreated, ok, err := runtime.findContainer(ctx, dockerClient, sandbox, VMState{})
+	if err != nil || !ok {
+		t.Fatalf("findContainer() after control-dir change = %v, %v", ok, err)
+	}
+	controlMounts := 0
+	for _, mount := range recreated.Mounts {
+		if mount.Destination == sandboxInitGuestControlDir {
+			controlMounts++
+		}
+	}
+	if controlMounts != 1 {
+		t.Fatalf("init control mount count = %d, want exactly one", controlMounts)
+	}
+	info = recreated
 	alive, err := runtime.IsSandboxAlive(ctx, sandbox, VMState{})
 	if err != nil || !alive {
 		t.Fatalf("IsSandboxAlive() = %v, %v; want true, nil", alive, err)

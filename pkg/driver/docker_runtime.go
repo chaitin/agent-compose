@@ -923,14 +923,20 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState); err != nil {
 		return containerapi.InspectResponse{}, false, err
 	} else if ok {
+		mountsForMatch := mounts
 		if dockerSandboxUsesInit(containerInfo) {
 			initMount, mountErr := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
 			if mountErr != nil {
 				return containerapi.InspectResponse{}, false, mountErr
 			}
-			mounts = append(mounts, initMount)
+			// Compare against the init mount without adding it to the slice used
+			// for creation: a stale container is deleted below and the creation
+			// path appends the init mount based on the current desired model. If
+			// the slice were reused, a rebuilt init container would carry two
+			// mounts for the same target.
+			mountsForMatch = append(append([]mountapi.Mount{}, mounts...), initMount)
 		}
-		if r.dockerSandboxMountsMatch(containerInfo, mounts, sandbox) {
+		if r.dockerSandboxMountsMatch(containerInfo, mountsForMatch, sandbox) {
 			return containerInfo, false, nil
 		}
 		slog.Warn("recreating docker sandbox whose bind mounts reference an earlier data root", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
