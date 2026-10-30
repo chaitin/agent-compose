@@ -43,6 +43,13 @@ on:
       - main
     tags:
       - "*"
+    # Republishing every image for a documentation-only merge buys nothing: no
+    # file the build reads can have changed, and the pull request already ran
+    # the smoke. Path filters are not evaluated for tag pushes, so a release
+    # tag still publishes.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   workflow_dispatch:
 
 permissions:
