@@ -64,13 +64,10 @@ type Request struct {
 // Frame is one server message. Data is raw stdout/stderr bytes; JSON encodes
 // it as base64 so the protocol remains text-only and easy to inspect.
 type Frame struct {
-	Type      string `json:"type"`
-	SessionID string `json:"session_id,omitempty"`
-	Data      []byte `json:"data,omitempty"`
-	// Code is always present on an exit frame, including success (0). It used
-	// to be omitempty, which made exit 0 indistinguishable from a missing
-	// field for protocol clients outside the Go SDK.
-	Code      int           `json:"code"`
+	Type      string        `json:"type"`
+	SessionID string        `json:"session_id,omitempty"`
+	Data      []byte        `json:"data,omitempty"`
+	Code      int           `json:"code,omitempty"`
 	Message   string        `json:"message,omitempty"`
 	Processes []ProcessInfo `json:"processes,omitempty"`
 }

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -32,6 +33,10 @@ const (
 	// maxFrameBuffer bounds how much per-stream output can queue while a
 	// client is connected. A disconnected client is drained to io.Discard.
 	maxFrameBuffer = 256
+	// execOutputDrainGrace bounds how long an exited exec waits for final
+	// output before its exit frame is delivered. Descendants can hold the
+	// inherited pipes indefinitely.
+	execOutputDrainGrace = 250 * time.Millisecond
 )
 
 // process is one command owned by init. The manager owns it until wait4
@@ -51,12 +56,14 @@ type process struct {
 
 	frames  chan Frame
 	discard chan struct{}
+	stopOut chan struct{}
 	done    chan struct{}
 	once    sync.Once
+	outOnce sync.Once
 	output  sync.WaitGroup
 
 	startedAt time.Time
-	exitCode  int
+	exitCode  atomic.Int32
 	waitErr   error
 }
 
@@ -77,18 +84,68 @@ func (p *process) detach() {
 	p.once.Do(func() { close(p.discard) })
 }
 
+func (p *process) stopOutput() {
+	p.outOnce.Do(func() { close(p.stopOut) })
+}
+
+// finish reports the leader's exit without waiting indefinitely for descendants
+// that inherited stdout/stderr. The leader is already reaped, so the exit frame
+// is the truth the caller needs; a background process holding the pipe must not
+// turn a completed exec into a timeout. Output that is already available gets a
+// short drain grace, then the pipes are drained to the discard path while the
+// exit frame is delivered.
 func (p *process) finish(code int, err error) {
-	p.exitCode = code
+	p.exitCode.Store(int32(code))
 	p.waitErr = err
 	go func() {
-		p.output.Wait()
+		drained := make(chan struct{})
+		go func() {
+			p.output.Wait()
+			close(drained)
+		}()
+		timer := time.NewTimer(execOutputDrainGrace)
+		select {
+		case <-drained:
+			timer.Stop()
+		case <-timer.C:
+		}
+		p.stopOutput()
 		select {
 		case <-p.discard:
 		case p.frames <- Frame{Type: FrameExit, SessionID: p.id, Code: code, Message: errString(err)}:
 		}
-		close(p.frames)
 		close(p.done)
 	}()
+}
+
+func (p *process) exitStatus() int {
+	return int(p.exitCode.Load())
+}
+
+// closeStdin closes the child's stdin direction. A TTY master cannot be closed
+// without hanging up the terminal and killing output, so EOF is delivered as
+// the terminal's EOT character instead.
+func (p *process) closeStdin() {
+	if p.tty {
+		if p.master != nil {
+			_, _ = p.master.Write([]byte{0x04})
+			// EOT is the terminal EOF and lets canonical readers finish while
+			// keeping output flowing. A program in raw mode may ignore it, so
+			// fall back to hanging up the terminal rather than leaving CloseSend
+			// blocked forever.
+			go func(master *os.File) {
+				select {
+				case <-p.done:
+				case <-time.After(500 * time.Millisecond):
+					_ = master.Close()
+				}
+			}(p.master)
+		}
+		return
+	}
+	if closer, ok := p.stdin.(io.Closer); ok {
+		_ = closer.Close()
+	}
 }
 
 func errString(err error) string {
@@ -102,21 +159,23 @@ type processManager struct {
 	// spawnMu serializes child start + registration against wait4 dispatch.
 	// Without it an immediately-exiting child could be reaped before byPID has
 	// the record, losing its exit frame.
-	spawnMu  sync.Mutex
-	mu       sync.Mutex
-	byID     map[string]*process
-	byPID    map[int]*process
-	hooks    Hooks
-	stopOnce sync.Once
-	stopped  chan struct{}
+	spawnMu    sync.Mutex
+	mu         sync.Mutex
+	byID       map[string]*process
+	byPID      map[int]*process
+	hooks      Hooks
+	stopOnce   sync.Once
+	stopped    chan struct{}
+	reaperDone chan struct{}
 }
 
 func newProcessManager(hooks Hooks) *processManager {
 	return &processManager{
-		byID:    make(map[string]*process),
-		byPID:   make(map[int]*process),
-		hooks:   hooks,
-		stopped: make(chan struct{}),
+		byID:       make(map[string]*process),
+		byPID:      make(map[int]*process),
+		hooks:      hooks,
+		stopped:    make(chan struct{}),
+		reaperDone: make(chan struct{}),
 	}
 }
 
@@ -144,6 +203,7 @@ func (m *processManager) start(ctx context.Context, request Request, main bool, 
 		main:      main,
 		frames:    make(chan Frame, maxFrameBuffer),
 		discard:   make(chan struct{}),
+		stopOut:   make(chan struct{}),
 		done:      make(chan struct{}),
 		startedAt: time.Now().UTC(),
 	}
@@ -324,6 +384,10 @@ func (p *process) emit(frame Frame) {
 	case <-p.discard:
 		// The client is gone. The reader continues draining the pipe in its
 		// own loop, so the child never blocks on a full stdout/stderr buffer.
+	case <-p.stopOut:
+		// The leader exited and its exit frame is being delivered; descendants
+		// may still write to the inherited pipes, but those bytes no longer
+		// belong to this exec session.
 	}
 }
 
@@ -350,6 +414,7 @@ func (p *process) signal(sig syscall.Signal, tree bool) error {
 }
 
 func (m *processManager) runReaper() {
+	defer close(m.reaperDone)
 	for {
 		var ws syscall.WaitStatus
 		pid, err := syscall.Wait4(-1, &ws, 0, nil)
@@ -451,6 +516,17 @@ func (m *processManager) killTree(marker string) error {
 
 func (m *processManager) shutdown(ctx context.Context) {
 	m.stopOnce.Do(func() { close(m.stopped) })
+	// A shut-down init must not leave a reaper goroutine behind: wait4(-1) is
+	// process-wide, so a surviving reaper could reap the next init instance
+	// (tests/wrappers run more than one Run in one process) and destroy its
+	// exit frames. Production PID 1 has no next instance, but the wait is
+	// bounded and cheap there too.
+	defer func() {
+		select {
+		case <-m.reaperDone:
+		case <-ctx.Done():
+		}
+	}()
 	m.mu.Lock()
 	processes := make([]*process, 0, len(m.byID))
 	for _, p := range m.byID {

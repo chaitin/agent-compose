@@ -118,6 +118,37 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		t.Fatalf("exec PPid = %q, want 1", strings.TrimSpace(parent.Stdout))
 	}
 
+	// A background descendant inherits stdout/stderr. The leader's exit frame
+	// must not wait for those pipes to close.
+	backgroundStarted := time.Now()
+	backgroundResult, err := runtime.Exec(ctx, sandbox, VMState{}, ExecSpec{
+		Command: "/bin/sh",
+		Args:    []string{"-c", "sleep 2 &"},
+		Cwd:     "/",
+	})
+	if err != nil {
+		t.Fatalf("Exec(background child) error = %v", err)
+	}
+	if backgroundResult.ExitCode != 0 {
+		t.Fatalf("Exec(background child) exit = %d, want 0", backgroundResult.ExitCode)
+	}
+	if elapsed := time.Since(backgroundStarted); elapsed > 5*time.Second {
+		t.Fatalf("Exec(background child) took %s, want the leader exit without waiting for the pipe", elapsed)
+	}
+
+	// A non-interactive exec has no stdin surface. It must still receive EOF
+	// like docker exec does; otherwise commands such as cat hang forever.
+	stdinResult, err := runtime.Exec(ctx, sandbox, VMState{}, ExecSpec{
+		Command: "/bin/cat",
+		Cwd:     "/",
+	})
+	if err != nil {
+		t.Fatalf("Exec(cat) error = %v", err)
+	}
+	if stdinResult.ExitCode != 0 || stdinResult.Stdout != "" {
+		t.Fatalf("Exec(cat) = exit %d stdout %q, want a clean EOF", stdinResult.ExitCode, stdinResult.Stdout)
+	}
+
 	interaction, err := runtime.OpenInteraction(ctx, sandbox, VMState{}, RuntimeStartSpec{
 		OperationID: "init-interaction",
 		Kind:        RuntimeOperationCommand,
@@ -193,12 +224,35 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 		t.Fatalf("detached child after canceled exec = %q, want GONE", strings.TrimSpace(child.Stdout))
 	}
 
+	// Start a detached workload that writes a heartbeat into the host-visible
+	// workspace. Killing init must kill this PID namespace; otherwise the
+	// heartbeat keeps changing after the container is reported exited.
+	heartbeat := filepath.Join(workspace, "init-heartbeat")
+	if _, err := runtime.Exec(ctx, sandbox, VMState{}, ExecSpec{
+		Command: "/bin/sh",
+		Args:    []string{"-c", "setsid /bin/sh -c 'while :; do date +%s%N > /workspace/init-heartbeat; sleep 0.2; done' >/dev/null 2>&1 &"},
+		Cwd:     "/",
+	}); err != nil {
+		t.Fatalf("start background workload error = %v", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		data, readErr := os.ReadFile(heartbeat)
+		if readErr == nil && len(data) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("background workload did not start")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	// ac-init is PID 1: killing it must terminate the sandbox, not leave a
 	// workload tree behind. This is the Stage 1 kill-resilience contract.
 	if err := dockerClient.ContainerKill(ctx, info.ID, "KILL"); err != nil {
 		t.Fatalf("ContainerKill(init) error = %v", err)
 	}
-	deadline := time.Now().Add(15 * time.Second)
+	deadline = time.Now().Add(15 * time.Second)
 	for {
 		current, inspectErr := dockerClient.ContainerInspect(ctx, info.ID)
 		if inspectErr == nil && current.State != nil && !current.State.Running {
@@ -208,5 +262,18 @@ func TestDockerSandboxInitContainerLifecycle(t *testing.T) {
 			t.Fatal("sandbox did not exit after ac-init was killed")
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+	time.Sleep(250 * time.Millisecond)
+	afterFirst, err := os.ReadFile(heartbeat)
+	if err != nil {
+		t.Fatalf("read heartbeat after kill: %v", err)
+	}
+	time.Sleep(1 * time.Second)
+	afterSecond, err := os.ReadFile(heartbeat)
+	if err != nil {
+		t.Fatalf("read heartbeat after kill: %v", err)
+	}
+	if string(afterFirst) != string(afterSecond) {
+		t.Fatalf("background workload kept writing after init was killed: first=%q second=%q", afterFirst, afterSecond)
 	}
 }

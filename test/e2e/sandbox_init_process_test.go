@@ -61,19 +61,68 @@ func TestE2ESandboxInitProcessLifecycle(t *testing.T) {
 	_ = session.Close()
 
 	marker := "e2e-init-marker"
+	pidFile := filepath.Join(t.TempDir(), "detached.pid")
 	detached, err := client.Exec(opCtx, sandboxinit.Request{
 		Command: "/bin/sh",
-		Args:    []string{"-c", "sleep 300"},
+		Args:    []string{"-c", "echo $$ > " + pidFile + "; exec sleep 300"},
 		Marker:  marker,
 	})
 	if err != nil {
 		t.Fatalf("Exec(detached) error = %v", err)
 	}
-	time.Sleep(100 * time.Millisecond)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(pidFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("detached process did not record its pid")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	if err := client.KillTree(opCtx, marker); err != nil {
 		t.Fatalf("KillTree() error = %v", err)
 	}
+	// The kill must reach the session and the process tree, not merely return.
+	var killedCode int
+	for {
+		frame, err := detached.Next(opCtx)
+		if err != nil {
+			t.Fatalf("detached.Next() error = %v", err)
+		}
+		if frame.Type == sandboxinit.FrameExit {
+			killedCode = frame.Code
+			break
+		}
+	}
+	if killedCode == 0 {
+		t.Fatal("detached process exited successfully after KillTree, want a signal exit")
+	}
 	_ = detached.Close()
+	check, err := client.Exec(opCtx, sandboxinit.Request{
+		Command: "/bin/sh",
+		Args:    []string{"-c", "pid=$(cat " + pidFile + "); kill -0 $pid 2>/dev/null && echo ALIVE || echo GONE"},
+	})
+	if err != nil {
+		t.Fatalf("Exec(kill_tree check) error = %v", err)
+	}
+	var checkOutput strings.Builder
+	for {
+		frame, err := check.Next(opCtx)
+		if err != nil {
+			t.Fatalf("check.Next() error = %v", err)
+		}
+		if frame.Type == sandboxinit.FrameStdout {
+			checkOutput.Write(frame.Data)
+		}
+		if frame.Type == sandboxinit.FrameExit {
+			break
+		}
+	}
+	_ = check.Close()
+	if strings.TrimSpace(checkOutput.String()) != "GONE" {
+		t.Fatalf("detached process after KillTree = %q, want GONE", strings.TrimSpace(checkOutput.String()))
+	}
 
 	if err := client.Shutdown(opCtx); err != nil {
 		t.Fatalf("Shutdown() error = %v", err)

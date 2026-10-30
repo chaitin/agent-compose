@@ -127,8 +127,8 @@ func Run(ctx context.Context, opts Options) error {
 	manager.shutdown(shutdownCtx)
 	_ = listener.Close()
 	_ = os.Remove(socketPath)
-	if mainProcess != nil && mainProcess.exitCode != 0 {
-		return &ExitError{Code: mainProcess.exitCode}
+	if mainProcess != nil && mainProcess.exitStatus() != 0 {
+		return &ExitError{Code: mainProcess.exitStatus()}
 	}
 	return nil
 }
@@ -234,6 +234,9 @@ func (s *initServer) handleExec(ctx context.Context, conn net.Conn, decoder *fra
 					p.detach()
 					return
 				}
+				if frame.Type == FrameExit {
+					return
+				}
 			case <-p.discard:
 				return
 			}
@@ -257,9 +260,7 @@ func (s *initServer) handleExec(ctx context.Context, conn net.Conn, decoder *fra
 					_, _ = p.stdin.Write(next.Data)
 				}
 			case RequestStdinEOF:
-				if closer, ok := p.stdin.(io.Closer); ok {
-					_ = closer.Close()
-				}
+				p.closeStdin()
 			case RequestResize:
 				if p.master != nil {
 					_ = ptySetsize(p.master, next.Rows, next.Cols)

@@ -484,3 +484,40 @@ func TestInitRunsWithoutAMainShell(t *testing.T) {
 		t.Fatal("init with no main did not stop after Shutdown")
 	}
 }
+
+func TestInitTTYStdinEOFDoesNotHangUpTheTerminal(t *testing.T) {
+	_, socket := startTestInit(t, "sleep 120")
+	client := NewClient(socket)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	session, err := client.Exec(ctx, Request{Command: "/bin/cat", TTY: true})
+	if err != nil {
+		t.Fatalf("Exec() error = %v", err)
+	}
+	defer func() { _ = session.Close() }()
+	if err := session.SendStdin(ctx, []byte("tty-eof-ok\n")); err != nil {
+		t.Fatalf("SendStdin() error = %v", err)
+	}
+	if err := session.CloseStdin(ctx); err != nil {
+		t.Fatalf("CloseStdin() error = %v", err)
+	}
+	var output strings.Builder
+	for {
+		frame, err := session.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next() error = %v", err)
+		}
+		if frame.Type == FrameStdout {
+			output.Write(frame.Data)
+		}
+		if frame.Type == FrameExit {
+			if frame.Code != 0 {
+				t.Fatalf("exit code = %d, want 0", frame.Code)
+			}
+			break
+		}
+	}
+	if !strings.Contains(output.String(), "tty-eof-ok") {
+		t.Fatalf("TTY output = %q, want stdin echo", output.String())
+	}
+}

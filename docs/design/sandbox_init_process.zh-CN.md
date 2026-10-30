@@ -121,7 +121,11 @@ Unix socket 上使用 newline-delimited JSON。选择 JSON 而不是 gRPC 是为
 ### 5.3 断连
 
 - exec 连接断开时，init 不杀进程；输出被 drain 到 `io.Discard`，避免子进程因 pipe 满阻塞。
+- 非交互 `Exec` 没有 stdin 输入面，init 客户端在启动命令后立即发送 `stdin_eof`，与 `docker exec` 的空 stdin 语义一致。
+- TTY 会话的 stdin EOF 以 EOT（Ctrl-D）写入 PTY，不关闭 master；若程序在 raw 模式下忽略 EOT，500ms 后关闭 master 兜底，避免 CloseSend 永久阻塞。
+- leader 被 `wait4` 回收后，退出帧只在有界输出宽限期（250ms）内等待 stdout/stderr EOF；后台后代继续持有时，输出转入 discard，退出帧仍会下发，exec 不再被后代生命周期绑定。
 - daemon 的 `Exec`/`ExecStream` 在 context 取消时调用 `kill`（tree 与否取决于 `KillOnlyOnCancel`）；非 `KillOnlyOnCancel` 时还会按 marker 调用 `kill_tree`，清理 `agent-compose-runtime` 放到独立进程组的真实命令及其后代。
+- init 关闭时会等待 reaper 就绪退出，避免同一进程内多个 init 实例（测试/wrapper）之间用 `wait4(-1)` 互相偷取子进程退出。
 - 交互式 `OpenInteraction` 的 cancel 先发 TERM，再关闭 session；最终由 init/容器停止兜底。
 - `docker stop` 给 PID 1 发 SIGTERM；init 把 TERM 转发给所有进程组，并在 PID 1 身份下向整个 PID namespace 发 TERM（回收未登记的孤儿），等待 5s，再 SIGKILL。
 
@@ -316,6 +320,8 @@ SANDBOX_INIT_PROFILE=/.agent-compose/security.json
 - 单元：profile 校验、filter 编译、Landlock ruleset、cgroup 路径、失败语义；
 - 集成：allow/deny syscall probe、文件读写 probe、fork/exec、pids limit、进程退出清理；
 - 真机：Docker/K8s/Microsandbox/BoxLite 各自跑 agent/codex/pi/JS runtime 的 smoke；
+  - Docker kill-init 用例在 kill 前启动写入 host workspace 心跳的后台 workload，确认 init 死后心跳停止；
+  - exec 用例覆盖后台后代持有管道、非交互 stdin EOF、TTY EOT 和 marker kill_tree 的退出帧/进程消失断言。
 - 负向：`ptrace` 被拒、读 `/.agent-compose` 被拒、超出 cgroup 被拒、profile 篡改被拒；
 - 性能：seccomp/Landlock 对 exec/启动延迟的影响。
 
