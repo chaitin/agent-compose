@@ -126,7 +126,7 @@ func (r *cgoSandboxRuntime) openBoxliteInteraction(ctx context.Context, sandbox 
 	if sandbox == nil {
 		return nil, fmt.Errorf("boxlite interaction sandbox is required")
 	}
-	if r.sandboxInitConfigured(sandbox) {
+	if r.sandboxInitConfigured(sandbox, vmState) {
 		return openSandboxInitInteraction(ctx, r.sandboxInitClient(sandbox), sandbox, r.config.GuestWorkspacePath, spec)
 	}
 

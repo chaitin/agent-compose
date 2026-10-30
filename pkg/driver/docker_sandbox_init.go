@@ -164,6 +164,9 @@ func (r *dockerRuntime) initExecWithStream(ctx context.Context, sandbox *Sandbox
 		return ExecResult{}, fmt.Errorf("start sandbox init exec for sandbox %s: %w", sandbox.Summary.ID, err)
 	}
 	defer func() { _ = session.Close() }()
+	// The driver Exec surface has no stdin input; close the child's stdin like
+	// docker exec does, otherwise a command that reads stdin waits forever.
+	_ = session.CloseStdin(ctx)
 
 	collector := &dockerExecCollector{stream: stream, filter: newExecOutputFilter()}
 	for {

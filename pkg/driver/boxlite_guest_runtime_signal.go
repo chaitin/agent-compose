@@ -16,9 +16,12 @@ func (r *cgoSandboxRuntime) SignalGuestRuntime(ctx context.Context, sandbox *San
 	if err != nil {
 		return err
 	}
-	if r.sandboxInitConfigured(sandbox) {
-		_, err := runSandboxInitExec(ctx, r.sandboxInitClient(sandbox), sandbox.Summary.ID, "/", ExecSpec{Command: command[0], Args: command[1:]}, nil)
-		return err
+	if r.sandboxInitConfigured(sandbox, vmState) {
+		result, err := runSandboxInitExec(ctx, r.sandboxInitClient(sandbox), sandbox.Summary.ID, "/", ExecSpec{Command: command[0], Args: command[1:]}, nil)
+		if err != nil {
+			return err
+		}
+		return guestRuntimeSignalExitError(result.ExitCode)
 	}
 	if strings.TrimSpace(vmState.BoxID) == "" {
 		return ErrGuestRuntimeGone

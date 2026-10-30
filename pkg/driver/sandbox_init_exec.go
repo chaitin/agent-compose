@@ -34,6 +34,9 @@ func runSandboxInitExec(ctx context.Context, client *sandboxinit.Client, sandbox
 		return ExecResult{}, fmt.Errorf("start sandbox init exec for sandbox %s: %w", sandboxID, err)
 	}
 	defer func() { _ = session.Close() }()
+	// The driver Exec surface has no stdin input; close the child's stdin like
+	// docker exec does, otherwise a command that reads stdin waits forever.
+	_ = session.CloseStdin(ctx)
 
 	collector := &dockerExecCollector{stream: stream, filter: newExecOutputFilter()}
 	for {
@@ -82,4 +85,22 @@ func killSandboxInitSession(client *sandboxinit.Client, sessionID string, tree b
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = client.Kill(ctx, sessionID, tree)
+}
+
+// requireSandboxInitExecSuccess turns a completed exec with a non-zero exit
+// into an error. runSandboxInitExec returns nil error for any completed process
+// so callers that only need a command's effect (bootstrap, signal scripts) must
+// inspect the result themselves.
+func requireSandboxInitExecSuccess(result ExecResult, operation string) error {
+	if result.Success {
+		return nil
+	}
+	detail := strings.TrimSpace(result.Stderr)
+	if detail == "" {
+		detail = strings.TrimSpace(result.Output)
+	}
+	if detail == "" {
+		detail = fmt.Sprintf("exit code %d", result.ExitCode)
+	}
+	return fmt.Errorf("%s failed: %s", operation, detail)
 }

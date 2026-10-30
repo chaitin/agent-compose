@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/chaitin/agent-compose/pkg/sandboxinit"
@@ -16,17 +17,26 @@ const (
 	boxliteInitGuestSocket = boxliteInitGuestDir + "/init.sock"
 )
 
-func (r *cgoSandboxRuntime) sandboxInitEnabled() bool {
-	return r != nil && r.config != nil && r.config.SandboxInitEnabled
+func (r *cgoSandboxRuntime) sandboxInitEnabled(vmState VMState) bool {
+	return SandboxInitEnabledFor(r.config, vmState)
 }
 
 func (r *cgoSandboxRuntime) sandboxInitClient(sandbox *Sandbox) *sandboxinit.Client {
 	return sandboxinit.NewClient(sandboxInitHostSocket(r.config, sandbox.Summary.ID))
 }
 
-func (r *cgoSandboxRuntime) sandboxInitConfigured(sandbox *Sandbox) bool {
-	_, err := os.Stat(sandboxInitHostDir(r.config, sandbox.Summary.ID))
-	return err == nil
+func (r *cgoSandboxRuntime) sandboxInitConfigured(sandbox *Sandbox, vmState VMState) bool {
+	if sandbox == nil {
+		return false
+	}
+	// The host directory is the marker for runtimes created before the
+	// persisted state existed. Prefer the recorded state when present.
+	if strings.TrimSpace(vmState.SandboxInitState) == "" {
+		if _, err := os.Stat(sandboxInitHostDir(r.config, sandbox.Summary.ID)); err == nil {
+			return true
+		}
+	}
+	return SandboxInitEnabledFor(r.config, vmState)
 }
 
 func (r *cgoSandboxRuntime) waitForSandboxInit(ctx context.Context, sandbox *Sandbox) error {

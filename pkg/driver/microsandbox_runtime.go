@@ -489,15 +489,22 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 			return SandboxVMInfo{}, err
 		}
 		bootstrap := directoryOnlyGuestSandboxBootstrapExecSpecForSandbox(r.config, session)
-		if _, err := runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, "/", bootstrap, nil); err != nil {
+		result, err := runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, "/", bootstrap, nil)
+		if err != nil {
+			return SandboxVMInfo{}, err
+		}
+		if err := requireSandboxInitExecSuccess(result, "microsandbox init bootstrap"); err != nil {
 			return SandboxVMInfo{}, err
 		}
 	} else if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
 		return SandboxVMInfo{}, err
 	}
 
+	// With init, Jupyter is the init main process launched via --main-shell.
+	// Probing it with the short legacy launch window and then starting another
+	// Jupyter would race two processes for the same port.
 	needLaunch := (created || restarted) && !usesInit
-	if jupyterEnabled(proxyState) && !needLaunch {
+	if jupyterEnabled(proxyState) && !usesInit && !needLaunch {
 		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		probeErr := waitForJupyterProxy(probeCtx, proxyState)
 		cancel()

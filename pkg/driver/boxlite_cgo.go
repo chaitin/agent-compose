@@ -495,12 +495,17 @@ func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox,
 		slog.Info("agent-compose boxlite box started", "sandbox_id", sandbox.Summary.ID, "elapsed_ms", time.Since(startedAt).Milliseconds())
 	}
 
-	if r.sandboxInitConfigured(sandbox) {
+	usesInit := r.sandboxInitConfigured(sandbox, vmState)
+	if usesInit {
 		if err := r.waitForSandboxInit(ctx, sandbox); err != nil {
 			return SandboxVMInfo{}, err
 		}
 		bootstrap := directoryOnlyGuestSandboxBootstrapExecSpecForSandbox(r.config, sandbox)
-		if _, err := runSandboxInitExec(ctx, r.sandboxInitClient(sandbox), sandbox.Summary.ID, "/", bootstrap, nil); err != nil {
+		result, err := runSandboxInitExec(ctx, r.sandboxInitClient(sandbox), sandbox.Summary.ID, "/", bootstrap, nil)
+		if err != nil {
+			return SandboxVMInfo{}, err
+		}
+		if err := requireSandboxInitExecSuccess(result, "boxlite init bootstrap"); err != nil {
 			return SandboxVMInfo{}, err
 		}
 	} else if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, box, sandbox); err != nil {
@@ -527,9 +532,14 @@ func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox,
 		return SandboxVMInfo{}, err
 	}
 	slog.Info("agent-compose boxlite ensure sandbox complete", "sandbox_id", sandbox.Summary.ID, "box_id", boxID, "elapsed_ms", time.Since(startedAt).Milliseconds())
+	initState := SandboxInitStateDisabled
+	if usesInit {
+		initState = SandboxInitStateEnabled
+	}
 	return SandboxVMInfo{
-		BoxID:      boxID,
-		JupyterURL: jupyterDirectURL(proxyState),
+		BoxID:            boxID,
+		JupyterURL:       jupyterDirectURL(proxyState),
+		SandboxInitState: initState,
 	}, nil
 }
 
@@ -639,7 +649,7 @@ func (r *cgoSandboxRuntime) TerminateProcessTree(ctx context.Context, sandbox *S
 	if strings.TrimSpace(marker) == "" {
 		return fmt.Errorf("process tree marker is required")
 	}
-	if r.sandboxInitConfigured(sandbox) {
+	if r.sandboxInitConfigured(sandbox, vmState) {
 		return r.sandboxInitClient(sandbox).KillTree(ctx, marker)
 	}
 	lookup := boxliteLookupKey(sandbox, vmState)
@@ -720,10 +730,14 @@ func (r *cgoSandboxRuntime) execWithStream(ctx context.Context, sandbox *Sandbox
 			return ExecResult{}, err
 		}
 	}
-	if r.sandboxInitConfigured(sandbox) {
+	if r.sandboxInitConfigured(sandbox, vmState) {
 		client := r.sandboxInitClient(sandbox)
 		bootstrap := directoryOnlyGuestSandboxBootstrapExecSpecForSandbox(r.config, sandbox)
-		if _, err := runSandboxInitExec(ctx, client, sandbox.Summary.ID, "/", bootstrap, nil); err != nil {
+		result, err := runSandboxInitExec(ctx, client, sandbox.Summary.ID, "/", bootstrap, nil)
+		if err != nil {
+			return ExecResult{}, err
+		}
+		if err := requireSandboxInitExecSuccess(result, "boxlite init bootstrap"); err != nil {
 			return ExecResult{}, err
 		}
 		return runSandboxInitExec(ctx, client, sandbox.Summary.ID, r.config.GuestWorkspacePath, spec, stream)
@@ -1285,7 +1299,7 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	C.boxlite_options_set_memory(options, C.int(resources.MemoryMiB))
 	C.boxlite_options_set_disk_size_gb(options, C.int(resources.DiskSizeGB))
 
-	initEnabled := r.sandboxInitEnabled()
+	initEnabled := r.sandboxInitEnabled(vmState)
 	if initEnabled {
 		initDir, err := ensureSandboxInitHostDir(r.config, sandbox.Summary.ID)
 		if err != nil {

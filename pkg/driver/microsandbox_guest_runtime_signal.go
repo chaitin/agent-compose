@@ -20,8 +20,11 @@ func (r *microsandboxRuntime) SignalGuestRuntime(ctx context.Context, session *S
 		if err := r.ensureReady(ctx); err != nil {
 			return err
 		}
-		_, err := runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, "/", ExecSpec{Command: command[0], Args: command[1:]}, nil)
-		return err
+		result, err := runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, "/", ExecSpec{Command: command[0], Args: command[1:]}, nil)
+		if err != nil {
+			return err
+		}
+		return guestRuntimeSignalExitError(result.ExitCode)
 	}
 	if err := r.ensureReady(ctx); err != nil {
 		return err
