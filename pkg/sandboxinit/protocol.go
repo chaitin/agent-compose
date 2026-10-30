@@ -1,6 +1,9 @@
 package sandboxinit
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Version is the control protocol version. It is sent by the client on every
 // request and checked by the server, so a daemon and a guest init from
@@ -70,6 +73,33 @@ type Frame struct {
 	Code      int           `json:"code,omitempty"`
 	Message   string        `json:"message,omitempty"`
 	Processes []ProcessInfo `json:"processes,omitempty"`
+}
+
+// MarshalJSON keeps non-exit frames compact while making the exit status
+// explicit: an exit frame always carries code, including a successful zero.
+// The plain omitempty tag would otherwise make exit 0 indistinguishable from a
+// missing field for clients outside the Go SDK.
+func (f Frame) MarshalJSON() ([]byte, error) {
+	type wireFrame struct {
+		Type      string        `json:"type"`
+		SessionID string        `json:"session_id,omitempty"`
+		Data      []byte        `json:"data,omitempty"`
+		Code      *int          `json:"code,omitempty"`
+		Message   string        `json:"message,omitempty"`
+		Processes []ProcessInfo `json:"processes,omitempty"`
+	}
+	out := wireFrame{
+		Type:      f.Type,
+		SessionID: f.SessionID,
+		Data:      f.Data,
+		Message:   f.Message,
+		Processes: f.Processes,
+	}
+	if f.Type == FrameExit {
+		code := f.Code
+		out.Code = &code
+	}
+	return json.Marshal(out)
 }
 
 // ProcessInfo describes one process currently owned by init. It is diagnostic:
