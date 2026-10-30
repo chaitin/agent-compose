@@ -242,6 +242,7 @@ func marshalVMState(s VMState) *sandboxhost.VMState {
 		BootstrapRef:     s.BootstrapRef,
 		K8SContext:       s.K8sContext,
 		K8SNamespace:     s.K8sNamespace,
+		SandboxInitState: s.SandboxInitState,
 	}
 }
 
@@ -264,6 +265,7 @@ func unmarshalVMState(s *sandboxhost.VMState) VMState {
 		BootstrapRef:     s.GetBootstrapRef(),
 		K8sContext:       s.GetK8SContext(),
 		K8sNamespace:     s.GetK8SNamespace(),
+		SandboxInitState: s.GetSandboxInitState(),
 	}
 }
 
@@ -376,9 +378,10 @@ func unmarshalExecResult(r *sandboxhost.ExecResult) ExecResult {
 
 func marshalSandboxVMInfo(i SandboxVMInfo) *sandboxhost.SandboxVMInfo {
 	out := &sandboxhost.SandboxVMInfo{
-		BoxId:          i.BoxID,
-		JupyterUrl:     i.JupyterURL,
-		RuntimeCreated: i.RuntimeCreated,
+		BoxId:            i.BoxID,
+		JupyterUrl:       i.JupyterURL,
+		RuntimeCreated:   i.RuntimeCreated,
+		SandboxInitState: i.SandboxInitState,
 	}
 	if i.ProxyState != nil {
 		state := marshalProxyState(*i.ProxyState)
@@ -392,9 +395,10 @@ func unmarshalSandboxVMInfo(i *sandboxhost.SandboxVMInfo) SandboxVMInfo {
 		return SandboxVMInfo{}
 	}
 	out := SandboxVMInfo{
-		BoxID:          i.GetBoxId(),
-		JupyterURL:     i.GetJupyterUrl(),
-		RuntimeCreated: i.GetRuntimeCreated(),
+		BoxID:            i.GetBoxId(),
+		JupyterURL:       i.GetJupyterUrl(),
+		RuntimeCreated:   i.GetRuntimeCreated(),
+		SandboxInitState: i.GetSandboxInitState(),
 	}
 	if i.GetProxyState() != nil {
 		state := unmarshalProxyState(i.GetProxyState())

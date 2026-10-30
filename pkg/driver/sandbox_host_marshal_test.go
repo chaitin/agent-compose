@@ -49,6 +49,7 @@ func TestSandboxHostMarshalRoundTrip(t *testing.T) {
 		Driver: RuntimeDriverMicrosandbox, Mode: "detached", BoxName: "box-1", BoxID: "box-id-1",
 		Image: "img", Registry: "reg", RuntimeHome: "/data/microsandbox", StartedAt: now, StoppedAt: zero,
 		LastError: "boom", BootstrapRef: "bootstrap", K8sContext: "ctx", K8sNamespace: "ns",
+		SandboxInitState: SandboxInitStateEnabled,
 	}
 
 	execSpec := ExecSpec{
@@ -132,7 +133,7 @@ func TestSandboxHostNilRoundTrip(t *testing.T) {
 }
 
 func TestSandboxVMInfoRoundTripPreservesNilProxyState(t *testing.T) {
-	info := SandboxVMInfo{BoxID: "b", JupyterURL: "http://jupyter", RuntimeCreated: true}
+	info := SandboxVMInfo{BoxID: "b", JupyterURL: "http://jupyter", RuntimeCreated: true, SandboxInitState: SandboxInitStateEnabled}
 	assertMarshalRoundTrip(t, info, marshalSandboxVMInfo, unmarshalSandboxVMInfo)
 
 	withProxy := SandboxVMInfo{BoxID: "b", ProxyState: &ProxyState{ProxyPath: "/p", Enabled: true}}

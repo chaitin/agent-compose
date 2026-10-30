@@ -495,7 +495,25 @@ func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox,
 		slog.Info("agent-compose boxlite box started", "sandbox_id", sandbox.Summary.ID, "elapsed_ms", time.Since(startedAt).Milliseconds())
 	}
 
-	if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, box, sandbox); err != nil {
+	usesInit := r.sandboxInitConfigured(sandbox, vmState)
+	if created {
+		// A newly created box follows createBox's decision even when the stored
+		// sandbox predates SandboxInitState.
+		usesInit = SandboxInitEnabledFor(r.config, vmState)
+	}
+	if usesInit {
+		if err := r.waitForSandboxInit(ctx, sandbox); err != nil {
+			return SandboxVMInfo{}, err
+		}
+		bootstrap := directoryOnlyGuestSandboxBootstrapExecSpecForSandbox(r.config, sandbox)
+		result, err := runSandboxInitExec(ctx, r.sandboxInitClient(sandbox), sandbox.Summary.ID, "/", bootstrap, nil)
+		if err != nil {
+			return SandboxVMInfo{}, err
+		}
+		if err := requireSandboxInitExecSuccess(result, "boxlite init bootstrap"); err != nil {
+			return SandboxVMInfo{}, err
+		}
+	} else if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, box, sandbox); err != nil {
 		return SandboxVMInfo{}, err
 	}
 	slog.Info("agent-compose boxlite guest bootstrap ready", "sandbox_id", sandbox.Summary.ID, "created", created, "elapsed_ms", time.Since(startedAt).Milliseconds())
@@ -519,9 +537,14 @@ func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox,
 		return SandboxVMInfo{}, err
 	}
 	slog.Info("agent-compose boxlite ensure sandbox complete", "sandbox_id", sandbox.Summary.ID, "box_id", boxID, "elapsed_ms", time.Since(startedAt).Milliseconds())
+	initState := SandboxInitStateDisabled
+	if usesInit {
+		initState = SandboxInitStateEnabled
+	}
 	return SandboxVMInfo{
-		BoxID:      boxID,
-		JupyterURL: jupyterDirectURL(proxyState),
+		BoxID:            boxID,
+		JupyterURL:       jupyterDirectURL(proxyState),
+		SandboxInitState: initState,
 	}, nil
 }
 
@@ -618,6 +641,7 @@ func (r *cgoSandboxRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox,
 		if err := CleanupBoxliteVolumeBridgeMounts(hostSandboxDir(sandbox)); err != nil {
 			return err
 		}
+		_ = os.RemoveAll(sandboxInitHostDir(r.config, sandbox.Summary.ID))
 	}
 	return nil
 }
@@ -629,6 +653,9 @@ func (r *cgoSandboxRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox,
 func (r *cgoSandboxRuntime) TerminateProcessTree(ctx context.Context, sandbox *Sandbox, vmState VMState, marker string) error {
 	if strings.TrimSpace(marker) == "" {
 		return fmt.Errorf("process tree marker is required")
+	}
+	if r.sandboxInitConfigured(sandbox, vmState) {
+		return r.sandboxInitClient(sandbox).KillTree(ctx, marker)
 	}
 	lookup := boxliteLookupKey(sandbox, vmState)
 	if lookup == "" {
@@ -707,6 +734,18 @@ func (r *cgoSandboxRuntime) execWithStream(ctx context.Context, sandbox *Sandbox
 		if err := r.startBox(ctx, box); err != nil {
 			return ExecResult{}, err
 		}
+	}
+	if r.sandboxInitConfigured(sandbox, vmState) {
+		client := r.sandboxInitClient(sandbox)
+		bootstrap := directoryOnlyGuestSandboxBootstrapExecSpecForSandbox(r.config, sandbox)
+		result, err := runSandboxInitExec(ctx, client, sandbox.Summary.ID, "/", bootstrap, nil)
+		if err != nil {
+			return ExecResult{}, err
+		}
+		if err := requireSandboxInitExecSuccess(result, "boxlite init bootstrap"); err != nil {
+			return ExecResult{}, err
+		}
+		return runSandboxInitExec(ctx, client, sandbox.Summary.ID, r.config.GuestWorkspacePath, spec, stream)
 	}
 	return executeUserCommandAfterBootstrap(
 		func() error {
@@ -1265,6 +1304,19 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	C.boxlite_options_set_memory(options, C.int(resources.MemoryMiB))
 	C.boxlite_options_set_disk_size_gb(options, C.int(resources.DiskSizeGB))
 
+	initEnabled := r.sandboxInitEnabled(vmState)
+	if initEnabled {
+		initDir, err := ensureSandboxInitHostDir(r.config, sandbox.Summary.ID)
+		if err != nil {
+			return nil, fmt.Errorf("create boxlite init control directory: %w", err)
+		}
+		hostPathCString := C.CString(initDir)
+		guestPathCString := C.CString(boxliteInitGuestDir)
+		C.boxlite_options_add_bind_mount(options, hostPathCString, guestPathCString, C.int(0))
+		C.free(unsafe.Pointer(hostPathCString))
+		C.free(unsafe.Pointer(guestPathCString))
+	}
+
 	for _, mount := range manifest.Mounts {
 		hostPathCString := C.CString(mount.HostPath)
 		guestPathCString := C.CString(mount.GuestPath)
@@ -1294,15 +1346,26 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 		}
 	}
 
-	entrypoint, entrypointLen, freeEntrypoint := cStringArray([]string{"sh", "-lc"})
-	defer freeEntrypoint()
-	C.boxlite_options_set_entrypoint(options, entrypoint, C.int(entrypointLen))
-
-	commandText := "sleep infinity"
+	commandText := ""
 	if jupyterEnabled(proxyState) {
 		commandText = directoryOnlyJupyterLaunchCommand(r.config, proxyState, false)
 	}
-	command, commandLen, freeCommand := cStringArray([]string{commandText})
+	entrypointValues := []string{"sh", "-lc"}
+	commandValues := []string{commandText}
+	if initEnabled {
+		entrypointValues = []string{sandboxInitBinaryPath(r.config)}
+		commandValues = []string{"--control-socket", boxliteInitGuestSocket}
+		if commandText != "" {
+			commandValues = append(commandValues, "--main-shell", commandText)
+		}
+	} else if commandText == "" {
+		commandValues = []string{"sleep infinity"}
+	}
+	entrypoint, entrypointLen, freeEntrypoint := cStringArray(entrypointValues)
+	defer freeEntrypoint()
+	C.boxlite_options_set_entrypoint(options, entrypoint, C.int(entrypointLen))
+
+	command, commandLen, freeCommand := cStringArray(commandValues)
 	defer freeCommand()
 	C.boxlite_options_set_cmd(options, command, C.int(commandLen))
 

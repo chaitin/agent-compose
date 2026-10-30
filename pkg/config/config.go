@@ -125,7 +125,19 @@ type Config struct {
 	// address and does not verify it is reachable, so a network misconfiguration
 	// silently drops enforcement rather than reporting the declaration
 	// unenforced.
-	DockerSandboxNetwork       string
+	DockerSandboxNetwork string
+	// SandboxInitEnabled makes newly created Docker sandboxes run the
+	// agent-compose init process as PID 1 instead of docker-init plus a
+	// keepalive shell. It only affects creation; an existing container keeps
+	// the process model it was created with.
+	SandboxInitEnabled bool
+	// SandboxInitBinary is the guest path of the init binary. It is only used
+	// when SandboxInitEnabled is true.
+	SandboxInitBinary string
+	// SandboxInitSocketDir is the host runtime directory containing one
+	// <sandbox-id>/init.sock per init-enabled sandbox. It defaults to
+	// $XDG_RUNTIME_DIR/agent-compose or /run/agent-compose.
+	SandboxInitSocketDir       string
 	MicrosandboxHome           string
 	MicrosandboxMSBPath        string
 	MicrosandboxLibPath        string
@@ -223,6 +235,7 @@ type configSources struct {
 	LLM              llmEnvConfig
 	Timeouts         runtimeTimeoutsConfig
 	Drivers          driverHomesConfig
+	SandboxInit      sandboxInitConfig
 	Images           imageEnvConfig
 	Resources        sandboxResourceConfig
 	Cleanup          cleanupConfigValues
@@ -254,6 +267,10 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		return configSources{}, err
 	}
 	drivers, err := loadDriverHomesConfig(logger, dataRoot)
+	if err != nil {
+		return configSources{}, err
+	}
+	sandboxInit, err := loadSandboxInitConfig()
 	if err != nil {
 		return configSources{}, err
 	}
@@ -307,6 +324,7 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		LLM:              loadLLMEnvConfig(logger),
 		Timeouts:         loadRuntimeTimeoutsConfig(logger),
 		Drivers:          drivers,
+		SandboxInit:      sandboxInit,
 		Images:           images,
 		Resources:        resources,
 		Cleanup:          cleanup,
@@ -387,6 +405,9 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		DockerHome:                 normalized.DockerHome,
 		DockerHostSandboxRoot:      normalized.DockerHostSandboxRoot,
 		DockerSandboxNetwork:       drivers.DockerSandboxNetwork,
+		SandboxInitEnabled:         sources.SandboxInit.Enabled,
+		SandboxInitBinary:          sources.SandboxInit.Binary,
+		SandboxInitSocketDir:       sources.SandboxInit.SocketDir,
 		DockerDefaultImage:         images.DockerDefaultImage,
 		MicrosandboxHome:           normalized.MicrosandboxHome,
 		MicrosandboxMSBPath:        normalized.MicrosandboxMSBPath,
@@ -827,6 +848,71 @@ type imageEnvConfig struct {
 	ImageStoreMode           string
 	ImageCacheRoot           string
 	ImageInsecureRegistries  []string
+}
+
+// sandboxInitConfig holds the experimental sandbox init switch.
+type sandboxInitConfig struct {
+	Enabled   bool
+	Binary    string
+	SocketDir string
+}
+
+// DefaultSandboxInitBinary is the guest path shipped by the guest image. A
+// deployment that mounts the binary elsewhere sets SANDBOX_INIT_BINARY.
+const DefaultSandboxInitBinary = "/.agent-compose/ac-init"
+
+// MaxSandboxInitSocketPathLength is the longest Linux sun_path this project
+// accepts for a control socket (sun_path itself is 108 bytes including the
+// trailing NUL; 100 leaves room for a future hash/alias suffix).
+const MaxSandboxInitSocketPathLength = 100
+
+// sandboxIDHexLength is the length of the SHA-256 hex sandbox IDs the daemon
+// generates. Startup validation uses it to reject a runtime root that cannot
+// hold the longest possible socket before any sandbox is created.
+const sandboxIDHexLength = 64
+
+func loadSandboxInitConfig() (sandboxInitConfig, error) {
+	config := sandboxInitConfig{Binary: DefaultSandboxInitBinary}
+	raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_ENABLED"))
+	if raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_ENABLED must be true or false: %w", err)
+		}
+		config.Enabled = enabled
+	}
+	if binary := strings.TrimSpace(os.Getenv("SANDBOX_INIT_BINARY")); binary != "" {
+		config.Binary = binary
+	}
+	socketDir := strings.TrimSpace(os.Getenv("SANDBOX_INIT_SOCKET_DIR"))
+	if socketDir == "" {
+		socketDir = defaultSandboxInitSocketDir()
+	}
+	if config.Enabled {
+		if !filepath.IsAbs(config.Binary) {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_BINARY must be an absolute guest path, got %q", config.Binary)
+		}
+		if !filepath.IsAbs(socketDir) {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_SOCKET_DIR must be an absolute host path, got %q", socketDir)
+		}
+		worstCaseSocket := filepath.Join(socketDir, strings.Repeat("0", sandboxIDHexLength), "init.sock")
+		if len(worstCaseSocket) > MaxSandboxInitSocketPathLength {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_SOCKET_DIR is too long: the longest sandbox socket %q is %d bytes (limit %d); set a shorter runtime directory", worstCaseSocket, len(worstCaseSocket), MaxSandboxInitSocketPathLength)
+		}
+	}
+	config.SocketDir = socketDir
+	return config, nil
+}
+
+// defaultSandboxInitSocketDir follows the Linux runtime-state convention:
+// $XDG_RUNTIME_DIR when the daemon has a user session, /run otherwise. A
+// containerized daemon overrides it with a path under DATA_ROOT because its own
+// /run is not the Docker Engine host's /run.
+func defaultSandboxInitSocketDir() string {
+	if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {
+		return filepath.Join(runtimeDir, "agent-compose")
+	}
+	return "/run/agent-compose"
 }
 
 func loadImageEnvConfig(dataRoot string) (imageEnvConfig, error) {

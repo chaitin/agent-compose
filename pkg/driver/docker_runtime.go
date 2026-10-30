@@ -239,6 +239,13 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err != nil {
 		return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, fmt.Errorf("inspect started docker container %s: %w", containerInfo.ID, err))
 	}
+	initState := SandboxInitStateDisabled
+	if dockerSandboxUsesInit(containerInfo) {
+		initState = SandboxInitStateEnabled
+		if err := r.waitForSandboxInit(ctx, dockerClient, containerInfo.ID, sandbox); err != nil {
+			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
+		}
+	}
 	containerInfo, proxyState, err = r.waitForDockerJupyterProxyState(
 		ctx,
 		dockerClient.ContainerInspect,
@@ -256,7 +263,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
 	}
 	if !jupyterEnabled(proxyState) {
-		return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, ProxyState: &proxyState}, nil
+		return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, ProxyState: &proxyState, SandboxInitState: initState}, nil
 	}
 
 	readyCtx, cancel := context.WithTimeout(ctx, r.config.JupyterReadyTimeout)
@@ -264,7 +271,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	cancel()
 	if readyErr != nil {
 		if logText := readSandboxJupyterLog(sandbox); jupyterLogIndicatesReady(logText) {
-			return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState}, nil
+			return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState, SandboxInitState: initState}, nil
 		}
 		if logText := readSandboxJupyterLog(sandbox); logText != "" {
 			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, fmt.Errorf("%w\nGuest log:\n%s", readyErr, logText))
@@ -275,7 +282,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, readyErr)
 	}
 
-	return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState}, nil
+	return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState, SandboxInitState: initState}, nil
 }
 
 func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
@@ -293,11 +300,19 @@ func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vm
 	if err != nil {
 		return false, err
 	}
+	if dockerSandboxUsesInit(containerInfo) {
+		initMount, mountErr := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+		if mountErr != nil {
+			return false, mountErr
+		}
+		expectedMounts = append(expectedMounts, initMount)
+	}
 	if !r.dockerSandboxMountsMatch(containerInfo, expectedMounts, sandbox) {
 		slog.Warn("docker sandbox mounts no longer match the active data root; retiring stale runtime for safe recreation", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
 		if err := removeDockerContainerWithStaleMounts(ctx, dockerClient, containerInfo.ID); err != nil {
 			return false, err
 		}
+		r.cleanupSandboxInitRuntime(sandbox)
 		return false, nil
 	}
 	return containerInfo.State != nil && containerInfo.State.Running, nil
@@ -386,6 +401,7 @@ func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return err
 	}
 	if !ok {
+		r.cleanupSandboxInitRuntime(sandbox)
 		return nil
 	}
 	removeCtx, cancel := dockerFallbackContextIfDone(ctx)
@@ -393,6 +409,7 @@ func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err := dockerClient.ContainerRemove(removeCtx, containerInfo.ID, containerapi.RemoveOptions{Force: true}); err != nil && !isDockerNotFound(err) {
 		return fmt.Errorf("remove docker container %s: %w", containerInfo.ID, err)
 	}
+	r.cleanupSandboxInitRuntime(sandbox)
 	return nil
 }
 
@@ -455,6 +472,10 @@ func (r *dockerRuntime) OpenInteraction(ctx context.Context, sandbox *Sandbox, v
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		cancel()
 		return nil, fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
+	}
+	if dockerSandboxUsesInit(containerInfo) {
+		cancel()
+		return r.initOpenInteraction(ctx, sandbox, spec)
 	}
 
 	execOptions, err := dockerCommandExecOptions(spec, r.config.GuestWorkspacePath)
@@ -556,6 +577,9 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		return ExecResult{}, fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
 	}
+	if dockerSandboxUsesInit(containerInfo) {
+		return r.initExecWithStream(ctx, sandbox, spec, stream)
+	}
 
 	execMarker := spec.Marker
 	if execMarker == "" {
@@ -640,6 +664,11 @@ func (r *dockerRuntime) TerminateProcessTree(ctx context.Context, sandbox *Sandb
 	}
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		return fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
+	}
+	if dockerSandboxUsesInit(containerInfo) {
+		killCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return r.sandboxInitClient(sandbox).KillTree(killCtx, marker)
 	}
 	return r.terminateDockerProcessTree(ctx, dockerClient, containerInfo.ID, marker)
 }
@@ -894,7 +923,20 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState); err != nil {
 		return containerapi.InspectResponse{}, false, err
 	} else if ok {
-		if r.dockerSandboxMountsMatch(containerInfo, mounts, sandbox) {
+		mountsForMatch := mounts
+		if dockerSandboxUsesInit(containerInfo) {
+			initMount, mountErr := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+			if mountErr != nil {
+				return containerapi.InspectResponse{}, false, mountErr
+			}
+			// Compare against the init mount without adding it to the slice used
+			// for creation: a stale container is deleted below and the creation
+			// path appends the init mount based on the current desired model. If
+			// the slice were reused, a rebuilt init container would carry two
+			// mounts for the same target.
+			mountsForMatch = append(append([]mountapi.Mount{}, mounts...), initMount)
+		}
+		if r.dockerSandboxMountsMatch(containerInfo, mountsForMatch, sandbox) {
 			return containerInfo, false, nil
 		}
 		slog.Warn("recreating docker sandbox whose bind mounts reference an earlier data root", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
@@ -913,31 +955,58 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 		slog.Warn("recreating missing legacy docker runtime from persisted mounts; container writable layer is not recoverable", "sandbox_id", sandbox.Summary.ID, "image", firstNonEmpty(vmState.Image, sandbox.Summary.GuestImage))
 	}
 
+	initEnabled := SandboxInitEnabledFor(r.config, vmState)
+	if initEnabled {
+		initMount, err := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+		if err != nil {
+			return containerapi.InspectResponse{}, false, err
+		}
+		mounts = append(mounts, initMount)
+	}
 	name := r.containerName(sandbox, vmState)
 	var exposedPorts nat.PortSet
 	var portBindings nat.PortMap
-	cmdText := "tail -f /dev/null"
+	cmdText := ""
 	if jupyterEnabled(proxyState) {
 		exposedPorts, portBindings = dockerJupyterPortConfig(proxyState.GuestPort)
 		cmdText = jupyterLaunchCommand(r.config, proxyState, false)
+	} else if !initEnabled {
+		// The legacy path still needs a keepalive process. With init enabled,
+		// PID 1 itself is the keepalive and commands are real children.
+		cmdText = "tail -f /dev/null"
 	}
 	env, err := r.containerEnv(ctx, sandbox, proxyState)
 	if err != nil {
 		return containerapi.InspectResponse{}, false, err
 	}
+	labels := map[string]string{
+		dockerSandboxLabelID:     sandbox.Summary.ID,
+		dockerSandboxLabelDriver: RuntimeDriverDocker,
+	}
+	entrypoint := []string{"sh", "-lc"}
+	command := []string{cmdText}
+	if initEnabled {
+		entrypoint = []string{r.sandboxInitBinary()}
+		command = []string{"--control-socket", sandboxInitGuestSocket}
+		if cmdText != "" {
+			command = append(command, "--main-shell", cmdText)
+		}
+		labels[dockerSandboxInitLabel] = "true"
+	}
 	containerConfig := &containerapi.Config{
 		Image:        resolveSandboxGuestImage(vmState.Image, sandbox.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverDocker)),
 		WorkingDir:   r.config.GuestWorkspacePath,
 		Env:          env,
-		Entrypoint:   []string{"sh", "-lc"},
-		Cmd:          []string{cmdText},
+		Entrypoint:   entrypoint,
+		Cmd:          command,
 		ExposedPorts: exposedPorts,
-		Labels: map[string]string{
-			dockerSandboxLabelID:     sandbox.Summary.ID,
-			dockerSandboxLabelDriver: RuntimeDriverDocker,
-		},
+		Labels:       labels,
 	}
 	hostConfig := dockerSandboxHostConfig(mounts, portBindings, networkMode)
+	if initEnabled {
+		useInit := false
+		hostConfig.Init = &useInit
+	}
 	createResp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, name)
 	if err != nil {
 		return containerapi.InspectResponse{}, false, fmt.Errorf("create docker container for sandbox %s: %w", sandbox.Summary.ID, err)

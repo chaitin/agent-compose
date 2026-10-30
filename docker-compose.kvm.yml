@@ -19,6 +19,8 @@ services:
     container_name: agent-compose-sandbox-host
     restart: always
     command: ["sandbox-host"]
+    environment:
+      SANDBOX_INIT_SOCKET_DIR: ${SANDBOX_INIT_SOCKET_DIR:-/data/run/agent-compose}
     privileged: true
     devices:
       - /dev/kvm:/dev/kvm
