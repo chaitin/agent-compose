@@ -496,6 +496,11 @@ func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox,
 	}
 
 	usesInit := r.sandboxInitConfigured(sandbox, vmState)
+	if created {
+		// A newly created box follows createBox's decision even when the stored
+		// sandbox predates SandboxInitState.
+		usesInit = SandboxInitEnabledFor(r.config, vmState)
+	}
 	if usesInit {
 		if err := r.waitForSandboxInit(ctx, sandbox); err != nil {
 			return SandboxVMInfo{}, err

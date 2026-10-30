@@ -485,6 +485,12 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	defer r.releaseSandboxHandle(name, sandbox)
 
 	usesInit := r.sandboxInitConfigured(session, vmState)
+	if created {
+		// This call just created the VM (including a stale-runtime rebuild), so
+		// the creation decision is the authority. An empty state on an older
+		// stored sandbox must not make us drive the fresh init VM as legacy.
+		usesInit = SandboxInitEnabledFor(r.config, vmState)
+	}
 	if usesInit {
 		if err := r.waitForSandboxInit(ctx, session, vmState); err != nil {
 			return SandboxVMInfo{}, err
