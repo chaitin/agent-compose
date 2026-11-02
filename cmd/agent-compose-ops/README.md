@@ -68,10 +68,10 @@ Candidates are ranked by an estimated interruption score (lower is better):
 | `FIRES` | scheduled trigger fires inside the window |
 | `RUNS/WK` | historical run starts per week for this time of week |
 
-With `--assume-pause` (default) the recommendation assumes the upgrade gate
-defers new scheduled fires until after the restart, so fires inside the window
-do not penalize a candidate. Without the gate, pass `--assume-pause=false` so
-the score also penalizes fires.
+By default the recommendation penalizes scheduled fires inside the window,
+because the daemon does not defer them yet. Once the upgrade gate is deployed,
+pass `--assume-pause` so fires inside the window are treated as deferred until
+after the restart and no longer penalize a candidate.
 
 The score is a heuristic. A long scheduler run that is already in progress can
 still be interrupted; `status` shows those runs explicitly, and

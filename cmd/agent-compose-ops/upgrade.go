@@ -145,7 +145,7 @@ func newWindowsCommand(options *cliOptions) *cobra.Command {
 	cmd.Flags().DurationVar(&window, "window", upgradeadvisor.DefaultWindow, "Minimum candidate window length")
 	cmd.Flags().DurationVar(&downtime, "downtime", upgradeadvisor.DefaultDowntime, "Estimated daemon restart duration")
 	cmd.Flags().IntVar(&top, "top", upgradeadvisor.DefaultTop, "How many candidate windows to print")
-	cmd.Flags().BoolVar(&assumePause, "assume-pause", true, "Assume new trigger fires will be deferred by upgrade prepare; set false to also penalize fires inside the window")
+	cmd.Flags().BoolVar(&assumePause, "assume-pause", false, "Assume new trigger fires will be deferred by upgrade prepare; enable only after that gate is deployed")
 	return cmd
 }
 
