@@ -407,96 +407,26 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
 - 现有 proxy/driver/app/config 测试通过；Docker 集成套件不依赖 daemon 重启，
   PR1–PR5 回归保持通过。
 
-### PR7：加固与后续（M/L）
+### PR7：加固、per-run 钩子与收尾（本 PR，M）
 
-- workload 非 root + SYS_PTRACE 只留 init；PEERCRED/权限收紧；
-- `getpeername` spoof（保持应用可见的地址语义）、`SO_ORIGINAL_DST` 等兼容；
-- seccomp 默认 profile（阻断 ptrace/io_uring/unshare 等）；
-- 可选的 nftables/fence defense-in-depth；
-- L7（TLS MITM + 每沙箱 CA + 凭据替换）单独大 PR，不在本路线第一阶段。
+实现：
 
----
+- 在 notify filter + listener 交接之后，再安装一个无 listener 的 hardening filter
+  （filter 只能叠加）：对 `unshare`/`setns`/`mount`/`umount2`/`pivot_root`/`bpf`/
+  `perf_event_open`/`kexec_*`/`userfaultfd`/`ptrace`/模块加载/`open_by_handle_at`/
+  `process_vm_*`/`pidfd_getfd` 返回 EPERM；pong 广告 `egress-hardening`；
+- `sendmmsg`/`recvmmsg` 不硬拒绝（glibc resolver 需要），DNS 残余继续在报告里披露；
+- proxy 增加 `EgressProxySessionPolicySource` 钩子：有 session 身份时向它取策略；
+  adapter 当前返回 sandbox 策略，为后续 per-run 策略存储留 seam；
+- workload 非 root、TLS MITM/L7、凭据代理仍作为后续独立工作，不在本 PR 范围；
+- 文档更新 `sandbox_init_process.zh-CN.md` §7.11、`egress_forward_proxy.md` 的审计/
+  中介说明，以及本计划。
 
-## 4. 真机测试计划（每个 PR 都要做）
+验收与实测：
 
-### 4.1 环境
-
-- Docker（默认 driver）：宿主内核 ≥5.6；guest image 含新的 `ac-init`；
-  `SANDBOX_INIT_ENABLED=true`、`SANDBOX_INIT_EGRESS=enforce`；daemon 开 `HTTP_LISTEN`。
-- KVM：microsandbox + boxlite（`docker-compose.kvm.yml`），guest 内核 probe 结果写进
-  能力报告；至少一个 VM driver 跑 smoke。
-- k8s：可选；若集群不允许 SYS_PTRACE，验证能力报告为不可用并保持 env proxy 降级。
-
-### 4.2 每次必跑的功能矩阵
-
-| 类别 | 用例 |
-| --- | --- |
-| 基本 TCP | `curl`（清空 proxy env）→ allowed IP/域名 200；denied → 快速失败 |
-| TLS | 证书校验通过（无 MITM）；SNI 正确；`curl -v` 看到正确证书 |
-| 语言 runtime | Node `fetch`/`https`、Python `requests`/`urllib`、Go `net/http`、git https |
-| 包管理器 | `pip install`、`npm install`（并发/连接复用）、`go mod download` |
-| Agent harness | codex / pi / claude / dsh 各打一次 prompt（facade 走 data-plane 绕过） |
-| DNS | `getent hosts`、Node `dns.lookup`、Python `socket.getaddrinfo`；AAAA 行为 |
-| 拒绝 | 未声明域名/IP、控制面端口、metadata、DNS 重绑定、非 53 UDP |
-| 绕过 | 清空/伪造 proxy env；`unshare -n`（应仍被 filter 拦截）；io_uring；raw socket；直接连 daemon API（应 407/不可达） |
-| 生命周期 | 并发 exec、长连接、daemon 重启后 sandbox 继续可用、kill init 后 sandbox 退出 |
-| 失败语义 | daemon proxy 不可达 → fail closed；超时后恢复 |
-| 性能 | 建立连接延迟、npm/pip 安装耗时、并发 100+ connect |
-
-### 4.3 测试基建
-
-- `pkg/sandboxinit` 单元测试用“helper 子进程”真实发 connect，验证 spoof/超时/并发；
-- `test/e2e/egress_intercept_*_test.go` opt-in，复用现有 Docker network policy e2e 模式；
-- CI 不跑需要真实 docker/KVM 的用例，保持现有 `test/e2e` 约定。
-
----
-
-## 5. 风险与未决问题
-
-1. **Docker/k8s 的 SYS_PTRACE**：Docker 可加 cap；k8s 受限命名空间不可加 →
-   k8s 第一版只能 env proxy 降级，能力报告要诚实。是否有必须支持的 k8s 场景需要确认。
-2. **guest 内核**：microVM 内 `pidfd_getfd`/seccomp unotify 版本需真机 probe；
-   不满足时 init 要 fail closed/降级。
-3. **非阻塞 connect 的细节**：复制 socket 后由 init 完成 CONNECT，target 的
-   `SO_ERROR`、`getsockname`、`getpeername`、`TCP_INFO` 语义会变化；需要按 runner 验证，
-   必要时后续 spoof `getpeername`。
-4. **身份可信度**：v1 依赖“init 独占 credential + dumpable=0 + workload 无 SYS_PTRACE”；
-   如果 workload 能拿到 container config/宿主权限，则身份可伪造——后续非 root 化解决。
-5. **UDP/QUIC**：第一版只支持 DNS UDP；QUIC 会失败回退 TCP；其它 UDP 默认拒绝。
-6. **性能**：每连接一次 CONNECT 握手 + init 通知；需要基准和并发上限，避免慢 proxy
-   拖死 target 线程。
-7. **io_uring / 新 syscall**：必须持续维护 filter 的拒绝列表；`socketcall`/x32 架构处理。
-8. **与现有 proxy env 的兼容**：enforce 初期是否完全停发 `HTTP_PROXY` 需要灰度；
-   保留一个 `SANDBOX_INIT_EGRESS=audit` 阶段收集真实流量。
-9. **PR #821 合入**：review 未完成 + draft；必须先落地，否则后续 PR 无法基于 main。
-
----
-
-## 6. 代码触点
-
-| 主题 | 位置 |
-| --- | --- |
-| trampoline / seccomp filter / listener | 新增 `pkg/sandboxinit/exec_child_linux.go`、`seccomp_linux.go` |
-| 通知循环 / connect 改道 | 新增 `pkg/sandboxinit/egress_linux.go`（按 notify/connect/dns 拆分文件） |
-| DNS stub / 合成地址 | 新增 `pkg/sandboxinit/dns_linux.go` |
-| 控制协议/能力协商/token | `pkg/sandboxinit/{protocol,server_linux,client,bridge}.go`、`cmd/ac-init/main.go` |
-| init 进程启动/环境/flag | `cmd/ac-init/main.go`、`pkg/config/config.go` |
-| Docker init 启动/caps/env | `pkg/driver/docker_sandbox_init.go`、`docker_runtime.go` |
-| k8s/VM init 启动 | `pkg/driver/{k8s,boxlite,microsandbox}_sandbox_init*.go`、`sandbox_init_runtime.go` |
-| 能力声明/报告 | `pkg/driver/sandbox_init_capability.go`、`network_enforcement.go`、`pkg/capmatrix/*` |
-| daemon proxy/凭据/身份头 | `pkg/agentcompose/proxy/egress_proxy.go`、`pkg/agentcompose/adapters/egress_proxy_sandbox.go` |
-| 审计 record | `pkg/egress/record.go`、`pkg/agentcompose/proxy/egress_proxy.go`（recorder 接线） |
-| 部署配置 | `.env.example`、`docker-compose*.yml`、`docs/pages/*` |
-
----
-
-## 7. PR #821 提交状态（2026-11-02）
-
-- PR：<https://github.com/chaitin/agent-compose/pull/821>（作者 kingfs，draft）
-- head：`c40bd6cb`；CI 已有运行且主要检查通过（Lint / Go tests / Coverage / Linux
-  full binary / Full image Docker smoke）。
-- 阻塞：`isDraft=true` + `REVIEW_REQUIRED`（reviewer：monkeyscan，30 条线程已逐条回复
-  修复）。
-- 建议动作：mark ready for review → 请求复审 → 通过后合入；随后把
-  `feat/ac-init-dev` rebase 到新 main，开始 PR1/PR2。
-- 需要注意：不要为了后续 PR 先改 #821 的分支内容；后续都作为独立 PR 叠在 main 上。
+- 主机内：`TestHardeningFilterProgram` 校验 BPF 结构；
+  `TestInitEgressEnforceHardeningDeniesSyscalls` 证明 workload 的 `unshare`/`mount`
+  得到 EPERM；`TestEgressProxyUsesThePerSessionPolicyWhenPresent` 证明 per-session
+  钩子可以只拒绝指定 session，其他 session 不受影响；
+- Docker 真机：PR1–PR7 全套集成测试（identity/audit/enforce/deny/DNS/datagram/
+  Node c-ares/legacy）在 PR7 镜像上复跑通过；`-race`、lint、build 通过。

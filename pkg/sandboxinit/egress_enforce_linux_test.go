@@ -517,3 +517,28 @@ func runEgressHelperUDP(ctx context.Context, socket, mode, name string) (string,
 		},
 	})
 }
+
+func TestInitEgressEnforceHardeningDeniesSyscalls(t *testing.T) {
+	requireEnforceSupport(t)
+	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
+	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	output, err := runEgressHelperMode(ctx, socket, "hardening", "")
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	for _, want := range []string{
+		"unshare:operation not permitted",
+		"mount:operation not permitted",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("helper output = %q, want %q", output, want)
+		}
+	}
+}

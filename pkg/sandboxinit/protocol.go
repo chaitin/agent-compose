@@ -37,6 +37,9 @@ const (
 	// CapabilityEgressDNS is the policy DNS stub that answers A queries with
 	// synthetic addresses and passes engine-owned names through.
 	CapabilityEgressDNS = "egress-dns"
+	// CapabilityEgressHardening is the listener-less deny filter installed
+	// after the notification listener is handed over.
+	CapabilityEgressHardening = "egress-hardening"
 )
 
 // SandboxIDEnvVar is the environment variable that carries the sandbox ID into

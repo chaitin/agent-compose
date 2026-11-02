@@ -90,6 +90,14 @@ func installEgressFilterForMode(mode EgressMode) error {
 	if err := sendListener(sock, listenerFD); err != nil {
 		return &egressHandoffError{err: err}
 	}
+	if mode == EgressModeEnforce {
+		// The listener is handed over already, so denying sendmmsg here does
+		// not block the handoff. The deny list is listener-less and stacks on
+		// top of the notification filter.
+		if err := installHardeningFilter(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

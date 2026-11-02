@@ -34,6 +34,15 @@ type EgressProxyPolicySource interface {
 	EgressProxyPolicy(ctx context.Context, sandboxID string) (egress.Policy, error)
 }
 
+// EgressProxySessionPolicySource is the optional per-run hook: when a caller
+// supplies it, the proxy asks for a policy scoped to the sandbox-init session
+// instead of the sandbox-wide policy. A source that has no per-session policy
+// returns the sandbox policy unchanged, so implementing this interface does not
+// change behavior until a deployment actually stores per-run policies.
+type EgressProxySessionPolicySource interface {
+	EgressProxyPolicyForSession(ctx context.Context, sandboxID, sessionID, marker string) (egress.Policy, error)
+}
+
 // EgressProxyRecorder receives one account of every decision. It is optional: a
 // composition without one still enforces, it just does not persist the record.
 type EgressProxyRecorder interface {
@@ -43,10 +52,11 @@ type EgressProxyRecorder interface {
 // EgressProxyOptions configures an EgressProxy. Authorizer and Policies are
 // required; the remaining fields have production defaults.
 type EgressProxyOptions struct {
-	Authorizer EgressProxyAuthorizer
-	Policies   EgressProxyPolicySource
-	Recorder   EgressProxyRecorder
-	Logger     *slog.Logger
+	Authorizer      EgressProxyAuthorizer
+	Policies        EgressProxyPolicySource
+	SessionPolicies EgressProxySessionPolicySource
+	Recorder        EgressProxyRecorder
+	Logger          *slog.Logger
 	// LookupIP resolves the destination of a request. It defaults to the
 	// process resolver; a test injects one so a decision never depends on real
 	// name resolution.
@@ -107,13 +117,14 @@ var blockedEnginePorts = map[int]string{
 // tunnels. It is not an open proxy — a request without a sandbox credential is
 // answered 407 and never decided.
 type EgressProxy struct {
-	authorizer  EgressProxyAuthorizer
-	policies    EgressProxyPolicySource
-	recorder    EgressProxyRecorder
-	logger      *slog.Logger
-	lookupIP    func(ctx context.Context, host string) ([]net.IP, error)
-	dial        func(ctx context.Context, network, address string) (net.Conn, error)
-	dialTimeout time.Duration
+	authorizer      EgressProxyAuthorizer
+	policies        EgressProxyPolicySource
+	sessionPolicies EgressProxySessionPolicySource
+	recorder        EgressProxyRecorder
+	logger          *slog.Logger
+	lookupIP        func(ctx context.Context, host string) ([]net.IP, error)
+	dial            func(ctx context.Context, network, address string) (net.Conn, error)
+	dialTimeout     time.Duration
 }
 
 // NewEgressProxy validates the required dependencies and returns the proxy.
@@ -142,13 +153,14 @@ func NewEgressProxy(options EgressProxyOptions) (*EgressProxy, error) {
 		dial = dialer.DialContext
 	}
 	return &EgressProxy{
-		authorizer:  options.Authorizer,
-		policies:    options.Policies,
-		recorder:    options.Recorder,
-		logger:      logger,
-		lookupIP:    lookupIP,
-		dial:        dial,
-		dialTimeout: dialTimeout,
+		authorizer:      options.Authorizer,
+		policies:        options.Policies,
+		sessionPolicies: options.SessionPolicies,
+		recorder:        options.Recorder,
+		logger:          logger,
+		lookupIP:        lookupIP,
+		dial:            dial,
+		dialTimeout:     dialTimeout,
 	}, nil
 }
 
@@ -189,7 +201,7 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	request.Marker = identity.Marker
 	request.ProcessID = identity.ProcessID
 
-	policy, err := p.policies.EgressProxyPolicy(r.Context(), sandboxID)
+	policy, err := p.egressPolicy(r.Context(), sandboxID, identity)
 	if err != nil {
 		// The policy could not be read, so nothing may be forwarded: an
 		// unreadable declaration is not an absent one.
@@ -293,6 +305,16 @@ func truncateIdentity(value string) string {
 		return value
 	}
 	return value[:egressIdentityHeaderLimit]
+}
+
+// egressPolicy resolves the policy for one request. The per-session hook, when
+// installed, may return a stricter policy for a scheduled or interactive run;
+// the default path reads the sandbox-wide declaration.
+func (p *EgressProxy) egressPolicy(ctx context.Context, sandboxID string, identity egressIdentity) (egress.Policy, error) {
+	if p.sessionPolicies != nil {
+		return p.sessionPolicies.EgressProxyPolicyForSession(ctx, sandboxID, identity.SessionID, identity.Marker)
+	}
+	return p.policies.EgressProxyPolicy(ctx, sandboxID)
 }
 
 // authenticate resolves the calling sandbox from the proxy credential. It

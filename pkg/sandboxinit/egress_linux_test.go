@@ -357,6 +357,13 @@ func TestEgressHelperProcess(t *testing.T) {
 		}
 	}
 	mode := os.Getenv("INIT_EGRESS_HELPER_MODE")
+	if mode == "hardening" {
+		fmt.Printf("unshare:%v\n", unix.Unshare(0))
+		fmt.Printf("mount:%v\n", unix.Mount("none", "/tmp", "tmpfs", 0, ""))
+		_, _, errno := unix.Syscall6(unix.SYS_SENDMMSG, 0, 0, 0, 0, 0, 0)
+		fmt.Printf("sendmmsg:%v\n", errno)
+		return
+	}
 	if mode == "env" {
 		fmt.Printf("http-proxy:%s\n", os.Getenv("HTTP_PROXY"))
 		fmt.Printf("https-proxy:%s\n", os.Getenv("HTTPS_PROXY"))
@@ -525,4 +532,27 @@ func firstAAnswer(message []byte) (net.IP, error) {
 		}
 	}
 	return nil, fmt.Errorf("response has no A record")
+}
+
+func TestHardeningFilterProgram(t *testing.T) {
+	program := buildHardeningFilter(0x1234, []uint32{42, 43})
+	// arch load + arch check + nr load + two (check, ret) pairs + allow + kill.
+	if len(program) != 9 {
+		t.Fatalf("filter length = %d, want 9", len(program))
+	}
+	if program[1].K != 0x1234 {
+		t.Fatalf("arch check = %#x, want 0x1234", program[1].K)
+	}
+	if program[1].Jf != 6 {
+		t.Fatalf("arch mismatch jump = %d, want 6 (kill at 8)", program[1].Jf)
+	}
+	if program[3].K != 42 || program[5].K != 43 {
+		t.Fatalf("syscall checks = %d/%d, want 42/43", program[3].K, program[5].K)
+	}
+	if program[4].K != uint32(unix.SECCOMP_RET_ERRNO)|uint32(unix.EPERM) || program[6].K != program[4].K {
+		t.Fatalf("deny actions = %#x/%#x, want EPERM", program[4].K, program[6].K)
+	}
+	if program[7].K != uint32(unix.SECCOMP_RET_ALLOW) || program[8].K != uint32(unix.SECCOMP_RET_KILL_PROCESS) {
+		t.Fatalf("terminal actions = %#x/%#x", program[7].K, program[8].K)
+	}
 }

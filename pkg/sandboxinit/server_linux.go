@@ -145,6 +145,7 @@ func Run(ctx context.Context, opts Options) error {
 			if egress.dns != nil {
 				capabilities = append(capabilities, CapabilityEgressDNS)
 			}
+			capabilities = append(capabilities, CapabilityEgressHardening)
 		} else {
 			capabilities = append(capabilities, CapabilityEgressAudit)
 		}

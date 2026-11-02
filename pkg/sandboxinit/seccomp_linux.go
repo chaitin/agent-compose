@@ -174,6 +174,83 @@ func installEgressFilter() (int, error) {
 // A connected sendto and a sendmsg without a name are left to the kernel: the
 // socket was already redirected to the policy DNS when it connected, and
 // notifying every stream write would add an upcall per write.
+// hardeningSyscalls are refused with EPERM by the second, listener-less filter
+// installed in enforce mode. The list is namespace, kernel, tracing, and
+// keyring primitives a sandboxed agent does not need and could use to escape
+// the mediated data plane.
+//
+// sendmmsg/recvmmsg are deliberately not in this list: glibc's getaddrinfo uses
+// them in the test environment, so denying them breaks ordinary name
+// resolution. The sendmmsg DNS-bypass residual is documented instead; closing
+// it needs a second notification listener, not a hard deny.
+func hardeningSyscalls() []uint32 {
+	return []uint32{
+		uint32(unix.SYS_UNSHARE),
+		uint32(unix.SYS_SETNS),
+		uint32(unix.SYS_MOUNT),
+		uint32(unix.SYS_UMOUNT2),
+		uint32(unix.SYS_PIVOT_ROOT),
+		uint32(unix.SYS_BPF),
+		uint32(unix.SYS_PERF_EVENT_OPEN),
+		uint32(unix.SYS_KEXEC_LOAD),
+		uint32(unix.SYS_KEXEC_FILE_LOAD),
+		uint32(unix.SYS_USERFAULTFD),
+		uint32(unix.SYS_PTRACE),
+		uint32(unix.SYS_INIT_MODULE),
+		uint32(unix.SYS_FINIT_MODULE),
+		uint32(unix.SYS_DELETE_MODULE),
+		uint32(unix.SYS_OPEN_BY_HANDLE_AT),
+		uint32(unix.SYS_NAME_TO_HANDLE_AT),
+		uint32(unix.SYS_PROCESS_VM_READV),
+		uint32(unix.SYS_PROCESS_VM_WRITEV),
+		uint32(unix.SYS_PIDFD_GETFD),
+	}
+}
+
+// buildHardeningFilter returns a listener-less filter that refuses the listed
+// syscalls. It is installed after the notification listener has been handed to
+// init, so sendmmsg can be denied without blocking the trampoline's own
+// handoff. Filters only stack, so an agent cannot remove this later.
+func buildHardeningFilter(arch uint32, syscalls []uint32) []unix.SockFilter {
+	program := make([]unix.SockFilter, 0, 5+len(syscalls)*2)
+	program = append(program,
+		unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: seccompDataArch},
+	)
+	archCheck := len(program)
+	program = append(program, unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, K: arch})
+	program = append(program,
+		unix.SockFilter{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: seccompDataNR},
+	)
+	for _, syscall := range syscalls {
+		program = append(program,
+			unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: syscall},
+			unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_ERRNO) | uint32(unix.EPERM)},
+		)
+	}
+	program = append(program, unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_ALLOW)})
+	killIndex := len(program)
+	program = append(program, unix.SockFilter{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_KILL_PROCESS)})
+	program[archCheck].Jt = 0
+	program[archCheck].Jf = uint8(killIndex - (archCheck + 1))
+	return program
+}
+
+// installHardeningFilter installs the deny list without a listener. The caller
+// must have no_new_privs set and must still hold CAP_SETPCAP/the ability to
+// install filters; a failure is fatal in enforce mode.
+func installHardeningFilter() error {
+	arch, err := seccompFilterArch()
+	if err != nil {
+		return err
+	}
+	program := buildHardeningFilter(arch, hardeningSyscalls())
+	fprog := unix.SockFprog{Len: uint16(len(program)), Filter: &program[0]}
+	if _, err := seccompSyscall(unix.SECCOMP_SET_MODE_FILTER, 0, unsafe.Pointer(&fprog)); err != nil {
+		return fmt.Errorf("install sandbox init hardening filter: %w", err)
+	}
+	return nil
+}
+
 // egressFilterSyscalls names the syscalls the filter treats specially.
 type egressFilterSyscalls struct {
 	Connect      uint32

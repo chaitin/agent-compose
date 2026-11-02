@@ -1007,3 +1007,61 @@ func writeConnectWithHeaders(t *testing.T, connection net.Conn, target, user, se
 		t.Fatalf("writing CONNECT: %v", err)
 	}
 }
+
+type proxyTestSessionPolicies struct {
+	blocked string
+}
+
+func (p proxyTestSessionPolicies) EgressProxyPolicyForSession(_ context.Context, _ string, sessionID, _ string) (egress.Policy, error) {
+	if sessionID == p.blocked {
+		return egress.NewPolicy(egress.Deny), nil
+	}
+	return egress.NewPolicy(egress.Allow), nil
+}
+
+func TestEgressProxyUsesThePerSessionPolicyWhenPresent(t *testing.T) {
+	upstreamSide, upstream := net.Pipe()
+	defer func() { _ = upstreamSide.Close() }()
+	proxyServer, recorder := newTestEgressProxy(t, &proxyTestPolicies{}, func(options *EgressProxyOptions) {
+		options.SessionPolicies = proxyTestSessionPolicies{blocked: "blocked-session"}
+		options.Dial = func(_ context.Context, _, _ string) (net.Conn, error) {
+			return upstream, nil
+		}
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+
+	allowed := dialProxy(t, server)
+	writeConnectWithHeaders(t, allowed, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderSession: "interactive-session",
+	})
+	reader := bufio.NewReader(allowed)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the allowed response: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("allowed session status = %d, want 200", response.StatusCode)
+	}
+	_ = allowed.Close()
+
+	blocked := dialProxy(t, server)
+	defer func() { _ = blocked.Close() }()
+	writeConnectWithHeaders(t, blocked, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderSession: "blocked-session",
+	})
+	blockedReader := bufio.NewReader(blocked)
+	blockedResponse, err := http.ReadResponse(blockedReader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the blocked response: %v", err)
+	}
+	defer func() { _ = blockedResponse.Body.Close() }()
+	if blockedResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("blocked session status = %d, want 403", blockedResponse.StatusCode)
+	}
+	records := recorder.collected()
+	if len(records) != 2 || !records[0].Allowed() || records[1].Allowed() {
+		t.Fatalf("records = %+v, want allow then deny", records)
+	}
+}

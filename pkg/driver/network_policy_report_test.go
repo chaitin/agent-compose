@@ -306,7 +306,7 @@ func TestReportAgentNetworkPolicyNamesSandboxInitMediation(t *testing.T) {
 		t.Fatalf("mechanisms = %v, want %q", report.Mechanisms, mechanismSeccompRedirect)
 	}
 	limitations := strings.Join(report.Limitations, "\n")
-	if !strings.Contains(limitations, "sandbox init") || !strings.Contains(limitations, "sendmmsg") {
-		t.Fatalf("limitations = %v, want the init mediation and its residual DNS gap", report.Limitations)
+	if !strings.Contains(limitations, "sandbox init") || !strings.Contains(limitations, "policy resolver") || !strings.Contains(limitations, "sendmmsg") {
+		t.Fatalf("limitations = %v, want the init mediation and its policy resolver", report.Limitations)
 	}
 }

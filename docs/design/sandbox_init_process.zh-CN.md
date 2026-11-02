@@ -415,7 +415,24 @@ TCP DNS：
 - per-run 策略（按 scheduler run / interactive session 选择不同策略）仍留到后续：
   当前 session/marker 只用于审计，不改变生效策略。
 
-### 7.11 Stage 2 测试
+### 7.11 加固与 per-run 钩子（PR7）
+
+- enforce 模式在 listener 交接完成后，再安装一个**无 listener 的 hardening filter**
+  （叠加在通知 filter 之上，只收紧不放松），对 `unshare`、`setns`、`mount`、
+  `umount2`、`pivot_root`、`bpf`、`perf_event_open`、`kexec_*`、`userfaultfd`、
+  `ptrace`、模块加载、`open_by_handle_at`、`process_vm_*`、`pidfd_getfd` 返回
+  `EPERM`；workload 无法移除已叠加的 filter；
+- `sendmmsg`/`recvmmsg` 故意不在拒绝列表里：glibc 的 `getaddrinfo` 会使用它们，
+  硬拒绝会破坏正常域名解析；因此“使用 sendmmsg 的 resolver 可绕过策略 DNS”仍是
+  已披露的残余，后续用第二个通知 listener 收敛；
+- per-run 策略钩子：proxy 新增可选 `EgressProxySessionPolicySource`，按
+  session/marker 取策略；当前 adapter 返回 sandbox 级策略，per-run 存储落地时
+  只需替换这个实现，proxy 与 init 协议不用改；
+- workload 非 root 化仍**未实现**：它需要 workspace/chown、Jupyter、provider
+  runner 权限矩阵的整体设计，作为后续 hardening 项；
+- init 在 pong 里额外广告 `egress-hardening` 能力。
+
+### 7.12 Stage 2 测试
 
 - 单元：profile 校验、filter 编译、Landlock ruleset、cgroup 路径、失败语义；
 - 集成：allow/deny syscall probe、文件读写 probe、fork/exec、pids limit、进程退出清理；
