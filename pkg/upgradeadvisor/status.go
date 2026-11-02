@@ -174,6 +174,12 @@ func (a *Advisor) detectAnomalies(ds *dataset) []Anomaly {
 		if !trigger.Enabled {
 			continue
 		}
+		info, ok := ds.scheduler(trigger.SchedulerID)
+		if !ok || !info.Enabled {
+			// Disabled schedulers keep their trigger rows; their stale next-fire
+			// time is historical configuration, not a ticking scheduler.
+			continue
+		}
 		kind := trigger.Kind
 		if kind == domain.SchedulerTriggerKindCron || kind == domain.SchedulerTriggerKindInterval {
 			if trigger.NextFireAt.IsZero() {

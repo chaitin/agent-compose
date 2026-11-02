@@ -148,6 +148,11 @@ func writeUpcoming(out io.Writer, report upgradeadvisor.UpcomingReport, location
 		_, err := fmt.Fprintln(out, "no scheduled trigger fires in the horizon")
 		return err
 	}
+	if report.Truncated {
+		if _, err := fmt.Fprintf(out, "note: showing %d of %d expected fire(s) (increase --limit or narrow --horizon)\n\n", len(report.Fires), report.TotalFires); err != nil {
+			return err
+		}
+	}
 	writer := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(writer, "TIME\tPROJECT/AGENT\tSCHEDULER\tTRIGGER\tKIND\tSOURCE")
 	for _, fire := range report.Fires {
@@ -167,9 +172,17 @@ func writeWindows(out io.Writer, report upgradeadvisor.WindowsReport, location *
 	if _, err := fmt.Fprintf(out, "now: %s  horizon end: %s  timezone: %s\n", formatTime(report.Now, location), formatTime(report.HorizonEnd, location), report.Assumptions.Timezone); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "assumptions: history=%dd bin=%dm window=%dm downtime=%ds assume_pause=%t\n\n",
+	if _, err := fmt.Fprintf(out, "assumptions: history=%dd bin=%dm window=%dm downtime=%ds assume_pause=%t\n",
 		report.Assumptions.Days, report.Assumptions.BinMinutes, report.Assumptions.WindowMinutes,
 		report.Assumptions.DowntimeSeconds, report.Assumptions.AssumePause); err != nil {
+		return err
+	}
+	if report.Truncated {
+		if _, err := fmt.Fprintln(out, "warning: scheduled-fire forecast was truncated; late candidates may under-count fires"); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintln(out); err != nil {
 		return err
 	}
 	if len(report.Candidates) == 0 {

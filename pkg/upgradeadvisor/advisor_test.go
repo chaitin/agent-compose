@@ -71,6 +71,70 @@ func TestUpcomingForecastsCronAndIntervalFires(t *testing.T) {
 	if !foundCron {
 		t.Fatalf("cron fire at 09:00 missing from %+v", report.Fires)
 	}
+	if report.TotalFires != 13 || report.Truncated {
+		t.Fatalf("upcoming totals = total %d truncated %t, want 13/false", report.TotalFires, report.Truncated)
+	}
+}
+
+func TestUpcomingSkipsDisabledSchedulerTriggers(t *testing.T) {
+	db := openFixtureDB(t)
+	seedProject(t, db, fixtureProjectID, fixtureAgentID, fixtureSchedulerID, "agent-a")
+	seedProject(t, db, "prj_disabled", "agt_disabled", "sch_disabled", "agent-b")
+	setSchedulerEnabled(t, db, "sch_disabled", false)
+	now := mustTime(t, "2026-11-02T00:00:00Z")
+	insertTrigger(t, db, fixtureSchedulerID, "hourly", domain.SchedulerTriggerKindInterval, "", time.Hour.Milliseconds(), now.Add(time.Hour))
+	insertTrigger(t, db, "sch_disabled", "fast", domain.SchedulerTriggerKindInterval, "", time.Minute.Milliseconds(), now.Add(time.Minute))
+
+	advisor := mustAdvisor(t, db, Options{Now: now, Horizon: 2 * time.Hour, Limit: 100, Location: time.UTC})
+	report, err := advisor.Upcoming(context.Background())
+	if err != nil {
+		t.Fatalf("forecast upcoming: %v", err)
+	}
+	if len(report.Fires) != 2 || report.TotalFires != 2 {
+		t.Fatalf("fires = %d total = %d, want 2/2 (disabled scheduler must be skipped)", len(report.Fires), report.TotalFires)
+	}
+	for _, fire := range report.Fires {
+		if fire.SchedulerID != fixtureSchedulerID {
+			t.Fatalf("unexpected fire from disabled scheduler: %+v", fire)
+		}
+	}
+}
+
+func TestForecastCountsFiresBeyondLegacyCap(t *testing.T) {
+	db := openFixtureDB(t)
+	seedProject(t, db, fixtureProjectID, fixtureAgentID, fixtureSchedulerID, "agent")
+	now := mustTime(t, "2026-11-02T00:00:00Z")
+	insertTrigger(t, db, fixtureSchedulerID, "fast", domain.SchedulerTriggerKindInterval, "", time.Minute.Milliseconds(), now.Add(time.Minute))
+	advisor := mustAdvisor(t, db, Options{
+		Now: now, Bin: 5 * time.Minute, Window: 10 * time.Minute, Downtime: 10 * time.Minute,
+		AssumePause: true, Location: time.UTC,
+	})
+	at := now.Add(19 * time.Hour)
+	report, err := advisor.Forecast(context.Background(), at)
+	if err != nil {
+		t.Fatalf("forecast: %v", err)
+	}
+	if report.Candidate.ScheduledFires != 10 {
+		t.Fatalf("scheduled fires = %d, want 10 (beyond the old 1000-fire cap)", report.Candidate.ScheduledFires)
+	}
+}
+
+func TestStatusDoesNotFlagDisabledSchedulerTriggers(t *testing.T) {
+	db := openFixtureDB(t)
+	seedProject(t, db, fixtureProjectID, fixtureAgentID, fixtureSchedulerID, "agent")
+	setSchedulerEnabled(t, db, fixtureSchedulerID, false)
+	now := mustTime(t, "2026-11-02T12:00:00Z")
+	insertTrigger(t, db, fixtureSchedulerID, "stale", domain.SchedulerTriggerKindCron, cronSpec(t, "0 9 * * *", "UTC"), 0, now.Add(-48*time.Hour))
+	advisor := mustAdvisor(t, db, Options{Now: now, Location: time.UTC})
+	report, err := advisor.Status(context.Background())
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	for _, anomaly := range report.Anomalies {
+		if anomaly.Kind == "scheduler_trigger_overdue" {
+			t.Fatalf("disabled scheduler trigger produced an overdue anomaly: %+v", anomaly)
+		}
+	}
 }
 
 func TestUpcomingDoesNotResurrectFiredTimeout(t *testing.T) {

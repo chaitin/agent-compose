@@ -56,6 +56,12 @@ agent-compose-ops upgrade forecast --at "2026-11-03 02:00" --tz Asia/Shanghai
 All commands accept `--json` for scripting and `--tz` for report timestamps.
 `--db` points directly at a `data.db` and overrides `--data-root`.
 
+Trigger forecasts only consider triggers that are enabled on an **enabled**
+scheduler; a disabled scheduler keeps its trigger rows as historical
+configuration and is not treated as ticking. `upgrade upcoming` reports
+`total_fires` and `truncated`: when `truncated` is true, raise `--limit` or
+narrow `--horizon` before treating the list as a complete calendar.
+
 ### How to read `windows`
 
 Candidates are ranked by an estimated interruption score (lower is better):

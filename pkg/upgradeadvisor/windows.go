@@ -15,6 +15,9 @@ type WindowsReport struct {
 	HorizonEnd  time.Time         `json:"horizon_end"`
 	Assumptions WindowAssumptions `json:"assumptions"`
 	Candidates  []Candidate       `json:"candidates"`
+	// Truncated reports that the scheduled-fire forecast hit its internal cap,
+	// so late windows may under-count fires.
+	Truncated bool `json:"truncated"`
 }
 
 // WindowAssumptions describes how the recommendations were derived.
@@ -74,7 +77,8 @@ func (a *Advisor) Windows(ctx context.Context) (WindowsReport, error) {
 		Candidates:  []Candidate{},
 	}
 	profile := buildActivityProfile(ds, a.opts)
-	fires := computeFires(ds, ds.now, horizonEnd)
+	fires, firesTruncated := computeFires(ds, ds.now, horizonEnd)
+	report.Truncated = firesTruncated
 	p90ByScheduler, p90Global := p90FromDurations(durationsByScheduler(ds.runs))
 	evaluator := newWindowEvaluator(a.opts, ds, profile, fires, p90Estimate{byScheduler: p90ByScheduler, global: p90Global})
 	for start := alignUp(ds.now, a.opts.Bin); !start.Add(window).After(horizonEnd); start = start.Add(a.opts.Bin) {
@@ -96,7 +100,7 @@ func (a *Advisor) Forecast(ctx context.Context, at time.Time) (ForecastReport, e
 	}
 	window := a.effectiveWindow()
 	profile := buildActivityProfile(ds, a.opts)
-	fires := computeFires(ds, ds.now, at.Add(window))
+	fires, _ := computeFires(ds, ds.now, at.Add(window))
 	p90ByScheduler, p90Global := p90FromDurations(durationsByScheduler(ds.runs))
 	evaluator := newWindowEvaluator(a.opts, ds, profile, fires, p90Estimate{byScheduler: p90ByScheduler, global: p90Global})
 	return ForecastReport{

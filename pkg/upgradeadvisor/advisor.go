@@ -40,8 +40,12 @@ const (
 	DefaultStuckAfter = time.Hour
 	// DefaultPendingSandboxAfter is when a creating sandbox is flagged as stuck.
 	DefaultPendingSandboxAfter = 30 * time.Minute
-	// maxFiresPerTrigger bounds the forecast loop for very short intervals.
-	maxFiresPerTrigger = 1000
+	// maxFiresPerTrigger bounds one trigger's forecast loop so a one-second
+	// interval cannot exhaust memory. It is intentionally far above a realistic
+	// horizon (48h at 1s is 172,800 fires).
+	maxFiresPerTrigger = 500_000
+	// maxFiresTotal bounds the merged forecast across all triggers.
+	maxFiresTotal = 200_000
 )
 
 // Options controls one analysis run. Zero values select the documented

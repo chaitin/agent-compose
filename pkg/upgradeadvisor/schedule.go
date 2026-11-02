@@ -13,11 +13,17 @@ import (
 // UpcomingReport lists the schedule-based trigger fires expected in the
 // forecast horizon.
 type UpcomingReport struct {
-	GeneratedAt time.Time  `json:"generated_at"`
-	Now         time.Time  `json:"now"`
-	HorizonEnd  time.Time  `json:"horizon_end"`
-	Timezone    string     `json:"timezone"`
-	Fires       []FireInfo `json:"fires"`
+	GeneratedAt time.Time `json:"generated_at"`
+	Now         time.Time `json:"now"`
+	HorizonEnd  time.Time `json:"horizon_end"`
+	Timezone    string    `json:"timezone"`
+	// TotalFires is the number of fires found in the horizon before the
+	// report limit is applied.
+	TotalFires int `json:"total_fires"`
+	// Truncated reports that Fires was limited (by --limit or the internal
+	// forecast cap) and does not list every expected fire.
+	Truncated bool       `json:"truncated"`
+	Fires     []FireInfo `json:"fires"`
 }
 
 // FireInfo is one expected trigger fire.
@@ -38,9 +44,11 @@ func (a *Advisor) Upcoming(ctx context.Context) (UpcomingReport, error) {
 	if err != nil {
 		return UpcomingReport{}, err
 	}
-	fires := computeFires(ds, ds.now, ds.now.Add(a.opts.Horizon))
+	fires, truncated := computeFires(ds, ds.now, ds.now.Add(a.opts.Horizon))
+	total := len(fires)
 	if len(fires) > a.opts.Limit {
 		fires = fires[:a.opts.Limit]
+		truncated = true
 	}
 	if fires == nil {
 		fires = []FireInfo{}
@@ -50,23 +58,40 @@ func (a *Advisor) Upcoming(ctx context.Context) (UpcomingReport, error) {
 		Now:         ds.now,
 		HorizonEnd:  ds.now.Add(a.opts.Horizon),
 		Timezone:    a.opts.Location.String(),
+		TotalFires:  total,
+		Truncated:   truncated,
 		Fires:       fires,
 	}, nil
 }
 
-// computeFires returns every scheduled fire in [from, until), sorted by time.
-// Only cron, interval, and timeout triggers participate; event triggers are
-// driven by their topic and are not predictable here.
-func computeFires(ds *dataset, from, until time.Time) []FireInfo {
+// computeFires returns the scheduled fires in [from, until), sorted by time,
+// and whether the internal cap cut the forecast short. Only triggers that are
+// enabled on an enabled scheduler participate: a disabled scheduler's leftover
+// trigger rows are historical configuration, not expected activity. cron,
+// interval, and timeout triggers participate; event triggers are driven by
+// their topic and are not predictable here.
+func computeFires(ds *dataset, from, until time.Time) ([]FireInfo, bool) {
 	from = from.UTC()
 	until = until.UTC()
 	var fires []FireInfo
+	truncated := false
 	for _, trigger := range ds.triggers {
 		if !trigger.Enabled || !isScheduleKind(trigger.Kind) {
 			continue
 		}
-		info, _ := ds.scheduler(trigger.SchedulerID)
-		for _, at := range triggerFires(trigger, from, until) {
+		info, ok := ds.scheduler(trigger.SchedulerID)
+		if !ok || !info.Enabled {
+			continue
+		}
+		times, triggerTruncated := triggerFires(trigger, from, until)
+		if triggerTruncated {
+			truncated = true
+		}
+		for _, at := range times {
+			if len(fires) >= maxFiresTotal {
+				truncated = true
+				break
+			}
 			fires = append(fires, FireInfo{
 				At:          at,
 				SchedulerID: trigger.SchedulerID,
@@ -78,6 +103,9 @@ func computeFires(ds *dataset, from, until time.Time) []FireInfo {
 				Source:      trigger.source(),
 			})
 		}
+		if len(fires) >= maxFiresTotal {
+			break
+		}
 	}
 	sort.Slice(fires, func(i, j int) bool {
 		if fires[i].At.Equal(fires[j].At) {
@@ -88,24 +116,27 @@ func computeFires(ds *dataset, from, until time.Time) []FireInfo {
 		}
 		return fires[i].At.Before(fires[j].At)
 	})
-	return fires
+	return fires, truncated
 }
 
-func triggerFires(trigger triggerInfo, from, until time.Time) []time.Time {
+func triggerFires(trigger triggerInfo, from, until time.Time) ([]time.Time, bool) {
 	if strings.EqualFold(strings.TrimSpace(trigger.Kind), domain.SchedulerTriggerKindTimeout) {
-		return timeoutFires(trigger, from, until)
+		return timeoutFires(trigger, from, until), false
 	}
 	domainTrigger := trigger.domainTrigger()
 	next := trigger.NextFireAt
 	if next.IsZero() || !next.After(from) {
 		computed, err := schedulers.SchedulerTriggerNextFireAt(from, domainTrigger, false)
 		if err != nil || computed.IsZero() {
-			return nil
+			return nil, false
 		}
 		next = computed
 	}
 	fires := make([]time.Time, 0, 8)
-	for len(fires) < maxFiresPerTrigger && !next.IsZero() && !next.After(until) {
+	for !next.IsZero() && !next.After(until) {
+		if len(fires) >= maxFiresPerTrigger {
+			return fires, true
+		}
 		fires = append(fires, next)
 		computed, err := schedulers.SchedulerTriggerNextFireAt(next, domainTrigger, true)
 		if err != nil || computed.IsZero() || !computed.After(next) {
@@ -113,7 +144,7 @@ func triggerFires(trigger triggerInfo, from, until time.Time) []time.Time {
 		}
 		next = computed
 	}
-	return fires
+	return fires, false
 }
 
 // timeoutFires forecasts a one-shot trigger. A zero next-fire time means the

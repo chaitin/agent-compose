@@ -50,6 +50,13 @@ func seedProject(t *testing.T, db *sql.DB, projectID, agentID, schedulerID, agen
 	}
 }
 
+func setSchedulerEnabled(t *testing.T, db *sql.DB, schedulerID string, enabled bool) {
+	t.Helper()
+	if _, err := db.ExecContext(context.Background(), `UPDATE project_scheduler SET enabled = ? WHERE id = ?`, enabled, schedulerID); err != nil {
+		t.Fatalf("set scheduler enabled: %v", err)
+	}
+}
+
 func insertTrigger(t *testing.T, db *sql.DB, schedulerID, triggerID, kind, specJSON string, intervalMS int64, nextFireAt time.Time) {
 	t.Helper()
 	nextFireMillis := int64(0)
