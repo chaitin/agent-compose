@@ -285,31 +285,41 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
   （CONTINUE 生效），container log 出现 `sandbox init egress audit` 且 host/port 正确；
 - PR1 的身份/legacy 集成测试在 PR2 镜像上复跑通过。
 
-### PR3：TCP connect 改道到 daemon proxy（L，约 1000–1500 行，核心 PR）
+### PR3：TCP connect 改道到 daemon proxy（本 PR，L，核心）
 
-- 目的：**第一个可演示的“不可绕过”版本**。
-- 内容：
-  - `SANDBOX_INIT_EGRESS=enforce`；
-  - `pidfd_getfd` 复制 socket；init 对 daemon data-plane 发 CONNECT（复用现有 proxy
-    协议与 credential），读 200/403，spoof 结果；
-  - 绕过规则（data-plane/自身地址/loopback 非 53/AF_UNIX）；
-  - fail closed、超时、并发上限、通知 ID 校验；
-  - driver：docker `CapAdd SYS_PTRACE`、把 proxy URL/credential/控制 token 经 env 传给
-    init；k8s/VM 是否开启由能力探测决定；
-  - daemon：读取身份头（审计）、`seccomp_redirect` 能力报告、`EGRESS_INTERCEPT_MODE`
-    配置；enforce 模式下不再注入 workload 的 `HTTP_PROXY`；
-  - 第一版策略演示以 **IP 规则**为主（因为 DNS 合成在 PR4）：`default: deny-all` +
-    `allow 93.184.216.34:443` 之类，清空 proxy env 的 `curl` 仍可用；
-    允许域名的情况在 PR4 完成。
-- 验收（真机）：
-  - 清空 `HTTP(S)_PROXY` 的 `curl https://<allowed-ip>` 成功；
-  - 未声明的 IP 立即失败（daemon 记录 403/deny）；
-  - 直接把 proxy env 改成垃圾或 unset，不影响；
-  - `docker exec` 直接跑（绕过 init）不受拦截（调试路径，文档说明）；
-  - daemon 停止/不可达时 fail closed，不直连；
-  - Node/Go/Python 各一个 client；并发/大流量不挂。
-- 测试：`test/e2e/egress_intercept_test.go`（opt-in，需要 init 镜像 + 真实 docker）；
-  单元用 helper 子进程做真实 connect。
+实现：
+
+- `SANDBOX_INIT_EGRESS=enforce`：init 从现有 `HTTP_PROXY`/`HTTPS_PROXY` 读取 daemon
+  发放的 per-sandbox credential，并立即把六个 proxy 环境变量从自身环境 unset；
+  workload 由 init fork/exec，因此不继承 credential（`/proc/1/environ` 也对 workload
+  不可读，dumpable=0 已在 PR1 落地）；
+- 收到 `connect` 通知后：`process_vm_readv` 读 sockaddr → `pidfd_getfd` 复制目标
+  socket → 在复制 fd 上 `connect(proxy)` + `CONNECT host:port HTTP/1.1`
+  （带 `Proxy-Authorization` 与 `X-Agent-Compose-Sandbox/Session/Marker`）→
+  200 时 spoof 成功，403/407/不可达/超时 spoof `ECONNREFUSED`（fail closed）；
+- 复制 fd 与目标 fd 是同一个 open file description，不替换 fd，因此非阻塞标志、
+  `SO_ERROR`、epoll 注册都不变；
+- 直连 bypass：`AF_UNIX`、loopback、沙箱自身接口地址、proxy 自身地址；非 DNS 的 UDP
+  拒绝；DNS（UDP/TCP 53）暂时直连，PR4 替换为策略 DNS；
+- Docker/Kubernetes 在 enforce 时为 sandbox 容器加 `CAP_SYS_PTRACE`（Docker 默认
+  seccomp profile 只在该 cap 下允许 `pidfd_getfd`）；trampoline 在 exec 前把
+  `SYS_PTRACE/SYS_ADMIN/NET_ADMIN/NET_RAW/BPF/PERFMON/SYS_MODULE` 从 workload 的
+  bounding set 去掉；
+- `connect`/CONNECT 有 10s 超时；通知处理并发（每 session 一个 goroutine），不阻塞
+  init 的 accept/reaper；
+- 没有 proxy credential 时（未声明 policy）enforce 记录告警并退回 off；能力报告的
+  daemon 侧接入放到 PR6。
+
+验收与实测：
+
+- 主机内（真实 seccomp）：`TestInitEgressEnforce*` 覆盖——
+  CONNECT 到 fake proxy 并隧道 echo、workload 环境无 proxy 变量、proxy 403 → 客户端
+  收到 `ECONNREFUSED`、proxy 不可达 → fail closed、loopback 直连且 proxy 不收到请求；
+- Docker 真机（29.8.1 / arm64）：`TestDockerSandboxInitEgressEnforce[Deny]Integration`
+  通过——Python（proxy-unaware）连接 `203.0.113.9:443` 经 host fake proxy 隧道 echo，
+  CONNECT 带 credential/身份头，workload 的 `HTTP_PROXY` 为空；proxy 返回 403 时
+  Python 收到 `ConnectionRefusedError`；
+- PR1/PR2 的 identity/audit/legacy 集成测试在 PR3 镜像上复跑通过；`-race`、lint 通过。
 
 ### PR4：DNS stub + 合成地址 + 域名策略（L，约 600–900 行）
 

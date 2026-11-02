@@ -115,15 +115,20 @@ func Run(ctx context.Context, opts Options) error {
 		return err
 	}
 	var egress *egressSupervisor
-	if egressMode == EgressModeAudit {
+	if egressMode == EgressModeAudit || egressMode == EgressModeEnforce {
 		if err := egressInterceptionSupported(); err != nil {
-			slog.Warn("sandbox init egress audit is unavailable on this guest; continuing without it", "error", err)
+			slog.Warn("sandbox init egress is unavailable on this guest; continuing without it",
+				"mode", egressMode, "error", err)
 		} else {
 			egress, err = newEgressSupervisor(egressMode, strings.TrimSpace(opts.SandboxID), opts.EgressAuditSink)
 			if err != nil {
-				_ = listener.Close()
-				_ = os.Remove(socketPath)
-				return err
+				// Enforce is often configured daemon-wide while a particular
+				// sandbox has no proxy credential (an undeclared policy). Keep
+				// the sandbox runnable and report the missing enforcement
+				// instead of turning it into an availability failure.
+				slog.Warn("sandbox init egress could not be enabled; continuing without it",
+					"mode", egressMode, "error", err)
+				egress = nil
 			}
 		}
 	}
@@ -132,7 +137,11 @@ func Run(ctx context.Context, opts Options) error {
 	go manager.runReaper()
 	capabilities := ServerCapabilities()
 	if egress.enabled() {
-		capabilities = append(capabilities, CapabilityEgressAudit)
+		if egress.mode == EgressModeEnforce {
+			capabilities = append(capabilities, CapabilityEgressMediate)
+		} else {
+			capabilities = append(capabilities, CapabilityEgressAudit)
+		}
 	}
 
 	server := &initServer{

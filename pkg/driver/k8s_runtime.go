@@ -527,6 +527,12 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 		if cmdText != "" {
 			container.Args = append(container.Args, "--main-shell", cmdText)
 		}
+		if sandboxInitEgressRequiresPtrace(r.config) {
+			// Mediation duplicates the workload socket with pidfd_getfd. A
+			// namespace that forbids SYS_PTRACE must be able to reject the pod;
+			// the capability report reflects whatever the cluster admits.
+			container.SecurityContext.Capabilities.Add = []corev1.Capability{"SYS_PTRACE"}
+		}
 	}
 	created, err := clientset.CoreV1().Pods(r.namespaceFor(vmState)).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {

@@ -104,7 +104,7 @@ func hostVisibleTestDir(t *testing.T) string {
 // startDockerInitSandboxForTest creates one init-backed Docker sandbox through
 // the driver and returns it. EnsureSandbox itself exercises the daemon-side
 // handshake because the readiness wait calls VerifySandbox.
-func startDockerInitSandboxForTest(t *testing.T, hostTmp, image, egressMode string) (*dockerRuntime, *Sandbox) {
+func startDockerInitSandboxForTest(t *testing.T, hostTmp, image, egressMode string, extraEnv ...SandboxEnvVar) (*dockerRuntime, *Sandbox) {
 	t.Helper()
 	root, err := os.MkdirTemp(hostTmp, "data-")
 	if err != nil {
@@ -147,7 +147,7 @@ func startDockerInitSandboxForTest(t *testing.T, hostTmp, image, egressMode stri
 		WorkspacePath: workspace,
 		GuestImage:    image,
 		Driver:        "docker",
-	}}
+	}, RuntimeEnvItems: extraEnv}
 	if _, err := PrepareRuntimeMountManifest(config, sandbox, "docker"); err != nil {
 		t.Fatalf("PrepareRuntimeMountManifest() error = %v", err)
 	}

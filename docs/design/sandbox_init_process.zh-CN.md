@@ -328,7 +328,7 @@ SANDBOX_INIT_PROFILE=/.agent-compose/security.json
 - 每次 profile 变更都有 digest/命令审计；失败时 fail closed；
 - 与 egress/credential 的集成仍由 daemon 侧负责，init 只做进程边界。
 
-### 7.8 Egress audit（已实现，PR2）
+### 7.7 Egress audit（PR2）
 
 Stage 1 之后的第一个 seccomp 能力是**观察**而不是改写：
 
@@ -347,16 +347,41 @@ Stage 1 之后的第一个 seccomp 能力是**观察**而不是改写：
 配置与前提：
 
 ```text
-SANDBOX_INIT_EGRESS=off|audit        # enforce 在 PR3 之前会被拒绝
+SANDBOX_INIT_EGRESS=off|audit
 ```
 
 - 需要 guest 内核 >= 5.5（CONTINUE）且支持 `SECCOMP_RET_USER_NOTIF`；init 启动时
   在 guest 内探测，不满足则记录告警并退回 off，`egress-audit` 能力不会出现在 pong 里；
 - workload 与 init 同 uid 时，init 可用 `process_vm_readv` 读 sockaddr；后续 enforce
   路径需要 `CAP_SYS_PTRACE`/降权模型（PR3 讨论）；
-- audit 只覆盖 `connect`；UDP `sendto`、DNS 重定向、透明 TCP 改道在 PR3/PR4 实现。
+- audit 只覆盖 `connect`；UDP `sendto`、DNS 重定向在 PR4 实现。
 
-### 7.7 Stage 2 测试
+### 7.8 Egress mediation（enforce，PR3）
+
+enforce 模式在 audit 的拦截基础上把连接改道到 daemon egress proxy：
+
+- init 用 `pidfd_getfd` 复制 workload 正在 connect 的 socket（同一个 open file
+  description，target 的 fd/flags/epoll 注册都不变），由 init 在复制 fd 上完成
+  `connect(proxy)` 与 `CONNECT host:port HTTP/1.1` 握手，然后向目标线程 spoof
+  connect 结果：200 → 成功，403/407/超时/不可达 → `ECONNREFUSED`（fail closed，绝不回退直连）；
+- init 从 `HTTP_PROXY`/`HTTPS_PROXY` 读取 daemon 发放的 credential（`sandbox-id:token`），
+  随后把六个 proxy 环境变量从自身环境 unset；workload 由 init fork/exec，因此**不会继承**
+  proxy credential。CONNECT 请求带 `X-Agent-Compose-Sandbox/Session/Marker` 身份头
+  （daemon 侧消费在 PR6）；
+- 不经过 proxy、直接连接的目的地：`AF_UNIX`、loopback、沙箱自身接口地址、proxy 自身地址；
+  非 DNS 的 UDP 一律拒绝，DNS（UDP/TCP 53）暂时保持直连（PR4 换成策略 DNS）；
+- Docker/Kubernetes 的 sandbox 容器在 enforce 时加 `CAP_SYS_PTRACE`（Docker 默认
+  seccomp profile 只在该 cap 下允许 `pidfd_getfd`）；trampoline 在 exec 前把
+  `SYS_PTRACE/SYS_ADMIN/NET_ADMIN/NET_RAW/BPF/PERFMON/SYS_MODULE` 从 workload 的
+  bounding set 去掉，workload 无法用这些能力绕过拦截或读取 init 内存；
+- enforce 需要 daemon 实际下发了 proxy credential（声明了网络策略且 proxy 可达）。
+  没有 credential 时（例如项目未声明 policy）init 记录告警并以 off 运行，不做不可用的
+  fail closed；admission/capability 的诚实报告在 PR6 接入；
+- 已知限制：需要 `CAP_SYS_PTRACE` 的集群（受限 PodSecurity）不可用；`getpeername`
+  会返回 proxy 地址；proxy-aware 客户端如果保留 proxy env 会直连 proxy（init 的 bypass
+  路径），enforce 下我们已 unset，因此不会发生。
+
+### 7.9 Stage 2 测试
 
 - 单元：profile 校验、filter 编译、Landlock ruleset、cgroup 路径、失败语义；
 - 集成：allow/deny syscall probe、文件读写 probe、fork/exec、pids limit、进程退出清理；

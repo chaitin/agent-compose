@@ -109,7 +109,7 @@ func TestSandboxInitEgressReadsAndValidatesTheMode(t *testing.T) {
 		{raw: "audit", want: sandboxinit.EgressModeAudit},
 		{raw: " AUDIT ", want: sandboxinit.EgressModeAudit},
 		{raw: "off", want: sandboxinit.EgressModeOff},
-		{raw: "enforce", wantError: true},
+		{raw: "enforce", want: sandboxinit.EgressModeEnforce},
 		{raw: "observe", wantError: true},
 	} {
 		t.Run(test.raw, func(t *testing.T) {

@@ -1007,6 +1007,13 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if initEnabled {
 		useInit := false
 		hostConfig.Init = &useInit
+		if sandboxInitEgressRequiresPtrace(r.config) {
+			// init duplicates the workload's socket with pidfd_getfd; Docker's
+			// default seccomp profile allows that syscall only with
+			// CAP_SYS_PTRACE. The trampoline drops it from the workload's
+			// bounding set before exec.
+			hostConfig.CapAdd = append(hostConfig.CapAdd, "SYS_PTRACE")
+		}
 	}
 	createResp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, name)
 	if err != nil {

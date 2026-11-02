@@ -5,6 +5,7 @@ package sandboxinit
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -265,11 +266,16 @@ func assertAuditEvent(t *testing.T, event EgressAuditEvent, target string) {
 // runEgressHelper runs this test binary as the workload under init. The helper
 // function dials the target, which the init supervisor must observe.
 func runEgressHelper(ctx context.Context, socket, target string) (string, error) {
+	return runEgressHelperMode(ctx, socket, "dial", target)
+}
+
+func runEgressHelperMode(ctx context.Context, socket, mode, target string) (string, error) {
 	return runEgressHelperRequest(ctx, socket, Request{
 		Command: os.Args[0],
 		Args:    []string{"-test.run=^TestEgressHelperProcess$"},
 		Env: map[string]string{
 			"GO_WANT_INIT_EGRESS_HELPER": "1",
+			"INIT_EGRESS_HELPER_MODE":    mode,
 			"INIT_EGRESS_HELPER_TARGET":  target,
 		},
 	})
@@ -334,11 +340,32 @@ func TestEgressHelperProcess(t *testing.T) {
 			}
 		}
 	}
-	conn, err := net.DialTimeout("tcp", os.Getenv("INIT_EGRESS_HELPER_TARGET"), 3*time.Second)
+	mode := os.Getenv("INIT_EGRESS_HELPER_MODE")
+	if mode == "env" {
+		fmt.Printf("http-proxy:%s\n", os.Getenv("HTTP_PROXY"))
+		fmt.Printf("https-proxy:%s\n", os.Getenv("HTTPS_PROXY"))
+		fmt.Printf("no-proxy:%s\n", os.Getenv("NO_PROXY"))
+		return
+	}
+	conn, err := net.DialTimeout("tcp", os.Getenv("INIT_EGRESS_HELPER_TARGET"), 5*time.Second)
 	if err != nil {
 		fmt.Printf("dial-error:%v\n", err)
 		os.Exit(1)
 	}
-	_ = conn.Close()
+	defer func() { _ = conn.Close() }()
+	if mode == "echo" {
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := conn.Write([]byte("ping")); err != nil {
+			fmt.Printf("write-error:%v\n", err)
+			os.Exit(1)
+		}
+		echoed := make([]byte, 4)
+		if _, err := io.ReadFull(conn, echoed); err != nil {
+			fmt.Printf("read-error:%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("tunnel-ok %s\n", echoed)
+		return
+	}
 	fmt.Println("dial-ok")
 }

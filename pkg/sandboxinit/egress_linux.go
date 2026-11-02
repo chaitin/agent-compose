@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -16,11 +17,15 @@ import (
 // session and reports the connections it observes. Audit mode never changes the
 // syscall outcome; the decision stays in the daemon.
 type egressSupervisor struct {
-	mode      EgressMode
-	sandboxID string
-	binary    string
-	sink      EgressAuditSink
-	logger    *slog.Logger
+	mode           EgressMode
+	sandboxID      string
+	binary         string
+	sink           EgressAuditSink
+	logger         *slog.Logger
+	proxy          *egressProxyTarget
+	bypassIPs      map[string]struct{}
+	localIPs       map[string]struct{}
+	connectTimeout time.Duration
 }
 
 // newEgressSupervisor resolves the init binary the trampoline re-executes. A
@@ -31,17 +36,27 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 	if err != nil {
 		return nil, fmt.Errorf("resolve sandbox init binary for egress audit: %w", err)
 	}
-	return &egressSupervisor{
-		mode:      mode,
-		sandboxID: sandboxID,
-		binary:    binary,
-		sink:      sink,
-		logger:    slog.Default(),
-	}, nil
+	supervisor := &egressSupervisor{
+		mode:           mode,
+		sandboxID:      sandboxID,
+		binary:         binary,
+		sink:           sink,
+		logger:         slog.Default(),
+		connectTimeout: egressConnectTimeout,
+	}
+	if mode == EgressModeEnforce {
+		proxy, err := loadEgressProxyTarget()
+		if err != nil {
+			return nil, err
+		}
+		supervisor.proxy = proxy
+		supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(proxy)
+	}
+	return supervisor, nil
 }
 
 func (s *egressSupervisor) enabled() bool {
-	return s != nil && s.mode == EgressModeAudit
+	return s != nil && (s.mode == EgressModeAudit || s.mode == EgressModeEnforce)
 }
 
 // adopt waits for the trampoline of one exec session to hand over its
@@ -91,6 +106,10 @@ func (s *egressSupervisor) serve(listenerFD int, sessionID, marker string) {
 }
 
 func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNotif, sessionID, marker string) {
+	if s.mode == EgressModeEnforce {
+		s.handleEnforce(listenerFD, request, sessionID, marker)
+		return
+	}
 	if request.Data.NR != int32(unix.SYS_CONNECT) {
 		_ = ioctlNotifSend(listenerFD, &seccompNotifResp{
 			ID:    request.ID,
@@ -133,7 +152,11 @@ func (s *egressSupervisor) record(event EgressAuditEvent) {
 		s.sink(event)
 		return
 	}
-	s.logger.Info("sandbox init egress audit",
+	message := "sandbox init egress audit"
+	if s.mode == EgressModeEnforce {
+		message = "sandbox init egress decision"
+	}
+	s.logger.Info(message,
 		"sandbox_id", event.SandboxID,
 		"session_id", event.SessionID,
 		"marker", event.Marker,
@@ -142,5 +165,7 @@ func (s *egressSupervisor) record(event EgressAuditEvent) {
 		"host", event.Host,
 		"port", event.Port,
 		"unix_path", event.UnixPath,
+		"decision", event.Decision,
+		"reason", event.Reason,
 	)
 }

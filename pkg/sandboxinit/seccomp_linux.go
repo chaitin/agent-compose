@@ -260,15 +260,31 @@ func receiveListener(sock *os.File) (int, error) {
 	return fds[0], nil
 }
 
-// connectDestination decodes the sockaddr of an intercepted connect.
-func connectDestination(pid int, addrPointer uint64, addrLen uint32) (EgressAuditEvent, error) {
+// readConnectAddress copies the sockaddr of an intercepted connect out of the
+// target process. The raw bytes are kept because mediation re-connects the
+// duplicated socket with the exact address the workload supplied.
+func readConnectAddress(pid int, addrPointer uint64, addrLen uint32) ([]byte, error) {
 	if addrLen == 0 || addrLen > seccompMaxSockaddr {
-		return EgressAuditEvent{}, fmt.Errorf("connect address length %d is out of range", addrLen)
+		return nil, fmt.Errorf("connect address length %d is out of range", addrLen)
 	}
 	buf := make([]byte, addrLen)
 	if err := readTargetMemory(pid, addrPointer, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
+// connectDestination decodes the sockaddr of an intercepted connect.
+func connectDestination(pid int, addrPointer uint64, addrLen uint32) (EgressAuditEvent, error) {
+	buf, err := readConnectAddress(pid, addrPointer, addrLen)
+	if err != nil {
 		return EgressAuditEvent{}, err
 	}
+	return decodeConnectAddress(buf)
+}
+
+// decodeConnectAddress parses a raw sockaddr.
+func decodeConnectAddress(buf []byte) (EgressAuditEvent, error) {
 	if len(buf) < 2 {
 		return EgressAuditEvent{}, errors.New("connect address is shorter than a family field")
 	}

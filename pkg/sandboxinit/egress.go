@@ -37,7 +37,7 @@ func ParseEgressMode(raw string) (EgressMode, error) {
 	case EgressModeAudit:
 		return EgressModeAudit, nil
 	case EgressModeEnforce:
-		return "", fmt.Errorf("%s=enforce is not implemented yet; use off or audit", EgressModeEnvVar)
+		return EgressModeEnforce, nil
 	default:
 		return "", fmt.Errorf("%s must be off or audit, got %q", EgressModeEnvVar, raw)
 	}
@@ -45,7 +45,8 @@ func ParseEgressMode(raw string) (EgressMode, error) {
 
 // EgressAuditEvent is one observed outbound connection. The daemon-facing shape
 // stays driver-neutral: init reports what the workload attempted, and the
-// policy decision remains the daemon's.
+// policy decision remains the daemon's. Decision is empty in audit mode and
+// "allow" or "deny" in mediated mode.
 type EgressAuditEvent struct {
 	SandboxID string
 	SessionID string
@@ -55,6 +56,8 @@ type EgressAuditEvent struct {
 	Host      string
 	Port      int
 	UnixPath  string
+	Decision  string
+	Reason    string
 }
 
 // EgressAuditSink receives audit events. It is injectable so tests can observe

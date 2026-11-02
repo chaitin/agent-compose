@@ -31,6 +31,9 @@ const (
 	// workload connect calls. It is advertised only when the guest kernel and
 	// the configured mode actually provide it.
 	CapabilityEgressAudit = "egress-audit"
+	// CapabilityEgressMediate is seccomp user-notification mediation: every
+	// workload connect is redirected through the daemon egress proxy.
+	CapabilityEgressMediate = "egress-mediate"
 )
 
 // SandboxIDEnvVar is the environment variable that carries the sandbox ID into

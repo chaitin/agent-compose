@@ -37,8 +37,11 @@ func RunExecChild(args []string) error {
 		return err
 	}
 	runtime.LockOSThread()
-	if mode == EgressModeAudit {
-		if err := installAuditFilter(); err != nil {
+	if mode == EgressModeAudit || mode == EgressModeEnforce {
+		if err := installEgressFilterForMode(mode); err != nil {
+			if mode == EgressModeEnforce {
+				return err
+			}
 			// A filter installed without a reachable supervisor makes every
 			// later connect fail with ENOSYS, which is worse than a missed
 			// audit. Once the listener exists, the handoff is mandatory.
@@ -60,10 +63,11 @@ func RunExecChild(args []string) error {
 	return nil
 }
 
-// installAuditFilter installs the connect filter and hands its listener to init
-// over the inherited socketpair. It must run on the thread that will exec the
-// workload: seccomp filters are per-thread.
-func installAuditFilter() error {
+// installEgressFilterForMode installs the connect filter, drops the
+// capabilities that would let the workload tamper with init or regain a
+// mediated syscall surface, and hands the listener to init. It must run on the
+// thread that will exec the workload: seccomp filters are per-thread.
+func installEgressFilterForMode(mode EgressMode) error {
 	sock := os.NewFile(egressChildFD, "sandbox-init-egress")
 	if sock == nil {
 		return errors.New("sandbox init egress handoff descriptor is missing")
@@ -77,10 +81,47 @@ func installAuditFilter() error {
 		return err
 	}
 	defer func() { _ = unix.Close(listenerFD) }()
+	if err := dropEgressUnsafeCapabilities(); err != nil {
+		if mode == EgressModeEnforce {
+			return fmt.Errorf("drop workload capabilities before mediated egress: %w", err)
+		}
+		slog.Warn("sandbox init egress audit could not drop workload capabilities", "error", err)
+	}
 	if err := sendListener(sock, listenerFD); err != nil {
 		return &egressHandoffError{err: err}
 	}
 	return nil
+}
+
+// egressUnsafeCapabilities are removed from the workload's bounding set. A
+// sandbox root process that kept CAP_SYS_PTRACE could read init's memory or
+// escape the mediated socket path; NET_ADMIN/NET_RAW/BPF/io_uring-adjacent
+// capabilities would let it build a second egress path.
+var egressUnsafeCapabilities = []uintptr{
+	unix.CAP_SYS_PTRACE,
+	unix.CAP_SYS_ADMIN,
+	unix.CAP_NET_ADMIN,
+	unix.CAP_NET_RAW,
+	unix.CAP_BPF,
+	unix.CAP_PERFMON,
+	unix.CAP_SYS_MODULE,
+}
+
+// dropEgressUnsafeCapabilities lowers the bounding set, which is what a root
+// exec regains its permitted capabilities from. EINVAL means this kernel does
+// not know the capability, so there is nothing to drop.
+func dropEgressUnsafeCapabilities() error {
+	var firstErr error
+	for _, capability := range egressUnsafeCapabilities {
+		err := unix.Prctl(unix.PR_CAPBSET_DROP, capability, 0, 0, 0)
+		if err == nil || errors.Is(err, unix.EINVAL) {
+			continue
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // egressHandoffError reports a failure after the filter was installed. The
