@@ -8,6 +8,7 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/egress"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 )
 
 // sandboxEgressMediation reports whether the engine's forward proxy will be in a
@@ -57,7 +58,12 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 		}
 		driver := driverForAgent(agent)
 		mediated := mediation != nil && mediation.MediatesDriver(driver)
-		report, err := driverpkg.ReportAgentNetworkPolicy(agent.Name, driver, effective, mediated, mode)
+		initMediated := mediated && config != nil && config.SandboxInitEgress == string(sandboxinit.EgressModeEnforce)
+		report, err := driverpkg.ReportAgentNetworkPolicy(agent.Name, driver, effective, driverpkg.NetworkPolicyReportOptions{
+			Mediated:     mediated,
+			InitMediated: initMediated,
+			Mode:         mode,
+		})
 		if err != nil {
 			return nil, err
 		}

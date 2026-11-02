@@ -99,11 +99,14 @@ type Config struct {
 	// GlobalNetworkPolicyInfo identifies the file and digest the effective
 	// daemon-wide policy was compiled from. It is zero when no policy is set.
 	GlobalNetworkPolicyInfo GlobalNetworkPolicyInfo
-	BoxliteHome             string
-	BoxliteRuntimeDir       string
-	DockerHome              string
-	DockerHostSandboxRoot   string
-	DockerDefaultImage      string
+	// EgressAuditLog is the append-only JSONL file the forward proxy writes
+	// one decision record per line to. Empty disables persistent audit.
+	EgressAuditLog        string
+	BoxliteHome           string
+	BoxliteRuntimeDir     string
+	DockerHome            string
+	DockerHostSandboxRoot string
+	DockerDefaultImage    string
 	// DockerSandboxNetwork is the Docker network each newly-created Docker
 	// sandbox container is attached to. Empty keeps the current behavior when
 	// the daemon is on a single non-default network: the sandbox joins the
@@ -253,6 +256,7 @@ type configSources struct {
 	EgressEnforce    EgressUnenforceablePolicy
 	GlobalPolicy     *egress.NetworkDeclaration
 	GlobalPolicyInfo GlobalNetworkPolicyInfo
+	EgressAuditLog   string
 }
 
 func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, error) {
@@ -315,6 +319,10 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 	if err != nil {
 		return configSources{}, err
 	}
+	egressAuditLog, err := loadEgressAuditLogPath()
+	if err != nil {
+		return configSources{}, err
+	}
 	if globalPolicyInfo.Path != "" {
 		// Name the exact bytes in the startup log as well as the admission
 		// report, so a daemon restart is auditable even before a project is
@@ -342,6 +350,7 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		EgressEnforce:    egressEnforce,
 		GlobalPolicy:     globalPolicy,
 		GlobalPolicyInfo: globalPolicyInfo,
+		EgressAuditLog:   egressAuditLog,
 	}, nil
 }
 
@@ -406,6 +415,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		EgressUnenforceablePolicy:  sources.EgressEnforce,
 		GlobalNetworkPolicy:        sources.GlobalPolicy,
 		GlobalNetworkPolicyInfo:    sources.GlobalPolicyInfo,
+		EgressAuditLog:             sources.EgressAuditLog,
 		BoxliteHome:                normalized.BoxliteHome,
 		BoxliteRuntimeDir:          normalized.BoxliteRuntimeDir,
 		DockerHome:                 normalized.DockerHome,

@@ -401,7 +401,21 @@ TCP DNS：
 - stub 启动失败（例如端口被占用）只记录告警，TCP 改道仍工作，但域名策略退化为
   IP 策略；`egress-dns` 能力不会出现在 pong 里。
 
-### 7.10 Stage 2 测试
+### 7.10 Identity、审计与报告（PR6）
+
+- init 在 CONNECT 请求上带 `X-Agent-Compose-Sandbox/Session/Marker/Pid`；daemon
+  校验 Sandbox 头与 proxy credential 一致，其余字段作为归因数据进入
+  `egress.Request`，不参与策略判定；
+- 设置 `EGRESS_AUDIT_LOG=/abs/path.jsonl` 后，forward proxy 的每条 allow/deny 都会
+  追加一行 JSON（sandbox、destination、resolved IPs、action、rule、generation、
+  session/marker/pid、时间）；写失败只记录错误，不改变决策；
+- admission 报告在 `SANDBOX_INIT_EGRESS=enforce` 时新增 `seccomp_redirect` 机制，
+  并替换掉“只对遵守 proxy env 的进程生效”的旧限制说明，明确 init 会重定向所有
+  TCP connect，同时披露 DNS stub 的 `sendmmsg` 残余缺口；
+- per-run 策略（按 scheduler run / interactive session 选择不同策略）仍留到后续：
+  当前 session/marker 只用于审计，不改变生效策略。
+
+### 7.11 Stage 2 测试
 
 - 单元：profile 校验、filter 编译、Landlock ruleset、cgroup 路径、失败语义；
 - 集成：allow/deny syscall probe、文件读写 probe、fork/exec、pids limit、进程退出清理；

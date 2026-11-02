@@ -448,11 +448,20 @@ func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {
 // sandbox's project declare now).
 func NewEgressProxy(di do.Injector) (*proxy.EgressProxy, error) {
 	mediation := *do.MustInvoke[*adapters.SandboxEgressProxy](di)
-	return proxy.NewEgressProxy(proxy.EgressProxyOptions{
+	config := do.MustInvoke[*appconfig.Config](di)
+	options := proxy.EgressProxyOptions{
 		Authorizer: mediation,
 		Policies:   mediation,
 		Logger:     do.MustInvoke[*slog.Logger](di),
-	})
+	}
+	if path := strings.TrimSpace(config.EgressAuditLog); path != "" {
+		audit, err := adapters.NewEgressAuditLog(path, options.Logger)
+		if err != nil {
+			return nil, err
+		}
+		options.Recorder = audit
+	}
+	return proxy.NewEgressProxy(options)
 }
 
 // NewSandboxEgressMediation builds the one mediation value the daemon shares:

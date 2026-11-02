@@ -169,6 +169,11 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	identity, err := egressIdentityFromRequest(r, sandboxID)
+	if err != nil {
+		http.Error(w, "agent-compose egress proxy: "+err.Error(), http.StatusForbidden)
+		return
+	}
 	destination, err := egressDestinationFromRequest(r)
 	if err != nil {
 		http.Error(w, "agent-compose egress proxy: "+err.Error(), http.StatusBadRequest)
@@ -180,6 +185,9 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request := egress.NetworkRequest(sandboxID, endpoint)
+	request.SessionID = identity.SessionID
+	request.Marker = identity.Marker
+	request.ProcessID = identity.ProcessID
 
 	policy, err := p.policies.EgressProxyPolicy(r.Context(), sandboxID)
 	if err != nil {
@@ -246,6 +254,45 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"sandbox_id", sandboxID, "host", destination.host, "port", destination.port,
 			"address", target.String(), "rule", result.RuleID, "error", err)
 	}
+}
+
+// egressIdentity is the sandbox-init attribution carried on a mediated
+// CONNECT. It is advisory: only the sandbox header is checked, because the
+// credential already authenticated the caller and a policy decision must never
+// depend on data the guest can write.
+type egressIdentity struct {
+	SessionID string
+	Marker    string
+	ProcessID int
+}
+
+const egressIdentityHeaderLimit = 256
+
+func egressIdentityFromRequest(r *http.Request, sandboxID string) (egressIdentity, error) {
+	claimed := strings.TrimSpace(r.Header.Get(egress.IdentityHeaderSandbox))
+	if claimed != "" && claimed != sandboxID {
+		return egressIdentity{}, errors.New("the sandbox identity header disagrees with the proxy credential")
+	}
+	identity := egressIdentity{
+		SessionID: truncateIdentity(r.Header.Get(egress.IdentityHeaderSession)),
+		Marker:    truncateIdentity(r.Header.Get(egress.IdentityHeaderMarker)),
+	}
+	if raw := strings.TrimSpace(r.Header.Get(egress.IdentityHeaderPID)); raw != "" {
+		processID, err := strconv.Atoi(raw)
+		if err != nil || processID <= 0 {
+			return egressIdentity{}, errors.New("the process identity header is not a positive integer")
+		}
+		identity.ProcessID = processID
+	}
+	return identity, nil
+}
+
+func truncateIdentity(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= egressIdentityHeaderLimit {
+		return value
+	}
+	return value[:egressIdentityHeaderLimit]
 }
 
 // authenticate resolves the calling sandbox from the proxy credential. It

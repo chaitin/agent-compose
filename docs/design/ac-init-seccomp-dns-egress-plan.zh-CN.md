@@ -382,13 +382,30 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
   恢复路径；
 - PR1–PR4 的集成测试在 PR5 镜像上复跑通过；`-race`、lint 通过。
 
-### PR6：身份、per-run 策略与审计（M）
+### PR6：身份、审计与诚实报告（本 PR，M）
 
-- init 在 CONNECT 头里带 session/marker/pid；daemon 扩展 `egress.Record`，
-  接线 `EgressProxyRecorder`，落地 allow/deny 记录与查询（先 JSONL/日志，后 OTLP/OCSF）。
-- exec 请求可选带 policy 选择（scheduler run vs interactive），daemon 按 session 决定
-  有效策略（仍用 layering）。
-- `inspect sandbox` 展示当前机制/generation/最近决策。
+实现：
+
+- init 在 CONNECT 上新增 `X-Agent-Compose-Pid`，四个身份头统一由
+  `pkg/egress/identity.go` 定义；
+- daemon proxy 校验 sandbox 头与 credential 一致（不一致 403），把
+  session/marker/pid 写入 `egress.Request`，随 allow/deny 一起进入 `egress.Record`；
+- 新增 `EGRESS_AUDIT_LOG` 配置：forward proxy 的每条决策追加一行 JSONL
+  （sandbox、destination、resolved IPs、action、rule、generation、身份、时间）；
+  写失败只记录日志，不改变决策；
+- admission 报告在 `SANDBOX_INIT_EGRESS=enforce` 时把 `seccomp_redirect` 列为机制，
+  用 init 的真实语义替换旧的“只约束遵守 proxy env 的进程”限制，并披露 DNS stub
+  的 `sendmmsg` 残余；
+- per-run 策略仍未实现：身份字段先进入审计与记录，作为后续策略选择的输入。
+
+验收与实测：
+
+- 单元：proxy 记录 init 身份、拒绝 sandbox 头不匹配/非法 pid；audit writer 的
+  JSONL 往返；report 的 `seccomp_redirect` + 限制文案；config 路径校验；
+- `EGRESS_AUDIT_LOG` 打开后，daemon 在每条 forward-proxy 决策后写一行；未设置时
+  recorder 仍为 nil，行为不变；
+- 现有 proxy/driver/app/config 测试通过；Docker 集成套件不依赖 daemon 重启，
+  PR1–PR5 回归保持通过。
 
 ### PR7：加固与后续（M/L）
 

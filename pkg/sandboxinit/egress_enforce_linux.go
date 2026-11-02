@@ -16,6 +16,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/chaitin/agent-compose/pkg/egress"
 	"golang.org/x/sys/unix"
 )
 
@@ -379,9 +380,10 @@ func (p *egressProxyTarget) connectRequest(destination EgressAuditEvent) []byte 
 		builder.WriteString(p.authHeader)
 		builder.WriteString("\r\n")
 	}
-	writeIdentityHeader(&builder, "X-Agent-Compose-Sandbox", destination.SandboxID)
-	writeIdentityHeader(&builder, "X-Agent-Compose-Session", destination.SessionID)
-	writeIdentityHeader(&builder, "X-Agent-Compose-Marker", destination.Marker)
+	writeIdentityHeader(&builder, egress.IdentityHeaderSandbox, destination.SandboxID)
+	writeIdentityHeader(&builder, egress.IdentityHeaderSession, destination.SessionID)
+	writeIdentityHeader(&builder, egress.IdentityHeaderMarker, destination.Marker)
+	writeIdentityHeader(&builder, egress.IdentityHeaderPID, strconv.Itoa(destination.PID))
 	builder.WriteString("\r\n")
 	return []byte(builder.String())
 }
