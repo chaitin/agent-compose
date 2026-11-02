@@ -92,6 +92,9 @@ func computeFires(ds *dataset, from, until time.Time) []FireInfo {
 }
 
 func triggerFires(trigger triggerInfo, from, until time.Time) []time.Time {
+	if strings.EqualFold(strings.TrimSpace(trigger.Kind), domain.SchedulerTriggerKindTimeout) {
+		return timeoutFires(trigger, from, until)
+	}
 	domainTrigger := trigger.domainTrigger()
 	next := trigger.NextFireAt
 	if next.IsZero() || !next.After(from) {
@@ -104,9 +107,6 @@ func triggerFires(trigger triggerInfo, from, until time.Time) []time.Time {
 	fires := make([]time.Time, 0, 8)
 	for len(fires) < maxFiresPerTrigger && !next.IsZero() && !next.After(until) {
 		fires = append(fires, next)
-		if strings.EqualFold(strings.TrimSpace(trigger.Kind), domain.SchedulerTriggerKindTimeout) {
-			break
-		}
 		computed, err := schedulers.SchedulerTriggerNextFireAt(next, domainTrigger, true)
 		if err != nil || computed.IsZero() || !computed.After(next) {
 			break
@@ -114,6 +114,23 @@ func triggerFires(trigger triggerInfo, from, until time.Time) []time.Time {
 		next = computed
 	}
 	return fires
+}
+
+// timeoutFires forecasts a one-shot trigger. A zero next-fire time means the
+// timeout already fired (the scheduler clears it after the single fire), so
+// inventing another fire from "now" would overstate the upgrade risk.
+func timeoutFires(trigger triggerInfo, from, until time.Time) []time.Time {
+	if trigger.NextFireAt.IsZero() {
+		return nil
+	}
+	next := trigger.NextFireAt
+	if !next.After(from) {
+		next = from
+	}
+	if next.After(until) {
+		return nil
+	}
+	return []time.Time{next}
 }
 
 func isScheduleKind(kind string) bool {

@@ -73,6 +73,24 @@ func TestUpcomingForecastsCronAndIntervalFires(t *testing.T) {
 	}
 }
 
+func TestUpcomingDoesNotResurrectFiredTimeout(t *testing.T) {
+	db := openFixtureDB(t)
+	seedProject(t, db, fixtureProjectID, fixtureAgentID, fixtureSchedulerID, "agent")
+	now := mustTime(t, "2026-11-02T00:00:00Z")
+	insertTrigger(t, db, fixtureSchedulerID, "boot", domain.SchedulerTriggerKindTimeout, "", time.Minute.Milliseconds(), time.Time{})
+	if _, err := db.ExecContext(context.Background(), `UPDATE scheduler_trigger SET last_fired_at = ? WHERE scheduler_id = ? AND trigger_id = 'boot'`, now.Add(-time.Hour).UnixMilli(), fixtureSchedulerID); err != nil {
+		t.Fatalf("mark timeout fired: %v", err)
+	}
+	advisor := mustAdvisor(t, db, Options{Now: now, Horizon: 24 * time.Hour, Location: time.UTC})
+	report, err := advisor.Upcoming(context.Background())
+	if err != nil {
+		t.Fatalf("forecast upcoming: %v", err)
+	}
+	if len(report.Fires) != 0 {
+		t.Fatalf("fires = %+v, want none for an already-fired timeout trigger", report.Fires)
+	}
+}
+
 func TestWindowsAvoidHistoricallyBusyHour(t *testing.T) {
 	db := openFixtureDB(t)
 	seedProject(t, db, fixtureProjectID, fixtureAgentID, fixtureSchedulerID, "agent")
