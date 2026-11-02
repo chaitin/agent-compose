@@ -76,6 +76,61 @@ func TestExecuteWindowsJSON(t *testing.T) {
 	}
 }
 
+func TestExecuteStatusText(t *testing.T) {
+	path := seedCLIFixture(t)
+	var stdout, stderr bytes.Buffer
+	if code := execute(&stdout, &stderr, []string{"upgrade", "status", "--db", path, "--tz", "UTC"}); code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, want := range []string{"running scheduler runs: 1", "run-live", "cli scheduler", "anomalies: none"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("status output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestExecuteStatsText(t *testing.T) {
+	path := seedCLIFixture(t)
+	var stdout, stderr bytes.Buffer
+	if code := execute(&stdout, &stderr, []string{"upgrade", "stats", "--db", path, "--tz", "UTC", "--triggers"}); code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, want := range []string{"PROJECT/AGENT", "cli-project/worker", "hourly", "RUNS"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stats output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestExecuteUpcomingJSON(t *testing.T) {
+	path := seedCLIFixture(t)
+	var stdout, stderr bytes.Buffer
+	if code := execute(&stdout, &stderr, []string{"upgrade", "upcoming", "--db", path, "--json", "--tz", "UTC", "--horizon", "6h"}); code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	var report upgradeadvisor.UpcomingReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode upcoming json: %v\n%s", err, stdout.String())
+	}
+	if len(report.Fires) == 0 {
+		t.Fatal("upcoming fires = 0, want at least one")
+	}
+}
+
+func TestExecuteForecastText(t *testing.T) {
+	path := seedCLIFixture(t)
+	at := time.Now().UTC().Add(2 * time.Hour).Format(time.RFC3339)
+	var stdout, stderr bytes.Buffer
+	if code := execute(&stdout, &stderr, []string{"upgrade", "forecast", "--db", path, "--tz", "UTC", "--at", at}); code != 0 {
+		t.Fatalf("exit code = %d, stderr = %s", code, stderr.String())
+	}
+	for _, want := range []string{"proposed window", "score=", "scheduled fires in window"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("forecast output missing %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
 func TestExecuteForecastRejectsInvalidTime(t *testing.T) {
 	path := seedCLIFixture(t)
 	var stdout, stderr bytes.Buffer
