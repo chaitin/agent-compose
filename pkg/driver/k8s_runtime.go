@@ -12,6 +12,7 @@ import (
 	"fmt"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 	"io"
 	"net/http"
 	"net/url"
@@ -633,6 +634,9 @@ func (r *k8sRuntime) containerEnv(ctx context.Context, sandbox *Sandbox) (map[st
 	env["WORKSPACE"] = r.config.GuestWorkspacePath
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
+	if egress, ok := sandboxInitEgressEnv(r.config); ok {
+		env[sandboxinit.EgressModeEnvVar] = egress
+	}
 	// K8S_RUNTIME_BASE_URL overrides the daemon-wide AGENT_COMPOSE_RUNTIME_BASE_URL
 	// for k8s sandboxes only - see docs/design/k8s_pod_runtime_driver_design.md §2.2.
 	if base := strings.TrimRight(strings.TrimSpace(r.config.K8sRuntimeBaseURL), "/"); base != "" {

@@ -27,6 +27,10 @@ const (
 	// CapabilitySandboxIdentity is the pong handshake that names the sandbox
 	// this init belongs to.
 	CapabilitySandboxIdentity = "sandbox-identity"
+	// CapabilityEgressAudit is seccomp user-notification observation of
+	// workload connect calls. It is advertised only when the guest kernel and
+	// the configured mode actually provide it.
+	CapabilityEgressAudit = "egress-audit"
 )
 
 // SandboxIDEnvVar is the environment variable that carries the sandbox ID into

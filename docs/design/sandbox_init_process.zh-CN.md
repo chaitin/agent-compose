@@ -328,6 +328,34 @@ SANDBOX_INIT_PROFILE=/.agent-compose/security.json
 - 每次 profile 变更都有 digest/命令审计；失败时 fail closed；
 - 与 egress/credential 的集成仍由 daemon 侧负责，init 只做进程边界。
 
+### 7.8 Egress audit（已实现，PR2）
+
+Stage 1 之后的第一个 seccomp 能力是**观察**而不是改写：
+
+- 每次 exec 由 `ac-init --exec-child` trampoline 先在 fork 后、exec 前安装 filter：
+  `connect` 返回 `SECCOMP_RET_USER_NOTIF`，`io_uring_setup` 返回 `EPERM`（io_uring
+  的 connect 不经 seccomp，必须先堵住）；
+- trampoline 通过 init 建好的 socketpair 用 `SCM_RIGHTS` 把 listener 交给 init，
+  然后 `execve` 目标；filter 随 exec 与后续 fork 继承，workload 无法移除；
+- init 每个 exec session 一个 goroutine 读 listener：校验 notification、用
+  `process_vm_readv` 读取目标 sockaddr、记录 `sandbox/session/marker/pid/family/
+  host/port/unix_path`，然后 `SECCOMP_USER_NOTIF_FLAG_CONTINUE` 放行；
+- audit 模式**不改变 syscall 结果**；策略判定仍在 daemon。filter 安装失败时
+  audit 模式记录告警并继续（观测不能变成可用性故障）；如果 filter 已安装但
+  listener 交接失败，trampoline 拒绝 exec，避免 workload 的所有 connect 变成 ENOSYS。
+
+配置与前提：
+
+```text
+SANDBOX_INIT_EGRESS=off|audit        # enforce 在 PR3 之前会被拒绝
+```
+
+- 需要 guest 内核 >= 5.5（CONTINUE）且支持 `SECCOMP_RET_USER_NOTIF`；init 启动时
+  在 guest 内探测，不满足则记录告警并退回 off，`egress-audit` 能力不会出现在 pong 里；
+- workload 与 init 同 uid 时，init 可用 `process_vm_readv` 读 sockaddr；后续 enforce
+  路径需要 `CAP_SYS_PTRACE`/降权模型（PR3 讨论）；
+- audit 只覆盖 `connect`；UDP `sendto`、DNS 重定向、透明 TCP 改道在 PR3/PR4 实现。
+
 ### 7.7 Stage 2 测试
 
 - 单元：profile 校验、filter 编译、Landlock ruleset、cgroup 路径、失败语义；

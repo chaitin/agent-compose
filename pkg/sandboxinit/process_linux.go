@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 // Hooks is the extension point for future isolation work. Stage 1 installs no
@@ -164,6 +165,7 @@ type processManager struct {
 	byID       map[string]*process
 	byPID      map[int]*process
 	hooks      Hooks
+	egress     *egressSupervisor
 	stopOnce   sync.Once
 	stopped    chan struct{}
 	reaperDone chan struct{}
@@ -215,15 +217,19 @@ func (m *processManager) start(ctx context.Context, request Request, main bool, 
 	// lookup race.
 	m.spawnMu.Lock()
 	defer m.spawnMu.Unlock()
-	cmd := exec.Command(request.Command, request.Args...)
-	cmd.Env = processEnvironment(request.Env, p.marker)
+	cmd, egress, err := m.buildCommand(request, p.marker)
+	if err != nil {
+		return nil, err
+	}
+	if egress != nil {
+		defer func() {
+			if egress != nil {
+				egress.closeRemaining()
+			}
+		}()
+	}
 	if cwd := strings.TrimSpace(request.Cwd); cwd != "" {
 		cmd.Dir = cwd
-	}
-	if m.hooks.Prepare != nil {
-		if err := m.hooks.Prepare(cmd); err != nil {
-			return nil, fmt.Errorf("prepare sandbox init child: %w", err)
-		}
 	}
 	if request.TTY {
 		ws := &pty.Winsize{Rows: request.Rows, Cols: request.Cols}
@@ -249,6 +255,11 @@ func (m *processManager) start(ctx context.Context, request Request, main bool, 
 		// parent fd, which newer Go rejects ("Ctty not valid in child"); the
 		// tty is duped to fd 0/1/2, so 0 is the correct child descriptor.
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+		if err := m.prepareChild(cmd); err != nil {
+			_ = master.Close()
+			_ = tty.Close()
+			return nil, err
+		}
 		if err := cmd.Start(); err != nil {
 			_ = master.Close()
 			_ = tty.Close()
@@ -261,6 +272,10 @@ func (m *processManager) start(ctx context.Context, request Request, main bool, 
 		p.stdin = master
 		p.output.Add(1)
 		go p.copyPTY(master, stdout)
+		if egress != nil {
+			egress.handoff(m.egress, p)
+			egress = nil
+		}
 	} else {
 		stdinR, stdinW, err := os.Pipe()
 		if err != nil {
@@ -284,6 +299,15 @@ func (m *processManager) start(ctx context.Context, request Request, main bool, 
 		cmd.Stdout = stdoutW
 		cmd.Stderr = stderrW
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := m.prepareChild(cmd); err != nil {
+			_ = stdinR.Close()
+			_ = stdinW.Close()
+			_ = stdoutR.Close()
+			_ = stdoutW.Close()
+			_ = stderrR.Close()
+			_ = stderrW.Close()
+			return nil, err
+		}
 		if err := cmd.Start(); err != nil {
 			_ = stdinR.Close()
 			_ = stdinW.Close()
@@ -302,6 +326,10 @@ func (m *processManager) start(ctx context.Context, request Request, main bool, 
 		p.output.Add(2)
 		go p.copyOutput(stdoutR, FrameStdout, stdout)
 		go p.copyOutput(stderrR, FrameStderr, stderr)
+		if egress != nil {
+			egress.handoff(m.egress, p)
+			egress = nil
+		}
 	}
 	// Release the os.Process handle: the init reaper, not os/exec, owns
 	// wait4. Releasing does not reap or wait for the child.
@@ -319,6 +347,96 @@ func (m *processManager) start(ctx context.Context, request Request, main bool, 
 		}
 	}
 	return p, nil
+}
+
+// childEgress carries the socketpair between init and one exec trampoline. The
+// trampoline sends its seccomp notification listener over it before exec.
+type childEgress struct {
+	parent *os.File
+	child  *os.File
+}
+
+// buildCommand returns the process init should start. When egress audit is
+// active the started process is this binary's trampoline, which installs the
+// filter and execs the requested command; otherwise it is the command itself.
+func (m *processManager) buildCommand(request Request, marker string) (*exec.Cmd, *childEgress, error) {
+	if m.egress == nil || !m.egress.enabled() {
+		cmd := exec.Command(request.Command, request.Args...)
+		cmd.Env = processEnvironment(request.Env, marker)
+		return cmd, nil, nil
+	}
+	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create sandbox init egress handoff socket: %w", err)
+	}
+	parent := os.NewFile(uintptr(pair[0]), "sandbox-init-egress-parent")
+	child := os.NewFile(uintptr(pair[1]), "sandbox-init-egress-child")
+	if parent == nil || child == nil {
+		_ = unix.Close(pair[0])
+		_ = unix.Close(pair[1])
+		return nil, nil, errors.New("wrap sandbox init egress handoff socket")
+	}
+	unix.CloseOnExec(pair[0])
+	args := append([]string{"--exec-child", "--", request.Command}, request.Args...)
+	cmd := exec.Command(m.egress.binary, args...)
+	cmd.Env = appendEnvOverride(processEnvironment(request.Env, marker), EgressModeEnvVar, string(m.egress.mode))
+	cmd.ExtraFiles = []*os.File{child}
+	return cmd, &childEgress{parent: parent, child: child}, nil
+}
+
+// prepareChild runs the configured hook after the base SysProcAttr is set, so a
+// future isolation hook can extend the attributes instead of losing them to the
+// transport branch that assigns SysProcAttr.
+func (m *processManager) prepareChild(cmd *exec.Cmd) error {
+	if m.hooks.Prepare == nil {
+		return nil
+	}
+	if err := m.hooks.Prepare(cmd); err != nil {
+		return fmt.Errorf("prepare sandbox init child: %w", err)
+	}
+	return nil
+}
+
+func (e *childEgress) closeRemaining() {
+	if e == nil {
+		return
+	}
+	if e.child != nil {
+		_ = e.child.Close()
+		e.child = nil
+	}
+	if e.parent != nil {
+		_ = e.parent.Close()
+		e.parent = nil
+	}
+}
+
+// handoff closes init's copy of the child end and starts serving the listener
+// the trampoline sends. The supervisor owns the parent end afterward.
+func (e *childEgress) handoff(supervisor *egressSupervisor, p *process) {
+	if e == nil || e.parent == nil || supervisor == nil || p == nil {
+		return
+	}
+	if e.child != nil {
+		_ = e.child.Close()
+		e.child = nil
+	}
+	parent := e.parent
+	e.parent = nil
+	supervisor.adopt(parent, p.id, p.marker, p.done)
+}
+
+// appendEnvOverride replaces an existing environment entry instead of leaving a
+// duplicate the trampoline would read ambiguously.
+func appendEnvOverride(env []string, key, value string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, item := range env {
+		if !strings.HasPrefix(item, prefix) {
+			filtered = append(filtered, item)
+		}
+	}
+	return append(filtered, prefix+value)
 }
 
 func processEnvironment(extra map[string]string, marker string) []string {

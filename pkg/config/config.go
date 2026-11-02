@@ -16,6 +16,7 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/egress"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 )
 
 const DefaultWorkspaceUploadLimitBytes int64 = 1 << 30
@@ -137,7 +138,12 @@ type Config struct {
 	// SandboxInitSocketDir is the host runtime directory containing one
 	// <sandbox-id>/init.sock per init-enabled sandbox. It defaults to
 	// $XDG_RUNTIME_DIR/agent-compose or /run/agent-compose.
-	SandboxInitSocketDir       string
+	SandboxInitSocketDir string
+	// SandboxInitEgress selects the init process's egress observer. "off" is
+	// the default; "audit" reports workload connect calls without changing
+	// them; "enforce" is reserved for mediated egress and is rejected until it
+	// exists.
+	SandboxInitEgress          string
 	MicrosandboxHome           string
 	MicrosandboxMSBPath        string
 	MicrosandboxLibPath        string
@@ -408,6 +414,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		SandboxInitEnabled:         sources.SandboxInit.Enabled,
 		SandboxInitBinary:          sources.SandboxInit.Binary,
 		SandboxInitSocketDir:       sources.SandboxInit.SocketDir,
+		SandboxInitEgress:          string(sources.SandboxInit.Egress),
 		DockerDefaultImage:         images.DockerDefaultImage,
 		MicrosandboxHome:           normalized.MicrosandboxHome,
 		MicrosandboxMSBPath:        normalized.MicrosandboxMSBPath,
@@ -855,6 +862,7 @@ type sandboxInitConfig struct {
 	Enabled   bool
 	Binary    string
 	SocketDir string
+	Egress    sandboxinit.EgressMode
 }
 
 // DefaultSandboxInitBinary is the guest path shipped by the guest image. A
@@ -884,6 +892,11 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 	if binary := strings.TrimSpace(os.Getenv("SANDBOX_INIT_BINARY")); binary != "" {
 		config.Binary = binary
 	}
+	egressMode, err := sandboxinit.ParseEgressMode(os.Getenv(sandboxinit.EgressModeEnvVar))
+	if err != nil {
+		return sandboxInitConfig{}, err
+	}
+	config.Egress = egressMode
 	socketDir := strings.TrimSpace(os.Getenv("SANDBOX_INIT_SOCKET_DIR"))
 	if socketDir == "" {
 		socketDir = defaultSandboxInitSocketDir()

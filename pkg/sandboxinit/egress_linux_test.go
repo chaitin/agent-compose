@@ -1,0 +1,344 @@
+//go:build linux
+
+package sandboxinit
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+// TestMain lets this test binary act as the init trampoline. The production
+// entry point lives in cmd/ac-init, but the host tests run the init server
+// in-process, so os.Executable() is this test binary; intercept the internal
+// flag before the testing package parses its own flags.
+func TestMain(m *testing.M) {
+	if index := execChildIndex(os.Args); index >= 0 {
+		args := os.Args[index+1:]
+		if len(args) > 0 && args[0] == "--" {
+			args = args[1:]
+		}
+		if err := RunExecChild(args); err != nil {
+			fmt.Fprintln(os.Stderr, "sandbox init exec child failed:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+func execChildIndex(args []string) int {
+	for index, arg := range args {
+		if arg == "--exec-child" {
+			return index
+		}
+	}
+	return -1
+}
+
+func TestEgressFilterProgram(t *testing.T) {
+	program := buildEgressFilter(0x1234, 42, 43)
+	if len(program) != 9 {
+		t.Fatalf("filter length = %d, want 9", len(program))
+	}
+	if program[0].K != seccompDataArch {
+		t.Fatalf("first load offset = %d, want %d", program[0].K, seccompDataArch)
+	}
+	if program[4].K != uint32(unix.SECCOMP_RET_USER_NOTIF) {
+		t.Fatalf("connect action = %#x, want SECCOMP_RET_USER_NOTIF", program[4].K)
+	}
+	if program[6].K != uint32(unix.SECCOMP_RET_ERRNO)|uint32(unix.EPERM) {
+		t.Fatalf("io_uring action = %#x, want SECCOMP_RET_ERRNO(EPERM)", program[6].K)
+	}
+	if program[8].K != uint32(unix.SECCOMP_RET_KILL_PROCESS) {
+		t.Fatalf("arch mismatch action = %#x, want SECCOMP_RET_KILL_PROCESS", program[8].K)
+	}
+}
+
+func TestParseKernelRelease(t *testing.T) {
+	cases := []struct {
+		release string
+		major   int
+		minor   int
+		wantErr bool
+	}{
+		{release: "6.8.0", major: 6, minor: 8},
+		{release: "5.5.19-1-MANJARO", major: 5, minor: 5},
+		{release: "4.19.0", major: 4, minor: 19},
+		{release: "broken", wantErr: true},
+	}
+	for _, test := range cases {
+		major, minor, err := parseKernelRelease(test.release)
+		if test.wantErr {
+			if err == nil {
+				t.Fatalf("parseKernelRelease(%q) error = nil, want a failure", test.release)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("parseKernelRelease(%q) error = %v", test.release, err)
+		}
+		if major != test.major || minor != test.minor {
+			t.Fatalf("parseKernelRelease(%q) = %d.%d, want %d.%d", test.release, major, minor, test.major, test.minor)
+		}
+	}
+}
+
+func TestInitEgressAuditReportsConnect(t *testing.T) {
+	if err := egressInterceptionSupported(); err != nil {
+		t.Skipf("seccomp user notification is unavailable: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	accepted := make(chan error, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			_ = conn.Close()
+		}
+		accepted <- err
+	}()
+
+	events := make(chan EgressAuditEvent, 4)
+	_, socket := startTestInitWithOptions(t, Options{
+		MainShell:       "sleep 120",
+		EgressMode:      EgressModeAudit,
+		EgressAuditSink: func(event EgressAuditEvent) { events <- event },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	target := listener.Addr().String()
+	output, err := runEgressHelper(ctx, socket, target)
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	if !strings.Contains(output, "dial-ok") {
+		t.Fatalf("helper output = %q, want a successful dial", output)
+	}
+	select {
+	case event := <-events:
+		assertAuditEvent(t, event, target)
+	case <-time.After(10 * time.Second):
+		t.Fatal("no egress audit event was reported")
+	}
+	if err := <-accepted; err != nil {
+		t.Fatalf("listener accept error = %v", err)
+	}
+}
+
+func TestInitEgressAuditTTYSession(t *testing.T) {
+	if err := egressInterceptionSupported(); err != nil {
+		t.Skipf("seccomp user notification is unavailable: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	accepted := make(chan error, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			_ = conn.Close()
+		}
+		accepted <- acceptErr
+	}()
+	events := make(chan EgressAuditEvent, 2)
+	_, socket := startTestInitWithOptions(t, Options{
+		MainShell:       "sleep 120",
+		EgressMode:      EgressModeAudit,
+		EgressAuditSink: func(event EgressAuditEvent) { events <- event },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	target := listener.Addr().String()
+	output, err := runEgressHelperTTY(ctx, socket, target)
+	if err != nil {
+		t.Fatalf("run tty helper: %v", err)
+	}
+	if !strings.Contains(output, "dial-ok") {
+		t.Fatalf("tty helper output = %q, want a successful dial", output)
+	}
+	select {
+	case event := <-events:
+		assertAuditEvent(t, event, target)
+	case <-time.After(10 * time.Second):
+		t.Fatal("no egress audit event was reported for the tty session")
+	}
+	if err := <-accepted; err != nil {
+		t.Fatalf("listener accept error = %v", err)
+	}
+}
+
+func TestInitEgressAuditConcurrentSessions(t *testing.T) {
+	if err := egressInterceptionSupported(); err != nil {
+		t.Skipf("seccomp user notification is unavailable: %v", err)
+	}
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = listener.Close() }()
+	const sessions = 3
+	var acceptWG sync.WaitGroup
+	acceptWG.Add(sessions)
+	go func() {
+		for i := 0; i < sessions; i++ {
+			conn, acceptErr := listener.Accept()
+			if acceptErr == nil {
+				_ = conn.Close()
+			}
+			acceptWG.Done()
+		}
+	}()
+
+	events := make(chan EgressAuditEvent, sessions*2)
+	_, socket := startTestInitWithOptions(t, Options{
+		MainShell:       "sleep 120",
+		EgressMode:      EgressModeAudit,
+		EgressAuditSink: func(event EgressAuditEvent) { events <- event },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	target := listener.Addr().String()
+	errs := make(chan error, sessions)
+	var runWG sync.WaitGroup
+	for i := 0; i < sessions; i++ {
+		runWG.Add(1)
+		go func() {
+			defer runWG.Done()
+			output, err := runEgressHelper(ctx, socket, target)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if !strings.Contains(output, "dial-ok") {
+				errs <- fmt.Errorf("helper output = %q, want dial-ok", output)
+			}
+		}()
+	}
+	runWG.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("concurrent helper: %v", err)
+	}
+	acceptWG.Wait()
+	for i := 0; i < sessions; i++ {
+		select {
+		case event := <-events:
+			assertAuditEvent(t, event, target)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("collected %d of %d egress audit events", i, sessions)
+		}
+	}
+}
+
+func assertAuditEvent(t *testing.T, event EgressAuditEvent, target string) {
+	t.Helper()
+	host, portText, err := net.SplitHostPort(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if event.Family != "inet" || event.Host != host || event.Port != port {
+		t.Fatalf("event = %+v, want %s/%d (%s)", event, host, port, target)
+	}
+	if event.PID <= 0 {
+		t.Fatalf("event.PID = %d, want the connecting process", event.PID)
+	}
+}
+
+// runEgressHelper runs this test binary as the workload under init. The helper
+// function dials the target, which the init supervisor must observe.
+func runEgressHelper(ctx context.Context, socket, target string) (string, error) {
+	return runEgressHelperRequest(ctx, socket, Request{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=^TestEgressHelperProcess$"},
+		Env: map[string]string{
+			"GO_WANT_INIT_EGRESS_HELPER": "1",
+			"INIT_EGRESS_HELPER_TARGET":  target,
+		},
+	})
+}
+
+func runEgressHelperTTY(ctx context.Context, socket, target string) (string, error) {
+	return runEgressHelperRequest(ctx, socket, Request{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=^TestEgressHelperProcess$"},
+		Env: map[string]string{
+			"GO_WANT_INIT_EGRESS_HELPER": "1",
+			"INIT_EGRESS_HELPER_TARGET":  target,
+		},
+		TTY:  true,
+		Rows: 24,
+		Cols: 80,
+	})
+}
+
+func runEgressHelperRequest(ctx context.Context, socket string, request Request) (string, error) {
+	client := NewClient(socket)
+	session, err := client.Exec(ctx, request)
+	if err != nil {
+		return "", fmt.Errorf("exec helper: %w", err)
+	}
+	defer func() { _ = session.Close() }()
+	var output strings.Builder
+	exitCode := -1
+	for {
+		frame, err := session.Next(ctx)
+		if err != nil {
+			return output.String(), fmt.Errorf("read helper frame: %w", err)
+		}
+		switch frame.Type {
+		case FrameStdout, FrameStderr:
+			output.Write(frame.Data)
+		case FrameExit:
+			exitCode = frame.Code
+		}
+		if frame.Type == FrameExit {
+			break
+		}
+	}
+	if exitCode != 0 {
+		return output.String(), fmt.Errorf("helper exit code = %d; output: %s", exitCode, output.String())
+	}
+	return output.String(), nil
+}
+
+// TestEgressHelperProcess is the workload. It only runs when the parent test
+// starts this binary through init with GO_WANT_INIT_EGRESS_HELPER=1.
+func TestEgressHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_INIT_EGRESS_HELPER") != "1" {
+		return
+	}
+	status, err := os.ReadFile("/proc/self/status")
+	if err == nil {
+		for _, line := range strings.Split(string(status), "\n") {
+			if strings.HasPrefix(line, "Seccomp_filters:") {
+				fmt.Printf("filters:%s\n", strings.TrimSpace(strings.TrimPrefix(line, "Seccomp_filters:")))
+				break
+			}
+		}
+	}
+	conn, err := net.DialTimeout("tcp", os.Getenv("INIT_EGRESS_HELPER_TARGET"), 3*time.Second)
+	if err != nil {
+		fmt.Printf("dial-error:%v\n", err)
+		os.Exit(1)
+	}
+	_ = conn.Close()
+	fmt.Println("dial-ok")
+}

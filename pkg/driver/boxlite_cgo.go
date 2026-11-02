@@ -157,6 +157,7 @@ import (
 	"errors"
 	"fmt"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 	"io"
 	"log/slog"
 	"os"
@@ -1392,6 +1393,9 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	baseEnv["STATE_ROOT"] = r.config.GuestStateRoot
 	baseEnv["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
 	baseEnv["JUPYTER_TOKEN"] = proxyState.Token
+	if egress, ok := sandboxInitEgressEnv(r.config); ok {
+		baseEnv[sandboxinit.EgressModeEnvVar] = egress
+	}
 	if len(baseEnv) > 0 {
 		keys := make([]string, 0, len(baseEnv))
 		for key := range baseEnv {

@@ -1293,6 +1293,9 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
 	env["JUPYTER_TOKEN"] = proxyState.Token
+	if egress, ok := sandboxInitEgressEnv(r.config); ok {
+		env[sandboxinit.EgressModeEnvVar] = egress
+	}
 	// The declared network policy decides egress. DNS rebind protection is a
 	// daemon-level setting that defaults to on; a deployment that turns it off
 	// is allowed to resolve names pointing at private addresses, so say so once

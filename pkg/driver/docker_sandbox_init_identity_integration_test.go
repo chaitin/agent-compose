@@ -29,7 +29,7 @@ func TestDockerSandboxInitIdentityHandshakeIntegration(t *testing.T) {
 		t.Skip("set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE to a guest image with the identity-aware ac-init")
 	}
 	hostTmp := hostVisibleTestDir(t)
-	runtime, sandbox := startDockerInitSandboxForTest(t, hostTmp, image)
+	runtime, sandbox := startDockerInitSandboxForTest(t, hostTmp, image, "")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -76,7 +76,7 @@ func TestDockerSandboxInitLegacyHandshakeAcceptedIntegration(t *testing.T) {
 		t.Skip("set AGENT_COMPOSE_TEST_DOCKER_INIT_LEGACY_IMAGE to a guest image with a pre-handshake ac-init")
 	}
 	hostTmp := hostVisibleTestDir(t)
-	runtime, sandbox := startDockerInitSandboxForTest(t, hostTmp, image)
+	runtime, sandbox := startDockerInitSandboxForTest(t, hostTmp, image, "")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
@@ -104,7 +104,7 @@ func hostVisibleTestDir(t *testing.T) string {
 // startDockerInitSandboxForTest creates one init-backed Docker sandbox through
 // the driver and returns it. EnsureSandbox itself exercises the daemon-side
 // handshake because the readiness wait calls VerifySandbox.
-func startDockerInitSandboxForTest(t *testing.T, hostTmp, image string) (*dockerRuntime, *Sandbox) {
+func startDockerInitSandboxForTest(t *testing.T, hostTmp, image, egressMode string) (*dockerRuntime, *Sandbox) {
 	t.Helper()
 	root, err := os.MkdirTemp(hostTmp, "data-")
 	if err != nil {
@@ -131,6 +131,7 @@ func startDockerInitSandboxForTest(t *testing.T, hostTmp, image string) (*docker
 		SandboxInitEnabled:   true,
 		SandboxInitBinary:    "/.agent-compose/ac-init",
 		SandboxInitSocketDir: initDir,
+		SandboxInitEgress:    egressMode,
 		SandboxStartTimeout:  2 * time.Minute,
 		SandboxStopTimeout:   30 * time.Second,
 		JupyterReadyTimeout:  time.Second,

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -35,6 +36,13 @@ type Options struct {
 	// left behind by another sandbox. Empty keeps the pre-identity behavior for
 	// tests and for a guest image that predates the handshake.
 	SandboxID string
+	// EgressMode selects how init watches egress. The zero value and off are
+	// indistinguishable; audit installs the seccomp observer, and enforce is
+	// rejected until mediation exists.
+	EgressMode EgressMode
+	// EgressAuditSink receives observed connections. A nil sink logs them, which
+	// is the production behavior and keeps the dependency explicit in tests.
+	EgressAuditSink EgressAuditSink
 	// Hooks is the future isolation extension point.
 	Hooks Hooks
 }
@@ -100,15 +108,39 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	egressMode, err := ParseEgressMode(string(opts.EgressMode))
+	if err != nil {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+		return err
+	}
+	var egress *egressSupervisor
+	if egressMode == EgressModeAudit {
+		if err := egressInterceptionSupported(); err != nil {
+			slog.Warn("sandbox init egress audit is unavailable on this guest; continuing without it", "error", err)
+		} else {
+			egress, err = newEgressSupervisor(egressMode, strings.TrimSpace(opts.SandboxID), opts.EgressAuditSink)
+			if err != nil {
+				_ = listener.Close()
+				_ = os.Remove(socketPath)
+				return err
+			}
+		}
+	}
 	manager := newProcessManager(opts.Hooks)
+	manager.egress = egress
 	go manager.runReaper()
+	capabilities := ServerCapabilities()
+	if egress.enabled() {
+		capabilities = append(capabilities, CapabilityEgressAudit)
+	}
 
 	server := &initServer{
 		listener:     listener,
 		manager:      manager,
 		stop:         cancel,
 		sandboxID:    strings.TrimSpace(opts.SandboxID),
-		capabilities: ServerCapabilities(),
+		capabilities: capabilities,
 	}
 	go server.acceptLoop(runCtx)
 

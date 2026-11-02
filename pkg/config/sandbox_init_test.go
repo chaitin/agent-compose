@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 )
 
 func TestSandboxInitConfigDefaultsOff(t *testing.T) {
@@ -84,5 +86,47 @@ func TestSandboxInitConfigRejectsAnOverlongRuntimeRoot(t *testing.T) {
 	t.Setenv("SANDBOX_INIT_ENABLED", "false")
 	if _, err := loadSandboxInitConfig(); err != nil {
 		t.Fatalf("loadSandboxInitConfig rejected the path while init is disabled: %v", err)
+	}
+}
+
+func TestSandboxInitEgressDefaultsOff(t *testing.T) {
+	t.Setenv("SANDBOX_INIT_EGRESS", "")
+	config, err := loadSandboxInitConfig()
+	if err != nil {
+		t.Fatalf("loadSandboxInitConfig() error = %v", err)
+	}
+	if config.Egress != sandboxinit.EgressModeOff {
+		t.Fatalf("egress = %q, want off", config.Egress)
+	}
+}
+
+func TestSandboxInitEgressReadsAndValidatesTheMode(t *testing.T) {
+	for _, test := range []struct {
+		raw       string
+		want      sandboxinit.EgressMode
+		wantError bool
+	}{
+		{raw: "audit", want: sandboxinit.EgressModeAudit},
+		{raw: " AUDIT ", want: sandboxinit.EgressModeAudit},
+		{raw: "off", want: sandboxinit.EgressModeOff},
+		{raw: "enforce", wantError: true},
+		{raw: "observe", wantError: true},
+	} {
+		t.Run(test.raw, func(t *testing.T) {
+			t.Setenv("SANDBOX_INIT_EGRESS", test.raw)
+			config, err := loadSandboxInitConfig()
+			if test.wantError {
+				if err == nil {
+					t.Fatal("loadSandboxInitConfig() accepted an invalid egress mode")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadSandboxInitConfig() error = %v", err)
+			}
+			if config.Egress != test.want {
+				t.Fatalf("egress = %q, want %q", config.Egress, test.want)
+			}
+		})
 	}
 }

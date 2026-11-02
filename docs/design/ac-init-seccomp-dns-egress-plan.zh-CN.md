@@ -256,21 +256,34 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
   对 workload 不可读；现有 exec/interaction/kill 行为不变。
 - 测试：`pkg/sandboxinit` 握手/legacy/不匹配用例；Docker/k8s 单测；Docker e2e。
 
-### PR2：exec trampoline + seccomp listener + audit 模式（M，约 800–1200 行）
+### PR2：exec trampoline + seccomp listener + audit 模式（本 PR，M）
 
-- 目的：把“拦截基础设施”落地，但默认不改变行为。
-- 内容：
-  - `ac-init --exec-child`：LockOSThread、no_new_privs、安装 filter（只 USER_NOTIF
-    `connect` + 拒绝 `io_uring_setup`）、SCM_RIGHTS 传 listener、exec 目标；
-  - init 侧每 session 的通知循环；`connect` 只做“读 sockaddr + 记日志 + CONTINUE”
-    （audit 模式；CONTINUE 在这里仅用于观察，不用于 enforce）；
-  - runtime capability probe（guest 内）；
-  - 配置 `SANDBOX_INIT_EGRESS=off|audit`；
-  - trampoline 的 `Hooks`/`SysProcAttr` 顺序修复先在这里做掉（后续 seccomp-Landlock 复用）。
-- 验收：Docker 上 `ac-init` 每个 exec 都有 filter（`/proc/<pid>/status` Seccomp=2）；
-  audit 模式能打出 connect(pid, session, dest)；所有现有 runner 不回归；KVM 真机 smoke。
-- 测试：单元（filter 编译、trampoline 参数、通知 spoof 返回码）、Docker 集成、
-  `-race`、并发 exec。
+实现：
+
+- `ac-init --exec-child` trampoline：`LockOSThread`、`PR_SET_NO_NEW_PRIVS`、安装
+  BPF filter（`connect` → USER_NOTIF，`io_uring_setup` → EPERM，arch 不匹配 →
+  KILL_PROCESS）、通过 init 预先建立的 socketpair 用 `SCM_RIGHTS` 交 listener，
+  再 `syscall.Exec` 目标；
+- init 每个 exec session 一个 supervisor goroutine：`NOTIF_RECV` → `ID_VALID` →
+  `process_vm_readv` 读 sockaddr → 记录 `sandbox/session/marker/pid/family/host/port` →
+  `SECCOMP_USER_NOTIF_FLAG_CONTINUE`；TTY 与非 TTY 共用同一 trampoline；
+- guest 内 capability probe（kernel ≥5.5 + `SECCOMP_RET_USER_NOTIF`）；不满足时
+  audit 降级为 off 并在 pong 能力列表里不出现 `egress-audit`；
+- 配置 `SANDBOX_INIT_EGRESS=off|audit`（`enforce` 在 PR3 前显式报错）；四种 driver
+  把模式作为环境变量注入 sandbox（旧 init 忽略该变量）；
+- 修复 `Hooks.Prepare` 在 `SysProcAttr` 之前被覆盖的顺序问题，后续 seccomp/Landlock
+  可在同一 trampoline 扩展；
+- audit 只看不改：filter 安装失败时 fail-open（记录告警）；filter 已安装但 listener
+  交接失败时 trampoline 拒绝 exec，避免 workload 的 connect 变成 ENOSYS。
+
+验收与实测：
+
+- `pkg/sandboxinit` 主机内测试：filter BPF 规则、kernel 版本解析、真实 connect
+  audit（非 TTY / TTY / 3 路并发），`-race` 通过；
+- Docker 真机（29.8.1 / arm64）：`TestDockerSandboxInitEgressAuditIntegration` 通过——
+  exec 进程 `Seccomp_filters >= 2`（容器默认 + init filter），Python connect 成功
+  （CONTINUE 生效），container log 出现 `sandbox init egress audit` 且 host/port 正确；
+- PR1 的身份/legacy 集成测试在 PR2 镜像上复跑通过。
 
 ### PR3：TCP connect 改道到 daemon proxy（L，约 1000–1500 行，核心 PR）
 
