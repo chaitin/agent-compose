@@ -66,17 +66,28 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       --output /out/agent-compose \
       --version "${VERSION}"
 
+# The read-only operations helper reads the daemon's SQLite state; it needs no
+# cgo runtime and is built without the driver tags the daemon requires.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build \
+      -ldflags "-X github.com/chaitin/agent-compose/pkg/config.BuildVersion=${VERSION}" \
+      -o /out/agent-compose-ops ./cmd/agent-compose-ops
+
 FROM scratch AS agent-compose-artifact
 COPY --from=go-build /out/agent-compose /out/agent-compose
+COPY --from=go-build /out/agent-compose-ops /out/agent-compose-ops
 
 FROM ${REGISTRY_MIRROR}/library/debian:trixie-slim
 RUN apt-get update &&     apt-get install -y --no-install-recommends ca-certificates git python3 tini tzdata e2fsprogs qemu-utils &&     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=go-build /out/agent-compose /app/agent-compose
 RUN ln -sf /app/agent-compose /usr/local/bin/agent-compose
+COPY --from=go-build /out/agent-compose-ops /app/agent-compose-ops
+RUN ln -sf /app/agent-compose-ops /usr/local/bin/agent-compose-ops
 COPY --from=boxlite-build /out/runtime /app/boxlite/runtime
 COPY --from=microsandbox-fetch /out /app/microsandbox
 RUN test -x /app/agent-compose && \
+    test -x /app/agent-compose-ops && \
     command -v qemu-img >/dev/null && \
     mkfs.ext4 2>&1 | grep -Fq -- '[-d root-directory' && \
     test -x /app/boxlite/runtime/boxlite-guest && \

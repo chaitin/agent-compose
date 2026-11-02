@@ -134,6 +134,7 @@ version_active=0
 
 runtime_check='set -eu
 test -x /app/agent-compose
+test -x /app/agent-compose-ops
 test -x /app/boxlite/runtime/boxlite-guest
 test -x /app/boxlite/runtime/boxlite-shim
 test -x /app/boxlite/runtime/bwrap

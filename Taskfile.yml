@@ -516,7 +516,7 @@ tasks:
 
   build:
     desc: Build project binaries
-    deps: ['build:agent-compose', 'build:proto', 'build:runtime-sdk']
+    deps: ['build:agent-compose', 'build:agent-compose-ops', 'build:proto', 'build:runtime-sdk']
     cmds:
       - echo "build all done"
 
@@ -607,6 +607,12 @@ tasks:
       AGENT_COMPOSE_BUILD_VERSION: '{{.VERSION}}'
     cmds:
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} ./scripts/build-agent-compose-binary.sh --profile linux-full --goarch "$AGENT_COMPOSE_BUILD_TARGET_ARCH" --output ./build/agent-compose --version "$AGENT_COMPOSE_BUILD_VERSION"
+
+  build:agent-compose-ops:
+    desc: Build the read-only agent-compose-ops upgrade helper
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} CGO_ENABLED=0 {{.GO_TOOLCHAIN_ENV}} go build -ldflags "-X github.com/chaitin/agent-compose/pkg/config.BuildVersion={{.VERSION}}" -o ./build/agent-compose-ops ./cmd/agent-compose-ops
 
   build:proto:
     desc: Verify maintained agent-compose protobuf Go packages build
