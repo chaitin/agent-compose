@@ -19,6 +19,8 @@ const (
 	// seccompDataNR and seccompDataArch are byte offsets in struct seccomp_data.
 	seccompDataNR   = 0
 	seccompDataArch = 4
+	// seccompDataArgs is the offset of the args[6] array in struct seccomp_data.
+	seccompDataArgs = 16
 	// seccompUserNotifContinue tells the kernel to execute the intercepted
 	// syscall after the supervisor inspected its arguments.
 	seccompUserNotifContinue = 0x00000001
@@ -138,7 +140,15 @@ func installEgressFilter() (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	program := buildEgressFilter(arch, uint32(unix.SYS_CONNECT), uint32(unix.SYS_IO_URING_SETUP))
+	program := buildEgressFilter(arch, egressFilterSyscalls{
+		Connect:      uint32(unix.SYS_CONNECT),
+		IOUringSetup: uint32(unix.SYS_IO_URING_SETUP),
+		Sendto:       uint32(unix.SYS_SENDTO),
+		Sendmsg:      uint32(unix.SYS_SENDMSG),
+		Recvfrom:     uint32(unix.SYS_RECVFROM),
+		Getpeername:  uint32(unix.SYS_GETPEERNAME),
+		Recvmsg:      uint32(unix.SYS_RECVMSG),
+	})
 	fprog := unix.SockFprog{
 		Len:    uint16(len(program)),
 		Filter: &program[0],
@@ -153,25 +163,75 @@ func installEgressFilter() (int, error) {
 // buildEgressFilter returns the classic BPF program. connect is reported to
 // user space; io_uring_setup fails closed; an architecture mismatch kills the
 // process rather than letting a foreign ABI slip past the connect check.
-func buildEgressFilter(arch, connectNR, ioUringSetupNR uint32) []unix.SockFilter {
+// buildEgressFilter returns the classic BPF program:
+//
+//	connect          -> user notification
+//	io_uring_setup   -> EPERM (io_uring bypasses seccomp connect checks)
+//	sendmsg          -> user notification (the name is only visible in memory)
+//	sendto with a destination pointer -> user notification
+//	everything else  -> allow
+//
+// A connected sendto and a sendmsg without a name are left to the kernel: the
+// socket was already redirected to the policy DNS when it connected, and
+// notifying every stream write would add an upcall per write.
+// egressFilterSyscalls names the syscalls the filter treats specially.
+type egressFilterSyscalls struct {
+	Connect      uint32
+	IOUringSetup uint32
+	Sendto       uint32
+	Sendmsg      uint32
+	Recvfrom     uint32
+	Getpeername  uint32
+	Recvmsg      uint32
+}
+
+func buildEgressFilter(arch uint32, syscalls egressFilterSyscalls) []unix.SockFilter {
 	return []unix.SockFilter{
 		// 0: A = seccomp_data.arch
 		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: seccompDataArch},
-		// 1: if arch matches continue at 2, otherwise go to 8 (kill)
-		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 6, K: arch},
+		// 1: if arch matches continue at 2, otherwise kill at 22
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 20, K: arch},
 		// 2: A = seccomp_data.nr
 		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: seccompDataNR},
 		// 3: connect -> 4, otherwise 5
-		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: connectNR},
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: syscalls.Connect},
 		// 4: SECCOMP_RET_USER_NOTIF
 		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_USER_NOTIF)},
 		// 5: io_uring_setup -> 6, otherwise 7
-		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: ioUringSetupNR},
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: syscalls.IOUringSetup},
 		// 6: SECCOMP_RET_ERRNO(EPERM)
 		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_ERRNO) | uint32(unix.EPERM)},
-		// 7: SECCOMP_RET_ALLOW
+		// 7: sendmsg -> 8 (always notify), otherwise 9
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: syscalls.Sendmsg},
+		// 8: SECCOMP_RET_USER_NOTIF
+		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_USER_NOTIF)},
+		// 9: recvfrom -> 10 (the supervisor continues non-DNS sockets), otherwise 11
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: syscalls.Recvfrom},
+		// 10: SECCOMP_RET_USER_NOTIF
+		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_USER_NOTIF)},
+		// 11: getpeername -> 12 (source spoofing for redirected DNS sockets), otherwise 13
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: syscalls.Getpeername},
+		// 12: SECCOMP_RET_USER_NOTIF
+		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_USER_NOTIF)},
+		// 13: recvmsg -> 14 (temporary observation of resolver reads), otherwise 15
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 1, K: syscalls.Recvmsg},
+		// 14: SECCOMP_RET_USER_NOTIF
+		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_USER_NOTIF)},
+		// 15: sendto -> 16, otherwise allow at 21
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 5, K: syscalls.Sendto},
+		// 16: A = low word of args[4] (the destination pointer)
+		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: seccompDataArgs + 4*8},
+		// 17: a zero low word may still be a non-null pointer, so continue to the high word
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 0, Jf: 2, K: 0},
+		// 18: A = high word of args[4]
+		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: seccompDataArgs + 4*8 + 4},
+		// 19: both words are zero -> allow at 21, otherwise notify at 20
+		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, Jt: 1, Jf: 0, K: 0},
+		// 20: SECCOMP_RET_USER_NOTIF
+		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_USER_NOTIF)},
+		// 21: SECCOMP_RET_ALLOW
 		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_ALLOW)},
-		// 8: SECCOMP_RET_KILL_PROCESS
+		// 22: SECCOMP_RET_KILL_PROCESS
 		{Code: unix.BPF_RET | unix.BPF_K, K: uint32(unix.SECCOMP_RET_KILL_PROCESS)},
 	}
 }
@@ -220,13 +280,53 @@ func notificationIDValid(listenerFD int, id uint64) bool {
 	return errno == 0
 }
 
+// rawMsghdr and rawMmsghdr mirror the kernel's sendmmsg ABI. The listener is
+// handed over with sendmmsg rather than sendmsg because the installed filter
+// notifies sendmsg: using sendmsg would make the trampoline wait for a
+// supervisor that cannot exist until the listener arrives.
+type rawMsghdr struct {
+	Name       uint64
+	Namelen    uint32
+	_          uint32
+	Iov        uint64
+	Iovlen     uint64
+	Control    uint64
+	Controllen uint64
+	Flags      int32
+	_          int32
+}
+
+type rawMmsghdr struct {
+	Msg    rawMsghdr
+	Msglen uint32
+	_      uint32
+}
+
 // sendListener sends the notification listener over the socketpair created by
 // init. The trampoline must not exec the workload if this fails: a filter whose
 // listener never reaches the supervisor answers connect with ENOSYS.
 func sendListener(sock *os.File, listenerFD int) error {
-	rights := unix.UnixRights(listenerFD)
-	if err := unix.Sendmsg(int(sock.Fd()), []byte{1}, rights, nil, 0); err != nil {
-		return fmt.Errorf("send sandbox init egress listener: %w", err)
+	payload := []byte{1}
+	control := make([]byte, unix.CmsgSpace(4))
+	binary.NativeEndian.PutUint64(control[0:8], uint64(unix.CmsgLen(4)))
+	binary.NativeEndian.PutUint32(control[8:12], uint32(unix.SOL_SOCKET))
+	binary.NativeEndian.PutUint32(control[12:16], uint32(unix.SCM_RIGHTS))
+	binary.NativeEndian.PutUint32(control[16:20], uint32(listenerFD))
+	iov := []unix.Iovec{{Base: &payload[0], Len: 1}}
+	messages := []rawMmsghdr{{
+		Msg: rawMsghdr{
+			Iov:        uint64(uintptr(unsafe.Pointer(&iov[0]))),
+			Iovlen:     1,
+			Control:    uint64(uintptr(unsafe.Pointer(&control[0]))),
+			Controllen: uint64(len(control)),
+		},
+	}}
+	sent, _, errno := unix.Syscall6(unix.SYS_SENDMMSG, sock.Fd(), uintptr(unsafe.Pointer(&messages[0])), 1, 0, 0, 0)
+	if errno != 0 {
+		return fmt.Errorf("send sandbox init egress listener: %w", errno)
+	}
+	if sent != 1 {
+		return fmt.Errorf("send sandbox init egress listener: sent %d messages, want 1", sent)
 	}
 	return nil
 }

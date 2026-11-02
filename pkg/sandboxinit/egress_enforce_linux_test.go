@@ -373,6 +373,29 @@ func TestInitEgressPolicyDNSPassesEngineHostThrough(t *testing.T) {
 	}
 }
 
+func TestInitEgressPolicyDNSConnectedGetpeername(t *testing.T) {
+	requireEnforceSupport(t)
+	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
+	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	waitForDNSPort(t)
+	output, err := runEgressHelperUDP(ctx, socket, "udp-connected-dns", "allowed.example")
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	for _, want := range []string{"peer 8.8.8.8:53", "source 8.8.8.8:53", "synthetic 198.1"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("helper output = %q, want %q", output, want)
+		}
+	}
+}
+
 func waitForDNSPort(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -433,4 +456,64 @@ func queryPolicyDNS(t *testing.T, name string, queryType dnsmessage.Type) []dnsm
 		t.Fatal(err)
 	}
 	return answers
+}
+
+func TestInitEgressPolicyDNSSendtoUnconnected(t *testing.T) {
+	requireEnforceSupport(t)
+	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
+	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	waitForDNSPort(t)
+	output, err := runEgressHelperUDP(ctx, socket, "udp-dns", "allowed.example")
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	if !strings.Contains(output, "synthetic 198.1") {
+		t.Fatalf("helper output = %q, want a synthetic DNS answer", output)
+	}
+	if requests := proxy.received(); len(requests) != 0 {
+		t.Fatalf("proxy received %d requests for a DNS datagram", len(requests))
+	}
+}
+
+func TestInitEgressPolicyDNSSendmsgUnconnected(t *testing.T) {
+	requireEnforceSupport(t)
+	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
+	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	waitForDNSPort(t)
+	output, err := runEgressHelperUDP(ctx, socket, "udp-sendmsg", "allowed.example")
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	if !strings.Contains(output, "synthetic 198.1") {
+		t.Fatalf("helper output = %q, want a synthetic DNS answer", output)
+	}
+	if requests := proxy.received(); len(requests) != 0 {
+		t.Fatalf("proxy received %d requests for a DNS datagram", len(requests))
+	}
+}
+
+func runEgressHelperUDP(ctx context.Context, socket, mode, name string) (string, error) {
+	return runEgressHelperRequest(ctx, socket, Request{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=^TestEgressHelperProcess$"},
+		Env: map[string]string{
+			"GO_WANT_INIT_EGRESS_HELPER":  "1",
+			"INIT_EGRESS_HELPER_MODE":     mode,
+			"INIT_EGRESS_HELPER_DNS_NAME": name,
+		},
+	})
 }

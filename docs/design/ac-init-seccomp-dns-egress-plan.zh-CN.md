@@ -353,14 +353,34 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
   重定向；
 - PR1–PR3 的 identity/audit/enforce/legacy 集成测试在 PR4 镜像上复跑通过。
 
-### PR5：UDP DNS（sendto/sendmsg）与非标准 resolver（M）
+### PR5：UDP DNS 与 resolver 兼容矩阵（本 PR，M）
 
-- c-ares / 部分 Node/Python resolver 走 unconnected UDP `sendto`：
-  拦截 `sendto`/`sendmsg` 到 53，复制 fd 由 init 发到 stub；响应自然回到目标 socket
-  （同一 open file description，不消费目标队列）。
-- 处理 IPv6-only、`AF_VSOCK`/其它 family 的拒绝语义；补 client 矩阵。
-- 验收：Node 原生 `dns.lookup`、`fetch`、Python `socket`、Go `net`、curl 在 enforce 下
-  全部走 stub；无直连 DNS。
+实现：
+
+- seccomp filter 增加 `sendto`（仅当目标指针非空时）、`sendmsg`、`recvfrom`、
+  `getpeername` 通知；`sendto`/`sendmsg` 到 `:53` 时 init 读取 payload、用
+  `pidfd_getfd` 复制 workload socket、由 init 把原始 DNS 报文转发到 stub；
+- stub 响应到达 workload 自己的 socket 队列后，`recvfrom` 通知把数据写回目标缓冲区，
+  并把 `source` sockaddr 恢复成 workload 配置的 nameserver；`getpeername` 同样返回
+  原 nameserver。c-ares 会校验 peer/source，不做这一步会把所有响应丢掉（实测
+  `dns.resolve4` ETIMEOUT）；
+- 非 DNS datagram 仍然 fail closed；非 DNS 的 `recvfrom`/`getpeername` 直接 CONTINUE；
+- trampoline 的 listener 交接改用 `sendmmsg`，避免 filter 对 `sendmsg` 的通知在
+  supervisor 尚不存在时把 trampoline 自己阻塞（这是本 PR 调试中发现并修复的死锁）；
+- 已知残余：`sendmmsg` 未被 filter 拦截（trampoline 用它交接），使用它的 resolver
+  仍可能绕过策略 DNS；TCP egress 不受影响。
+
+验收与实测：
+
+- 主机内：`TestInitEgressPolicyDNS(Sendto|Sendmsg)Unconnected` 验证 unconnected
+  sendto/sendmsg 经 stub 得到合成地址；`TestInitEgressPolicyDNSConnectedGetpeername`
+  验证 connect 后 `getpeername`/`recvfrom` 的 source 都是原 nameserver；
+- Docker 真机：`TestDockerSandboxInitEgressPolicyDNSDatagramIntegration` 用 Python
+  unconnected `sendto` 与 `sendmsg` 拿到 198.18 合成地址；
+  `TestDockerSandboxInitEgressPolicyDNSNodeResolverIntegration` 用 Node c-ares
+  `dns.resolve4`（系统 nameserver 10.2.255.2）拿到合成地址，验证 source/getpeername
+  恢复路径；
+- PR1–PR4 的集成测试在 PR5 镜像上复跑通过；`-race`、lint 通过。
 
 ### PR6：身份、per-run 策略与审计（M）
 

@@ -26,6 +26,8 @@ type egressSupervisor struct {
 	dns            *egressDNS
 	bypassIPs      map[string]struct{}
 	localIPs       map[string]struct{}
+	dnsMu          sync.Mutex
+	dnsSockets     map[uint64]dnsSocketDestination
 	connectTimeout time.Duration
 }
 
@@ -44,6 +46,7 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 		sink:           sink,
 		logger:         slog.Default(),
 		connectTimeout: egressConnectTimeout,
+		dnsSockets:     make(map[uint64]dnsSocketDestination),
 	}
 	if mode == EgressModeEnforce {
 		proxy, err := loadEgressProxyTarget()
@@ -126,7 +129,18 @@ func (s *egressSupervisor) serve(listenerFD int, sessionID, marker string) {
 
 func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNotif, sessionID, marker string) {
 	if s.mode == EgressModeEnforce {
-		s.handleEnforce(listenerFD, request, sessionID, marker)
+		switch int32(request.Data.NR) {
+		case int32(unix.SYS_CONNECT):
+			s.handleEnforce(listenerFD, request, sessionID, marker)
+		case int32(unix.SYS_SENDTO), int32(unix.SYS_SENDMSG):
+			s.handleEnforceDatagram(listenerFD, request, sessionID, marker)
+		case int32(unix.SYS_RECVFROM):
+			s.handleEnforceRecvfrom(listenerFD, request, sessionID, marker)
+		case int32(unix.SYS_GETPEERNAME):
+			s.handleEnforceGetpeername(listenerFD, request)
+		default:
+			_ = ioctlNotifSend(listenerFD, &seccompNotifResp{ID: request.ID, Flags: seccompUserNotifContinue})
+		}
 		return
 	}
 	if request.Data.NR != int32(unix.SYS_CONNECT) {

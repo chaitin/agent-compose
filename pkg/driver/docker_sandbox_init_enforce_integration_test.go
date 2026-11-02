@@ -251,3 +251,116 @@ s.close()'`
 		t.Fatalf("proxy requests = %v, want CONNECT allowed.example:443", requests)
 	}
 }
+
+// TestDockerSandboxInitEgressPolicyDNSDatagramIntegration exercises resolvers
+// that use unconnected UDP sendto/sendmsg instead of connect.
+func TestDockerSandboxInitEgressPolicyDNSDatagramIntegration(t *testing.T) {
+	image := strings.TrimSpace(os.Getenv("AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE"))
+	if image == "" {
+		t.Skip("set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE to a guest image with the enforce-aware ac-init")
+	}
+	hostTmp := hostVisibleTestDir(t)
+	gateway := dockerBridgeGatewayIP(t)
+	proxy := startDockerFakeEgressProxy(t, "200 Connection Established", true)
+	proxyURL := fmt.Sprintf("http://sandbox-1:secret@%s:%d", gateway, proxy.port())
+	runtime, sandbox := startDockerInitSandboxForTest(t, hostTmp, image, "enforce",
+		SandboxEnvVar{Name: "HTTP_PROXY", Value: proxyURL},
+		SandboxEnvVar{Name: "HTTPS_PROXY", Value: proxyURL},
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	command := `python3 -c 'import struct, socket
+def query(name):
+    header = struct.pack("!HHHHHH", 0x1234, 0x0100, 1, 0, 0, 0)
+    qname = b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\x00"
+    return header + qname + struct.pack("!HH", 1, 1)
+def skip_name(data, off):
+    while True:
+        length = data[off]
+        if length == 0:
+            return off + 1
+        if length & 0xC0 == 0xC0:
+            return off + 2
+        off += 1 + length
+def first_ip(data):
+    off = skip_name(data, 12) + 4
+    off = skip_name(data, off) + 10
+    return socket.inet_ntoa(data[off:off+4])
+message = query("allowed.example")
+a = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+a.settimeout(5)
+a.sendto(message, ("8.8.8.8", 53))
+data, _ = a.recvfrom(4096)
+print("sendto", first_ip(data))
+b = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+b.settimeout(5)
+b.sendmsg([message], [], 0, ("8.8.8.8", 53))
+data, _ = b.recvfrom(4096)
+print("sendmsg", first_ip(data))'`
+	result, err := runtime.Exec(ctx, sandbox, VMState{}, ExecSpec{
+		Command: "/bin/sh",
+		Args:    []string{"-c", command},
+		Cwd:     "/",
+	})
+	if err != nil {
+		t.Fatalf("Exec(UDP DNS) error = %v; stderr: %s", err, result.Stderr)
+	}
+	for _, want := range []string{"sendto 198.1", "sendmsg 198.1"} {
+		if !strings.Contains(result.Stdout, want) {
+			t.Fatalf("workload output = %q, want %q", result.Stdout, want)
+		}
+	}
+}
+
+// TestDockerSandboxInitEgressPolicyDNSNodeResolverIntegration exercises the
+// c-ares resolver Node uses for dns.resolve4, which is a different syscall path
+// from the libc getaddrinfo resolver.
+func TestDockerSandboxInitEgressPolicyDNSNodeResolverIntegration(t *testing.T) {
+	image := strings.TrimSpace(os.Getenv("AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE"))
+	if image == "" {
+		t.Skip("set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE to a guest image with the enforce-aware ac-init")
+	}
+	hostTmp := hostVisibleTestDir(t)
+	gateway := dockerBridgeGatewayIP(t)
+	proxy := startDockerFakeEgressProxy(t, "200 Connection Established", true)
+	proxyURL := fmt.Sprintf("http://sandbox-1:secret@%s:%d", gateway, proxy.port())
+	runtime, sandbox := startDockerInitSandboxForTest(t, hostTmp, image, "enforce",
+		SandboxEnvVar{Name: "HTTP_PROXY", Value: proxyURL},
+		SandboxEnvVar{Name: "HTTPS_PROXY", Value: proxyURL},
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	command := `node -e 'require("dns").resolve4("allowed.example", function (error, addresses) { if (error) { console.log("node-resolve", error.code); return; } console.log("node-resolve", addresses.join(",")); })'`
+	result, err := runtime.Exec(ctx, sandbox, VMState{}, ExecSpec{
+		Command: "/bin/sh",
+		Args:    []string{"-c", command},
+		Cwd:     "/",
+	})
+	if err != nil {
+		t.Fatalf("Exec(node DNS) error = %v; stderr: %s", err, result.Stderr)
+	}
+	if !strings.Contains(result.Stdout, "node-resolve 198.1") {
+		t.Fatalf("workload output = %q, want a synthetic c-ares answer; init logs:\n%s", result.Stdout, sandboxInitLogs(t, runtime, sandbox, ctx))
+	}
+}
+
+// sandboxInitLogs returns the init stderr tail for failure diagnostics.
+func sandboxInitLogs(t *testing.T, runtime *dockerRuntime, sandbox *Sandbox, ctx context.Context) string {
+	t.Helper()
+	client, err := runtime.newClient()
+	if err != nil {
+		return "newClient: " + err.Error()
+	}
+	defer func() { _ = client.Close() }()
+	info, ok, err := runtime.findContainer(ctx, client, sandbox, VMState{})
+	if err != nil || !ok {
+		return "findContainer failed"
+	}
+	logs, err := runtime.readContainerLogs(ctx, client, info.ID)
+	if err != nil {
+		return "read logs: " + err.Error()
+	}
+	return logs
+}

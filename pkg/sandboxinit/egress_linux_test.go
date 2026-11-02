@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/sys/unix"
 )
 
@@ -46,9 +47,9 @@ func execChildIndex(args []string) int {
 }
 
 func TestEgressFilterProgram(t *testing.T) {
-	program := buildEgressFilter(0x1234, 42, 43)
-	if len(program) != 9 {
-		t.Fatalf("filter length = %d, want 9", len(program))
+	program := buildEgressFilter(0x1234, egressFilterSyscalls{Connect: 42, IOUringSetup: 43, Sendto: 44, Sendmsg: 45, Recvfrom: 46, Getpeername: 47, Recvmsg: 48})
+	if len(program) != 23 {
+		t.Fatalf("filter length = %d, want 23", len(program))
 	}
 	if program[0].K != seccompDataArch {
 		t.Fatalf("first load offset = %d, want %d", program[0].K, seccompDataArch)
@@ -59,8 +60,23 @@ func TestEgressFilterProgram(t *testing.T) {
 	if program[6].K != uint32(unix.SECCOMP_RET_ERRNO)|uint32(unix.EPERM) {
 		t.Fatalf("io_uring action = %#x, want SECCOMP_RET_ERRNO(EPERM)", program[6].K)
 	}
-	if program[8].K != uint32(unix.SECCOMP_RET_KILL_PROCESS) {
-		t.Fatalf("arch mismatch action = %#x, want SECCOMP_RET_KILL_PROCESS", program[8].K)
+	if program[8].K != uint32(unix.SECCOMP_RET_USER_NOTIF) {
+		t.Fatalf("sendmsg action = %#x, want SECCOMP_RET_USER_NOTIF", program[8].K)
+	}
+	if program[10].K != uint32(unix.SECCOMP_RET_USER_NOTIF) {
+		t.Fatalf("recvfrom action = %#x, want SECCOMP_RET_USER_NOTIF", program[10].K)
+	}
+	if program[12].K != uint32(unix.SECCOMP_RET_USER_NOTIF) {
+		t.Fatalf("getpeername action = %#x, want SECCOMP_RET_USER_NOTIF", program[12].K)
+	}
+	if program[14].K != uint32(unix.SECCOMP_RET_USER_NOTIF) {
+		t.Fatalf("recvmsg action = %#x, want SECCOMP_RET_USER_NOTIF", program[14].K)
+	}
+	if program[16].K != seccompDataArgs+4*8 || program[18].K != seccompDataArgs+4*8+4 {
+		t.Fatalf("sendto pointer offsets = %d/%d, want %d/%d", program[16].K, program[18].K, seccompDataArgs+4*8, seccompDataArgs+4*8+4)
+	}
+	if program[22].K != uint32(unix.SECCOMP_RET_KILL_PROCESS) {
+		t.Fatalf("arch mismatch action = %#x, want SECCOMP_RET_KILL_PROCESS", program[22].K)
 	}
 }
 
@@ -348,6 +364,100 @@ func TestEgressHelperProcess(t *testing.T) {
 		return
 	}
 	target := os.Getenv("INIT_EGRESS_HELPER_TARGET")
+	if mode == "udp-connected-dns" {
+		query := buildDNSQuery(os.Getenv("INIT_EGRESS_HELPER_DNS_NAME"), dnsmessage.TypeA)
+		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+		if err != nil {
+			fmt.Printf("socket-error:%v\n", err)
+			os.Exit(1)
+		}
+		defer func() { _ = unix.Close(fd) }()
+		if err := unix.Connect(fd, &unix.SockaddrInet4{Addr: [4]byte{8, 8, 8, 8}, Port: 53}); err != nil {
+			fmt.Printf("connect-error:%v\n", err)
+			os.Exit(1)
+		}
+		peer, err := unix.Getpeername(fd)
+		if err != nil {
+			fmt.Printf("getpeername-error:%v\n", err)
+			os.Exit(1)
+		}
+		peerAddr, _ := peer.(*unix.SockaddrInet4)
+		if peerAddr == nil {
+			fmt.Printf("peer-family:%T\n", peer)
+			os.Exit(1)
+		}
+		fmt.Printf("peer %s:%d\n", net.IP(peerAddr.Addr[:]), peerAddr.Port)
+		if err := unix.Send(fd, query, 0); err != nil {
+			fmt.Printf("send-error:%v\n", err)
+			os.Exit(1)
+		}
+		buffer := make([]byte, 4096)
+		read, from, err := unix.Recvfrom(fd, buffer, 0)
+		if err != nil {
+			fmt.Printf("recvfrom-error:%v\n", err)
+			os.Exit(1)
+		}
+		if source, ok := from.(*unix.SockaddrInet4); ok {
+			fmt.Printf("source %s:%d\n", net.IP(source.Addr[:]), source.Port)
+		}
+		ip, err := firstAAnswer(buffer[:read])
+		if err != nil {
+			fmt.Printf("dns-parse-error:%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("synthetic %s\n", ip)
+		return
+	}
+	if mode == "udp-dns" || mode == "udp-sendmsg" {
+		name := os.Getenv("INIT_EGRESS_HELPER_DNS_NAME")
+		query := buildDNSQuery(name, dnsmessage.TypeA)
+		var response []byte
+		if mode == "udp-dns" {
+			conn, err := net.ListenPacket("udp", "0.0.0.0:0")
+			if err != nil {
+				fmt.Printf("udp-error:%v\n", err)
+				os.Exit(1)
+			}
+			defer func() { _ = conn.Close() }()
+			_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+			if _, err := conn.WriteTo(query, &net.UDPAddr{IP: net.IPv4(8, 8, 8, 8), Port: 53}); err != nil {
+				fmt.Printf("sendto-error:%v\n", err)
+				os.Exit(1)
+			}
+			buffer := make([]byte, 4096)
+			read, _, err := conn.ReadFrom(buffer)
+			if err != nil {
+				fmt.Printf("recvfrom-error:%v\n", err)
+				os.Exit(1)
+			}
+			response = buffer[:read]
+		} else {
+			fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+			if err != nil {
+				fmt.Printf("socket-error:%v\n", err)
+				os.Exit(1)
+			}
+			defer func() { _ = unix.Close(fd) }()
+			if _, err := unix.SendmsgN(fd, query, nil, &unix.SockaddrInet4{Addr: [4]byte{8, 8, 8, 8}, Port: 53}, 0); err != nil {
+				fmt.Printf("sendmsg-error:%v\n", err)
+				os.Exit(1)
+			}
+			buffer := make([]byte, 4096)
+			read, _, err := unix.Recvfrom(fd, buffer, 0)
+			if err != nil {
+				fmt.Printf("recvfrom-error:%v\n", err)
+				os.Exit(1)
+			}
+			response = buffer[:read]
+		}
+		ip, err := firstAAnswer(response)
+		if err != nil {
+			fmt.Printf("dns-parse-error:%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("synthetic %s\n", ip)
+		return
+	}
 	if mode == "dns-echo" {
 		name := os.Getenv("INIT_EGRESS_HELPER_DNS_NAME")
 		addresses, err := net.LookupHost(name)
@@ -379,4 +489,40 @@ func TestEgressHelperProcess(t *testing.T) {
 		return
 	}
 	fmt.Println("dial-ok")
+}
+
+// buildDNSQuery builds one UDP DNS query for the helper process.
+func buildDNSQuery(name string, queryType dnsmessage.Type) []byte {
+	if !strings.HasSuffix(name, ".") {
+		name += "."
+	}
+	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 9, RecursionDesired: true})
+	_ = builder.StartQuestions()
+	_ = builder.Question(dnsmessage.Question{Name: dnsmessage.MustNewName(name), Type: queryType, Class: dnsmessage.ClassINET})
+	message, err := builder.Finish()
+	if err != nil {
+		return nil
+	}
+	return message
+}
+
+// firstAAnswer returns the first A record of a DNS response.
+func firstAAnswer(message []byte) (net.IP, error) {
+	var parser dnsmessage.Parser
+	if _, err := parser.Start(message); err != nil {
+		return nil, err
+	}
+	if err := parser.SkipAllQuestions(); err != nil {
+		return nil, err
+	}
+	answers, err := parser.AllAnswers()
+	if err != nil {
+		return nil, err
+	}
+	for _, answer := range answers {
+		if resource, ok := answer.Body.(*dnsmessage.AResource); ok {
+			return net.IP(resource.A[:]), nil
+		}
+	}
+	return nil, fmt.Errorf("response has no A record")
 }

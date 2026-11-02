@@ -281,6 +281,7 @@ func (d *egressDNS) answer(query []byte) []byte {
 		RecursionAvailable: true,
 		RCode:              dnsmessage.RCodeSuccess,
 	})
+	builder.EnableCompression()
 	if err := builder.StartQuestions(); err != nil {
 		return nil
 	}
