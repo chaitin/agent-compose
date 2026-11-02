@@ -160,6 +160,13 @@ func orphanedSchedulerSandbox(
 // switch from sticky to new, and config changes, so the binding alone cannot
 // exempt a sandbox from reclamation.
 func schedulerBindingStillValid(ctx context.Context, runs schedulerRunReader, binding domain.SchedulerBinding) (bool, error) {
+	// A retiring binding marks a sandbox that is being replaced and is never a
+	// valid sticky target. Its sandbox must be reclaimed rather than exempted,
+	// otherwise a crash between the retirement CAS and the old sandbox's
+	// shutdown leaves the sandbox running until the next reuse retires it.
+	if _, retiring := schedulers.RetiringSchedulerBindingConfigHash(binding); retiring {
+		return false, nil
+	}
 	scheduler, err := runs.GetScheduler(ctx, binding.SchedulerID)
 	if errors.Is(err, domain.ErrNotFound) {
 		return false, nil
@@ -182,12 +189,15 @@ func schedulerBindingStillValid(ctx context.Context, runs schedulerRunReader, bi
 			return false, nil
 		}
 	}
-	// A legacy binding may predate the scheduler config hash and is claimed on
-	// the next reuse; only compare the hash when the row already carries one.
-	// The scheduler-level (base) hash — not the full request-level sandbox
-	// config hash — is the correct scope here: the full hash folds in
-	// per-request inputs unavailable at startup, while the base hash is
-	// derivable from the scheduler alone.
+	// A legacy binding predates the persisted configuration hashes. The full
+	// request-level hash is claimed on the next reuse, but the scheduler-level
+	// (base) hash is not backfilled by legacy adoption, so an adopted row keeps
+	// an empty base hash and this check is skipped for it — a conservative keep
+	// rather than a reclaim. Only compare the base hash when the row already
+	// carries one. The base hash — not the full request-level sandbox config
+	// hash — is the correct scope here: the full hash folds in per-request
+	// inputs unavailable at startup, while the base hash is derivable from the
+	// scheduler alone.
 	if hash := strings.TrimSpace(binding.SchedulerConfigHash); hash != "" {
 		currentHash, err := schedulers.SchedulerSandboxConfigHash(scheduler)
 		if err != nil {

@@ -174,6 +174,14 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 			schedulers: map[string]domain.Scheduler{"sched": stickyScheduler},
 		},
 		{
+			name:        "retiring binding is reclaimed",
+			sandboxes:   []*domain.Sandbox{schedulerSandboxFixture("sb-retiring", "scheduler", "sched", "run-failed", "remove", before)},
+			runs:        map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
+			bindings:    map[string]domain.SchedulerBinding{"sb-retiring": {SchedulerID: "sched", TriggerID: "trigger-a", SandboxID: "sb-retiring", SandboxConfigHash: "retiring:sha256:next", SchedulerConfigHash: stickyBaseHash}},
+			schedulers:  map[string]domain.Scheduler{"sched": stickyScheduler},
+			wantStopped: []string{"sb-retiring"},
+		},
+		{
 			name:      "stale binding after policy switch is reclaimed",
 			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-stale-policy", "scheduler", "sched", "run-failed", "remove", before)},
 			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
