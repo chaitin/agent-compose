@@ -172,6 +172,31 @@ func (s *egressSupervisor) handleEnforce(listenerFD int, request *seccompNotif, 
 		s.denyConnect(listenerFD, request.ID, event, "cannot read the workload socket type")
 		return
 	}
+	domain, err := unix.GetsockoptInt(targetFD, unix.SOL_SOCKET, unix.SO_DOMAIN)
+	if err != nil {
+		s.denyConnect(listenerFD, request.ID, event, "cannot read the workload socket family")
+		return
+	}
+	// Every DNS query goes to the sandbox's policy resolver, whatever address
+	// the workload was configured with.
+	if destination.Port == 53 && s.dns != nil {
+		s.redirectToDNS(listenerFD, request.ID, targetFD, domain, event)
+		return
+	}
+	// A synthetic answer is only meaningful as the name the workload asked
+	// for; map it back so the daemon policy is evaluated against the name. An
+	// unmapped synthetic address is refused rather than sent anywhere.
+	if s.dns != nil {
+		if ip := net.ParseIP(destination.Host); ip != nil {
+			if hostname, ok := s.dns.hostnameForIP(ip); ok {
+				destination.Host = hostname
+				event = destination
+			} else if s.dns.syntheticIP(ip) {
+				s.denyConnect(listenerFD, request.ID, event, "synthetic DNS address is not mapped to a name")
+				return
+			}
+		}
+	}
 	// Local IPC and sandbox-local services are not egress; they keep working
 	// for stream, datagram, and Unix sockets alike.
 	if destination.Family == "unix" || s.isLocalDestination(destination) {
@@ -179,12 +204,6 @@ func (s *egressSupervisor) handleEnforce(listenerFD int, request *seccompNotif, 
 		return
 	}
 	if socketType != unix.SOCK_STREAM {
-		// DNS stays on its current path until the policy DNS stub lands. Any
-		// other datagram traffic has no mediated representation yet.
-		if destination.Port == 53 {
-			s.connectDirect(listenerFD, request.ID, targetFD, rawAddress, event)
-			return
-		}
 		s.denyConnect(listenerFD, request.ID, event, "datagram egress is not mediated")
 		return
 	}
@@ -233,6 +252,27 @@ func (s *egressSupervisor) connectDirect(listenerFD int, id uint64, targetFD int
 	}
 	event.Decision = "allow"
 	event.Reason = "bypass"
+	s.record(event)
+	replyConnect(listenerFD, id, 0)
+}
+
+// redirectToDNS connects the duplicated socket to the local policy resolver,
+// keeping the workload's own DNS wire format intact for UDP and TCP alike.
+func (s *egressSupervisor) redirectToDNS(listenerFD int, id uint64, targetFD int, domain int, event EgressAuditEvent) {
+	rawAddress := s.dns.rawAddrForDomain(domain)
+	if rawAddress == nil {
+		s.denyConnect(listenerFD, id, event, "no sandbox DNS resolver for this address family")
+		return
+	}
+	if errno := connectSockaddr(targetFD, rawAddress, s.connectTimeout); errno != 0 {
+		event.Decision = "deny"
+		event.Reason = fmt.Sprintf("connect to the sandbox DNS resolver failed: %v", errno)
+		s.record(event)
+		replyConnect(listenerFD, id, errno)
+		return
+	}
+	event.Decision = "allow"
+	event.Reason = "dns-stub"
 	s.record(event)
 	replyConnect(listenerFD, id, 0)
 }

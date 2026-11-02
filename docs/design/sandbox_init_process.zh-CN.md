@@ -369,7 +369,7 @@ enforce 模式在 audit 的拦截基础上把连接改道到 daemon egress proxy
   proxy credential。CONNECT 请求带 `X-Agent-Compose-Sandbox/Session/Marker` 身份头
   （daemon 侧消费在 PR6）；
 - 不经过 proxy、直接连接的目的地：`AF_UNIX`、loopback、沙箱自身接口地址、proxy 自身地址；
-  非 DNS 的 UDP 一律拒绝，DNS（UDP/TCP 53）暂时保持直连（PR4 换成策略 DNS）；
+  非 DNS 的 UDP 一律拒绝；DNS（UDP/TCP 53）被重定向到沙箱内策略 DNS（见 7.9）；
 - Docker/Kubernetes 的 sandbox 容器在 enforce 时加 `CAP_SYS_PTRACE`（Docker 默认
   seccomp profile 只在该 cap 下允许 `pidfd_getfd`）；trampoline 在 exec 前把
   `SYS_PTRACE/SYS_ADMIN/NET_ADMIN/NET_RAW/BPF/PERFMON/SYS_MODULE` 从 workload 的
@@ -381,7 +381,27 @@ enforce 模式在 audit 的拦截基础上把连接改道到 daemon egress proxy
   会返回 proxy 地址；proxy-aware 客户端如果保留 proxy env 会直连 proxy（init 的 bypass
   路径），enforce 下我们已 unset，因此不会发生。
 
-### 7.9 Stage 2 测试
+### 7.9 Policy DNS（PR4）
+
+enforce 模式下 init 在 `127.0.0.1:53`（以及 `::1:53`，若 guest 支持）同时监听 UDP 与
+TCP DNS：
+
+- 发往任意地址 `:53` 的 connect（包括 Docker 内嵌 DNS 127.0.0.11、外部 8.8.8.8）
+  都会被改连到 stub；UDP/TCP 均支持，AF_INET6 socket 重定向到 `::1:53`；
+- A 查询返回 `198.18.0.0/15` 合成地址（TTL 30s），AAAA 返回空 answer，让应用的
+  双栈 resolver 回退 IPv4；非 A/AAAA 查询返回空 NOERROR；
+- stub 维护 `hostname ↔ 合成 IP` 映射；connect 到合成 IP 时还原 hostname，CONNECT
+  发 `hostname:port`，因此 daemon 的域名 allow/deny、`allowed_ips` 按声明生效；
+  未映射的合成地址直接拒绝（不直连）；
+- engine 自己的 hostname（`AGENT_COMPOSE_RUNTIME_BASE_URL` 与 proxy host）是
+  passthrough：stub 返回真实地址，facade/Jupyter 不被当作普通 egress 处理；
+- 不做 `/etc/resolv.conf` 改写：拦截 `:53` 的 connect 已经覆盖系统 resolver，
+  同时避免 init 自己的解析被 stub 递归劫持。副作用是明确使用 unconnected UDP
+  `sendto` 的 resolver 仍可能绕过 stub，PR5 处理；
+- stub 启动失败（例如端口被占用）只记录告警，TCP 改道仍工作，但域名策略退化为
+  IP 策略；`egress-dns` 能力不会出现在 pong 里。
+
+### 7.10 Stage 2 测试
 
 - 单元：profile 校验、filter 编译、Landlock ruleset、cgroup 路径、失败语义；
 - 集成：allow/deny syscall probe、文件读写 probe、fork/exec、pids limit、进程退出清理；

@@ -309,9 +309,10 @@ func decodeConnectAddress(buf []byte) (EgressAuditEvent, error) {
 			Port:   int(binary.BigEndian.Uint16(buf[2:4])),
 		}, nil
 	case unix.AF_UNIX:
+		path, _, _ := strings.Cut(string(buf[2:]), "\x00")
 		return EgressAuditEvent{
 			Family:   "unix",
-			UnixPath: strings.TrimRight(string(buf[2:]), "\x00"),
+			UnixPath: path,
 		}, nil
 	default:
 		return EgressAuditEvent{Family: fmt.Sprintf("family-%d", family)}, nil

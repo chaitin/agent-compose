@@ -23,6 +23,7 @@ type egressSupervisor struct {
 	sink           EgressAuditSink
 	logger         *slog.Logger
 	proxy          *egressProxyTarget
+	dns            *egressDNS
 	bypassIPs      map[string]struct{}
 	localIPs       map[string]struct{}
 	connectTimeout time.Duration
@@ -51,12 +52,30 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 		}
 		supervisor.proxy = proxy
 		supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(proxy)
+		dns, dnsErr := startEgressDNS(sandboxID, egressDNSPassthrough(proxy))
+		if dnsErr != nil {
+			// Mediation still works without the DNS stub; port 53 then keeps
+			// its non-mediated path and hostname policy is weaker. Report it
+			// rather than failing egress entirely.
+			slog.Warn("sandbox init policy DNS is unavailable; DNS stays on its previous path", "error", dnsErr)
+		} else {
+			supervisor.dns = dns
+		}
 	}
 	return supervisor, nil
 }
 
 func (s *egressSupervisor) enabled() bool {
 	return s != nil && (s.mode == EgressModeAudit || s.mode == EgressModeEnforce)
+}
+
+// close releases the DNS listeners. Mediation itself has no long-lived
+// resources beyond the per-session listeners.
+func (s *egressSupervisor) close() {
+	if s == nil {
+		return
+	}
+	s.dns.close()
 }
 
 // adopt waits for the trampoline of one exec session to hand over its

@@ -34,6 +34,9 @@ const (
 	// CapabilityEgressMediate is seccomp user-notification mediation: every
 	// workload connect is redirected through the daemon egress proxy.
 	CapabilityEgressMediate = "egress-mediate"
+	// CapabilityEgressDNS is the policy DNS stub that answers A queries with
+	// synthetic addresses and passes engine-owned names through.
+	CapabilityEgressDNS = "egress-dns"
 )
 
 // SandboxIDEnvVar is the environment variable that carries the sandbox ID into

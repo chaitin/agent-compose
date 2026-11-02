@@ -321,25 +321,37 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
   Python 收到 `ConnectionRefusedError`；
 - PR1/PR2 的 identity/audit/legacy 集成测试在 PR3 镜像上复跑通过；`-race`、lint 通过。
 
-### PR4：DNS stub + 合成地址 + 域名策略（L，约 600–900 行）
+### PR4：DNS stub + 合成地址 + 域名策略（本 PR，L）
 
-- 目的：让域名声明真正生效，并关闭 DNS 外泄。
-- 内容：
-  - init 起 UDP/TCP `127.0.0.1:53` DNS stub；A 合成（198.18.0.0/15，TTL 30s）、
-    AAAA 空；`hostname↔IP` LRU；
-  - 启动时写 `/etc/resolv.conf` 指向 127.0.0.1；
-  - connect 到任意 `:53` → 改连本地 stub；
-  - connect 到合成 IP → 用还原后的 hostname 发 CONNECT；
-  - 策略演示改为域名 allow/deny，覆盖 `allowed_ips`。
-- 验收：
-  - `getent hosts allowed.example` 返回 198.18.x.x；`curl https://allowed.example` 成功；
-  - denied 域名解析到合成地址但 connect 被 403（或 NXDOMAIN 由后续策略 DNS 决定）；
-  - 硬编码 `8.8.8.8` 的 DNS 也被改道；
-  - 无任何 DNS 查询离开沙箱（抓包/daemon 记录验证）；
-  - `pip/npm/git https/codex/pi/claude` 全链路 smoke。
-- 拆分建议：若一个 PR 仍然偏大，可拆成
-  PR4a（DNS stub + resolv.conf + connect:53 改道，先不做 hostname 还原）、
-  PR4b（合成 IP ↔ hostname + 域名策略）。
+实现：
+
+- init 在 `127.0.0.1:53` / `::1:53` 同时起 UDP 与 TCP 策略 DNS；A 查询返回
+  `198.18.0.0/15` 合成地址（TTL 30s），AAAA 返回空 answer，其它类型空 NOERROR；
+- 发往任意 `:53` 的 connect（Docker 内嵌 127.0.0.11、外部 8.8.8.8 等）在 enforce
+  路径里被改连到 stub；按目标 socket 的 `SO_DOMAIN` 选择 IPv4/IPv6 stub；
+- connect 到合成 IP 时从映射还原 hostname，CONNECT 发 `hostname:port`，daemon 的
+  域名 allow/deny 与 `allowed_ips` 按声明生效；未映射的合成地址 fail closed；
+- engine hostname（`AGENT_COMPOSE_RUNTIME_BASE_URL` 和 proxy host）passthrough 到
+  真实地址，facade/Jupyter 不被当作普通 egress；
+- 不改写 `/etc/resolv.conf`：拦截 `:53` 已覆盖系统 resolver，同时避免 init 自己的
+  解析被 stub 递归劫持；
+- stub 启动失败只告警（TCP 改道继续，域名策略退化为 IP 策略），`egress-dns`
+  能力只在 stub 真正启动时广告；
+- 已知未覆盖：unconnected UDP `sendto` 型 resolver（PR5）；DoH/DoT 走普通 TCP
+  策略路径；域名 allow/deny 的 daemon 侧报告与审计在 PR6。
+
+验收与实测：
+
+- 主机内：`TestInitEgressPolicyDNSAnswersSyntheticAddresses` 断言 A 为
+  198.18/15、TTL 30、AAAA 为空；`TestInitEgressPolicyDNSPassesEngineHostThrough`
+  断言 engine hostname 返回真实地址；`TestInitEgressPolicyDNSRoutesHostnameThroughProxy`
+  用 Go 的 `net.LookupHost` 走 stub，再 connect 合成地址，fake proxy 收到
+  `CONNECT allowed.example:443` 并隧道 echo；
+- Docker 真机：`TestDockerSandboxInitEgressPolicyDNSIntegration` 用 proxy-unaware
+  Python，`getaddrinfo("allowed.example")` 得到 198.18.x.x，connect 后 fake proxy
+  收到 `CONNECT allowed.example:443` 并 echo；glibc resolver 的 UDP connect 被正确
+  重定向；
+- PR1–PR3 的 identity/audit/enforce/legacy 集成测试在 PR4 镜像上复跑通过。
 
 ### PR5：UDP DNS（sendto/sendmsg）与非标准 resolver（M）
 

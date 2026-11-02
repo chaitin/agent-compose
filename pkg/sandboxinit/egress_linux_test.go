@@ -347,13 +347,24 @@ func TestEgressHelperProcess(t *testing.T) {
 		fmt.Printf("no-proxy:%s\n", os.Getenv("NO_PROXY"))
 		return
 	}
-	conn, err := net.DialTimeout("tcp", os.Getenv("INIT_EGRESS_HELPER_TARGET"), 5*time.Second)
+	target := os.Getenv("INIT_EGRESS_HELPER_TARGET")
+	if mode == "dns-echo" {
+		name := os.Getenv("INIT_EGRESS_HELPER_DNS_NAME")
+		addresses, err := net.LookupHost(name)
+		if err != nil || len(addresses) == 0 {
+			fmt.Printf("dns-error:%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("synthetic %s\n", addresses[0])
+		target = net.JoinHostPort(addresses[0], "443")
+	}
+	conn, err := net.DialTimeout("tcp", target, 5*time.Second)
 	if err != nil {
 		fmt.Printf("dial-error:%v\n", err)
 		os.Exit(1)
 	}
 	defer func() { _ = conn.Close() }()
-	if mode == "echo" {
+	if mode == "echo" || mode == "dns-echo" {
 		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		if _, err := conn.Write([]byte("ping")); err != nil {
 			fmt.Printf("write-error:%v\n", err)

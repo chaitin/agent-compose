@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/sys/unix"
 )
 
@@ -271,4 +272,165 @@ func requireEnforceSupport(t *testing.T) {
 		t.Skipf("pidfd_getfd is unavailable: %v", err)
 	}
 	_ = unix.Close(duplicate)
+}
+
+func TestInitEgressPolicyDNSAnswersSyntheticAddresses(t *testing.T) {
+	requireEnforceSupport(t)
+	t.Setenv("HTTP_PROXY", "http://sandbox-1:secret@127.0.0.1:1")
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	_ = socket
+	waitForDNSPort(t)
+
+	answers := queryPolicyDNS(t, "allowed.example.", dnsmessage.TypeA)
+	if len(answers) != 1 {
+		t.Fatalf("A answers = %d, want one synthetic address", len(answers))
+	}
+	address, ok := answers[0].Body.(*dnsmessage.AResource)
+	if !ok {
+		t.Fatalf("answer body = %T, want A", answers[0].Body)
+	}
+	ip := net.IP(address.A[:])
+	if ip[0] != 198 || (ip[1] != 18 && ip[1] != 19) {
+		t.Fatalf("synthetic answer = %s, want a 198.18.0.0/15 address", ip)
+	}
+	if answers[0].Header.TTL != egressDNSRecordTTL {
+		t.Fatalf("A TTL = %d, want %d", answers[0].Header.TTL, egressDNSRecordTTL)
+	}
+
+	aaaa := queryPolicyDNS(t, "allowed.example.", dnsmessage.TypeAAAA)
+	if len(aaaa) != 0 {
+		t.Fatalf("AAAA answers = %d, want an empty answer", len(aaaa))
+	}
+}
+
+func TestInitEgressPolicyDNSRoutesHostnameThroughProxy(t *testing.T) {
+	requireEnforceSupport(t)
+	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
+	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	waitForDNSPort(t)
+
+	output, err := runEgressHelperDNS(ctx, socket, "allowed.example")
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	if !strings.Contains(output, "synthetic 198.1") {
+		t.Fatalf("helper output = %q, want a synthetic DNS answer", output)
+	}
+	if !strings.Contains(output, "tunnel-ok ping") {
+		t.Fatalf("helper output = %q, want the tunneled echo", output)
+	}
+	requests := proxy.received()
+	if len(requests) != 1 || !strings.Contains(requests[0], "CONNECT allowed.example:443 HTTP/1.1") {
+		t.Fatalf("proxy requests = %v, want CONNECT allowed.example:443", requests)
+	}
+}
+
+func runEgressHelperDNS(ctx context.Context, socket, name string) (string, error) {
+	return runEgressHelperRequest(ctx, socket, Request{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=^TestEgressHelperProcess$"},
+		Env: map[string]string{
+			"GO_WANT_INIT_EGRESS_HELPER":  "1",
+			"INIT_EGRESS_HELPER_MODE":     "dns-echo",
+			"INIT_EGRESS_HELPER_DNS_NAME": name,
+		},
+	})
+}
+
+func TestInitEgressPolicyDNSPassesEngineHostThrough(t *testing.T) {
+	requireEnforceSupport(t)
+	t.Setenv("HTTP_PROXY", "http://sandbox-1:secret@127.0.0.1:1")
+	t.Setenv("AGENT_COMPOSE_RUNTIME_BASE_URL", "http://localhost:7410")
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	_ = socket
+	waitForDNSPort(t)
+	answers := queryPolicyDNS(t, "localhost.", dnsmessage.TypeA)
+	if len(answers) == 0 {
+		t.Fatal("engine hostname resolved to no address")
+	}
+	address, ok := answers[0].Body.(*dnsmessage.AResource)
+	if !ok {
+		t.Fatalf("answer body = %T, want A", answers[0].Body)
+	}
+	ip := net.IP(address.A[:])
+	if !ip.IsLoopback() {
+		t.Fatalf("engine hostname answer = %s, want the real loopback address, not a synthetic one", ip)
+	}
+}
+
+func waitForDNSPort(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("udp", egressDNSv4Address, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("sandbox policy DNS did not start")
+}
+
+func queryPolicyDNS(t *testing.T, name string, queryType dnsmessage.Type) []dnsmessage.Resource {
+	t.Helper()
+	builder := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 7, RecursionDesired: true})
+	if err := builder.StartQuestions(); err != nil {
+		t.Fatal(err)
+	}
+	if err := builder.Question(dnsmessage.Question{Name: dnsmessage.MustNewName(name), Type: queryType, Class: dnsmessage.ClassINET}); err != nil {
+		t.Fatal(err)
+	}
+	query, err := builder.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var read int
+	var response []byte
+	for attempt := 0; attempt < 30; attempt++ {
+		conn, err := net.DialTimeout("udp", egressDNSv4Address, time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
+		_, _ = conn.Write(query)
+		buffer := make([]byte, 4096)
+		read, err = conn.Read(buffer)
+		_ = conn.Close()
+		if err == nil {
+			response = buffer[:read]
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if response == nil {
+		t.Fatal("sandbox policy DNS did not answer")
+	}
+	var parser dnsmessage.Parser
+	if _, err := parser.Start(response); err != nil {
+		t.Fatal(err)
+	}
+	if err := parser.SkipAllQuestions(); err != nil {
+		t.Fatal(err)
+	}
+	answers, err := parser.AllAnswers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return answers
 }

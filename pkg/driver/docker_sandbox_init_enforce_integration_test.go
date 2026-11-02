@@ -204,3 +204,50 @@ func dockerBridgeGatewayIP(t *testing.T) string {
 	}
 	return "172.17.0.1"
 }
+
+// TestDockerSandboxInitEgressPolicyDNSIntegration proves a proxy-unaware client
+// resolves a policy name through the sandbox DNS stub, connects to the
+// synthetic address, and reaches the proxy with the original hostname.
+func TestDockerSandboxInitEgressPolicyDNSIntegration(t *testing.T) {
+	image := strings.TrimSpace(os.Getenv("AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE"))
+	if image == "" {
+		t.Skip("set AGENT_COMPOSE_TEST_DOCKER_INIT_IMAGE to a guest image with the enforce-aware ac-init")
+	}
+	hostTmp := hostVisibleTestDir(t)
+	gateway := dockerBridgeGatewayIP(t)
+	proxy := startDockerFakeEgressProxy(t, "200 Connection Established", true)
+	proxyURL := fmt.Sprintf("http://sandbox-1:secret@%s:%d", gateway, proxy.port())
+	runtime, sandbox := startDockerInitSandboxForTest(t, hostTmp, image, "enforce",
+		SandboxEnvVar{Name: "HTTP_PROXY", Value: proxyURL},
+		SandboxEnvVar{Name: "HTTPS_PROXY", Value: proxyURL},
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	command := `python3 -c 'import socket
+infos = socket.getaddrinfo("allowed.example", 443, 0, socket.SOCK_STREAM)
+address = infos[0][4][0]
+print("synthetic", address)
+s = socket.create_connection((address, 443), 5)
+s.sendall(b"ping")
+print("tunnel-ok", s.recv(4).decode())
+s.close()'`
+	result, err := runtime.Exec(ctx, sandbox, VMState{}, ExecSpec{
+		Command: "/bin/sh",
+		Args:    []string{"-c", command},
+		Cwd:     "/",
+	})
+	if err != nil {
+		t.Fatalf("Exec(DNS + mediated connect) error = %v; stderr: %s", err, result.Stderr)
+	}
+	if !strings.Contains(result.Stdout, "synthetic 198.1") {
+		t.Fatalf("workload output = %q, want a synthetic 198.18.0.0/15 answer", result.Stdout)
+	}
+	if !strings.Contains(result.Stdout, "tunnel-ok ping") {
+		t.Fatalf("workload output = %q, want the tunneled echo", result.Stdout)
+	}
+	requests := proxy.received()
+	if len(requests) != 1 || !strings.Contains(requests[0], "CONNECT allowed.example:443 HTTP/1.1") {
+		t.Fatalf("proxy requests = %v, want CONNECT allowed.example:443", requests)
+	}
+}

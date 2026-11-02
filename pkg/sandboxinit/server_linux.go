@@ -132,6 +132,9 @@ func Run(ctx context.Context, opts Options) error {
 			}
 		}
 	}
+	if egress != nil {
+		defer egress.close()
+	}
 	manager := newProcessManager(opts.Hooks)
 	manager.egress = egress
 	go manager.runReaper()
@@ -139,6 +142,9 @@ func Run(ctx context.Context, opts Options) error {
 	if egress.enabled() {
 		if egress.mode == EgressModeEnforce {
 			capabilities = append(capabilities, CapabilityEgressMediate)
+			if egress.dns != nil {
+				capabilities = append(capabilities, CapabilityEgressDNS)
+			}
 		} else {
 			capabilities = append(capabilities, CapabilityEgressAudit)
 		}
