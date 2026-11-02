@@ -10,6 +10,44 @@ import (
 // different builds fail with a clear message instead of misreading frames.
 const Version = 1
 
+// Capability identifiers the init server advertises in its handshake. A daemon
+// and a guest image are built and shipped independently, so additive features
+// are negotiated instead of inferred from the protocol version: an old init
+// keeps answering the requests it knows and a new client treats a missing
+// capability as "not available" rather than as a failure.
+const (
+	// CapabilityExec is the exec request and its stdout/stderr/exit frames.
+	CapabilityExec = "exec"
+	// CapabilityInteraction is stdin, resize, and signal on one exec session.
+	CapabilityInteraction = "interaction"
+	// CapabilityKillTree is marker-based process-tree termination.
+	CapabilityKillTree = "kill-tree"
+	// CapabilityProcessList is the diagnostic process listing.
+	CapabilityProcessList = "process-list"
+	// CapabilitySandboxIdentity is the pong handshake that names the sandbox
+	// this init belongs to.
+	CapabilitySandboxIdentity = "sandbox-identity"
+)
+
+// SandboxIDEnvVar is the environment variable that carries the sandbox ID into
+// the init process. It travels through the driver environment instead of a new
+// command-line flag so a daemon upgrade never makes an older guest init reject
+// its own entrypoint arguments.
+const SandboxIDEnvVar = "SANDBOX_ID"
+
+// ServerCapabilities returns the capabilities every init build of this protocol
+// version offers. It returns a fresh slice so a caller cannot mutate a shared
+// capability list.
+func ServerCapabilities() []string {
+	return []string{
+		CapabilityExec,
+		CapabilityInteraction,
+		CapabilityKillTree,
+		CapabilityProcessList,
+		CapabilitySandboxIdentity,
+	}
+}
+
 // Request types understood by the init control socket.
 const (
 	RequestExec     = "exec"
@@ -73,6 +111,11 @@ type Frame struct {
 	Code      int           `json:"code,omitempty"`
 	Message   string        `json:"message,omitempty"`
 	Processes []ProcessInfo `json:"processes,omitempty"`
+	// SandboxID and Capabilities are only carried by the pong handshake. They
+	// are empty when the other side is an init build that predates capability
+	// negotiation, which is why callers must treat empty as "legacy".
+	SandboxID    string   `json:"sandbox_id,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 // MarshalJSON keeps non-exit frames compact while making the exit status
@@ -81,19 +124,23 @@ type Frame struct {
 // missing field for clients outside the Go SDK.
 func (f Frame) MarshalJSON() ([]byte, error) {
 	type wireFrame struct {
-		Type      string        `json:"type"`
-		SessionID string        `json:"session_id,omitempty"`
-		Data      []byte        `json:"data,omitempty"`
-		Code      *int          `json:"code,omitempty"`
-		Message   string        `json:"message,omitempty"`
-		Processes []ProcessInfo `json:"processes,omitempty"`
+		Type         string        `json:"type"`
+		SessionID    string        `json:"session_id,omitempty"`
+		Data         []byte        `json:"data,omitempty"`
+		Code         *int          `json:"code,omitempty"`
+		Message      string        `json:"message,omitempty"`
+		Processes    []ProcessInfo `json:"processes,omitempty"`
+		SandboxID    string        `json:"sandbox_id,omitempty"`
+		Capabilities []string      `json:"capabilities,omitempty"`
 	}
 	out := wireFrame{
-		Type:      f.Type,
-		SessionID: f.SessionID,
-		Data:      f.Data,
-		Message:   f.Message,
-		Processes: f.Processes,
+		Type:         f.Type,
+		SessionID:    f.SessionID,
+		Data:         f.Data,
+		Message:      f.Message,
+		Processes:    f.Processes,
+		SandboxID:    f.SandboxID,
+		Capabilities: f.Capabilities,
 	}
 	if f.Type == FrameExit {
 		code := f.Code

@@ -450,8 +450,10 @@ func (r *microsandboxRuntime) waitForSandboxInit(ctx context.Context, session *S
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		if err := client.Ping(waitCtx); err == nil {
+		if _, err := client.VerifySandbox(waitCtx, session.Summary.ID); err == nil {
 			return nil
+		} else if errors.Is(err, sandboxinit.ErrSandboxMismatch) {
+			return err
 		} else {
 			lastErr = err
 		}

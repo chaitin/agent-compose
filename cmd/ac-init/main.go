@@ -57,6 +57,10 @@ func main() {
 	err := sandboxinit.Run(ctx, sandboxinit.Options{
 		ControlSocket: *controlSocket,
 		MainShell:     *mainShell,
+		// The drivers already export SANDBOX_ID into the sandbox environment.
+		// Reading it here, rather than adding a flag, keeps an older guest init
+		// working when a newer daemon starts it.
+		SandboxID: strings.TrimSpace(os.Getenv(sandboxinit.SandboxIDEnvVar)),
 	})
 	if err == nil {
 		return

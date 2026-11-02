@@ -119,8 +119,10 @@ func (r *k8sRuntime) waitForK8sSandboxInit(ctx context.Context, clientset kubern
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		if err := client.Ping(waitCtx); err == nil {
+		if _, err := client.VerifySandbox(waitCtx, sandbox.Summary.ID); err == nil {
 			return nil
+		} else if errors.Is(err, sandboxinit.ErrSandboxMismatch) {
+			return err
 		} else {
 			lastErr = err
 		}

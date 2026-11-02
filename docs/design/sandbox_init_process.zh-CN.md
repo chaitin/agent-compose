@@ -91,12 +91,25 @@ Unix socket 上使用 newline-delimited JSON。选择 JSON 而不是 gRPC 是为
 {"type":"error","message":"..."}
 {"type":"killed"}
 {"type":"processes","processes":[...]}
-{"type":"pong"}
+{"type":"pong","sandbox_id":"...","capabilities":["exec","interaction","kill-tree","process-list","sandbox-identity"]}
 ```
 
 - 一个 exec session 一个连接；连接断开不会杀进程（支持 detach/attach 语义），daemon 在 context 取消时显式 `kill`。
 - `kill_tree` 先按 manager 中的 marker 找进程组，再扫描 `/proc/<pid>/environ` 的 marker 环境变量，覆盖已脱离原进程组的后代。
 - `marker` 由 daemon 生成/传入；Stage 1 沿用现有 execution marker 字符串。
+
+### 4.3 握手与身份
+
+- `pong` 承载握手：`sandbox_id` 是 init 所属 sandbox（来自 driver 已有的 `SANDBOX_ID`
+  环境变量，不新增命令行参数，避免新 daemon 让旧 init 拒绝启动），`capabilities` 是
+  additive 能力列表。
+- 新增能力**不 bump `Version`**：daemon 与 guest image 独立升级，旧 init 不认识新请求时
+  返回 `unknown init request`，客户端按“无该能力”降级；旧 init 的 `pong` 没有这两个字段，
+  daemon 视为 legacy（不强制身份）而不是失败。
+- daemon 在就绪等待里用 `VerifySandbox` 校验 `sandbox_id`：不是目标 sandbox 就立即失败，
+  不把它当成可重试的超时。
+- init 启动即 `PR_SET_DUMPABLE=0`：workload 不能通过 `/proc/1/mem`、`/proc/1/environ`
+  读取 init 持有的凭据；exec 出的子进程 dumpable 恢复默认，不影响 workload 自身调试。
 
 ---
 

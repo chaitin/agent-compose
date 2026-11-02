@@ -219,9 +219,67 @@ func (c *Client) List(ctx context.Context) ([]ProcessInfo, error) {
 	return frame.Processes, nil
 }
 
+// ServerInfo is the init handshake: which sandbox this init process serves and
+// which additive protocol capabilities it supports. Both fields are empty for
+// an init build that predates capability negotiation; callers must treat that
+// as "legacy", not as a failure.
+type ServerInfo struct {
+	SandboxID    string
+	Capabilities []string
+}
+
+// Supports reports whether the handshake advertised one capability.
+func (i ServerInfo) Supports(capability string) bool {
+	for _, candidate := range i.Capabilities {
+		if candidate == capability {
+			return true
+		}
+	}
+	return false
+}
+
+// ErrSandboxMismatch reports an init process that names a different sandbox
+// than the one the daemon intended. Unlike a transient dial error it is not
+// retryable: the daemon reached a live socket it does not own.
+var ErrSandboxMismatch = errors.New("sandbox init belongs to another sandbox")
+
+// Info performs the init handshake without checking sandbox identity.
+func (c *Client) Info(ctx context.Context) (ServerInfo, error) {
+	frame, err := c.controlFrame(ctx, Request{Type: RequestPing})
+	if err != nil {
+		return ServerInfo{}, err
+	}
+	if frame.Type != FramePong {
+		if frame.Type == FrameError {
+			return ServerInfo{}, fmt.Errorf("sandbox init: %s", frame.Message)
+		}
+		return ServerInfo{}, fmt.Errorf("sandbox init returned %q, want %q", frame.Type, FramePong)
+	}
+	return ServerInfo{
+		SandboxID:    frame.SandboxID,
+		Capabilities: append([]string(nil), frame.Capabilities...),
+	}, nil
+}
+
+// VerifySandbox performs the handshake and checks that a self-identified init
+// belongs to sandboxID. An init that reports no identity is a legacy build and
+// is accepted; the daemon only enforces identity once the guest advertises it,
+// because daemon and guest images are upgraded independently.
+func (c *Client) VerifySandbox(ctx context.Context, sandboxID string) (ServerInfo, error) {
+	info, err := c.Info(ctx)
+	if err != nil {
+		return ServerInfo{}, err
+	}
+	if info.SandboxID != "" && info.SandboxID != sandboxID {
+		return ServerInfo{}, fmt.Errorf("%w: reported %q, want %q", ErrSandboxMismatch, info.SandboxID, sandboxID)
+	}
+	return info, nil
+}
+
 // Ping verifies that init is reachable and speaking this protocol version.
 func (c *Client) Ping(ctx context.Context) error {
-	return c.control(ctx, Request{Type: RequestPing}, FramePong)
+	_, err := c.Info(ctx)
+	return err
 }
 
 // Shutdown asks init to terminate its children and exit.

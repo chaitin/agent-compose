@@ -30,6 +30,11 @@ type Options struct {
 	// MainCommand is used when MainShell is empty. The first element is the
 	// program and the rest are arguments.
 	MainCommand []string
+	// SandboxID names the sandbox this init belongs to. When set it is echoed in
+	// the pong handshake so the daemon can tell a socket it owns from a socket
+	// left behind by another sandbox. Empty keeps the pre-identity behavior for
+	// tests and for a guest image that predates the handshake.
+	SandboxID string
 	// Hooks is the future isolation extension point.
 	Hooks Hooks
 }
@@ -54,6 +59,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	if !filepath.IsAbs(socketPath) {
 		return fmt.Errorf("sandbox init control socket must be absolute: %s", socketPath)
+	}
+	// Init is the sandbox's trust anchor: it must not be a core-dumpable or
+	// ptrace-readable target for the workload it supervises. Exec resets
+	// dumpable for the children, so this only applies to init itself.
+	if err := unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0); err != nil {
+		return fmt.Errorf("make sandbox init non-dumpable: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
 		return fmt.Errorf("create sandbox init control directory: %w", err)
@@ -93,9 +104,11 @@ func Run(ctx context.Context, opts Options) error {
 	go manager.runReaper()
 
 	server := &initServer{
-		listener: listener,
-		manager:  manager,
-		stop:     cancel,
+		listener:     listener,
+		manager:      manager,
+		stop:         cancel,
+		sandboxID:    strings.TrimSpace(opts.SandboxID),
+		capabilities: ServerCapabilities(),
 	}
 	go server.acceptLoop(runCtx)
 
@@ -144,10 +157,12 @@ func mainInvocation(opts Options) (string, []string, bool) {
 }
 
 type initServer struct {
-	listener net.Listener
-	manager  *processManager
-	stop     context.CancelFunc
-	stopOnce sync.Once
+	listener     net.Listener
+	manager      *processManager
+	stop         context.CancelFunc
+	stopOnce     sync.Once
+	sandboxID    string
+	capabilities []string
 }
 
 func (s *initServer) acceptLoop(ctx context.Context) {
@@ -199,7 +214,11 @@ func (s *initServer) handleConn(ctx context.Context, conn net.Conn) {
 	case RequestList:
 		_ = encoder.Encode(Frame{Type: FrameProcesses, Processes: s.manager.list()})
 	case RequestPing:
-		_ = encoder.Encode(Frame{Type: FramePong})
+		_ = encoder.Encode(Frame{
+			Type:         FramePong,
+			SandboxID:    s.sandboxID,
+			Capabilities: append([]string(nil), s.capabilities...),
+		})
 	case RequestShutdown:
 		_ = encoder.Encode(Frame{Type: FrameShutdown})
 		s.stopOnce.Do(s.stop)

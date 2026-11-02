@@ -17,12 +17,18 @@ import (
 
 func startTestInit(t *testing.T, mainShell string) (context.CancelFunc, string) {
 	t.Helper()
+	return startTestInitWithOptions(t, Options{MainShell: mainShell})
+}
+
+func startTestInitWithOptions(t *testing.T, options Options) (context.CancelFunc, string) {
+	t.Helper()
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "init.sock")
+	options.ControlSocket = socket
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Options{ControlSocket: socket, MainShell: mainShell})
+		done <- Run(ctx, options)
 	}()
 	deadline := time.Now().Add(30 * time.Second)
 	for {
@@ -107,6 +113,45 @@ func TestInitPingAndList(t *testing.T) {
 	}
 	if len(processes) != 1 || !processes[0].Main {
 		t.Fatalf("List() = %#v, want exactly the main process", processes)
+	}
+}
+
+func TestInitHandshakeReportsSandboxIdentityAndCapabilities(t *testing.T) {
+	_, socket := startTestInitWithOptions(t, Options{MainShell: "sleep 120", SandboxID: "sandbox-1"})
+	client := NewClient(socket)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	info, err := client.VerifySandbox(ctx, "sandbox-1")
+	if err != nil {
+		t.Fatalf("VerifySandbox() error = %v", err)
+	}
+	if info.SandboxID != "sandbox-1" {
+		t.Fatalf("SandboxID = %q, want %q", info.SandboxID, "sandbox-1")
+	}
+	for _, capability := range []string{CapabilityExec, CapabilityInteraction, CapabilityKillTree, CapabilityProcessList, CapabilitySandboxIdentity} {
+		if !info.Supports(capability) {
+			t.Fatalf("capabilities = %v, want %q", info.Capabilities, capability)
+		}
+	}
+
+	if _, err := client.VerifySandbox(ctx, "sandbox-2"); !errors.Is(err, ErrSandboxMismatch) {
+		t.Fatalf("VerifySandbox(sandbox-2) error = %v, want ErrSandboxMismatch", err)
+	}
+}
+
+func TestInitHandshakeAcceptsLegacyInitWithoutIdentity(t *testing.T) {
+	_, socket := startTestInit(t, "sleep 120")
+	client := NewClient(socket)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	info, err := client.VerifySandbox(ctx, "sandbox-1")
+	if err != nil {
+		t.Fatalf("VerifySandbox() error = %v", err)
+	}
+	if info.SandboxID != "" {
+		t.Fatalf("SandboxID = %q, want empty for an init started without an identity", info.SandboxID)
 	}
 }
 
