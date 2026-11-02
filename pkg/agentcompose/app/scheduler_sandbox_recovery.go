@@ -88,7 +88,11 @@ func reconcileOrphanedSchedulerSandboxes(
 		}
 		schedulerID := strings.TrimSpace(schedulerSandboxTag(sandbox, "scheduler_id"))
 		runID := strings.TrimSpace(schedulerSandboxTag(sandbox, "scheduler_run_id"))
-		orphaned, warning := orphanedSchedulerSandbox(ctx, runs, sandbox.Summary.ID, schedulerID, runID, startedAt)
+		orphaned, warning := orphanedSchedulerSandbox(ctx, runs, schedulerSandboxOwner{
+			sandboxID:   sandbox.Summary.ID,
+			schedulerID: schedulerID,
+			runID:       runID,
+		}, startedAt)
 		if warning != "" {
 			warnings = append(warnings, warning)
 			continue
@@ -109,6 +113,14 @@ func reconcileOrphanedSchedulerSandboxes(
 	return warnings
 }
 
+// schedulerSandboxOwner identifies a scheduler sandbox and the run recorded as
+// its owner via the scheduler_id and scheduler_run_id tags.
+type schedulerSandboxOwner struct {
+	sandboxID   string
+	schedulerID string
+	runID       string
+}
+
 // orphanedSchedulerSandbox reports whether the sandbox has lost every valid
 // owner. A sandbox without a scheduler_run_id tag predates the ownership tag;
 // it is resolved through its linked scheduler event instead of being stopped
@@ -116,29 +128,29 @@ func reconcileOrphanedSchedulerSandboxes(
 func orphanedSchedulerSandbox(
 	ctx context.Context,
 	runs schedulerRunReader,
-	sandboxID, schedulerID, runID string,
+	owner schedulerSandboxOwner,
 	startedAt time.Time,
 ) (bool, string) {
-	if runID != "" {
-		run, err := runs.GetSchedulerRun(ctx, schedulerID, runID)
+	if owner.runID != "" {
+		run, err := runs.GetSchedulerRun(ctx, owner.schedulerID, owner.runID)
 		if err == nil {
 			return schedulerRunLostOwner(run, startedAt), ""
 		}
 		if errors.Is(err, domain.ErrNotFound) {
 			return true, ""
 		}
-		return false, fmt.Sprintf("look up scheduler run %s/%s for sandbox %s: %v", schedulerID, runID, sandboxID, err)
+		return false, fmt.Sprintf("look up scheduler run %s/%s for sandbox %s: %v", owner.schedulerID, owner.runID, owner.sandboxID, err)
 	}
-	if schedulerID == "" {
-		return false, fmt.Sprintf("sandbox %s has neither scheduler_run_id nor scheduler_id; leaving it for manual review", sandboxID)
+	if owner.schedulerID == "" {
+		return false, fmt.Sprintf("sandbox %s has neither scheduler_run_id nor scheduler_id; leaving it for manual review", owner.sandboxID)
 	}
-	found, err := runs.BatchGetLatestSchedulerRunsBySandboxIDs(ctx, []string{schedulerID}, []string{sandboxID})
+	found, err := runs.BatchGetLatestSchedulerRunsBySandboxIDs(ctx, []string{owner.schedulerID}, []string{owner.sandboxID})
 	if err != nil {
-		return false, fmt.Sprintf("look up linked scheduler run for legacy sandbox %s: %v", sandboxID, err)
+		return false, fmt.Sprintf("look up linked scheduler run for legacy sandbox %s: %v", owner.sandboxID, err)
 	}
-	run, ok := found[sandboxID]
+	run, ok := found[owner.sandboxID]
 	if !ok {
-		return false, fmt.Sprintf("sandbox %s has no scheduler_run_id tag and no linked scheduler run; leaving it for manual review", sandboxID)
+		return false, fmt.Sprintf("sandbox %s has no scheduler_run_id tag and no linked scheduler run; leaving it for manual review", owner.sandboxID)
 	}
 	return schedulerRunLostOwner(run, startedAt), ""
 }
