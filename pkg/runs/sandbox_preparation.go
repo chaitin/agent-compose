@@ -295,7 +295,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 		if !hasBindingStore {
 			return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, fmt.Errorf("sticky sandbox binding store is required")
 		}
-		claimed, err := bindingStore.CompareAndSwapSchedulerBinding(ctx, previousStickyBinding, domain.SchedulerBinding{SchedulerID: stickySchedulerID, TriggerID: stickyTriggerID, SandboxID: sandbox.Summary.ID, SandboxConfigHash: stickyConfigHash})
+		claimed, err := bindingStore.CompareAndSwapSchedulerBinding(ctx, previousStickyBinding, domain.SchedulerBinding{SchedulerID: stickySchedulerID, TriggerID: stickyTriggerID, SandboxID: sandbox.Summary.ID, SandboxConfigHash: stickyConfigHash, SchedulerConfigHash: req.StickyBindingConfigHash})
 		if err != nil {
 			if stopErr := c.stopProjectRunSandbox(ctx, sandbox); stopErr != nil {
 				return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, errors.Join(fmt.Errorf("persist sticky sandbox binding: %w", err), fmt.Errorf("retire unbound sticky sandbox: %w", stopErr))

@@ -26,18 +26,20 @@ func (s *schedulerBindingClaimStoreStub) CompareAndSwapSchedulerBinding(_ contex
 
 func TestSchedulerBindingsMatchComparesStickyState(t *testing.T) {
 	current := domain.SchedulerBinding{
-		SchedulerID:       "scheduler-1",
-		TriggerID:         "trigger-1",
-		SandboxID:         "sandbox-1",
-		SandboxConfigHash: "sha256:current",
-		CreatedAt:         time.Unix(1, 0),
-		UpdatedAt:         time.Unix(2, 0),
+		SchedulerID:         "scheduler-1",
+		TriggerID:           "trigger-1",
+		SandboxID:           "sandbox-1",
+		SandboxConfigHash:   "sha256:current",
+		SchedulerConfigHash: "sha256:base-current",
+		CreatedAt:           time.Unix(1, 0),
+		UpdatedAt:           time.Unix(2, 0),
 	}
 	expected := current
 	expected.SchedulerID = " scheduler-1 "
 	expected.TriggerID = " trigger-1 "
 	expected.SandboxID = " sandbox-1 "
 	expected.SandboxConfigHash = " sha256:current "
+	expected.SchedulerConfigHash = " sha256:base-current "
 	expected.CreatedAt = time.Unix(3, 0)
 	expected.UpdatedAt = time.Unix(4, 0)
 	if !SchedulerBindingsMatch(current, expected) {
@@ -45,10 +47,11 @@ func TestSchedulerBindingsMatchComparesStickyState(t *testing.T) {
 	}
 
 	for name, mutate := range map[string]func(*domain.SchedulerBinding){
-		"scheduler":   func(binding *domain.SchedulerBinding) { binding.SchedulerID = "scheduler-2" },
-		"trigger":     func(binding *domain.SchedulerBinding) { binding.TriggerID = "trigger-2" },
-		"sandbox":     func(binding *domain.SchedulerBinding) { binding.SandboxID = "sandbox-2" },
-		"config hash": func(binding *domain.SchedulerBinding) { binding.SandboxConfigHash = "sha256:other" },
+		"scheduler":             func(binding *domain.SchedulerBinding) { binding.SchedulerID = "scheduler-2" },
+		"trigger":               func(binding *domain.SchedulerBinding) { binding.TriggerID = "trigger-2" },
+		"sandbox":               func(binding *domain.SchedulerBinding) { binding.SandboxID = "sandbox-2" },
+		"config hash":           func(binding *domain.SchedulerBinding) { binding.SandboxConfigHash = "sha256:other" },
+		"scheduler config hash": func(binding *domain.SchedulerBinding) { binding.SchedulerConfigHash = "sha256:base-other" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			changed := current

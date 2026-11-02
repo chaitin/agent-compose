@@ -8,6 +8,7 @@ import (
 	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
 
 type fakeSchedulerSandboxLister struct {
@@ -110,6 +111,11 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 	after := startedAt.Add(time.Minute)
 	runningRun := domain.SchedulerRunSummary{ID: "run-running", SchedulerID: "sched", Status: domain.SchedulerRunStatusRunning, StartedAt: startedAt.Add(time.Minute)}
 	failedRun := domain.SchedulerRunSummary{ID: "run-failed", SchedulerID: "sched", Status: domain.SchedulerRunStatusFailed}
+	stickyScheduler := domain.Scheduler{
+		Summary:  domain.SchedulerSummary{ID: "sched", SandboxPolicy: domain.SchedulerSandboxPolicySticky},
+		Triggers: []domain.SchedulerTrigger{{ID: "trigger-a", SchedulerID: "sched"}},
+	}
+	stickyBaseHash := schedulerBaseHash(t, stickyScheduler)
 
 	tests := []struct {
 		name        string
@@ -161,6 +167,13 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 			}},
 		},
 		{
+			name:       "sticky binding with matching scheduler hash is kept",
+			sandboxes:  []*domain.Sandbox{schedulerSandboxFixture("sb-bound-hash", "scheduler", "sched", "run-failed", "remove", before)},
+			runs:       map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
+			bindings:   map[string]domain.SchedulerBinding{"sb-bound-hash": {SchedulerID: "sched", TriggerID: "trigger-a", SandboxID: "sb-bound-hash", SandboxConfigHash: "sha256:full-request", SchedulerConfigHash: stickyBaseHash}},
+			schedulers: map[string]domain.Scheduler{"sched": stickyScheduler},
+		},
+		{
 			name:      "stale binding after policy switch is reclaimed",
 			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-stale-policy", "scheduler", "sched", "run-failed", "remove", before)},
 			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
@@ -186,7 +199,7 @@ func TestReconcileOrphanedSchedulerSandboxes(t *testing.T) {
 			name:      "stale binding after config change is reclaimed",
 			sandboxes: []*domain.Sandbox{schedulerSandboxFixture("sb-stale-hash", "scheduler", "sched", "run-failed", "remove", before)},
 			runs:      map[string]domain.SchedulerRunSummary{"sched/run-failed": failedRun},
-			bindings:  map[string]domain.SchedulerBinding{"sb-stale-hash": {SchedulerID: "sched", TriggerID: "trigger-a", SandboxID: "sb-stale-hash", SandboxConfigHash: "stale-hash"}},
+			bindings:  map[string]domain.SchedulerBinding{"sb-stale-hash": {SchedulerID: "sched", TriggerID: "trigger-a", SandboxID: "sb-stale-hash", SchedulerConfigHash: "sha256:stale-base"}},
 			schedulers: map[string]domain.Scheduler{"sched": {
 				Summary:  domain.SchedulerSummary{ID: "sched", SandboxPolicy: domain.SchedulerSandboxPolicySticky},
 				Triggers: []domain.SchedulerTrigger{{ID: "trigger-a", SchedulerID: "sched"}},
@@ -281,4 +294,13 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func schedulerBaseHash(t *testing.T, scheduler domain.Scheduler) string {
+	t.Helper()
+	hash, err := schedulers.SchedulerSandboxConfigHash(scheduler)
+	if err != nil {
+		t.Fatalf("SchedulerSandboxConfigHash: %v", err)
+	}
+	return hash
 }

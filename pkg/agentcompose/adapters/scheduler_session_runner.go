@@ -124,6 +124,7 @@ type resolvedSchedulerSandboxConfig struct {
 	GuestImage        string
 	VolumeMounts      []domain.SandboxVolumeMount
 	VolumeWarnings    []string
+	BaseConfigHash    string
 	ConfigHash        string
 }
 
@@ -221,6 +222,7 @@ func (r *SchedulerSandboxRunner) resolveSchedulerSandboxConfig(ctx context.Conte
 		GuestImage:        guestImage,
 		VolumeMounts:      volumeMounts,
 		VolumeWarnings:    volumeWarnings,
+		BaseConfigHash:    baseConfigHash,
 		ConfigHash:        configHash,
 	}, nil
 }
@@ -352,10 +354,11 @@ func (r *SchedulerSandboxRunner) Ensure(ctx context.Context, scheduler domain.Sc
 	}
 	if effectivePolicy == domain.SchedulerSandboxPolicySticky && !forceNew {
 		claimed, err := r.bindSchedulerSandbox(ctx, domain.SchedulerBinding{
-			SchedulerID:       scheduler.Summary.ID,
-			TriggerID:         request.BindingTriggerID,
-			SandboxID:         session.Summary.ID,
-			SandboxConfigHash: configHash,
+			SchedulerID:         scheduler.Summary.ID,
+			TriggerID:           request.BindingTriggerID,
+			SandboxID:           session.Summary.ID,
+			SandboxConfigHash:   configHash,
+			SchedulerConfigHash: cfg.BaseConfigHash,
 		}, previousBinding)
 		if err != nil {
 			_ = r.Shutdown(ctx, session.Summary.ID)

@@ -866,7 +866,7 @@ func assertTableColumns(t *testing.T, store *ConfigStore, table string, columns 
 
 func assertSandboxNamedSQLiteSchema(t *testing.T, store *ConfigStore) {
 	t.Helper()
-	assertTableColumns(t, store, "scheduler_sandbox_binding", "sandbox_id", "sandbox_config_hash")
+	assertTableColumns(t, store, "scheduler_sandbox_binding", "sandbox_id", "sandbox_config_hash", "scheduler_config_hash")
 	assertTableColumns(t, store, "scheduler_event", "linked_sandbox_id", "linked_agent_thread_id")
 	assertTableDoesNotExist(t, store, "loader")
 	assertTableDoesNotExist(t, store, "loader_binding")

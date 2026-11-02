@@ -170,9 +170,13 @@ func schedulerBindingStillValid(ctx context.Context, runs schedulerRunReader, bi
 			return false, nil
 		}
 	}
-	// A legacy binding may predate the hash and is claimed on the next reuse;
-	// only compare the hash when the row already carries one.
-	if hash := strings.TrimSpace(binding.SandboxConfigHash); hash != "" {
+	// A legacy binding may predate the scheduler config hash and is claimed on
+	// the next reuse; only compare the hash when the row already carries one.
+	// The scheduler-level (base) hash — not the full request-level sandbox
+	// config hash — is the correct scope here: the full hash folds in
+	// per-request inputs unavailable at startup, while the base hash is
+	// derivable from the scheduler alone.
+	if hash := strings.TrimSpace(binding.SchedulerConfigHash); hash != "" {
 		currentHash, err := schedulers.SchedulerSandboxConfigHash(scheduler)
 		if err != nil {
 			return false, err

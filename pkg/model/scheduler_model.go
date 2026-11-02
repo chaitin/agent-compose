@@ -113,12 +113,17 @@ type SchedulerEvent struct {
 }
 
 type SchedulerBinding struct {
-	SchedulerID       string    `json:"scheduler_id"`
-	TriggerID         string    `json:"trigger_id,omitempty"`
-	SandboxID         string    `json:"sandbox_id"`
-	SandboxConfigHash string    `json:"sandbox_config_hash,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	SchedulerID       string `json:"scheduler_id"`
+	TriggerID         string `json:"trigger_id,omitempty"`
+	SandboxID         string `json:"sandbox_id"`
+	SandboxConfigHash string `json:"sandbox_config_hash,omitempty"`
+	// SchedulerConfigHash records the scheduler-level (base) configuration hash
+	// at bind time. Startup reclamation compares it against the current
+	// scheduler because the full SandboxConfigHash folds in per-request inputs
+	// that are unavailable outside a run.
+	SchedulerConfigHash string    `json:"scheduler_config_hash,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type SchedulerAgentRequest struct {
