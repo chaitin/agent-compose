@@ -458,7 +458,7 @@ func (c *Controller) applyProject(ctx context.Context, req ApplyRequest, lifecyc
 		agents, listAgentsErr := c.store.ListProjectAgents(ctx, project.ID)
 		if listAgentsErr != nil {
 			// The listing failure is reported for diagnosis only and is formatted
-			// with %v on purpose. projectConnectError classifies this error with an
+			// with %v on purpose. projectWriteConnectError classifies this error with an
 			// ordered switch, so wrapping a second, unrelated cause would let the
 			// follow-up failure decide the status code instead of the reconcile
 			// failure that actually broke the apply.

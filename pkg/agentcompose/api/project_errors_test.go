@@ -229,6 +229,11 @@ func TestConnectErrorForProjectPreservesPremappedCode(t *testing.T) {
 	if detail.Effect != EffectToProto(apierror.EffectUnknown) {
 		t.Fatalf("effect = %s, want unknown (no marker)", detail.Effect)
 	}
+	// The shared skeleton attaches the detail in place. Re-wrapping would
+	// duplicate the code prefix and drift from every other read/write mapper.
+	if got, want := mapped.Error(), premapped.Error(); got != want {
+		t.Fatalf("message = %q, want the original %q", got, want)
+	}
 }
 
 func TestConnectErrorForProjectDoesNotTrustUnmarkedNotApplied(t *testing.T) {

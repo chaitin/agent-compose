@@ -172,7 +172,7 @@ func (h *ProjectHandler) ApplyProject(ctx context.Context, req *connect.Request[
 func (h *ProjectHandler) PatchProject(ctx context.Context, req *connect.Request[agentcomposev2.PatchProjectRequest]) (*connect.Response[agentcomposev2.ApplyProjectResponse], error) {
 	projectRef, err := projectReferenceFromProto(req.Msg.GetProject())
 	if err != nil {
-		return nil, projectConnectError(apierror.NotApplied(err))
+		return nil, ConnectErrorForProject(apierror.NotApplied(err))
 	}
 	return h.delegate.PatchProject(ctx, req, projectRef)
 }
@@ -180,7 +180,7 @@ func (h *ProjectHandler) PatchProject(ctx context.Context, req *connect.Request[
 func (h *ProjectHandler) RemoveProject(ctx context.Context, req *connect.Request[agentcomposev2.RemoveProjectRequest]) (*connect.Response[agentcomposev2.RemoveProjectResponse], error) {
 	projectRef, err := projectReferenceFromProto(req.Msg.GetProject())
 	if err != nil {
-		return nil, projectConnectError(apierror.NotApplied(err))
+		return nil, ConnectErrorForProject(apierror.NotApplied(err))
 	}
 	return h.delegate.RemoveProject(ctx, req, projectRef)
 }
@@ -405,10 +405,6 @@ func projectTimestamp(value time.Time) *timestamppb.Timestamp {
 		return nil
 	}
 	return timestamppb.New(value)
-}
-
-func projectConnectError(err error) error {
-	return ConnectErrorForProject(err)
 }
 
 func (h *ProjectHandler) GetProject(ctx context.Context, req *connect.Request[agentcomposev2.GetProjectRequest]) (*connect.Response[agentcomposev2.GetProjectResponse], error) {
