@@ -211,9 +211,8 @@ func listAllSandboxes(ctx context.Context, client agentcomposev2connect.SandboxS
 
 func listFilteredSandboxes(ctx context.Context, client agentcomposev2connect.SandboxServiceClient, projectID string, statuses []string) ([]*agentcomposev2.Sandbox, error) {
 	var result []*agentcomposev2.Sandbox
-	var offset uint32
 	const limit uint32 = 100
-	for {
+	_, err := collectAllPages("sandbox list", func(offset uint32) (int, uint32, error) {
 		resp, err := client.ListSandboxes(ctx, connect.NewRequest(&agentcomposev2.ListSandboxesRequest{
 			Offset:    offset,
 			Limit:     limit,
@@ -221,16 +220,13 @@ func listFilteredSandboxes(ctx context.Context, client agentcomposev2connect.San
 			Status:    sandboxStatusesFromText(statuses),
 		}))
 		if err != nil {
-			return nil, err
+			return 0, 0, err
 		}
 		result = append(result, resp.Msg.GetSandboxes()...)
-		offset += uint32(len(resp.Msg.GetSandboxes()))
-		if offset >= resp.Msg.GetTotal() {
-			break
-		}
-		if len(resp.Msg.GetSandboxes()) == 0 {
-			return nil, fmt.Errorf("sandbox list pagination did not advance")
-		}
+		return len(resp.Msg.GetSandboxes()), resp.Msg.GetTotal(), nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return result, nil
 }

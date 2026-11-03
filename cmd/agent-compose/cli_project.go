@@ -50,29 +50,24 @@ func listProjectsPage(ctx context.Context, client agentcomposev2connect.ProjectS
 
 func listAllProjects(ctx context.Context, client agentcomposev2connect.ProjectServiceClient) (composeProjectListOutput, error) {
 	const pageSize uint32 = 200
-	var output composeProjectListOutput
-	for {
-		offset := uint32(len(output.Projects))
+	var projects []composeProjectListItem
+	total, err := collectAllPages("project list", func(offset uint32) (int, uint32, error) {
 		resp, err := client.ListProjects(ctx, connect.NewRequest(&agentcomposev2.ListProjectsRequest{
 			Offset: offset,
 			Limit:  pageSize,
 		}))
 		if err != nil {
-			return composeProjectListOutput{}, err
+			return 0, 0, err
 		}
-		msg := resp.Msg
-		output.Total = msg.GetTotal()
-		for _, project := range msg.GetProjects() {
-			output.Projects = append(output.Projects, composeProjectListItemFromSummary(project))
+		for _, project := range resp.Msg.GetProjects() {
+			projects = append(projects, composeProjectListItemFromSummary(project))
 		}
-		if uint32(len(output.Projects)) >= msg.GetTotal() {
-			break
-		}
-		if len(msg.GetProjects()) == 0 {
-			return composeProjectListOutput{}, fmt.Errorf("project list pagination did not advance")
-		}
+		return len(resp.Msg.GetProjects()), resp.Msg.GetTotal(), nil
+	})
+	if err != nil {
+		return composeProjectListOutput{}, err
 	}
-	return output, nil
+	return composeProjectListOutput{Projects: projects, Total: total}, nil
 }
 
 func resolveComposeAgentNameFromProject(project *agentcomposev2.Project, ref string) (string, error) {
