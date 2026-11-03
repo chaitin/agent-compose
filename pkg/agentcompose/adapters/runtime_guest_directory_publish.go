@@ -2,37 +2,25 @@ package adapters
 
 import (
 	"context"
-	"fmt"
 
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
-	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
 func (r guestFileRuntimeAdapter) PublishGuestDirectory(ctx context.Context, sandbox *domain.Sandbox, vmState domain.VMState, publication driverpkg.GuestDirectoryPublication) error {
-	publisher, ok := r.runtime.(interface {
-		PublishGuestDirectory(context.Context, *driverpkg.Sandbox, driverpkg.VMState, driverpkg.GuestDirectoryPublication) error
+	return guestRuntimeCallErr[driverGuestDirectoryPublisher](r, ctx, guestRuntimeTarget{
+		session: sandbox, vmState: vmState,
+		unsupported: "runtime does not support guest directory publication",
+	}, func(capability driverGuestDirectoryPublisher, driverSandbox *driverpkg.Sandbox, state driverpkg.VMState) error {
+		return capability.PublishGuestDirectory(ctx, driverSandbox, state, publication)
 	})
-	if !ok {
-		return fmt.Errorf("runtime does not support guest directory publication")
-	}
-	driverSandbox, _, err := r.driverSandbox(ctx, sandbox)
-	if err != nil {
-		return err
-	}
-	return publisher.PublishGuestDirectory(ctx, driverSandbox, execution.ToDriverVMState(vmState), publication)
 }
 
 func (r guestFileRuntimeAdapter) EnsureGuestSymlink(ctx context.Context, sandbox *domain.Sandbox, vmState domain.VMState, projection driverpkg.GuestSymlinkProjection) error {
-	linker, ok := r.runtime.(interface {
-		EnsureGuestSymlink(context.Context, *driverpkg.Sandbox, driverpkg.VMState, driverpkg.GuestSymlinkProjection) error
+	return guestRuntimeCallErr[driverGuestSymlinkProjector](r, ctx, guestRuntimeTarget{
+		session: sandbox, vmState: vmState,
+		unsupported: "runtime does not support guest symlink projection",
+	}, func(capability driverGuestSymlinkProjector, driverSandbox *driverpkg.Sandbox, state driverpkg.VMState) error {
+		return capability.EnsureGuestSymlink(ctx, driverSandbox, state, projection)
 	})
-	if !ok {
-		return fmt.Errorf("runtime does not support guest symlink projection")
-	}
-	driverSandbox, _, err := r.driverSandbox(ctx, sandbox)
-	if err != nil {
-		return err
-	}
-	return linker.EnsureGuestSymlink(ctx, driverSandbox, execution.ToDriverVMState(vmState), projection)
 }

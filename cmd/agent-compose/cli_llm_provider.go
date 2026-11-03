@@ -72,22 +72,20 @@ func runComposeLLMProviderListCommand(cmd *cobra.Command, cli cliOptions) error 
 		return err
 	}
 	request := &agentcomposev2.ListProvidersRequest{Limit: 500}
-	response := &agentcomposev2.ListProvidersResponse{}
-	for uint32(len(response.Providers)) < response.GetTotal() || response.GetTotal() == 0 {
-		request.Offset = uint32(len(response.Providers))
+	var providers []*agentcomposev2.LLMProvider
+	total, err := collectAllPages("llm provider list", func(offset uint32) (int, uint32, error) {
+		request.Offset = offset
 		resp, err := clients.llm.ListProviders(cmd.Context(), connect.NewRequest(request))
 		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("list llm providers: %w", err))
+			return 0, 0, commandExitErrorForConnect(fmt.Errorf("list llm providers: %w", err))
 		}
-		response.Total = resp.Msg.GetTotal()
-		response.Providers = append(response.Providers, resp.Msg.GetProviders()...)
-		if uint32(len(response.Providers)) >= response.Total {
-			break
-		}
-		if len(resp.Msg.GetProviders()) == 0 {
-			return fmt.Errorf("llm provider list pagination did not advance")
-		}
+		providers = append(providers, resp.Msg.GetProviders()...)
+		return len(resp.Msg.GetProviders()), resp.Msg.GetTotal(), nil
+	})
+	if err != nil {
+		return err
 	}
+	response := &agentcomposev2.ListProvidersResponse{Total: total, Providers: providers}
 	output := composeLLMProviderListOutputFromResponse(response)
 	if cli.JSON {
 		return writeLLMProviderJSON(cmd.OutOrStdout(), output)

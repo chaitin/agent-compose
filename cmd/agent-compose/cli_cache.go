@@ -75,22 +75,21 @@ func runComposeCacheListCommand(cmd *cobra.Command, cli cliOptions, options comp
 	if err != nil {
 		return commandExitError{Code: exitCodeUsage, Err: err}
 	}
-	response := &agentcomposev2.ListCachesResponse{}
-	for uint32(len(response.Caches)) < response.GetTotal() || response.GetTotal() == 0 {
-		resp, err := clients.cache.ListCaches(cmd.Context(), connect.NewRequest(&agentcomposev2.ListCachesRequest{Filter: filter, Offset: uint32(len(response.Caches)), Limit: 500}))
+	var caches []*agentcomposev2.CacheItem
+	var warnings []string
+	total, err := collectAllPages("cache list", func(offset uint32) (int, uint32, error) {
+		resp, err := clients.cache.ListCaches(cmd.Context(), connect.NewRequest(&agentcomposev2.ListCachesRequest{Filter: filter, Offset: offset, Limit: 500}))
 		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("list caches: %w", err))
+			return 0, 0, commandExitErrorForConnect(fmt.Errorf("list caches: %w", err))
 		}
-		response.Total = resp.Msg.GetTotal()
-		response.Caches = append(response.Caches, resp.Msg.GetCaches()...)
-		response.Warnings = append(response.Warnings, resp.Msg.GetWarnings()...)
-		if uint32(len(response.Caches)) >= response.Total {
-			break
-		}
-		if len(resp.Msg.GetCaches()) == 0 {
-			return fmt.Errorf("cache list pagination did not advance")
-		}
+		caches = append(caches, resp.Msg.GetCaches()...)
+		warnings = append(warnings, resp.Msg.GetWarnings()...)
+		return len(resp.Msg.GetCaches()), resp.Msg.GetTotal(), nil
+	})
+	if err != nil {
+		return err
 	}
+	response := &agentcomposev2.ListCachesResponse{Total: total, Caches: caches, Warnings: warnings}
 	output := composeCacheListOutputFromResponse(response)
 	if cli.JSON {
 		data, err := json.MarshalIndent(output, "", "  ")

@@ -68,25 +68,20 @@ func writeSandboxHistoryLogs(cmd *cobra.Command, cli cliOptions, client agentcom
 		return err
 	}
 	history := &agentcomposev2.ListSandboxHistoryResponse{}
-	var offset uint32
-	for offset < history.GetTotal() || history.GetTotal() == 0 {
+	total, err := collectAllPages("sandbox history", func(offset uint32) (int, uint32, error) {
 		resp, err := client.ListSandboxHistory(cmd.Context(), connect.NewRequest(&agentcomposev2.ListSandboxHistoryRequest{SandboxId: sandboxID, Offset: offset, Limit: 500}))
 		if err != nil {
-			return commandExitErrorForConnect(fmt.Errorf("list sandbox %s history for project %s: %w", sandboxID, projectID, err))
+			return 0, 0, commandExitErrorForConnect(fmt.Errorf("list sandbox %s history for project %s: %w", sandboxID, projectID, err))
 		}
-		history.Total = resp.Msg.GetTotal()
 		history.LegacyHistory = resp.Msg.GetLegacyHistory()
 		history.Cells = append(history.Cells, resp.Msg.GetCells()...)
 		history.Events = append(history.Events, resp.Msg.GetEvents()...)
-		pageSize := uint32(len(resp.Msg.GetCells()) + len(resp.Msg.GetEvents()))
-		offset += pageSize
-		if offset >= history.Total {
-			break
-		}
-		if pageSize == 0 {
-			return fmt.Errorf("sandbox history pagination did not advance")
-		}
+		return len(resp.Msg.GetCells()) + len(resp.Msg.GetEvents()), resp.Msg.GetTotal(), nil
+	})
+	if err != nil {
+		return err
 	}
+	history.Total = total
 	output := tailLogOutput(sandboxHistoryOutput(history.GetCells()), options.TailLines)
 	if cli.JSON {
 		data, err := json.MarshalIndent(composeSandboxLogsOutput{SandboxID: sandboxID, Output: output, Events: history.GetEvents()}, "", "  ")

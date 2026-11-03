@@ -471,57 +471,37 @@ func (r driverRuntimeAdapter) IsSandboxAlive(ctx context.Context, session *domai
 }
 
 func (r guestFileRuntimeAdapter) ReadGuestFile(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, guestPath string) ([]byte, error) {
-	reader, ok := r.runtime.(interface {
-		ReadGuestFile(context.Context, *driverpkg.Sandbox, driverpkg.VMState, string) ([]byte, error)
+	return guestRuntimeCall[driverGuestFileReader, []byte](r, ctx, guestRuntimeTarget{
+		session: session, vmState: vmState,
+		unsupported: "runtime does not support reading guest files directly",
+	}, func(capability driverGuestFileReader, sandbox *driverpkg.Sandbox, state driverpkg.VMState) ([]byte, error) {
+		return capability.ReadGuestFile(ctx, sandbox, state, guestPath)
 	})
-	if !ok {
-		return nil, domain.ClassifyError(domain.ErrUnsupported, "runtime does not support reading guest files directly", nil)
-	}
-	driverSandbox, _, err := r.driverSandbox(ctx, session)
-	if err != nil {
-		return nil, err
-	}
-	return reader.ReadGuestFile(ctx, driverSandbox, execution.ToDriverVMState(vmState), guestPath)
 }
 
 func (r guestFileRuntimeAdapter) ReadGuestDir(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, guestDir, hostDestDir string) error {
-	reader, ok := r.runtime.(interface {
-		ReadGuestDir(context.Context, *driverpkg.Sandbox, driverpkg.VMState, string, string) error
+	return guestRuntimeCallErr[driverGuestDirReader](r, ctx, guestRuntimeTarget{
+		session: session, vmState: vmState,
+		unsupported: "runtime does not support reading guest directories directly",
+	}, func(capability driverGuestDirReader, sandbox *driverpkg.Sandbox, state driverpkg.VMState) error {
+		return capability.ReadGuestDir(ctx, sandbox, state, guestDir, hostDestDir)
 	})
-	if !ok {
-		return domain.ClassifyError(domain.ErrUnsupported, "runtime does not support reading guest directories directly", nil)
-	}
-	driverSandbox, _, err := r.driverSandbox(ctx, session)
-	if err != nil {
-		return err
-	}
-	return reader.ReadGuestDir(ctx, driverSandbox, execution.ToDriverVMState(vmState), guestDir, hostDestDir)
 }
 
 func (r guestFileRuntimeAdapter) WriteGuestFile(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, guestPath string, content []byte) error {
-	writer, ok := r.runtime.(interface {
-		WriteGuestFile(context.Context, *driverpkg.Sandbox, driverpkg.VMState, string, []byte) error
+	return guestRuntimeCallErr[driverGuestFileWriter](r, ctx, guestRuntimeTarget{
+		session: session, vmState: vmState,
+		unsupported: "runtime does not support writing guest files directly",
+	}, func(capability driverGuestFileWriter, sandbox *driverpkg.Sandbox, state driverpkg.VMState) error {
+		return capability.WriteGuestFile(ctx, sandbox, state, guestPath, content)
 	})
-	if !ok {
-		return domain.ClassifyError(domain.ErrUnsupported, "runtime does not support writing guest files directly", nil)
-	}
-	driverSandbox, _, err := r.driverSandbox(ctx, session)
-	if err != nil {
-		return err
-	}
-	return writer.WriteGuestFile(ctx, driverSandbox, execution.ToDriverVMState(vmState), guestPath, content)
 }
 
 func (r guestFileRuntimeAdapter) WriteGuestDir(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, hostSrcDir, guestDir string) error {
-	writer, ok := r.runtime.(interface {
-		WriteGuestDir(context.Context, *driverpkg.Sandbox, driverpkg.VMState, string, string) error
+	return guestRuntimeCallErr[driverGuestDirWriter](r, ctx, guestRuntimeTarget{
+		session: session, vmState: vmState,
+		unsupported: "runtime does not support writing guest directories directly",
+	}, func(capability driverGuestDirWriter, sandbox *driverpkg.Sandbox, state driverpkg.VMState) error {
+		return capability.WriteGuestDir(ctx, sandbox, state, hostSrcDir, guestDir)
 	})
-	if !ok {
-		return domain.ClassifyError(domain.ErrUnsupported, "runtime does not support writing guest directories directly", nil)
-	}
-	driverSandbox, _, err := r.driverSandbox(ctx, session)
-	if err != nil {
-		return err
-	}
-	return writer.WriteGuestDir(ctx, driverSandbox, execution.ToDriverVMState(vmState), hostSrcDir, guestDir)
 }

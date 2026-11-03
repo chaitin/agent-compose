@@ -95,15 +95,15 @@ func TestAppProjectControllerHelperCoverage(t *testing.T) {
 		{domain.ErrNotFound, connect.CodeNotFound},
 		{errors.New("boom"), connect.CodeInternal},
 	} {
-		mapped := projectConnectError(tc.err)
+		mapped := projectWriteConnectError(tc.err)
 		if tc.err == nil {
 			if mapped != nil {
-				t.Fatalf("projectConnectError nil = %v", mapped)
+				t.Fatalf("projectWriteConnectError nil = %v", mapped)
 			}
 			continue
 		}
 		if connect.CodeOf(mapped) != tc.code {
-			t.Fatalf("projectConnectError(%v) code=%s want %s", tc.err, connect.CodeOf(mapped), tc.code)
+			t.Fatalf("projectWriteConnectError(%v) code=%s want %s", tc.err, connect.CodeOf(mapped), tc.code)
 		}
 	}
 }

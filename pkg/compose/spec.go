@@ -805,20 +805,31 @@ func validateVolumeMountList(node *yaml.Node, path string) error {
 	return nil
 }
 
-func validateVolumeMount(node *yaml.Node, path string) error {
+// validateScalarOrMapping validates the shorthand-or-block shape several
+// policy blocks share. validateShorthand checks the scalar form; fields the
+// mapping form.
+func validateScalarOrMapping(node *yaml.Node, path string, validateShorthand nodeValidator, fields map[string]nodeValidator) error {
 	switch node.Kind {
 	case yaml.ScalarNode:
-		return validateScalar(node, path)
+		return validateShorthand(node, path)
 	case yaml.MappingNode:
-		return validateMapping(node, path, map[string]nodeValidator{
-			"type":      validateScalar,
-			"source":    validateScalar,
-			"target":    validateScalar,
-			"read_only": validateBool,
-		})
+		return validateMapping(node, path, fields)
 	default:
 		return newParseError(node, path, "expected scalar or mapping")
 	}
+}
+
+// validateAnyScalar accepts every scalar. It is the shorthand validator for
+// blocks whose scalar form carries no content constraint.
+func validateAnyScalar(*yaml.Node, string) error { return nil }
+
+func validateVolumeMount(node *yaml.Node, path string) error {
+	return validateScalarOrMapping(node, path, validateScalar, map[string]nodeValidator{
+		"type":      validateScalar,
+		"source":    validateScalar,
+		"target":    validateScalar,
+		"read_only": validateBool,
+	})
 }
 
 func validateSkillList(node *yaml.Node, path string) error {
@@ -840,23 +851,16 @@ func validateSkill(node *yaml.Node, path string) error {
 }
 
 func validateBuild(node *yaml.Node, path string) error {
-	switch node.Kind {
-	case yaml.ScalarNode:
-		return validateScalar(node, path)
-	case yaml.MappingNode:
-		return validateMapping(node, path, map[string]nodeValidator{
-			"context":    validateScalar,
-			"dockerfile": validateScalar,
-			"target":     validateScalar,
-			"args":       validateBuildArgMap,
-			"platforms":  validateStringList,
-			"tags":       validateStringList,
-			"no_cache":   validateBool,
-			"pull":       validateBool,
-		})
-	default:
-		return newParseError(node, path, "expected scalar or mapping")
-	}
+	return validateScalarOrMapping(node, path, validateScalar, map[string]nodeValidator{
+		"context":    validateScalar,
+		"dockerfile": validateScalar,
+		"target":     validateScalar,
+		"args":       validateBuildArgMap,
+		"platforms":  validateStringList,
+		"tags":       validateStringList,
+		"no_cache":   validateBool,
+		"pull":       validateBool,
+	})
 }
 
 func validateBuildArgMap(node *yaml.Node, path string) error {
@@ -890,14 +894,7 @@ func validateScheduler(node *yaml.Node, path string) error {
 }
 
 func validateScriptSource(node *yaml.Node, path string) error {
-	switch node.Kind {
-	case yaml.ScalarNode:
-		return validateScalar(node, path)
-	case yaml.MappingNode:
-		return validateMapping(node, path, sourceFieldValidators(nil))
-	default:
-		return newParseError(node, path, "expected scalar or mapping")
-	}
+	return validateScalarOrMapping(node, path, validateScalar, sourceFieldValidators(nil))
 }
 
 func validateJupyter(node *yaml.Node, path string) error {
@@ -1019,17 +1016,10 @@ func validateStringMap(node *yaml.Node, path string) error {
 }
 
 func validateEnvVar(node *yaml.Node, path string) error {
-	switch node.Kind {
-	case yaml.ScalarNode:
-		return nil
-	case yaml.MappingNode:
-		return validateMapping(node, path, map[string]nodeValidator{
-			"value":  validateScalar,
-			"secret": validateBool,
-		})
-	default:
-		return newParseError(node, path, "expected scalar or mapping")
-	}
+	return validateScalarOrMapping(node, path, validateAnyScalar, map[string]nodeValidator{
+		"value":  validateScalar,
+		"secret": validateBool,
+	})
 }
 
 func validateNamedMap(node *yaml.Node, path string, validateValue nodeValidator) error {

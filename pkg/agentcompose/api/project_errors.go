@@ -9,34 +9,19 @@ import (
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/images"
-	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 // ConnectErrorForProject maps a project write failure. The effect comes from
-// the not-applied marker so an unclassified failure reports UNKNOWN.
+// the not-applied marker so an unclassified failure reports UNKNOWN. It shares
+// the domain-mapper skeleton and supplies only the project sentinel table.
 func ConnectErrorForProject(err error) error {
 	if err == nil {
 		return nil
 	}
-	effect := apierror.EffectFor(err)
-	// Keep a detail an inner boundary already attached (it may be more precise
-	// than a code-to-reason mapping), but upgrade a read-style UNSPECIFIED
-	// effect: this mapper only serves write RPCs.
-	if detail, ok := errdetail.From(err); ok {
-		return preserveOrUpgradeDetail(err, detail, effect)
-	}
-	// Handlers and adapters often return an already mapped *connect.Error
-	// without a detail. Preserve its code instead of reclassifying the wrapped
-	// cause as Internal, mirroring the read-side mapper.
-	var connectErr *connect.Error
-	if errors.As(err, &connectErr) {
-		return NewOperationError(connectErr.Code(), reasonForConnectCode(connectErr.Code(), ResourceProject), effect, connectErr)
-	}
-	code, reason := classifyProjectError(err)
-	return NewOperationError(code, reason, effect, err)
+	return connectErrorForDomainWith(err, ResourceProject, apierror.EffectFor(err), true, classifyProjectError)
 }
 
-func classifyProjectError(err error) (connect.Code, apierror.Reason) {
+func classifyProjectError(err error, kind ResourceKind) (connect.Code, apierror.Reason) {
 	switch {
 	case errors.Is(err, context.Canceled):
 		return connect.CodeCanceled, apierror.ReasonOperationCanceled
@@ -65,6 +50,6 @@ func classifyProjectError(err error) (connect.Code, apierror.Reason) {
 	case errors.Is(err, projects.ErrUnimplemented):
 		return connect.CodeUnimplemented, apierror.ReasonUnsupported
 	default:
-		return classifyDomainError(err, ResourceProject)
+		return classifyDomainError(err, kind)
 	}
 }

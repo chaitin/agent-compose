@@ -152,7 +152,7 @@ func (d projectControllerDelegate) ApplyProject(ctx context.Context, req *connec
 		DryRun:     req.Msg.GetDryRun(),
 	})
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, projectWriteConnectError(err)
 	}
 	response, err := d.applyResponse(result)
 	if err != nil {
@@ -218,7 +218,7 @@ func (d projectControllerDelegate) PatchProject(ctx context.Context, req *connec
 		DryRun:                  req.Msg.GetDryRun(),
 	})
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, projectWriteConnectError(err)
 	}
 	response, err := d.applyResponse(result)
 	if err != nil {
@@ -251,7 +251,7 @@ func (d projectControllerDelegate) RemoveProject(ctx context.Context, req *conne
 		RemoveHistory: req.Msg.GetRemoveHistory(),
 	})
 	if err != nil {
-		return nil, projectConnectError(err)
+		return nil, projectWriteConnectError(err)
 	}
 	return connect.NewResponse(&agentcomposev2.RemoveProjectResponse{
 		Project: api.ProjectToProto(result.Project, nil, result.Agents, result.Schedulers),
@@ -400,7 +400,7 @@ func projectChangeActionToProto(action string) agentcomposev2.ProjectChangeActio
 	}
 }
 
-func projectConnectError(err error) error {
+func projectWriteConnectError(err error) error {
 	if err == nil {
 		return nil
 	}

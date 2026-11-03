@@ -49,6 +49,20 @@ func ConnectErrorForDomainWrite(err error, kind ResourceKind) error {
 }
 
 func connectErrorForDomain(err error, kind ResourceKind, effect apierror.Effect, upgradeUnspecified bool) error {
+	return connectErrorForDomainWith(err, kind, effect, upgradeUnspecified, classifyDomainError)
+}
+
+// domainErrorClassifier maps a domain error to a Connect code and reason. Every
+// write boundary shares the skeleton below; only the sentinel table differs.
+type domainErrorClassifier func(error, ResourceKind) (connect.Code, apierror.Reason)
+
+func connectErrorForDomainWith(
+	err error,
+	kind ResourceKind,
+	effect apierror.Effect,
+	upgradeUnspecified bool,
+	classify domainErrorClassifier,
+) error {
 	if err == nil {
 		return nil
 	}
@@ -62,12 +76,11 @@ func connectErrorForDomain(err error, kind ResourceKind, effect apierror.Effect,
 	}
 	// Handlers and adapters often return an already mapped *connect.Error.
 	// Attaching the detail in place preserves its code and message.
-	var connectErr *connect.Error
-	if errors.As(err, &connectErr) {
+	if connectErr, ok := errors.AsType[*connect.Error](err); ok {
 		attachOperationDetail(connectErr, reasonForConnectCode(connectErr.Code(), kind), effect)
 		return connectErr
 	}
-	code, reason := classifyDomainError(err, kind)
+	code, reason := classify(err, kind)
 	return NewOperationError(code, reason, effect, err)
 }
 
