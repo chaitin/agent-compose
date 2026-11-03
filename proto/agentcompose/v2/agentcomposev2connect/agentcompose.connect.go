@@ -226,6 +226,12 @@ const (
 	// SandboxServiceWatchSandboxProcedure is the fully-qualified name of the SandboxService's
 	// WatchSandbox RPC.
 	SandboxServiceWatchSandboxProcedure = "/agentcompose.v2.SandboxService/WatchSandbox"
+	// SandboxServiceListSandboxWorkspaceProcedure is the fully-qualified name of the SandboxService's
+	// ListSandboxWorkspace RPC.
+	SandboxServiceListSandboxWorkspaceProcedure = "/agentcompose.v2.SandboxService/ListSandboxWorkspace"
+	// SandboxServiceDownloadSandboxWorkspaceFileProcedure is the fully-qualified name of the
+	// SandboxService's DownloadSandboxWorkspaceFile RPC.
+	SandboxServiceDownloadSandboxWorkspaceFileProcedure = "/agentcompose.v2.SandboxService/DownloadSandboxWorkspaceFile"
 	// DashboardServiceGetDashboardOverviewProcedure is the fully-qualified name of the
 	// DashboardService's GetDashboardOverview RPC.
 	DashboardServiceGetDashboardOverviewProcedure = "/agentcompose.v2.DashboardService/GetDashboardOverview"
@@ -1984,6 +1990,15 @@ type SandboxServiceClient interface {
 	ListSandboxes(context.Context, *connect.Request[v2.ListSandboxesRequest]) (*connect.Response[v2.ListSandboxesResponse], error)
 	ListSandboxHistory(context.Context, *connect.Request[v2.ListSandboxHistoryRequest]) (*connect.Response[v2.ListSandboxHistoryResponse], error)
 	WatchSandbox(context.Context, *connect.Request[v2.WatchSandboxRequest]) (*connect.ServerStreamForClient[v2.WatchSandboxResponse], error)
+	// Lists one directory below the sandbox workspace root. The call is
+	// read-only, does not start a stopped runtime, and never returns host
+	// paths. A directory is counted while only the requested page is retained
+	// in memory. Drivers without a shared filesystem, mounted workspaces, and
+	// unknown workspace types return UNIMPLEMENTED.
+	ListSandboxWorkspace(context.Context, *connect.Request[v2.ListSandboxWorkspaceRequest]) (*connect.Response[v2.ListSandboxWorkspaceResponse], error)
+	// Streams one regular file below the sandbox workspace root. The first
+	// response frame carries the file metadata; later frames carry content.
+	DownloadSandboxWorkspaceFile(context.Context, *connect.Request[v2.DownloadSandboxWorkspaceFileRequest]) (*connect.ServerStreamForClient[v2.DownloadSandboxWorkspaceFileResponse], error)
 }
 
 // NewSandboxServiceClient constructs a client for the agentcompose.v2.SandboxService service. By
@@ -2051,20 +2066,34 @@ func NewSandboxServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sandboxServiceMethods.ByName("WatchSandbox")),
 			connect.WithClientOptions(opts...),
 		),
+		listSandboxWorkspace: connect.NewClient[v2.ListSandboxWorkspaceRequest, v2.ListSandboxWorkspaceResponse](
+			httpClient,
+			baseURL+SandboxServiceListSandboxWorkspaceProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("ListSandboxWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
+		downloadSandboxWorkspaceFile: connect.NewClient[v2.DownloadSandboxWorkspaceFileRequest, v2.DownloadSandboxWorkspaceFileResponse](
+			httpClient,
+			baseURL+SandboxServiceDownloadSandboxWorkspaceFileProcedure,
+			connect.WithSchema(sandboxServiceMethods.ByName("DownloadSandboxWorkspaceFile")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // sandboxServiceClient implements SandboxServiceClient.
 type sandboxServiceClient struct {
-	removeSandbox      *connect.Client[v2.RemoveSandboxRequest, v2.RemoveSandboxResponse]
-	pruneSandboxes     *connect.Client[v2.PruneSandboxesRequest, v2.PruneSandboxesResponse]
-	getSandboxStats    *connect.Client[v2.GetSandboxStatsRequest, v2.GetSandboxStatsResponse]
-	getSandbox         *connect.Client[v2.GetSandboxRequest, v2.GetSandboxResponse]
-	stopSandbox        *connect.Client[v2.StopSandboxRequest, v2.StopSandboxResponse]
-	resumeSandbox      *connect.Client[v2.ResumeSandboxRequest, v2.ResumeSandboxResponse]
-	listSandboxes      *connect.Client[v2.ListSandboxesRequest, v2.ListSandboxesResponse]
-	listSandboxHistory *connect.Client[v2.ListSandboxHistoryRequest, v2.ListSandboxHistoryResponse]
-	watchSandbox       *connect.Client[v2.WatchSandboxRequest, v2.WatchSandboxResponse]
+	removeSandbox                *connect.Client[v2.RemoveSandboxRequest, v2.RemoveSandboxResponse]
+	pruneSandboxes               *connect.Client[v2.PruneSandboxesRequest, v2.PruneSandboxesResponse]
+	getSandboxStats              *connect.Client[v2.GetSandboxStatsRequest, v2.GetSandboxStatsResponse]
+	getSandbox                   *connect.Client[v2.GetSandboxRequest, v2.GetSandboxResponse]
+	stopSandbox                  *connect.Client[v2.StopSandboxRequest, v2.StopSandboxResponse]
+	resumeSandbox                *connect.Client[v2.ResumeSandboxRequest, v2.ResumeSandboxResponse]
+	listSandboxes                *connect.Client[v2.ListSandboxesRequest, v2.ListSandboxesResponse]
+	listSandboxHistory           *connect.Client[v2.ListSandboxHistoryRequest, v2.ListSandboxHistoryResponse]
+	watchSandbox                 *connect.Client[v2.WatchSandboxRequest, v2.WatchSandboxResponse]
+	listSandboxWorkspace         *connect.Client[v2.ListSandboxWorkspaceRequest, v2.ListSandboxWorkspaceResponse]
+	downloadSandboxWorkspaceFile *connect.Client[v2.DownloadSandboxWorkspaceFileRequest, v2.DownloadSandboxWorkspaceFileResponse]
 }
 
 // RemoveSandbox calls agentcompose.v2.SandboxService.RemoveSandbox.
@@ -2112,6 +2141,16 @@ func (c *sandboxServiceClient) WatchSandbox(ctx context.Context, req *connect.Re
 	return c.watchSandbox.CallServerStream(ctx, req)
 }
 
+// ListSandboxWorkspace calls agentcompose.v2.SandboxService.ListSandboxWorkspace.
+func (c *sandboxServiceClient) ListSandboxWorkspace(ctx context.Context, req *connect.Request[v2.ListSandboxWorkspaceRequest]) (*connect.Response[v2.ListSandboxWorkspaceResponse], error) {
+	return c.listSandboxWorkspace.CallUnary(ctx, req)
+}
+
+// DownloadSandboxWorkspaceFile calls agentcompose.v2.SandboxService.DownloadSandboxWorkspaceFile.
+func (c *sandboxServiceClient) DownloadSandboxWorkspaceFile(ctx context.Context, req *connect.Request[v2.DownloadSandboxWorkspaceFileRequest]) (*connect.ServerStreamForClient[v2.DownloadSandboxWorkspaceFileResponse], error) {
+	return c.downloadSandboxWorkspaceFile.CallServerStream(ctx, req)
+}
+
 // SandboxServiceHandler is an implementation of the agentcompose.v2.SandboxService service.
 type SandboxServiceHandler interface {
 	RemoveSandbox(context.Context, *connect.Request[v2.RemoveSandboxRequest]) (*connect.Response[v2.RemoveSandboxResponse], error)
@@ -2123,6 +2162,15 @@ type SandboxServiceHandler interface {
 	ListSandboxes(context.Context, *connect.Request[v2.ListSandboxesRequest]) (*connect.Response[v2.ListSandboxesResponse], error)
 	ListSandboxHistory(context.Context, *connect.Request[v2.ListSandboxHistoryRequest]) (*connect.Response[v2.ListSandboxHistoryResponse], error)
 	WatchSandbox(context.Context, *connect.Request[v2.WatchSandboxRequest], *connect.ServerStream[v2.WatchSandboxResponse]) error
+	// Lists one directory below the sandbox workspace root. The call is
+	// read-only, does not start a stopped runtime, and never returns host
+	// paths. A directory is counted while only the requested page is retained
+	// in memory. Drivers without a shared filesystem, mounted workspaces, and
+	// unknown workspace types return UNIMPLEMENTED.
+	ListSandboxWorkspace(context.Context, *connect.Request[v2.ListSandboxWorkspaceRequest]) (*connect.Response[v2.ListSandboxWorkspaceResponse], error)
+	// Streams one regular file below the sandbox workspace root. The first
+	// response frame carries the file metadata; later frames carry content.
+	DownloadSandboxWorkspaceFile(context.Context, *connect.Request[v2.DownloadSandboxWorkspaceFileRequest], *connect.ServerStream[v2.DownloadSandboxWorkspaceFileResponse]) error
 }
 
 // NewSandboxServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -2186,6 +2234,18 @@ func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sandboxServiceMethods.ByName("WatchSandbox")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sandboxServiceListSandboxWorkspaceHandler := connect.NewUnaryHandler(
+		SandboxServiceListSandboxWorkspaceProcedure,
+		svc.ListSandboxWorkspace,
+		connect.WithSchema(sandboxServiceMethods.ByName("ListSandboxWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	sandboxServiceDownloadSandboxWorkspaceFileHandler := connect.NewServerStreamHandler(
+		SandboxServiceDownloadSandboxWorkspaceFileProcedure,
+		svc.DownloadSandboxWorkspaceFile,
+		connect.WithSchema(sandboxServiceMethods.ByName("DownloadSandboxWorkspaceFile")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/agentcompose.v2.SandboxService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SandboxServiceRemoveSandboxProcedure:
@@ -2206,6 +2266,10 @@ func NewSandboxServiceHandler(svc SandboxServiceHandler, opts ...connect.Handler
 			sandboxServiceListSandboxHistoryHandler.ServeHTTP(w, r)
 		case SandboxServiceWatchSandboxProcedure:
 			sandboxServiceWatchSandboxHandler.ServeHTTP(w, r)
+		case SandboxServiceListSandboxWorkspaceProcedure:
+			sandboxServiceListSandboxWorkspaceHandler.ServeHTTP(w, r)
+		case SandboxServiceDownloadSandboxWorkspaceFileProcedure:
+			sandboxServiceDownloadSandboxWorkspaceFileHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2249,6 +2313,14 @@ func (UnimplementedSandboxServiceHandler) ListSandboxHistory(context.Context, *c
 
 func (UnimplementedSandboxServiceHandler) WatchSandbox(context.Context, *connect.Request[v2.WatchSandboxRequest], *connect.ServerStream[v2.WatchSandboxResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.WatchSandbox is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) ListSandboxWorkspace(context.Context, *connect.Request[v2.ListSandboxWorkspaceRequest]) (*connect.Response[v2.ListSandboxWorkspaceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.ListSandboxWorkspace is not implemented"))
+}
+
+func (UnimplementedSandboxServiceHandler) DownloadSandboxWorkspaceFile(context.Context, *connect.Request[v2.DownloadSandboxWorkspaceFileRequest], *connect.ServerStream[v2.DownloadSandboxWorkspaceFileResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.SandboxService.DownloadSandboxWorkspaceFile is not implemented"))
 }
 
 // DashboardServiceClient is a client for the agentcompose.v2.DashboardService service.

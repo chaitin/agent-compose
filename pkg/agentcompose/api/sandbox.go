@@ -19,6 +19,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
+	"github.com/chaitin/agent-compose/pkg/workspaces"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 	"github.com/chaitin/agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -99,6 +100,17 @@ type SandboxHandler struct {
 	stats      SandboxStatsRuntimeResolver
 	runTargets SandboxRunTargetResolver
 	removal    SandboxRemovalCoordinator
+	// workspaceFiles reads the sandbox-owned workspace. It is optional so
+	// hosts that only expose lifecycle operations can keep constructing the
+	// handler; the workspace RPCs report a concrete internal error when it is
+	// absent instead of falling through to the generated Unimplemented
+	// handlers.
+	workspaceFiles workspaces.SandboxFiles
+}
+
+func (h *SandboxHandler) WithWorkspaceFiles(files workspaces.SandboxFiles) *SandboxHandler {
+	h.workspaceFiles = files
+	return h
 }
 
 func (h *SandboxHandler) WithRemovalCoordinator(coordinator SandboxRemovalCoordinator) *SandboxHandler {

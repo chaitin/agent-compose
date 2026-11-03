@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package agentcompose.v2;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/chaitin/agent-compose/proto/agentcompose/v2;agentcomposev2";
+
+// SandboxWorkspaceEntryType is the kind of one entry below the sandbox
+// workspace root. It is a closed set: a new filesystem object kind that a
+// client must distinguish gets a new value.
+enum SandboxWorkspaceEntryType {
+  SANDBOX_WORKSPACE_ENTRY_TYPE_UNSPECIFIED = 0;
+  SANDBOX_WORKSPACE_ENTRY_TYPE_FILE = 1;
+  SANDBOX_WORKSPACE_ENTRY_TYPE_DIRECTORY = 2;
+  SANDBOX_WORKSPACE_ENTRY_TYPE_SYMLINK = 3;
+  SANDBOX_WORKSPACE_ENTRY_TYPE_OTHER = 4;
+}
+
+message SandboxWorkspaceEntry {
+  // Workspace-relative, slash-separated. Never absolute and never a host
+  // path. The empty string is the workspace root itself, which is not an
+  // entry.
+  string path = 1;
+  // Base name of the entry.
+  string name = 2;
+  SandboxWorkspaceEntryType type = 3;
+  // File size in bytes. Directories, symlinks and other entries report 0.
+  uint64 size = 4;
+  // Modification time reported by the runtime's filesystem.
+  google.protobuf.Timestamp modified_at = 5;
+}
+
+message ListSandboxWorkspaceRequest {
+  string sandbox_id = 1;
+  // Workspace-relative directory. Empty or "." means the workspace root.
+  // The path must be a real directory; symlinked directories are rejected.
+  string path = 2;
+  // Number of entries to skip. Values at or above total return an empty page.
+  uint32 offset = 3;
+  // Maximum entries to return. Zero uses the server default; values above
+  // 500 are rejected.
+  uint32 limit = 4;
+}
+
+message ListSandboxWorkspaceResponse {
+  // At most limit entries, sorted by name within the returned page. The
+  // order is not stable across calls when the directory changes.
+  repeated SandboxWorkspaceEntry entries = 1;
+  // Entries that can be represented as UTF-8 strings at read time, before
+  // offset and limit. Non-UTF-8 file names are neither returned nor counted.
+  uint32 total = 2;
+}
+
+message SandboxWorkspaceFileInfo {
+  // Workspace-relative, slash-separated path of the file.
+  string path = 1;
+  uint64 size = 2;
+  google.protobuf.Timestamp modified_at = 3;
+}
+
+message DownloadSandboxWorkspaceFileRequest {
+  string sandbox_id = 1;
+  // Workspace-relative regular file. Directories, symlinks and other
+  // non-regular files are rejected.
+  string path = 2;
+}
+
+message DownloadSandboxWorkspaceFileResponse {
+  oneof payload {
+    // Sent exactly once, before any chunk. An empty file sends only this.
+    SandboxWorkspaceFileInfo info = 1;
+    // Content bytes, at most 64 KiB per frame.
+    bytes chunk = 2;
+  }
+}

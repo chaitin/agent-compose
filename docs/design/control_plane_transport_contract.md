@@ -72,6 +72,12 @@ capabilities. Page layout is intentionally not part of this stable contract.
 | Control-plane LLM generation | `LLMService.Generate` |
 | Polymorphic identifier lookup | `ResourceService.ResolveID` |
 
+`SandboxService.ListSandboxWorkspace` and `DownloadSandboxWorkspaceFile` are
+admin-only server-to-server workspace reads. They are intentionally absent from
+this browser matrix: a business layer must authorize the user and proxy the
+download from its own endpoint instead of exposing the daemon token to a
+browser.
+
 ## Approved non-Connect HTTP routes
 
 The exact route set is executable policy in `TestDaemonHTTPRouteAllowlist`.
