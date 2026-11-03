@@ -25,10 +25,6 @@ func terminalSizeForFD(int) *agentcomposev2.AttachTerminalSize {
 	return nil
 }
 
-func startAttachExecResizePump(context.Context, int, func(*agentcomposev2.AttachExecRequest) error) func() {
-	return func() {}
-}
-
-func startAttachAgentRunResizePump(context.Context, int, func(*agentcomposev2.AttachAgentRunRequest) error) func() {
+func startAttachResizePump(context.Context, int, func(*agentcomposev2.AttachTerminalSize) error) func() {
 	return func() {}
 }
