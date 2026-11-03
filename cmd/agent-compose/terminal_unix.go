@@ -51,7 +51,7 @@ func terminalSizeForFD(fd int) *agentcomposev2.AttachTerminalSize {
 	}
 }
 
-func startAttachExecResizePump(ctx context.Context, fd int, send func(*agentcomposev2.AttachExecRequest) error) func() {
+func startAttachResizePump(ctx context.Context, fd int, send func(*agentcomposev2.AttachTerminalSize) error) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGWINCH)
@@ -67,38 +67,7 @@ func startAttachExecResizePump(ctx context.Context, fd int, send func(*agentcomp
 				if size == nil {
 					continue
 				}
-				_ = send(&agentcomposev2.AttachExecRequest{
-					Frame: &agentcomposev2.AttachExecRequest_Resize{Resize: &agentcomposev2.AttachResize{TerminalSize: size}},
-				})
-			}
-		}
-	}()
-	return func() {
-		cancel()
-		signal.Stop(signals)
-		<-done
-	}
-}
-
-func startAttachAgentRunResizePump(ctx context.Context, fd int, send func(*agentcomposev2.AttachAgentRunRequest) error) func() {
-	ctx, cancel := context.WithCancel(ctx)
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGWINCH)
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-signals:
-				size := terminalSizeForFD(fd)
-				if size == nil {
-					continue
-				}
-				_ = send(&agentcomposev2.AttachAgentRunRequest{
-					Frame: &agentcomposev2.AttachAgentRunRequest_Resize{Resize: &agentcomposev2.AttachResize{TerminalSize: size}},
-				})
+				_ = send(size)
 			}
 		}
 	}()
