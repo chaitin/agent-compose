@@ -49,7 +49,7 @@ func ScanSchedulerBinding(scan func(dest ...any) error) (domain.SchedulerBinding
 	var item domain.SchedulerBinding
 	var createdAtRaw any
 	var updatedAtRaw any
-	if err := scan(&item.SchedulerID, &item.TriggerID, &item.SandboxID, &item.SandboxConfigHash, &createdAtRaw, &updatedAtRaw); err != nil {
+	if err := scan(&item.SchedulerID, &item.TriggerID, &item.SandboxID, &item.SandboxConfigHash, &item.SchedulerConfigHash, &createdAtRaw, &updatedAtRaw); err != nil {
 		return domain.SchedulerBinding{}, fmt.Errorf("scan scheduler binding: %w", err)
 	}
 	item.CreatedAt = storedtime.ParseStoredTime(createdAtRaw)
@@ -73,5 +73,5 @@ func SelectSchedulerEventSQL() string {
 }
 
 func SelectSchedulerBindingSQL() string {
-	return `SELECT scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, created_at, updated_at FROM scheduler_sandbox_binding`
+	return `SELECT scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, scheduler_config_hash, created_at, updated_at FROM scheduler_sandbox_binding`
 }

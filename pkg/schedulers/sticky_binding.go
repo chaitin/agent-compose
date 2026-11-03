@@ -21,7 +21,8 @@ func SchedulerBindingsMatch(current, expected domain.SchedulerBinding) bool {
 	return strings.TrimSpace(current.SchedulerID) == strings.TrimSpace(expected.SchedulerID) &&
 		strings.TrimSpace(current.TriggerID) == strings.TrimSpace(expected.TriggerID) &&
 		strings.TrimSpace(current.SandboxID) == strings.TrimSpace(expected.SandboxID) &&
-		strings.TrimSpace(current.SandboxConfigHash) == strings.TrimSpace(expected.SandboxConfigHash)
+		strings.TrimSpace(current.SandboxConfigHash) == strings.TrimSpace(expected.SandboxConfigHash) &&
+		strings.TrimSpace(current.SchedulerConfigHash) == strings.TrimSpace(expected.SchedulerConfigHash)
 }
 
 // AdoptLegacySchedulerBindingConfigHash returns a replacement that records the

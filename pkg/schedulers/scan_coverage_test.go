@@ -28,11 +28,11 @@ func TestSchedulerScanFunctionsAndStoredTimeEdges(t *testing.T) {
 	if event.ID != "event-1" || event.CreatedAt.IsZero() {
 		t.Fatalf("event = %#v", event)
 	}
-	binding, err := ScanSchedulerBinding(assignScanValues("scheduler-1", "trigger-1", "session-1", "sha256:config", "2026-07-01T02:03:04.000Z", nil))
+	binding, err := ScanSchedulerBinding(assignScanValues("scheduler-1", "trigger-1", "session-1", "sha256:config", "sha256:base", "2026-07-01T02:03:04.000Z", nil))
 	if err != nil {
 		t.Fatalf("ScanSchedulerBinding returned error: %v", err)
 	}
-	if binding.SchedulerID != "scheduler-1" || binding.SandboxConfigHash != "sha256:config" || binding.CreatedAt.IsZero() || !binding.UpdatedAt.IsZero() {
+	if binding.SchedulerID != "scheduler-1" || binding.SandboxConfigHash != "sha256:config" || binding.SchedulerConfigHash != "sha256:base" || binding.CreatedAt.IsZero() || !binding.UpdatedAt.IsZero() {
 		t.Fatalf("binding = %#v", binding)
 	}
 
