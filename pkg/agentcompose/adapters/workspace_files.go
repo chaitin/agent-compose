@@ -98,8 +98,11 @@ func (w *WorkspaceFiles) ListSandboxFiles(
 	defer func() { _ = dir.Close() }()
 
 	// Count the directory while retaining only the smallest offset+limit
-	// names. Memory therefore tracks the requested page depth, not the
-	// directory size; a directory with millions of entries is still listed.
+	// names. Memory is bounded by min(directory entries, offset+limit): a
+	// typical page keeps only offset+limit names, but a very deep offset can
+	// still retain the whole directory. This matches the offset/limit/total
+	// contract the other list RPCs share, which already materialize the full
+	// result in memory.
 	selected := make(sandboxDirEntryHeap, 0)
 	total := 0
 	for {

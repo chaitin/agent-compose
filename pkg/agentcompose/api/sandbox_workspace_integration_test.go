@@ -96,7 +96,8 @@ func TestListSandboxWorkspaceMapsEntriesAndPagination(t *testing.T) {
 }
 
 func TestDownloadSandboxWorkspaceFileStreamsInfoThenChunks(t *testing.T) {
-	content := bytes.Repeat([]byte("report"), 1024)
+	// Span three 64 KiB chunks so the buffer-reuse path is exercised.
+	content := bytes.Repeat([]byte("report"), 32768)
 	reader := &workspaceFilesTestReader{content: content}
 	client := newSandboxWorkspaceTestClient(t, reader)
 	stream, err := client.DownloadSandboxWorkspaceFile(context.Background(), connect.NewRequest(&agentcomposev2.DownloadSandboxWorkspaceFileRequest{
@@ -107,6 +108,7 @@ func TestDownloadSandboxWorkspaceFileStreamsInfoThenChunks(t *testing.T) {
 	}
 	var info *agentcomposev2.SandboxWorkspaceFileInfo
 	var got []byte
+	chunks := 0
 	for stream.Receive() {
 		switch payload := stream.Msg().GetPayload().(type) {
 		case *agentcomposev2.DownloadSandboxWorkspaceFileResponse_Info:
@@ -118,10 +120,14 @@ func TestDownloadSandboxWorkspaceFileStreamsInfoThenChunks(t *testing.T) {
 			if info == nil {
 				t.Fatalf("chunk arrived before info")
 			}
+			chunks++
 			got = append(got, payload.Chunk...)
 		default:
 			t.Fatalf("unexpected payload %T", payload)
 		}
+	}
+	if chunks < 2 {
+		t.Fatalf("chunk count = %d, want >= 2 to cover the multi-chunk path", chunks)
 	}
 	if err := stream.Err(); err != nil {
 		t.Fatalf("stream error: %v", err)
