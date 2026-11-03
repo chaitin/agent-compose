@@ -569,11 +569,28 @@ func (s *schedulerStore) GetSchedulerBinding(ctx context.Context, schedulerID, t
 	return item, true, nil
 }
 
+// GetSchedulerBindingForSandbox reports whether a sandbox is currently bound
+// for sticky scheduler reuse. A bound sandbox must not be reclaimed as an
+// orphan even when its stopped-runtime policy is remove: the scheduler keeps
+// the binding so the next run can resume it.
+func (s *schedulerStore) GetSchedulerBindingForSandbox(ctx context.Context, sandboxID string) (domain.SchedulerBinding, bool, error) {
+	row := s.db.QueryRowContext(ctx, schedulers.SelectSchedulerBindingSQL()+` WHERE sandbox_id = ? LIMIT 1`, strings.TrimSpace(sandboxID))
+	item, err := schedulers.ScanSchedulerBinding(row.Scan)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.SchedulerBinding{}, false, nil
+		}
+		return domain.SchedulerBinding{}, false, err
+	}
+	return item, true, nil
+}
+
 func (s *schedulerStore) UpsertSchedulerBinding(ctx context.Context, binding domain.SchedulerBinding) error {
 	binding.SchedulerID = strings.TrimSpace(binding.SchedulerID)
 	binding.TriggerID = strings.TrimSpace(binding.TriggerID)
 	binding.SandboxID = strings.TrimSpace(binding.SandboxID)
 	binding.SandboxConfigHash = strings.TrimSpace(binding.SandboxConfigHash)
+	binding.SchedulerConfigHash = strings.TrimSpace(binding.SchedulerConfigHash)
 	if binding.SchedulerID == "" || binding.SandboxID == "" {
 		return fmt.Errorf("scheduler binding requires scheduler id and sandbox id")
 	}
@@ -582,8 +599,8 @@ func (s *schedulerStore) UpsertSchedulerBinding(ctx context.Context, binding dom
 		binding.CreatedAt = now
 	}
 	binding.UpdatedAt = now
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_sandbox_binding(scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?)
-		ON CONFLICT(scheduler_id, trigger_id) DO UPDATE SET sandbox_id = excluded.sandbox_id, sandbox_config_hash = excluded.sandbox_config_hash, updated_at = excluded.updated_at`, binding.SchedulerID, binding.TriggerID, binding.SandboxID, binding.SandboxConfigHash, binding.CreatedAt.Unix(), binding.UpdatedAt.Unix())
+	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_sandbox_binding(scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, scheduler_config_hash, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(scheduler_id, trigger_id) DO UPDATE SET sandbox_id = excluded.sandbox_id, sandbox_config_hash = excluded.sandbox_config_hash, scheduler_config_hash = excluded.scheduler_config_hash, updated_at = excluded.updated_at`, binding.SchedulerID, binding.TriggerID, binding.SandboxID, binding.SandboxConfigHash, binding.SchedulerConfigHash, binding.CreatedAt.Unix(), binding.UpdatedAt.Unix())
 	if err != nil {
 		return fmt.Errorf("upsert scheduler binding: %w", err)
 	}
@@ -595,13 +612,14 @@ func (s *schedulerStore) CompareAndSwapSchedulerBinding(ctx context.Context, exp
 	replacement.TriggerID = strings.TrimSpace(replacement.TriggerID)
 	replacement.SandboxID = strings.TrimSpace(replacement.SandboxID)
 	replacement.SandboxConfigHash = strings.TrimSpace(replacement.SandboxConfigHash)
+	replacement.SchedulerConfigHash = strings.TrimSpace(replacement.SchedulerConfigHash)
 	if replacement.SchedulerID == "" || replacement.SandboxID == "" {
 		return false, fmt.Errorf("scheduler binding requires scheduler id and sandbox id")
 	}
 	now := time.Now().UTC()
 	if expected == nil {
-		result, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_sandbox_binding(scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(scheduler_id, trigger_id) DO NOTHING`, replacement.SchedulerID, replacement.TriggerID, replacement.SandboxID, replacement.SandboxConfigHash, now.Unix(), now.Unix())
+		result, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_sandbox_binding(scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, scheduler_config_hash, created_at, updated_at)
+			VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scheduler_id, trigger_id) DO NOTHING`, replacement.SchedulerID, replacement.TriggerID, replacement.SandboxID, replacement.SandboxConfigHash, replacement.SchedulerConfigHash, now.Unix(), now.Unix())
 		if err != nil {
 			return false, fmt.Errorf("claim scheduler binding: %w", err)
 		}
@@ -612,10 +630,11 @@ func (s *schedulerStore) CompareAndSwapSchedulerBinding(ctx context.Context, exp
 		return false, fmt.Errorf("scheduler binding replacement key does not match expected binding")
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE scheduler_sandbox_binding
-		SET sandbox_id = ?, sandbox_config_hash = ?, updated_at = ?
+		SET sandbox_id = ?, sandbox_config_hash = ?, scheduler_config_hash = ?, updated_at = ?
 		WHERE scheduler_id = ? AND trigger_id = ? AND sandbox_id = ? AND sandbox_config_hash = ?`,
 		replacement.SandboxID,
 		replacement.SandboxConfigHash,
+		replacement.SchedulerConfigHash,
 		now.Unix(),
 		replacement.SchedulerID,
 		replacement.TriggerID,
