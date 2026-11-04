@@ -163,7 +163,9 @@ func RegisterRoutes(di do.Injector) {
 			}
 			return statsRuntime, nil
 		},
-	).WithRunTargetResolver(do.MustInvoke[*runs.SandboxRunTargetResolver](di)).WithRemovalCoordinator(do.MustInvoke[*sandboxes.RemovalCoordinator](di))
+	).WithRunTargetResolver(do.MustInvoke[*runs.SandboxRunTargetResolver](di)).
+		WithRemovalCoordinator(do.MustInvoke[*sandboxes.RemovalCoordinator](di)).
+		WithWorkspaceFiles(adapters.NewWorkspaceFiles(do.MustInvoke[*appconfig.Config](di)))
 	path, handler = agentcomposev2connect.NewSandboxServiceHandler(sandboxHandler)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewSettingsServiceHandler(api.NewSettingsV2Handler(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)))

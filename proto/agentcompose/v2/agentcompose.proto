@@ -5,6 +5,7 @@ package agentcompose.v2;
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "agentcompose/v2/errors.proto";
+import "agentcompose/v2/sandbox_workspace.proto";
 
 option go_package = "github.com/chaitin/agent-compose/proto/agentcompose/v2;agentcomposev2";
 
@@ -128,6 +129,15 @@ service SandboxService {
   rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse);
   rpc ListSandboxHistory(ListSandboxHistoryRequest) returns (ListSandboxHistoryResponse);
   rpc WatchSandbox(WatchSandboxRequest) returns (stream WatchSandboxResponse);
+  // Lists one directory below the sandbox workspace root. The call is
+  // read-only, does not start a stopped runtime, and never returns host
+  // paths. A directory is counted while only the requested page is retained
+  // in memory. Drivers without a shared filesystem, mounted workspaces, and
+  // unknown workspace types return UNIMPLEMENTED.
+  rpc ListSandboxWorkspace(ListSandboxWorkspaceRequest) returns (ListSandboxWorkspaceResponse);
+  // Streams one regular file below the sandbox workspace root. The first
+  // response frame carries the file metadata; later frames carry content.
+  rpc DownloadSandboxWorkspaceFile(DownloadSandboxWorkspaceFileRequest) returns (stream DownloadSandboxWorkspaceFileResponse);
 }
 
 service DashboardService {
