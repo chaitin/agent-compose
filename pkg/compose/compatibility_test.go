@@ -153,7 +153,7 @@ agents:
 	if got, want := validationErr.Path, "agents.reviewer.scheduler.triggers[0].prompt"; got != want {
 		t.Fatalf("validation path = %q, want %q", got, want)
 	}
-	if got, want := validationErr.Message, "trigger prompt is required"; got != want {
+	if got, want := validationErr.Message, "trigger prompt is required because the trigger starts an agent with no message"; got != want {
 		t.Fatalf("validation message = %q, want %q", got, want)
 	}
 }

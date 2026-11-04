@@ -1338,7 +1338,7 @@ scheduler:
 | `interval` | duration | One of four | Positive period such as `30s`, `5m`, or `2h`; registration precision is at least 1 ms. |
 | `timeout` | duration | One of four | Positive one-shot delay such as `15s`; registration precision is at least 1 ms. |
 | `event.topic` | string | One of four | The nested `topic` is the non-empty subscribed topic, for example `webhook.github.push`. |
-| `prompt` | string | Yes | Prompt sent to the agent when the trigger fires. It must be non-empty; a trigger without one fails configuration validation. |
+| `prompt` | string | Yes | Prompt sent to the agent when the trigger fires. It must be non-empty: a trigger compiles to a `scheduler.agent` call, which rejects an empty prompt, so a trigger without one fails configuration validation instead of starting an agent with no task. |
 | `include_event` | bool | No | `event` triggers only. Defaults to `true`, which appends the triggering event to the prompt; `false` sends the declared prompt alone. |
 | `sandbox_policy` | string | No | `sticky` or `new` for this generated agent call. If omitted, no call-level override is emitted. |
 
