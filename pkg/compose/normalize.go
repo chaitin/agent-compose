@@ -1531,7 +1531,7 @@ func normalizeTriggerSpec(path string, trigger TriggerSpec) (NormalizedTriggerSp
 	// the failure is reported here rather than as a run that starts an agent
 	// with no task.
 	if strings.TrimSpace(trigger.Prompt) == "" {
-		return NormalizedTriggerSpec{}, &ValidationError{Path: path + ".prompt", Message: "trigger prompt is required because the trigger starts an agent with no message"}
+		return NormalizedTriggerSpec{}, &ValidationError{Path: path + ".prompt", Message: "trigger prompt is required; the trigger compiles to scheduler.agent, which rejects an empty prompt"}
 	}
 
 	return normalized, nil
