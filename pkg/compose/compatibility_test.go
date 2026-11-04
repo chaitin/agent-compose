@@ -2,6 +2,7 @@ package compose
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -123,6 +124,38 @@ func compareStableYAMLContracts(baseline, candidate stableYAMLContract) stableYA
 		}
 	}
 	return changes
+}
+
+// The v2608.1.0 baseline accepted a declarative trigger without a prompt and
+// compiled it to "Run agent <name>.". Requiring the prompt is a deliberate
+// breaking change, and it cannot surface through contract-v2608.1.0.json: the
+// field still carries omitempty, so the reflected contract sees it as optional
+// and compareStableYAMLContracts has nothing to report. The fixtures are updated
+// to declare prompts, which would otherwise hide the regression, so pin the
+// rejection of a baseline-shaped file here.
+func TestStableYAMLTriggerWithoutPromptIsNowRejected(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: legacy-trigger
+agents:
+  reviewer:
+    scheduler:
+      triggers:
+        - name: daily
+          cron: "0 9 * * *"
+          timezone: UTC
+`)
+
+	_, err := Normalize(spec, NormalizeOptions{})
+	var validationErr *ValidationError
+	if !errors.As(err, &validationErr) {
+		t.Fatalf("Normalize error = %v, want ValidationError", err)
+	}
+	if got, want := validationErr.Path, "agents.reviewer.scheduler.triggers[0].prompt"; got != want {
+		t.Fatalf("validation path = %q, want %q", got, want)
+	}
+	if got, want := validationErr.Message, "trigger prompt is required"; got != want {
+		t.Fatalf("validation message = %q, want %q", got, want)
+	}
 }
 
 func TestStableYAMLFixtures(t *testing.T) {
