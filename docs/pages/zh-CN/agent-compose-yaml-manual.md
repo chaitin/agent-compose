@@ -1405,6 +1405,10 @@ jupyter:
 
 每个 project 的 ID 以及 revision、agent、scheduler、run、sandbox 和 volume 关联仍属于原 project。升级后使用 `agent-compose project ls` 查看分配后的名称；后续如需更新带后缀的 project，应在对应 compose 文件中设置该名称。
 
+### 声明式 trigger 未写 prompt
+
+声明式 trigger 的 `prompt` 现在是必填项。在此变更前持久化的 project 中，可能存有省略了 prompt 的 trigger：这些旧 revision 仍能正常加载，并继续按旧的回退消息（`Run agent <name>.`）运行，因为回退只在持久化数据的解码边界恢复。若 compose 文件中的 trigger 仍未写 `prompt`，下次 `config` 或 `up` 会校验失败；请为每个 trigger（包括 event trigger）补上 `prompt` 后重新 apply。升级前建议备份 `data.db`。
+
 ### 顶层误写 `workspace`
 
 错误：

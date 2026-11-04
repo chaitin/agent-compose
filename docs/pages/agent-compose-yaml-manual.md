@@ -1443,6 +1443,10 @@ An upgrade does not merge projects that already have the same name, because matc
 
 Every project ID and its revisions, agents, schedulers, runs, sandboxes, and volume associations remain attached to the same project. Use `agent-compose project ls` after the upgrade to see the assigned names. To update a suffixed project later, set that assigned name in its compose file.
 
+### Declarative triggers without a prompt
+
+`prompt` on a declarative trigger is now required. A project persisted before this change may carry a trigger whose prompt was omitted: the stored revision keeps loading and keeps running with the old fallback message (`Run agent <name>.`), because the fallback is restored only at the persisted-data boundary. The next `config` or `up` of a project whose compose file still declares a trigger without a `prompt` fails validation; add a `prompt` to every trigger (event triggers included) and re-apply. Back up `data.db` before upgrading.
+
 ### Using top-level `workspace`
 
 Invalid:
