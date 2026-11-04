@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -23,6 +24,12 @@ const (
 	maxSandboxWorkspacePathBytes = 4096
 	sandboxWorkspaceRootName     = "workspace"
 	sandboxWorkspaceListBatch    = 4096
+
+	// sandboxWorkspaceOpenFlags opens read-only without blocking. O_NONBLOCK
+	// makes opening a FIFO or device return immediately instead of blocking the
+	// handler, since a guest can race a path into one between the Lstat check
+	// and the open. The descriptor type is re-verified after every open.
+	sandboxWorkspaceOpenFlags = os.O_RDONLY | syscall.O_NONBLOCK
 )
 
 // WorkspaceFiles is the shared-filesystem implementation of
@@ -74,6 +81,7 @@ func (w *WorkspaceFiles) ListSandboxFiles(
 	}
 	defer func() { _ = root.Close() }()
 
+	var lstatInfo os.FileInfo
 	if relPath != "" {
 		if err := sandboxWorkspaceRejectSymlinkComponents(root, relPath); err != nil {
 			return nil, 0, err
@@ -85,17 +93,31 @@ func (w *WorkspaceFiles) ListSandboxFiles(
 		if !info.IsDir() {
 			return nil, 0, domain.ClassifyError(domain.ErrInvalidArgument, fmt.Sprintf("workspace path %q is not a directory", relPath), nil)
 		}
+		lstatInfo = info
 	}
 
 	openPath := relPath
 	if openPath == "" {
 		openPath = "."
 	}
-	dir, err := root.Open(openPath)
+	dir, err := root.OpenFile(openPath, sandboxWorkspaceOpenFlags, 0)
 	if err != nil {
 		return nil, 0, sandboxWorkspaceReadError(err, "open workspace directory")
 	}
 	defer func() { _ = dir.Close() }()
+
+	// The guest writes the workspace concurrently, so the Lstat above can be
+	// stale by the time the directory is opened. Re-verify the opened handle is
+	// the same directory we inspected: a swap to a symlink would otherwise be
+	// followed inside the root, and a swap to a FIFO would have blocked without
+	// O_NONBLOCK.
+	dirInfo, err := dir.Stat()
+	if err != nil {
+		return nil, 0, sandboxWorkspaceReadError(err, "stat workspace directory")
+	}
+	if !dirInfo.IsDir() || (relPath != "" && !os.SameFile(dirInfo, lstatInfo)) {
+		return nil, 0, domain.ClassifyError(domain.ErrInvalidArgument, fmt.Sprintf("workspace path %q changed while opening", relPath), nil)
+	}
 
 	// Count the directory while retaining only the smallest offset+limit
 	// names. Memory is bounded by min(directory entries, offset+limit): a
@@ -193,6 +215,11 @@ func (h *sandboxDirEntryHeap) Pop() any {
 // symlink at any component. Checking only the final component would let a
 // caller reach a regular file through a symlinked directory, which the wire
 // contract says is never followed.
+//
+// This Lstat walk is the pre-open half of the defense. It is inherently racy
+// because the guest can mutate the workspace concurrently, so every open is
+// followed by an fstat + os.SameFile check that verifies the opened object is
+// the one that was inspected here.
 func sandboxWorkspaceRejectSymlinkComponents(root *os.Root, relPath string) error {
 	current := ""
 	for _, part := range strings.Split(relPath, "/") {
@@ -255,17 +282,33 @@ func (w *WorkspaceFiles) OpenSandboxFile(
 		_ = root.Close()
 		return nil, workspaces.SandboxFileInfo{}, domain.ClassifyError(domain.ErrInvalidArgument, fmt.Sprintf("workspace path %q is not a regular file", relPath), nil)
 	}
-	file, err := root.Open(relPath)
+	file, err := root.OpenFile(relPath, sandboxWorkspaceOpenFlags, 0)
 	if err != nil {
 		_ = root.Close()
 		return nil, workspaces.SandboxFileInfo{}, sandboxWorkspaceReadError(err, "open workspace file")
+	}
+	// The guest writes the workspace concurrently, so the Lstat above can be
+	// stale by the time the file is opened. Re-verify the opened descriptor is
+	// the same regular file we inspected: a swap to a symlink would otherwise be
+	// followed inside the root and return bytes that disagree with info, and a
+	// swap to a FIFO would have blocked without O_NONBLOCK.
+	openedInfo, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		_ = root.Close()
+		return nil, workspaces.SandboxFileInfo{}, sandboxWorkspaceReadError(err, "stat workspace file")
+	}
+	if !openedInfo.Mode().IsRegular() || !os.SameFile(openedInfo, info) {
+		_ = file.Close()
+		_ = root.Close()
+		return nil, workspaces.SandboxFileInfo{}, domain.ClassifyError(domain.ErrInvalidArgument, fmt.Sprintf("workspace path %q changed while opening", relPath), nil)
 	}
 	// The file owns the root handle: closing the file must also release the
 	// root, and the directory entry remains valid after an unlink on Unix.
 	return &sandboxWorkspaceFile{File: file, root: root}, workspaces.SandboxFileInfo{
 		Path:    filepath.ToSlash(relPath),
-		Size:    info.Size(),
-		ModTime: info.ModTime().UTC(),
+		Size:    openedInfo.Size(),
+		ModTime: openedInfo.ModTime().UTC(),
 	}, nil
 }
 
@@ -318,6 +361,9 @@ func (w *WorkspaceFiles) sandboxWorkspaceRoot(sandbox *domain.Sandbox) (string, 
 	if !sandboxWorkspaceDriverSupported(driver) {
 		return "", domain.ClassifyError(domain.ErrUnsupported, fmt.Sprintf("workspace file reads are not supported by driver %q", driver), nil)
 	}
+	if w.sandboxWorkspaceVolumeMountInterferes(sandbox) {
+		return "", domain.ClassifyError(domain.ErrUnsupported, "sandbox volume mounts overlap the workspace and are not readable by the workspace file API", nil)
+	}
 	workspacePath := strings.TrimSpace(sandbox.Summary.WorkspacePath)
 	if workspacePath == "" {
 		return "", domain.ClassifyError(domain.ErrFailedPrecondition, "sandbox workspace path is required", nil)
@@ -355,6 +401,37 @@ func (w *WorkspaceFiles) resolveDriver(sandbox *domain.Sandbox) (string, error) 
 		return "", domain.ClassifyError(domain.ErrUnsupported, "resolve sandbox runtime driver", err)
 	}
 	return driver, nil
+}
+
+// sandboxWorkspaceVolumeMountInterferes reports whether any user volume is
+// mounted inside the guest workspace. The daemon-owned <sandbox>/workspace
+// directory does not contain a volume mounted over one of its subdirectories,
+// so serving that subtree would return the wrong (host-side) content. Fail
+// closed with Unimplemented, matching the mount-mode workspace guard, instead
+// of silently reading stale bytes.
+func (w *WorkspaceFiles) sandboxWorkspaceVolumeMountInterferes(sandbox *domain.Sandbox) bool {
+	if sandbox == nil || len(sandbox.VolumeMounts) == 0 {
+		return false
+	}
+	// guestWorkspace mirrors the config default of /workspace; the real daemon
+	// config always carries a normalized GuestWorkspacePath, so the fallback
+	// only serves nil/zero configs in tests.
+	guestWorkspace := "/workspace"
+	if w.config != nil {
+		if trimmed := strings.TrimSpace(w.config.GuestWorkspacePath); trimmed != "" {
+			guestWorkspace = path.Clean(trimmed)
+		}
+	}
+	for _, mount := range sandbox.VolumeMounts {
+		target := path.Clean(strings.TrimSpace(mount.Target))
+		if target == "" || target == "." {
+			continue
+		}
+		if target == guestWorkspace || strings.HasPrefix(target, guestWorkspace+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // sandboxWorkspaceDriverSupported is an explicit allowlist, not a "not k8s"

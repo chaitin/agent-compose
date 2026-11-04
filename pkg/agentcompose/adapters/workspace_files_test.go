@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -299,4 +300,182 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+func TestWorkspaceFilesRejectsSymlinkFileDownload(t *testing.T) {
+	workspacePath := filepath.Join(t.TempDir(), "sandbox", "workspace")
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspacePath, "report.md"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("report.md", filepath.Join(workspacePath, "file-link")); err != nil {
+		t.Skipf("filesystem does not support symlinks: %v", err)
+	}
+	files := NewWorkspaceFiles(&appconfig.Config{RuntimeDriver: "docker"})
+	// The final component is a symlink to a regular file: it must be rejected
+	// like a symlinked directory, not followed.
+	if _, _, err := files.OpenSandboxFile(context.Background(), workspaceFilesSandbox(workspacePath), "file-link"); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("symlink file download error = %v, want invalid argument", err)
+	}
+}
+
+func TestWorkspaceFilesOmitsNonUTF8Names(t *testing.T) {
+	workspacePath := filepath.Join(t.TempDir(), "sandbox", "workspace")
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspacePath, "good.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	badName := string([]byte{'b', 'a', 'd', 0xff, '.', 't', 'x', 't'})
+	if err := os.WriteFile(filepath.Join(workspacePath, badName), []byte("bad"), 0o644); err != nil {
+		t.Skipf("filesystem does not allow a non-UTF-8 name: %v", err)
+	}
+	files := NewWorkspaceFiles(&appconfig.Config{RuntimeDriver: "docker"})
+	entries, total, err := files.ListSandboxFiles(context.Background(), workspaceFilesSandbox(workspacePath), "", 0, 10)
+	if err != nil {
+		t.Fatalf("ListSandboxFiles: %v", err)
+	}
+	if total != 1 || len(entries) != 1 || entries[0].Name != "good.txt" {
+		t.Fatalf("entries = %+v total=%d, want only good.txt total=1", entries, total)
+	}
+}
+
+func TestWorkspaceFilesClassifiesFIFOAsOther(t *testing.T) {
+	workspacePath := filepath.Join(t.TempDir(), "sandbox", "workspace")
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(workspacePath, "pipe"), 0o600); err != nil {
+		t.Skipf("filesystem does not support FIFO: %v", err)
+	}
+	files := NewWorkspaceFiles(&appconfig.Config{RuntimeDriver: "docker"})
+	sandbox := workspaceFilesSandbox(workspacePath)
+
+	entries, total, err := files.ListSandboxFiles(context.Background(), sandbox, "", 0, 10)
+	if err != nil {
+		t.Fatalf("ListSandboxFiles: %v", err)
+	}
+	if total != 1 || len(entries) != 1 || entries[0].Kind != workspaces.SandboxEntryOther {
+		t.Fatalf("entries = %+v total=%d, want one OTHER entry", entries, total)
+	}
+	if _, _, err := files.OpenSandboxFile(context.Background(), sandbox, "pipe"); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("FIFO download error = %v, want invalid argument", err)
+	}
+}
+
+func TestWorkspaceFilesListPaginationBoundary(t *testing.T) {
+	workspacePath := filepath.Join(t.TempDir(), "sandbox", "workspace")
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.WriteFile(filepath.Join(workspacePath, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := NewWorkspaceFiles(&appconfig.Config{RuntimeDriver: "docker"})
+	sandbox := workspaceFilesSandbox(workspacePath)
+
+	entries, total, err := files.ListSandboxFiles(context.Background(), sandbox, "", 2, 1)
+	if err != nil {
+		t.Fatalf("ListSandboxFiles: %v", err)
+	}
+	if total != 3 || len(entries) != 1 || entries[0].Name != "c" {
+		t.Fatalf("last page = %+v total=%d, want [c] total=3", entries, total)
+	}
+
+	entries, total, err = files.ListSandboxFiles(context.Background(), sandbox, "", 3, 1)
+	if err != nil {
+		t.Fatalf("ListSandboxFiles: %v", err)
+	}
+	if total != 3 || len(entries) != 0 {
+		t.Fatalf("past-end page = %+v total=%d, want empty total=3", entries, total)
+	}
+}
+
+func TestWorkspaceFilesRejectsUnsafeRoots(t *testing.T) {
+	root := t.TempDir()
+	workspacePath := filepath.Join(root, "sandbox", "workspace")
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := NewWorkspaceFiles(&appconfig.Config{RuntimeDriver: "docker"})
+
+	t.Run("basename mismatch", func(t *testing.T) {
+		sandbox := workspaceFilesSandbox(filepath.Join(root, "sandbox", "not-workspace"))
+		if _, _, err := files.ListSandboxFiles(context.Background(), sandbox, "", 0, 10); !errors.Is(err, domain.ErrFailedPrecondition) {
+			t.Fatalf("basename mismatch error = %v, want failed precondition", err)
+		}
+	})
+
+	t.Run("root missing", func(t *testing.T) {
+		sandbox := workspaceFilesSandbox(filepath.Join(root, "sandbox", "workspace-missing"))
+		if _, _, err := files.ListSandboxFiles(context.Background(), sandbox, "", 0, 10); !errors.Is(err, domain.ErrFailedPrecondition) {
+			t.Fatalf("missing root error = %v, want failed precondition", err)
+		}
+	})
+
+	t.Run("root is symlink", func(t *testing.T) {
+		alias := filepath.Join(root, "alias")
+		if err := os.MkdirAll(alias, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(alias, "workspace")
+		if err := os.Symlink(workspacePath, link); err != nil {
+			t.Skipf("filesystem does not support symlinks: %v", err)
+		}
+		sandbox := workspaceFilesSandbox(link)
+		if _, _, err := files.ListSandboxFiles(context.Background(), sandbox, "", 0, 10); !errors.Is(err, domain.ErrFailedPrecondition) {
+			t.Fatalf("symlink root error = %v, want failed precondition", err)
+		}
+	})
+}
+
+func TestWorkspaceFilesVolumeMountInterference(t *testing.T) {
+	files := NewWorkspaceFiles(&appconfig.Config{RuntimeDriver: "docker", GuestWorkspacePath: "/workspace"})
+	cases := []struct {
+		target string
+		want   bool
+	}{
+		{"/workspace/cache", true},
+		{"/workspace", true},
+		{"/workspace/", true},
+		{"/cache", false},
+		{"/workspace-other", false},
+	}
+	for _, tc := range cases {
+		sandbox := &domain.Sandbox{VolumeMounts: []domain.SandboxVolumeMount{{Target: tc.target}}}
+		if got := files.sandboxWorkspaceVolumeMountInterferes(sandbox); got != tc.want {
+			t.Errorf("target %q = %v, want %v", tc.target, got, tc.want)
+		}
+	}
+	if files.sandboxWorkspaceVolumeMountInterferes(&domain.Sandbox{}) {
+		t.Errorf("empty volume mounts must not interfere")
+	}
+}
+
+func TestWorkspaceFilesRejectsVolumeMountInWorkspace(t *testing.T) {
+	workspacePath := filepath.Join(t.TempDir(), "sandbox", "workspace")
+	if err := os.MkdirAll(workspacePath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspacePath, "report.md"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	files := NewWorkspaceFiles(&appconfig.Config{RuntimeDriver: "docker", GuestWorkspacePath: "/workspace"})
+
+	interfering := workspaceFilesSandbox(workspacePath)
+	interfering.VolumeMounts = []domain.SandboxVolumeMount{{Type: "bind", Source: "cache", Target: "/workspace/cache"}}
+	if _, _, err := files.ListSandboxFiles(context.Background(), interfering, "", 0, 10); !errors.Is(err, domain.ErrUnsupported) {
+		t.Fatalf("interfering volume mount error = %v, want unsupported", err)
+	}
+
+	outside := workspaceFilesSandbox(workspacePath)
+	outside.VolumeMounts = []domain.SandboxVolumeMount{{Type: "bind", Source: "cache", Target: "/cache"}}
+	if _, _, err := files.ListSandboxFiles(context.Background(), outside, "", 0, 10); err != nil {
+		t.Fatalf("non-interfering volume mount error = %v, want nil", err)
+	}
 }
