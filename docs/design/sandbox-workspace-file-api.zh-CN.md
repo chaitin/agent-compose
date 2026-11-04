@@ -4,7 +4,7 @@
 
 页面会话的常见需求是：agent 在 sandbox workspace 里生成一个报告文件，用户在页面上把它下载下来。
 
-agent-compose 之前没有公开的 workspace 读取 API。现有可用的替代路径都不适合跨机器：
+agent-compose 没有面向 sandbox 运行时 workspace 的公开读取 API。仓库已有的 `GET /api/agent-compose/workspaces/:id/files|download|upload` 数据面（`pkg/agentcompose/proxy/workspace.go`）只读写 workspace preset 内容（上传初始文件/模板），读不到 agent 之后在 sandbox workspace 里生成的文件；它读的 `sandboxes` 目录在默认 compose 里还以只读方式挂载给 UI（`docker-compose.yml`），宿主路径跨机器不可移植。因此本 PR 新增 Connect RPC 而非扩展那条 HTTP 数据面。现有可用的替代路径都不适合跨机器：
 
 - `SandboxService.GetSandbox` 只返回 `workspace_path`（daemon 宿主路径），ADP 与 engine 不共享卷时无法读取；
 - `ExecService.Exec` 可以 `cat`/`tar`，但要求 sandbox 处于 `running`（`pkg/agentcompose/api/exec_target.go:105`），而 chat SDK 每轮结束使用 `STOP_ON_COMPLETION`（`sdk/go/chat/conversation.go:458`），所以回合结束后直接 Exec 会失败；
@@ -38,13 +38,13 @@ rpc DownloadSandboxWorkspaceFile(DownloadSandboxWorkspaceFileRequest)
 - 只列一层，不递归；
 - `offset`/`limit` 与其他 List RPC 一致；`limit` 默认 100，最大 500；
 - 返回 `total`，按名字排序当前页；
-- 单目录可能很大。实现先计数，同时只保留最小的 `offset+limit` 个名字；内存随请求的页深增长，不随目录大小增长，因此没有额外的页深上限；
+- 单目录可能很大。实现先计数，同时只保留最小的 `offset+limit` 个名字，内存上界是 `min(目录条目数, offset+limit)`：常见页面只保留 `offset+limit` 个名字，但很深的 offset 会退化为保留整个目录（与仓库其它 List RPC 的 offset/limit/total 契约一致）。因此没有额外的页深上限；
 - 目录在分页之间变化是 best-effort。
 
 ### Download
 
 - `path` 必须是 workspace 相对路径的普通文件；
-- 第一帧是 `info`，之后是 64 KiB 的 `chunk`；空文件只有 `info`；
+- 第一帧是 `info`，之后是最多 64 KiB 的 `chunk`（最后一帧可能更短）；空文件只有 `info`；
 - 流式读取，不落临时文件，不把整个文件放进内存；
 - 取消请求时停止读取并关闭文件。
 
@@ -54,8 +54,8 @@ rpc DownloadSandboxWorkspaceFile(DownloadSandboxWorkspaceFileRequest)
 
 - 根固定为 sandbox 自己的 `<sandbox>/workspace`；
 - 不开放 home、state、volume，不返回宿主路径；
-- 拒绝绝对路径、`..`、NUL、超长路径；反斜杠不作为路径分隔符，在 Unix 上是合法文件名字符，列表按原样返回；
-- 符号链接在列表中报告为 `SYMLINK`，不跟随；下载和进入目录都拒绝任何路径分量上的符号链接；
+- 拒绝绝对路径、NUL 和超过 4096 字节的路径；拒绝逃逸根的 `..` 与 `../` 前缀（`a/../b` 会被 `path.Clean` 归一化为 `b`，不逃逸，因此接受）；反斜杠不作为路径分隔符，在 Unix 上是合法文件名字符，列表按原样返回；
+- 符号链接在列表中报告为 `SYMLINK`，不跟随；下载和进入目录都拒绝任何路径分量上的符号链接。由于 guest 会并发写 workspace，实现用「逐分量 Lstat 预检 + `O_NONBLOCK` 打开 + 打开后 fstat/`os.SameFile` 复验」保证实际打开的对象与预检一致：符号链接被跟随到根内另一个对象时会因 inode 不符被拒绝，竞态把路径换成 FIFO 时 `O_NONBLOCK` 保证 open 立即返回而不阻塞 handler；
 - 非 UTF-8 文件名不会出现在响应里，也不计入 `total`，避免破坏 protobuf string。
 
 ### 生命周期
@@ -64,7 +64,8 @@ rpc DownloadSandboxWorkspaceFile(DownloadSandboxWorkspaceFileRequest)
 - workspace provisioning 未 ready：`FailedPrecondition`；
 - Docker/BoxLite/Microsandbox 停止后宿主 workspace 还在，可以读；
 - K8s 第一版返回 `Unimplemented`，因为 workspace 在 Pod 内，读取需要额外的 streaming guest 能力；
-- `mode: mount` 第一版返回 `Unimplemented`，不猜测挂载源映射。
+- `mode: mount` 第一版返回 `Unimplemented`，不猜测挂载源映射；
+- 用户 volume 挂载落在 guest workspace 内（例如 `/workspace/cache`）时返回 `Unimplemented`：宿主 `<sandbox>/workspace` 不包含该挂载内容，静默读取会返回错误数据，因此 fail closed。
 
 ### 错误
 
@@ -83,11 +84,11 @@ rpc DownloadSandboxWorkspaceFile(DownloadSandboxWorkspaceFileRequest)
 
 - `pkg/workspaces/sandbox_files.go`：`SandboxFiles` 接口和传输中立的 entry/info 类型；
 - `pkg/agentcompose/adapters/workspace_files.go`：共享文件系统实现，使用 `os.Root`；不启动 runtime；
-- `pkg/agentcompose/api/sandbox_workspace.go`：参数校验、分页、流组装、错误映射；
+- `pkg/agentcompose/api/sandbox_workspace.go`：offset/limit 分页、流组装、错误映射（路径归一化、校验与符号链接防护在 adapter 的 `workspace_files.go`）；
 - `pkg/agentcompose/api/sandbox.go`：`WithWorkspaceFiles` 依赖注入；
 - `pkg/agentcompose/app/app.go`：构造 `WorkspaceFiles`。
 
-分页实现使用一个按名字排序的有界 max-heap，只保留最小的 `offset+limit` 个条目，因此目录大小只影响扫描时间，不影响常驻内存；内存随请求的页深增长。
+分页实现使用一个按名字排序的有界 max-heap，只保留最小的 `offset+limit` 个条目；内存上界是 `min(目录条目数, offset+limit)`，因此常见页面下目录大小只影响扫描时间、不影响常驻内存，但很深的 offset 会保留整个目录。
 
 ## 6. 业务层用法
 
@@ -108,12 +109,12 @@ ADP 不需要 artifact 存储，也不需要 chat SDK 改动：
 - **K8s 不在 v1**：K8s 返回 `Unimplemented`，等待独立的流式 guest 读取实现；
 - **ACL 不在这一层**：daemon token 是管理员边界，接口只提供管理员级只读原语；用户、项目、会话级授权由上层业务模块负责；
 - **安全与运维留给上层**：内容过滤、审计、限流、下载策略不由这个 RPC 实现；上层不得把该 RPC 直接暴露给浏览器或终端用户；
-- **性能与资源按流式处理**：下载已经是 `info` + 64 KiB `chunk` 的服务端流，不缓存完整文件；列表只保留 `offset+limit` 个名字，内存不随目录大小增长。列表为了满足仓库统一的 `offset/limit/total` 分页契约，仍会扫描目录计数；如果未来要求列目录本身也严格流式，需要改成 server-streaming/cursor 形状，并同时调整分页契约。
+- **性能与资源按流式处理**：下载已经是 `info` + 最多 64 KiB `chunk` 的服务端流，不缓存完整文件；列表只保留 `min(目录条目数, offset+limit)` 个名字，但深 offset 会退化为保留整个目录。列表为了满足仓库统一的 `offset/limit/total` 分页契约，仍会扫描目录计数；如果未来要求列目录本身也严格流式，需要改成 server-streaming/cursor 形状，并同时调整分页契约。
 
 ## 8. 验证
 
 - `proto/agentcompose/v2/sandbox_workspace_contract_test.go`：RPC streaming 形状、字段编号、enum 连续性；
-- `pkg/agentcompose/adapters/workspace_files_test.go`：分页、排序、路径 round-trip（空格/反斜杠文件名）、任意路径分量上的符号链接、无页深上限、权限错误分类、回收状态、K8s/mount 不支持；
-- `pkg/agentcompose/api/sandbox_workspace_integration_test.go`：Connect 列表映射、info/chunk 顺序、错误 code；
+- `pkg/agentcompose/adapters/workspace_files_test.go`：分页（含精确边界）、排序、路径 round-trip（空格/反斜杠文件名）、任意路径分量与最终文件上的符号链接拒绝、非 UTF-8 文件名不计入、FIFO/Other 分类、根校验（basename 不符/不存在/为符号链接）、volume mount 干涉、权限错误分类、回收状态、K8s/mount 不支持；
+- `pkg/agentcompose/api/sandbox_workspace_integration_test.go`：Connect 列表映射、info/chunk 顺序、错误 code 与 reason（含 `SANDBOX_NOT_FOUND` vs `RESOURCE_NOT_FOUND`）；
 - `TestDaemonV2RPCInventoryReachesConcreteHandlers`：两个新 RPC 都有具体 handler；
 - `TestDaemonHTTPRouteAllowlist`：HTTP 路由集合不变。

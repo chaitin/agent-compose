@@ -38,8 +38,10 @@ type SandboxFileInfo struct {
 
 // SandboxFiles reads files below one sandbox's workspace root. It is
 // read-only: it never creates, writes, deletes, or starts a runtime. A
-// directory listing is one level deep and bounded by offset and limit;
-// implementations must not materialize the whole directory to satisfy it.
+// directory listing is one level deep and bounded by offset and limit; memory
+// is bounded by min(directory entries, offset+limit), so a deep offset may
+// still retain the whole directory. Implementations may scan the directory to
+// count it, but must not build a result larger than that bound.
 //
 // Authorization, auditing, rate limiting and content policy belong to the
 // caller. This is an administrator-level read primitive, not a user-facing
