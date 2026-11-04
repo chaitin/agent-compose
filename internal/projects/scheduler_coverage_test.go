@@ -15,8 +15,8 @@ func TestManagedSchedulerTriggerRegistrationCoverage(t *testing.T) {
 		Triggers: []compose.NormalizedTriggerSpec{
 			{Name: "cron-main", Kind: "cron", Cron: "*/5 * * * *", Prompt: "Run cron"},
 			{Name: "cron-shanghai", Kind: "cron", Cron: "0 9 * * *", Timezone: "Asia/Shanghai", Prompt: "Run local cron"},
-			{Name: "interval-main", Kind: "interval", Interval: "2s"},
-			{Name: "timeout-main", Kind: "timeout", Timeout: "3s"},
+			{Name: "interval-main", Kind: "interval", Interval: "2s", Prompt: "Run interval"},
+			{Name: "timeout-main", Kind: "timeout", Timeout: "3s", Prompt: "Run timeout"},
 			{Name: "event-main", Kind: "event", Event: &compose.EventTriggerSpec{Topic: "webhook.github.push"}, Prompt: `quote "prompt"`},
 		},
 	})
@@ -37,7 +37,7 @@ func TestManagedSchedulerTriggerRegistrationCoverage(t *testing.T) {
 			t.Fatalf("script missing %q: %s", want, script)
 		}
 	}
-	_, policyRegistration, err := ProjectSchedulerTriggerAndRegistration("sticky-trigger", "worker", compose.NormalizedTriggerSpec{Kind: "interval", Interval: "1s", SandboxPolicy: "sticky"})
+	_, policyRegistration, err := ProjectSchedulerTriggerAndRegistration("sticky-trigger", "worker", compose.NormalizedTriggerSpec{Kind: "interval", Interval: "1s", SandboxPolicy: "sticky", Prompt: "Run once"})
 	if err != nil || !strings.Contains(policyRegistration, `sandboxPolicy: "sticky"`) {
 		t.Fatalf("sticky registration = %q, err=%v", policyRegistration, err)
 	}
@@ -54,18 +54,19 @@ func TestManagedSchedulerTriggerRegistrationCoverage(t *testing.T) {
 		t.Fatalf("nil scheduler returned nil error")
 	}
 	if _, _, err := ProjectSchedulerTriggersAndScript("project-1", "worker", "", &compose.NormalizedSchedulerSpec{Triggers: []compose.NormalizedTriggerSpec{
-		{Name: "dup", Kind: "interval", Interval: "1s"},
-		{Name: "dup", Kind: "interval", Interval: "2s"},
+		{Name: "dup", Kind: "interval", Interval: "1s", Prompt: "Run"},
+		{Name: "dup", Kind: "interval", Interval: "2s", Prompt: "Run"},
 	}}); err == nil {
 		t.Fatalf("duplicate trigger names returned nil error")
 	}
 	for _, item := range []compose.NormalizedTriggerSpec{
-		{Kind: "interval", Interval: "bad"},
-		{Kind: "interval", Interval: "0s"},
-		{Kind: "timeout", Timeout: "bad"},
-		{Kind: "timeout", Timeout: "0s"},
-		{Kind: "event"},
-		{Kind: "unsupported"},
+		{Kind: "interval", Interval: "bad", Prompt: "Run"},
+		{Kind: "interval", Interval: "0s", Prompt: "Run"},
+		{Kind: "timeout", Timeout: "bad", Prompt: "Run"},
+		{Kind: "timeout", Timeout: "0s", Prompt: "Run"},
+		{Kind: "event", Prompt: "Run"},
+		{Kind: "unsupported", Prompt: "Run"},
+		{Kind: "interval", Interval: "1s"},
 	} {
 		if _, _, err := ProjectSchedulerTriggerAndRegistration("trigger-id", "worker", item); err == nil {
 			t.Fatalf("ProjectSchedulerTriggerAndRegistration(%#v) returned nil error", item)

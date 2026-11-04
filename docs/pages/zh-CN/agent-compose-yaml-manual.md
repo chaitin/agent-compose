@@ -1300,7 +1300,7 @@ scheduler:
 | `interval` | duration | 四选一 | 周期，例如 `30s`、`5m`、`2h`；必须大于 0，实际注册精度至少 1ms。 |
 | `timeout` | duration | 四选一 | 一次性延迟，例如 `15s`；必须大于 0，实际注册精度至少 1ms。 |
 | `event.topic` | string | 四选一 | 内层 `topic` 是订阅的非空 topic，可使用如 `webhook.github.push`。 |
-| `prompt` | string | 否 | 触发后发送给 Agent 的 prompt；空值默认为 `Run agent <name>.`。 |
+| `prompt` | string | 是 | 触发后发送给 Agent 的 prompt，不能为空。trigger 会编译成 `scheduler.agent(...)`，该 API 不接受空 prompt，所以为空时配置校验失败，而不是启动一个没有任何任务的 Agent。 |
 | `include_event` | bool | 否 | 仅用于 `event` trigger。默认 `true`，把触发事件追加到 prompt 之后；`false` 时只发送声明的 prompt。 |
 | `sandbox_policy` | string | 否 | 本次 Agent 调用使用 `sticky` 或 `new`；省略时不在生成的调用中显式覆盖。 |
 

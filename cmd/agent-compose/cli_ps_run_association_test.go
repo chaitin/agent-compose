@@ -85,6 +85,7 @@ agents:
       triggers:
         - name: nightly
           cron: "0 2 * * *"
+          prompt: review nightly
 `)
 	const sandboxID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	projectRunID := "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

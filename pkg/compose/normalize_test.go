@@ -176,9 +176,11 @@ agents:
       triggers:
         - name: inherited
           interval: 1m
+          prompt: review changes
         - name: fresh
           interval: 2m
           sandbox_policy: new
+          prompt: review changes
 `)
 	normalized, err := Normalize(spec, NormalizeOptions{})
 	if err != nil {
@@ -196,6 +198,7 @@ agents:
     scheduler:
       triggers:
         - interval: 1m
+          prompt: review changes
 `)
 	defaultNormalized, err := Normalize(defaultSpec, NormalizeOptions{})
 	if err != nil {
@@ -897,6 +900,7 @@ agents:
       triggers:
         - cron: "0 9 * * *"
           timezone: asia/shanghai
+          prompt: review changes
 `)
 
 	_, err := Normalize(spec, NormalizeOptions{})
@@ -912,7 +916,9 @@ agents:
       triggers:
         - cron: "0 9 * * *"
           timezone: local
+          prompt: review changes
         - cron: "0 1 * * *"
+          prompt: review changes
           timezone: Asia/Shanghai
 `)
 	normalized, err := Normalize(spec, NormalizeOptions{})
@@ -951,12 +957,15 @@ agents:
       triggers:
         - event:
             topic: webhook.github.push
+          prompt: handle the event
         - event:
             topic: webhook.github.push
           include_event: true
+          prompt: handle the event
         - event:
             topic: webhook.github.push
           include_event: false
+          prompt: handle the event
 `)
 
 	normalized, err := Normalize(spec, NormalizeOptions{})
@@ -1239,8 +1248,10 @@ agents:
       triggers:
         - name: duplicate
           interval: 1m
+          prompt: review changes
         - name: `+tt.secondName+`
           interval: 2m
+          prompt: review changes
 `)
 
 			_, err := Normalize(spec, NormalizeOptions{})
@@ -1268,7 +1279,9 @@ agents:
     scheduler:
       triggers:
         - interval: 1m
+          prompt: review changes
         - interval: 2m
+          prompt: review changes
 `)
 
 		normalized, err := Normalize(spec, NormalizeOptions{})
@@ -1299,6 +1312,8 @@ func TestNormalizeRejectsInvalidTriggerPayloads(t *testing.T) {
 		{name: "negative timeout", trigger: `timeout: -1s`, wantField: "triggers[0].timeout"},
 		{name: "empty event topic", trigger: "event: {}", wantField: "triggers[0].event.topic"},
 		{name: "blank event topic", trigger: `event: { topic: "" }`, wantField: "triggers[0].event.topic"},
+		{name: "missing prompt", trigger: `interval: 1m`, wantField: "triggers[0].prompt"},
+		{name: "blank prompt", trigger: "interval: 1m\n          prompt: \"   \"", wantField: "triggers[0].prompt"},
 	}
 
 	for _, tt := range tests {

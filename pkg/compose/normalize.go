@@ -1524,6 +1524,15 @@ func normalizeTriggerSpec(path string, trigger TriggerSpec) (NormalizedTriggerSp
 	if trigger.IncludeEvent != nil && normalized.Kind != "event" {
 		return NormalizedTriggerSpec{}, &ValidationError{Path: path + ".include_event", Message: "include_event is only supported for event triggers"}
 	}
+	// A declarative trigger compiles to scheduler.agent(prompt), so the script
+	// API's non-empty prompt requirement applies to it too. An omitted prompt
+	// used to be filled with "Run agent <name>." - a caller-facing sentence the
+	// model then had to interpret as a task. Refuse the declaration instead, so
+	// the failure is reported here rather than as a run that starts an agent
+	// with no task.
+	if strings.TrimSpace(trigger.Prompt) == "" {
+		return NormalizedTriggerSpec{}, &ValidationError{Path: path + ".prompt", Message: "trigger prompt is required; the trigger compiles to scheduler.agent, which rejects an empty prompt"}
+	}
 
 	return normalized, nil
 }
