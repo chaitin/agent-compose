@@ -12,10 +12,12 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 	"github.com/chaitin/agent-compose/proto/agentcompose/v2/agentcomposev2connect"
+	"github.com/chaitin/agent-compose/proto/agentcompose/v2/errdetail"
 )
 
 type workspaceFilesTestReader struct {
@@ -49,10 +51,15 @@ func (r *workspaceFilesTestReader) OpenSandboxFile(_ context.Context, _ *domain.
 
 func newSandboxWorkspaceTestClient(t *testing.T, reader workspaces.SandboxFiles) agentcomposev2connect.SandboxServiceClient {
 	t.Helper()
-	sandboxID := uuid.NewString()
+	store := &characterizationSandboxStore{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: uuid.NewString()}}}
+	return newSandboxWorkspaceTestClientWithStore(t, reader, store)
+}
+
+func newSandboxWorkspaceTestClientWithStore(t *testing.T, reader workspaces.SandboxFiles, store SandboxStore) agentcomposev2connect.SandboxServiceClient {
+	t.Helper()
 	handler := NewSandboxHandler(SandboxHandlerDeps{
 		Delegate: &characterizationSessionDelegate{},
-		Store:    &characterizationSandboxStore{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: sandboxID}}},
+		Store:    store,
 	}).WithWorkspaceFiles(reader)
 	path, serviceHandler := agentcomposev2connect.NewSandboxServiceHandler(handler)
 	mux := http.NewServeMux()
@@ -62,7 +69,7 @@ func newSandboxWorkspaceTestClient(t *testing.T, reader workspaces.SandboxFiles)
 	return agentcomposev2connect.NewSandboxServiceClient(server.Client(), server.URL)
 }
 
-func TestListSandboxWorkspaceMapsEntriesAndPagination(t *testing.T) {
+func TestIntegrationListSandboxWorkspaceMapsEntriesAndPagination(t *testing.T) {
 	reader := &workspaceFilesTestReader{
 		entries: []workspaces.SandboxEntry{
 			{Path: "report.md", Name: "report.md", Kind: workspaces.SandboxEntryFile, Size: 5},
@@ -95,7 +102,7 @@ func TestListSandboxWorkspaceMapsEntriesAndPagination(t *testing.T) {
 	}
 }
 
-func TestDownloadSandboxWorkspaceFileStreamsInfoThenChunks(t *testing.T) {
+func TestIntegrationDownloadSandboxWorkspaceFileStreamsInfoThenChunks(t *testing.T) {
 	// Span three 64 KiB chunks so the buffer-reuse path is exercised.
 	content := bytes.Repeat([]byte("report"), 32768)
 	reader := &workspaceFilesTestReader{content: content}
@@ -146,7 +153,7 @@ func TestDownloadSandboxWorkspaceFileStreamsInfoThenChunks(t *testing.T) {
 	}
 }
 
-func TestDownloadSandboxWorkspaceFileEmptyFileSendsOnlyInfo(t *testing.T) {
+func TestIntegrationDownloadSandboxWorkspaceFileEmptyFileSendsOnlyInfo(t *testing.T) {
 	reader := &workspaceFilesTestReader{content: nil}
 	client := newSandboxWorkspaceTestClient(t, reader)
 	stream, err := client.DownloadSandboxWorkspaceFile(context.Background(), connect.NewRequest(&agentcomposev2.DownloadSandboxWorkspaceFileRequest{
@@ -176,72 +183,66 @@ func TestDownloadSandboxWorkspaceFileEmptyFileSendsOnlyInfo(t *testing.T) {
 	}
 }
 
-func TestSandboxWorkspaceRPCMapsErrors(t *testing.T) {
-	notFound := &workspaceFilesTestReader{listErr: domain.ClassifyError(domain.ErrNotFound, "missing", nil)}
-	client := newSandboxWorkspaceTestClient(t, notFound)
+func TestIntegrationSandboxWorkspaceRPCMapsErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		listErr error
+		code    connect.Code
+		reason  apierror.Reason
+	}{
+		{"path not found", domain.ClassifyError(domain.ErrNotFound, "missing", nil), connect.CodeNotFound, apierror.ReasonResourceNotFound},
+		{"invalid argument", domain.ClassifyError(domain.ErrRequired, "sandbox id", nil), connect.CodeInvalidArgument, apierror.ReasonInvalidRequest},
+		{"internal", errors.New("disk failure"), connect.CodeInternal, apierror.ReasonInternal},
+		{"precondition", domain.ClassifyError(domain.ErrFailedPrecondition, "reclaimed", nil), connect.CodeFailedPrecondition, apierror.ReasonPreconditionFailed},
+		{"canceled", context.Canceled, connect.CodeCanceled, apierror.ReasonOperationCanceled},
+		{"deadline", context.DeadlineExceeded, connect.CodeDeadlineExceeded, apierror.ReasonOperationTimeout},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client := newSandboxWorkspaceTestClient(t, &workspaceFilesTestReader{listErr: tc.listErr})
+			_, err := client.ListSandboxWorkspace(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxWorkspaceRequest{
+				SandboxId: uuid.NewString(),
+			}))
+			assertSandboxWorkspaceError(t, err, tc.code, tc.reason)
+		})
+	}
+
+	t.Run("unsupported download", func(t *testing.T) {
+		client := newSandboxWorkspaceTestClient(t, &workspaceFilesTestReader{openErr: domain.ClassifyError(domain.ErrUnsupported, "k8s", nil)})
+		stream, err := client.DownloadSandboxWorkspaceFile(context.Background(), connect.NewRequest(&agentcomposev2.DownloadSandboxWorkspaceFileRequest{
+			SandboxId: uuid.NewString(), Path: "report.md",
+		}))
+		if err != nil {
+			t.Fatalf("DownloadSandboxWorkspaceFile setup error: %v", err)
+		}
+		for stream.Receive() {
+		}
+		assertSandboxWorkspaceError(t, stream.Err(), connect.CodeUnimplemented, apierror.ReasonUnsupported)
+	})
+}
+
+func TestIntegrationSandboxWorkspaceSandboxNotFoundMapsReason(t *testing.T) {
+	store := &characterizationSandboxStore{
+		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: uuid.NewString()}},
+		getErr:  errors.New("sandbox gone"),
+	}
+	client := newSandboxWorkspaceTestClientWithStore(t, &workspaceFilesTestReader{}, store)
 	_, err := client.ListSandboxWorkspace(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxWorkspaceRequest{
-		SandboxId: uuid.NewString(), Path: "missing",
-	}))
-	if connect.CodeOf(err) != connect.CodeNotFound {
-		t.Fatalf("not found code = %s", connect.CodeOf(err))
-	}
-
-	unsupported := &workspaceFilesTestReader{openErr: domain.ClassifyError(domain.ErrUnsupported, "k8s", nil)}
-	client = newSandboxWorkspaceTestClient(t, unsupported)
-	stream, err := client.DownloadSandboxWorkspaceFile(context.Background(), connect.NewRequest(&agentcomposev2.DownloadSandboxWorkspaceFileRequest{
-		SandboxId: uuid.NewString(), Path: "report.md",
-	}))
-	if err != nil {
-		t.Fatalf("DownloadSandboxWorkspaceFile setup error: %v", err)
-	}
-	for stream.Receive() {
-	}
-	if connect.CodeOf(stream.Err()) != connect.CodeUnimplemented {
-		t.Fatalf("unsupported code = %s (err=%v)", connect.CodeOf(stream.Err()), stream.Err())
-	}
-
-	invalid := &workspaceFilesTestReader{listErr: domain.ClassifyError(domain.ErrRequired, "sandbox id", nil)}
-	client = newSandboxWorkspaceTestClient(t, invalid)
-	_, err = client.ListSandboxWorkspace(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxWorkspaceRequest{
 		SandboxId: uuid.NewString(),
 	}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument {
-		t.Fatalf("invalid code = %s", connect.CodeOf(err))
-	}
+	assertSandboxWorkspaceError(t, err, connect.CodeNotFound, apierror.ReasonSandboxNotFound)
+}
 
-	internal := &workspaceFilesTestReader{listErr: errors.New("disk failure")}
-	client = newSandboxWorkspaceTestClient(t, internal)
-	_, err = client.ListSandboxWorkspace(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxWorkspaceRequest{
-		SandboxId: uuid.NewString(),
-	}))
-	if connect.CodeOf(err) != connect.CodeInternal {
-		t.Fatalf("internal code = %s", connect.CodeOf(err))
+func assertSandboxWorkspaceError(t *testing.T, err error, code connect.Code, reason apierror.Reason) {
+	t.Helper()
+	if got := connect.CodeOf(err); got != code {
+		t.Fatalf("code = %s, want %s (err=%v)", got, code, err)
 	}
-
-	precondition := &workspaceFilesTestReader{listErr: domain.ClassifyError(domain.ErrFailedPrecondition, "reclaimed", nil)}
-	client = newSandboxWorkspaceTestClient(t, precondition)
-	_, err = client.ListSandboxWorkspace(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxWorkspaceRequest{
-		SandboxId: uuid.NewString(),
-	}))
-	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
-		t.Fatalf("precondition code = %s", connect.CodeOf(err))
+	detail, ok := errdetail.From(err)
+	if !ok {
+		t.Fatalf("error has no operation detail: %v", err)
 	}
-
-	canceled := &workspaceFilesTestReader{listErr: context.Canceled}
-	client = newSandboxWorkspaceTestClient(t, canceled)
-	_, err = client.ListSandboxWorkspace(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxWorkspaceRequest{
-		SandboxId: uuid.NewString(),
-	}))
-	if connect.CodeOf(err) != connect.CodeCanceled {
-		t.Fatalf("canceled code = %s", connect.CodeOf(err))
-	}
-
-	deadline := &workspaceFilesTestReader{listErr: context.DeadlineExceeded}
-	client = newSandboxWorkspaceTestClient(t, deadline)
-	_, err = client.ListSandboxWorkspace(context.Background(), connect.NewRequest(&agentcomposev2.ListSandboxWorkspaceRequest{
-		SandboxId: uuid.NewString(),
-	}))
-	if connect.CodeOf(err) != connect.CodeDeadlineExceeded {
-		t.Fatalf("deadline code = %s", connect.CodeOf(err))
+	if got := ReasonFromProto(detail.Reason); got != reason {
+		t.Fatalf("reason = %v, want %v", got, reason)
 	}
 }

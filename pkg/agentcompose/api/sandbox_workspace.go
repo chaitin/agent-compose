@@ -123,27 +123,19 @@ func sandboxWorkspaceEntryTypeToProto(kind workspaces.SandboxEntryKind) agentcom
 	}
 }
 
+// sandboxWorkspaceConnectError maps a workspace reader error for the two read
+// RPCs. The only deliberate deviation from the shared domain classifier is the
+// NotFound attribution: here the sandbox already resolved, so a NotFound can
+// only mean the requested workspace path is missing and must map to
+// RESOURCE_NOT_FOUND, not SANDBOX_NOT_FOUND. Everything else delegates to the
+// shared classifier so the workspace RPCs cannot drift from the rest of the API
+// as sentinel branches grow.
 func sandboxWorkspaceConnectError(err error) error {
 	if err == nil {
 		return nil
 	}
-	switch {
-	case errors.Is(err, domain.ErrNotFound):
-		// The sandbox exists; only the requested workspace path is missing.
-		// ResourceGeneric maps this to RESOURCE_NOT_FOUND instead of
-		// SANDBOX_NOT_FOUND.
+	if errors.Is(err, domain.ErrNotFound) {
 		return ErrorForCode(connect.CodeNotFound, ResourceGeneric, err)
-	case errors.Is(err, context.Canceled):
-		return ErrorForCode(connect.CodeCanceled, ResourceSandbox, err)
-	case errors.Is(err, context.DeadlineExceeded):
-		return ErrorForCode(connect.CodeDeadlineExceeded, ResourceSandbox, err)
-	case errors.Is(err, domain.ErrFailedPrecondition):
-		return ErrorForCode(connect.CodeFailedPrecondition, ResourceSandbox, err)
-	case errors.Is(err, domain.ErrUnsupported):
-		return ErrorForCode(connect.CodeUnimplemented, ResourceSandbox, err)
-	case errors.Is(err, domain.ErrInvalidArgument), errors.Is(err, domain.ErrRequired):
-		return ErrorForCode(connect.CodeInvalidArgument, ResourceSandbox, err)
-	default:
-		return ErrorForCode(connect.CodeInternal, ResourceSandbox, err)
 	}
+	return ConnectErrorForDomainKind(err, ResourceSandbox)
 }
