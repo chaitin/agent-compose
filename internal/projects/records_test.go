@@ -131,12 +131,12 @@ func TestSchedulerConcurrencyPolicyFlowsIntoManagedScheduler(t *testing.T) {
 	}{
 		{
 			name: "default skip",
-			raw:  "name: default-policy\nagents:\n  reviewer:\n    scheduler:\n      triggers:\n        - interval: 1m\n",
+			raw:  "name: default-policy\nagents:\n  reviewer:\n    scheduler:\n      triggers:\n        - interval: 1m\n          prompt: review changes\n",
 			want: domain.SchedulerConcurrencyPolicySkip,
 		},
 		{
 			name: "parallel",
-			raw:  "name: parallel-policy\nagents:\n  reviewer:\n    scheduler:\n      concurrency_policy: parallel\n      triggers:\n        - interval: 1m\n",
+			raw:  "name: parallel-policy\nagents:\n  reviewer:\n    scheduler:\n      concurrency_policy: parallel\n      triggers:\n        - interval: 1m\n          prompt: review changes\n",
 			want: domain.SchedulerConcurrencyPolicyParallel,
 		},
 	} {
@@ -171,6 +171,7 @@ agents:
       run_timeout: 2h
       triggers:
         - interval: 1m
+          prompt: review changes
 `))
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)

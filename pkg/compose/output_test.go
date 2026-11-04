@@ -141,6 +141,7 @@ agents:
       concurrency_policy: parallel
       triggers:
         - interval: 1m
+          prompt: review changes
 `, nil)
 
 	jsonData, err := normalized.MarshalCanonicalJSON(false)
@@ -552,6 +553,7 @@ agents:
     scheduler:
       triggers:
         - cron: "@hourly"
+          prompt: review changes
   reviewer:
     provider: codex
 `, nil)
@@ -563,6 +565,7 @@ agents:
     scheduler:
       triggers:
         - cron: "@hourly"
+          prompt: review changes
     env:
       A: first
       Z: last
@@ -591,8 +594,10 @@ agents:
     scheduler:
       triggers:
         - cron: "@hourly"
+          prompt: review changes
         - event:
             topic: git.push
+          prompt: review changes
 `, map[string]string{"TOKEN": "one"})
 	changedSecret := mustNormalizeCompose(t, `
 name: hash-diff
@@ -605,8 +610,10 @@ agents:
     scheduler:
       triggers:
         - cron: "@hourly"
+          prompt: review changes
         - event:
             topic: git.push
+          prompt: review changes
 `, map[string]string{"TOKEN": "two"})
 	changedTriggerOrder := mustNormalizeCompose(t, `
 name: hash-diff
@@ -620,7 +627,9 @@ agents:
       triggers:
         - event:
             topic: git.push
+          prompt: review changes
         - cron: "@hourly"
+          prompt: review changes
 `, map[string]string{"TOKEN": "one"})
 	changedSecretFlag := mustNormalizeCompose(t, `
 name: hash-diff
@@ -633,8 +642,10 @@ agents:
     scheduler:
       triggers:
         - cron: "@hourly"
+          prompt: review changes
         - event:
             topic: git.push
+          prompt: review changes
 `, map[string]string{"TOKEN": "one"})
 
 	baseHash := mustHash(t, base)

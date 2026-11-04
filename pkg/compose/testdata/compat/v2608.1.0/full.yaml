@@ -102,6 +102,7 @@ agents:
           cron: "0 9 * * *"
           timezone: UTC
           sandbox_policy: new
+          prompt: Review daily.
         - name: pushed
           event:
             topic: git.push

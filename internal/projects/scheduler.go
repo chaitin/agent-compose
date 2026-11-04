@@ -51,9 +51,13 @@ func ProjectSchedulerTriggersAndScript(projectID, agentName, schedulerName strin
 }
 
 func ProjectSchedulerTriggerAndRegistration(id, agentName string, trigger projectdef.NormalizedTriggerSpec) (domain.SchedulerTrigger, string, error) {
+	// Normalize rejects a trigger without a prompt, so reaching this branch
+	// means an unnormalized spec bypassed validation. Refuse to synthesize a
+	// message: a placeholder would be handed to the model as if a caller wrote
+	// it.
 	prompt := strings.TrimSpace(trigger.Prompt)
 	if prompt == "" {
-		prompt = fmt.Sprintf("Run agent %s.", agentName)
+		return domain.SchedulerTrigger{}, "", fmt.Errorf("scheduler trigger %q requires a prompt", trigger.Name)
 	}
 	promptExpression := JSStringLiteral(prompt)
 	if trigger.IncludesEvent() {

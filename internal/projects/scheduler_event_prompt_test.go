@@ -301,8 +301,8 @@ func TestDeclaredEventTriggerWithoutIncludeEventKeepsDeclaredPrompt(t *testing.T
 // The formatter is defined once per script, however many triggers use it.
 func TestEventPromptFormatterIsDefinedOncePerScript(t *testing.T) {
 	_, script, err := ProjectSchedulerTriggersAndScript("project-1", "reviewer", "", &compose.NormalizedSchedulerSpec{Triggers: []compose.NormalizedTriggerSpec{
-		{Name: "push", Kind: "event", Event: &compose.EventTriggerSpec{Topic: "webhook.github.push"}},
-		{Name: "pr", Kind: "event", Event: &compose.EventTriggerSpec{Topic: "webhook.github.pull_request"}},
+		{Name: "push", Kind: "event", Event: &compose.EventTriggerSpec{Topic: "webhook.github.push"}, Prompt: "Review."},
+		{Name: "pr", Kind: "event", Event: &compose.EventTriggerSpec{Topic: "webhook.github.pull_request"}, Prompt: "Review."},
 	}})
 	if err != nil {
 		t.Fatal(err)

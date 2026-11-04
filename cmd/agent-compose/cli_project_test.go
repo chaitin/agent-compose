@@ -450,8 +450,10 @@ agents:
       triggers:
         - name: duplicate
           interval: 1m
+          prompt: review changes
         - name: duplicate
           interval: 2m
+          prompt: review changes
 `)
 
 	stdout, stderr, runCount, exitCode := executeCLICommand("config", "--quiet", "--file", composePath)
