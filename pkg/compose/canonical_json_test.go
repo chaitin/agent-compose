@@ -87,6 +87,37 @@ func TestParseCanonicalJSONDefaultsHistoricalSchedulerPolicies(t *testing.T) {
 	}
 }
 
+// TestParseCanonicalJSONDefaultsHistoricalTriggerPrompt covers the legacy
+// revisions that were normalized before prompt became required: an empty
+// prompt was dropped by omitempty, so the persisted canonical JSON has no
+// prompt key at all. Parsing must restore the old compiler's fallback
+// ("Run agent <name>.") at this persisted-data boundary only, so stored
+// projects keep loading while new declarations are still rejected by
+// Normalize. A trigger with an explicit prompt must be left untouched.
+func TestParseCanonicalJSONDefaultsHistoricalTriggerPrompt(t *testing.T) {
+	parsed, err := ParseCanonicalJSON([]byte(`{"name":"historical","agents":[{"name":"reviewer","scheduler":{"triggers":[{"name":"nightly","kind":"cron","cron":"0 * * * *"}]}},{"name":"writer","scheduler":{"triggers":[{"name":"hourly","kind":"cron","cron":"0 * * * *","prompt":"Write a summary."}]}}]}`))
+	if err != nil {
+		t.Fatalf("ParseCanonicalJSON returned error: %v", err)
+	}
+	if len(parsed.Agents) != 2 {
+		t.Fatalf("parsed agents = %d, want 2", len(parsed.Agents))
+	}
+	legacy := parsed.Agents[0]
+	if legacy.Scheduler == nil || len(legacy.Scheduler.Triggers) != 1 {
+		t.Fatalf("parsed legacy scheduler = %#v, want one trigger", legacy.Scheduler)
+	}
+	if got := legacy.Scheduler.Triggers[0].Prompt; got != "Run agent reviewer." {
+		t.Fatalf("legacy trigger prompt = %q, want the restored fallback", got)
+	}
+	explicit := parsed.Agents[1]
+	if explicit.Scheduler == nil || len(explicit.Scheduler.Triggers) != 1 {
+		t.Fatalf("parsed explicit scheduler = %#v, want one trigger", explicit.Scheduler)
+	}
+	if got := explicit.Scheduler.Triggers[0].Prompt; got != "Write a summary." {
+		t.Fatalf("explicit trigger prompt = %q, want the declared prompt", got)
+	}
+}
+
 func TestParseCanonicalJSONRejectsMalformedJSON(t *testing.T) {
 	if _, err := ParseCanonicalJSON([]byte(`{"agents":`)); err == nil {
 		t.Fatal("ParseCanonicalJSON accepted malformed JSON")

@@ -90,6 +90,16 @@ func applyHistoricalSchedulerDefaults(agents []orderedAgentSpec) {
 		if strings.TrimSpace(scheduler.ConcurrencyPolicy) == "" {
 			scheduler.ConcurrencyPolicy = domain.SchedulerConcurrencyPolicySkip
 		}
+		// Legacy revisions were normalized before prompt became required, and
+		// the empty prompt was dropped by omitempty. The old compiler filled an
+		// empty prompt with "Run agent <name>."; reproduce that only at the
+		// persisted-data boundary so stored projects keep loading, while new
+		// declarations are still rejected by Normalize.
+		for triggerIndex := range scheduler.Triggers {
+			if strings.TrimSpace(scheduler.Triggers[triggerIndex].Prompt) == "" {
+				scheduler.Triggers[triggerIndex].Prompt = fmt.Sprintf("Run agent %s.", agents[index].Name)
+			}
+		}
 	}
 }
 
