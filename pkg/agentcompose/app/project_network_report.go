@@ -3,11 +3,13 @@ package app
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/egress"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 )
 
 // sandboxEgressMediation reports whether the engine's forward proxy will be in a
@@ -38,6 +40,12 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 		mode = config.EgressUnenforceablePolicy
 		global = config.GlobalNetworkPolicy
 	}
+	// The strict Docker network is a deployment-wide placement choice, so it is
+	// resolved once. It is only a mechanism for a sandbox that actually joins
+	// it: the switch is live only in enforce mode and it is inert without a
+	// configured network name (the driver then fails the start closed).
+	strictDockerNetwork := config != nil && driverpkg.DockerSandboxNetworkStrictRequested(config) &&
+		strings.TrimSpace(config.DockerSandboxNetwork) != ""
 	reports := make([]driverpkg.AgentNetworkPolicyReport, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
 		var declaration *egress.NetworkDeclaration
@@ -48,6 +56,18 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 			}
 			declaration = &compiled
 		}
+		// Explicit enforce mode (without the unified strict profile) is
+		// default-deny even when the agent declared no network policy. Report
+		// that synthetic declaration so admission does not omit the sandboxes
+		// the new default now restricts. The strict profile keeps undeclared
+		// agents on an allow-all mediated policy, so it stays silent about them
+		// just like the pre-enforce behavior did.
+		enforceWithoutDeclaration := config != nil &&
+			strings.TrimSpace(config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce) &&
+			strings.TrimSpace(config.SandboxEgressProfile) != "strict"
+		if declaration == nil && global == nil && enforceWithoutDeclaration {
+			declaration = &egress.NetworkDeclaration{Default: egress.Deny}
+		}
 		if declaration == nil && global == nil {
 			continue
 		}
@@ -57,7 +77,14 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 		}
 		driver := driverForAgent(agent)
 		mediated := mediation != nil && mediation.MediatesDriver(driver)
-		report, err := driverpkg.ReportAgentNetworkPolicy(agent.Name, driver, effective, mediated, mode)
+		initMediated := mediated && config != nil && config.SandboxInitEgress == string(sandboxinit.EgressModeEnforce)
+		report, err := driverpkg.ReportAgentNetworkPolicy(agent.Name, driver, effective, driverpkg.NetworkPolicyReportOptions{
+			Mediated:               mediated,
+			InitMediated:           initMediated,
+			K8sEgressNetworkPolicy: driver == driverpkg.RuntimeDriverK8s && mediated && config != nil && config.SandboxInitEnabled && strings.TrimSpace(config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce),
+			DockerInternalNetwork:  strictDockerNetwork && driver == driverpkg.RuntimeDriverDocker,
+			Mode:                   mode,
+		})
 		if err != nil {
 			return nil, err
 		}

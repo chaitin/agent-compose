@@ -21,6 +21,8 @@ func TestNewPolicyGenerationIsContentDerived(t *testing.T) {
 		"rule action unset":        NewPolicy(Deny, Rule{ID: "r", Names: []string{"dev"}, Action: Action(""), Target: "dev"}),
 		"reordered rule ids":       NewPolicy(Deny, Rule{ID: "s", Action: Deny}, Rule{ID: "r", Names: []string{"dev"}, Action: Allow, Target: "dev"}),
 		"added address constraint": NewPolicy(Deny, Rule{ID: "r", Names: []string{"dev"}, Action: Allow, Target: "dev", AllowedIPs: []string{"203.0.113.0/24"}}),
+		"added binary constraint":  NewPolicy(Deny, Rule{ID: "r", Names: []string{"dev"}, Action: Allow, Target: "dev", Binaries: []string{"/usr/bin/curl"}}),
+		"audit enforcement":        NewPolicy(Deny, Rule{ID: "r", Names: []string{"dev"}, Action: Allow, Target: "dev", Enforcement: EnforcementAudit}),
 	}
 	for name, policy := range changes {
 		if policy.Generation() == base.Generation() {

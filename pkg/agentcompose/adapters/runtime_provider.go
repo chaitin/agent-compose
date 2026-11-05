@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -12,6 +15,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 	"github.com/chaitin/agent-compose/pkg/telemetry"
 )
 
@@ -100,6 +104,15 @@ type driverRuntimeAdapter struct {
 	// policy as mediated, so the driver reports enforcement instead of warning
 	// that the declaration is unenforced.
 	egressProxy SandboxEgressProxy
+	// sandboxInitEgress carries the daemon's egress mode into the create-time
+	// environment. VM drivers run in the sandbox-host, whose own configuration
+	// can differ from the daemon's; the daemon must remain the authority for
+	// the mode it reports as enforced.
+	sandboxInitEgress string
+	// sandboxInitAuditLog is the guest path of the opt-in init-side JSONL audit
+	// sink. Empty keeps the sink disabled, so a deployment that already captures
+	// init stderr does not gain a second copy.
+	sandboxInitAuditLog string
 }
 
 // guestFileRuntimeAdapter adds the no-shared-filesystem capabilities only to
@@ -153,6 +166,14 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	for _, option := range opts {
 		option(provider)
 	}
+	if config.SandboxInitEnabled {
+		driver := driverpkg.ResolveRuntimeDriver(config.RuntimeDriver)
+		if !driverpkg.SandboxInitSupported(driver) {
+			slog.Warn("sandbox init is enabled but this runtime driver keeps the legacy process model",
+				"driver", driver,
+				"capability", driverpkg.SandboxInitCapabilityFor(driver))
+		}
+	}
 
 	// VM drivers are held by the sandbox-host process, not the daemon: the
 	// daemon drives them through the remoteSandboxRuntime over the shared unix
@@ -184,12 +205,14 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	// The mediation decides with the same resolved declaration and engine
 	// endpoints as the driver-boundary policy, so both read one seam.
 	provider.egressProxy.networkPolicies = networkPolicies
+	auditLog, _ := driverpkg.SandboxInitEgressAuditLogPath(config)
 	provider.runtimes = map[string]SandboxRuntime{
-		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy},
-		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy},
-		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy},
+		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
+		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
+		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
 		driverpkg.RuntimeDriverK8s: guestFileRuntimeAdapter{driverRuntimeAdapter{
 			runtime: k8sRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy,
+			sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog,
 		}},
 	}
 	return provider, nil
@@ -247,6 +270,21 @@ func (p *runtimeProvider) ForSession(session *domain.Sandbox) (SandboxRuntime, e
 // call site must use this helper rather than execution.ToDriverSandbox directly.
 func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain.Sandbox) (*driverpkg.Sandbox, domain.SandboxEgressPolicy, error) {
 	driverSandbox := execution.ToDriverSandbox(session)
+	if driverSandbox != nil {
+		// The daemon owns the egress mode it reports as enforced. VM drivers
+		// execute in the sandbox-host, whose own configuration can be older or
+		// different; carry the mode in the create-time environment so the host
+		// cannot silently run a different mode than the daemon's admission
+		// report describes.
+		mode := strings.TrimSpace(r.sandboxInitEgress)
+		if mode == "" {
+			mode = string(sandboxinit.EgressModeOff)
+		}
+		driverSandbox.RuntimeEnvItems = append(driverSandbox.RuntimeEnvItems, driverpkg.SandboxEnvVar{
+			Name:  sandboxinit.EgressModeEnvVar,
+			Value: mode,
+		})
+	}
 	// The driver-boundary policy is derived from the project's normalized
 	// declaration, not from the domain session, and only a declared policy sets
 	// it. An undeclared sandbox keeps a nil policy and today's behavior (D3).
@@ -256,8 +294,24 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 	if err != nil {
 		return nil, domain.SandboxEgressPolicy{}, err
 	}
+	// The unified strict profile mediates every sandbox, including one that
+	// declared no policy, because the Docker workload has no interface and the
+	// other drivers rely on init to send its traffic through the proxy. An
+	// undeclared sandbox keeps the allow-all policy, so enabling the profile
+	// does not cut an existing deployment off.
+	strictProfile := r.strictEgressProfile()
+	proxyAvailable := r.egressProxy.available(session)
+	if strictProfile && !proxyAvailable {
+		return nil, domain.SandboxEgressPolicy{}, fmt.Errorf("sandbox egress profile strict requires the engine forward proxy, but it is unavailable for sandbox %s", session.Summary.ID)
+	}
 	mediated := false
 	if driverSandbox != nil {
+		if auditLog := strings.TrimSpace(r.sandboxInitAuditLog); auditLog != "" {
+			driverSandbox.RuntimeEnvItems = append(driverSandbox.RuntimeEnvItems,
+				driverpkg.SandboxEnvVar{Name: sandboxinit.EgressAuditLogEnvVar, Value: auditLog},
+				driverpkg.SandboxEnvVar{Name: sandboxinit.EgressGenerationEnvVar, Value: strconv.FormatUint(uint64(effective.Generation()), 10)},
+			)
+		}
 		driverSandbox.NetworkPolicy = policy
 		// A declaration that restricts egress is only really enforced where the
 		// engine is in the traffic path. Routing the guest through the forward
@@ -270,9 +324,12 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 		// credentials no guest could ever present. Whether the engine can mediate
 		// at all is a pure fact about the deployment and this sandbox, so the
 		// report below still knows it before the driver runs.
-		if policy != nil && policy.Restricts() && r.egressProxy.available(session) {
+		needsMediation := strictProfile || (policy != nil && policy.Restricts())
+		if needsMediation && proxyAvailable {
 			driverSandbox.ProxyEnv = r.egressProxy.proxyEnvProvider(session)
-			policy.MediatedByForwardProxy = true
+			if policy != nil {
+				policy.MediatedByForwardProxy = true
+			}
 			mediated = true
 		}
 	}
@@ -282,6 +339,14 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 	// declaration that is in force then.
 	record := r.egressRuntimePolicy(session, policy, effective, mediated)
 	return driverSandbox, record, nil
+}
+
+// strictEgressProfile reports whether the unified experimental profile is
+// selected. The profile mediates every sandbox, including one that declared no
+// policy, so the default remains allow rather than denying an upgrade.
+func (r driverRuntimeAdapter) strictEgressProfile() bool {
+	return r.networkPolicies.config != nil &&
+		strings.TrimSpace(r.networkPolicies.config.SandboxEgressProfile) == "strict"
 }
 
 // egressRuntimePolicy describes the effective policy this creation installs for
@@ -304,7 +369,10 @@ func (r driverRuntimeAdapter) egressRuntimePolicy(session *domain.Sandbox, polic
 			application = egress.ApplicationDriverApplied
 		}
 	}
-	return sandboxEgressPolicyRecord(egress.RuntimePolicy{Generation: effective.Generation(), Application: application})
+	return sandboxEgressPolicyRecord(
+		egress.RuntimePolicy{Generation: effective.Generation(), Application: application},
+		egress.PolicyHash(effective),
+	)
 }
 
 func (r driverRuntimeAdapter) EnsureSandbox(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, proxyState domain.ProxyState) (domain.SandboxVMInfo, error) {

@@ -67,6 +67,23 @@ type Rule struct {
 	// the allowance unconstrained, which is a different declaration from a list
 	// that happens to allow everything.
 	AllowedIPs []string
+	// Binaries scopes the rule to processes whose executable is one of these
+	// canonical absolute paths. An allow rule with names matches only a
+	// declared binary; an empty request binary never satisfies it. A deny rule
+	// with binaries refuses an unknown binary as well, so omitting the
+	// attribution cannot bypass a binary-scoped refusal.
+	Binaries []string
+	// L7 optionally narrows an allowance to HTTP methods and paths. An empty
+	// constraint keeps the L4 destination-only behavior. A rule with a
+	// constraint matches a request only when the engine observed its method and
+	// path, or when the caller deferred the check to a payload it will inspect.
+	L7 L7Constraint
+	// InjectHeaders are validated header templates the proxy resolves and adds
+	// to an allowed L7 request.
+	InjectHeaders map[string]string
+	// Enforcement selects how a matched allow rule is applied. It is enforced
+	// by default; audit records the match and allows the request.
+	Enforcement Enforcement
 }
 
 // Policy is one immutable snapshot of the rules governing a consumer's egress.
@@ -89,6 +106,10 @@ func NewPolicy(defaultAction Action, rules ...Rule) Policy {
 		copied[i].Match = normalizeMatch(rule.Match)
 		copied[i].Names = append([]string(nil), rule.Names...)
 		copied[i].AllowedIPs = append([]string(nil), rule.AllowedIPs...)
+		copied[i].Binaries = append([]string(nil), rule.Binaries...)
+		copied[i].L7 = canonicalL7Constraint(rule.L7)
+		copied[i].InjectHeaders = cloneInjectHeaders(rule.InjectHeaders)
+		copied[i].Enforcement = normalizeEnforcement(rule.Enforcement)
 	}
 	policy := Policy{defaultAction: normalizeAction(defaultAction), rules: copied}
 	policy.generation = policy.contentGeneration()
@@ -121,11 +142,43 @@ func (p Policy) Rules() []Rule {
 		copied[i] = rule
 		copied[i].Names = append([]string(nil), rule.Names...)
 		copied[i].AllowedIPs = append([]string(nil), rule.AllowedIPs...)
+		copied[i].Binaries = append([]string(nil), rule.Binaries...)
+		copied[i].L7 = rule.L7.Clone()
+		copied[i].InjectHeaders = cloneInjectHeaders(rule.InjectHeaders)
 	}
 	return copied
 }
 
+// hasBinaryConstraints reports whether any rule scopes its outcome to an
+// executable. A policy with such a rule cannot decide an anonymous connection
+// by its default alone: an unknown binary is denied instead, so a permissive
+// default cannot silently stand in for an attribution the policy requires.
+func (p Policy) hasBinaryConstraints() bool {
+	for _, rule := range p.rules {
+		if len(rule.Binaries) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalL7Constraint returns the normalized form of a constraint for a
+// policy built without a validation step. NewPolicy cannot return an error, so
+// an invalid value is kept as written: a malformed method or path then matches
+// nothing, which fails closed under a deny default and never turns into an
+// unconstrained allowance.
+func canonicalL7Constraint(value L7Constraint) L7Constraint {
+	normalized, err := NormalizeL7Constraint(value.Methods, value.Paths)
+	if err != nil {
+		return value.Clone()
+	}
+	return normalized
+}
+
 func (r Rule) matches(request Request) bool {
+	if !r.matchesBinary(request.Binary) {
+		return false
+	}
 	if r.Match == MatchEndpoint {
 		return r.matchesEndpoint(request)
 	}
@@ -139,6 +192,21 @@ func (r Rule) matches(request Request) bool {
 		}
 	}
 	return false
+}
+
+// matchesBinary reports whether the rule's declared executable scope covers the
+// request. A rule that declares no binaries is unrestricted. A binary-scoped
+// allow requires a matching binary, so an unknown binary never satisfies it. A
+// binary-scoped deny treats an unknown binary as in scope, because failing to
+// attribute the connection must not let it bypass the refusal.
+func (r Rule) matchesBinary(binary string) bool {
+	if len(r.Binaries) == 0 {
+		return true
+	}
+	if r.Action == Deny && binary == "" {
+		return true
+	}
+	return BinaryMatches(binary, r.Binaries)
 }
 
 // matchesEndpoint matches a canonical endpoint name against the rule's
@@ -164,6 +232,25 @@ func (r Rule) matchesEndpoint(request Request) bool {
 		}
 	}
 	return false
+}
+
+// matchesL7 reports whether the request satisfies the rule's optional L7
+// constraint. A rule without one matches every request, which keeps the
+// destination-only behavior. A rule with one requires the engine to have
+// observed the request (LayerL7) or the caller to have promised to inspect the
+// payload after connecting (DeferL7); an uninspected CONNECT never satisfies an
+// L7 declaration by itself.
+func (r Rule) matchesL7(request Request) bool {
+	if r.L7.Empty() {
+		return true
+	}
+	if request.DeferL7 {
+		return true
+	}
+	if request.Layer != LayerL7 {
+		return false
+	}
+	return r.L7.Matches(request.Method, request.Path)
 }
 
 func normalizeAction(action Action) Action {
@@ -205,6 +292,41 @@ func (p Policy) contentGeneration() Generation {
 			writeField(h, address)
 		}
 		writeField(h, "\x00")
+		// The remaining fields are written only when they carry a non-default
+		// value, so a rule that existed before binary/L7 scoping and per-entry
+		// audit keeps the same generation after an upgrade. A generation is
+		// recorded with a running sandbox, and changing it for an unchanged
+		// declaration would make that record look stale.
+		if enforcement := normalizeEnforcement(rule.Enforcement); enforcement != EnforcementEnforce {
+			writeField(h, "enforcement")
+			writeField(h, string(enforcement))
+		}
+		if len(rule.Binaries) > 0 {
+			writeField(h, "binaries")
+			for _, binary := range rule.Binaries {
+				writeField(h, binary)
+			}
+			writeField(h, "\x00")
+		}
+		if len(rule.InjectHeaders) > 0 {
+			writeField(h, "inject_headers")
+			for _, name := range InjectedHeaderNames(rule.InjectHeaders) {
+				writeField(h, name)
+				writeField(h, rule.InjectHeaders[name])
+			}
+			writeField(h, "\x00")
+		}
+		if !rule.L7.Empty() {
+			writeField(h, "l7")
+			for _, method := range rule.L7.Methods {
+				writeField(h, method)
+			}
+			writeField(h, "\x00")
+			for _, path := range rule.L7.Paths {
+				writeField(h, path)
+			}
+			writeField(h, "\x00")
+		}
 	}
 	return Generation(h.Sum64())
 }
@@ -215,4 +337,15 @@ func writeField(h hash.Hash64, value string) {
 	// hash.Hash never fails a write; the error is always nil.
 	_, _ = h.Write(length[:])
 	_, _ = h.Write([]byte(value))
+}
+
+func cloneInjectHeaders(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for name, value := range values {
+		cloned[name] = value
+	}
+	return cloned
 }

@@ -95,15 +95,21 @@ func SandboxSpecToProto(sandbox *compose.NormalizedSandboxSpec) *agentcomposev2.
 	network := &agentcomposev2.SandboxNetworkSpec{Default: sandbox.Network.Default}
 	for _, entry := range sandbox.Network.Allow {
 		network.Allow = append(network.Allow, &agentcomposev2.SandboxNetworkAllowSpec{
-			Host:       entry.Host,
-			Port:       int32(entry.Port),
-			AllowedIps: append([]string(nil), entry.AllowedIPs...),
+			Host:          entry.Host,
+			Port:          int32(entry.Port),
+			AllowedIps:    append([]string(nil), entry.AllowedIPs...),
+			Binaries:      append([]string(nil), entry.Binaries...),
+			Enforcement:   entry.Enforcement,
+			Methods:       append([]string(nil), entry.Methods...),
+			Paths:         append([]string(nil), entry.Paths...),
+			InjectHeaders: cloneStringMap(entry.InjectHeaders),
 		})
 	}
 	for _, entry := range sandbox.Network.Deny {
 		network.Deny = append(network.Deny, &agentcomposev2.SandboxNetworkDenySpec{
-			Host: entry.Host,
-			Port: int32(entry.Port),
+			Host:     entry.Host,
+			Port:     int32(entry.Port),
+			Binaries: append([]string(nil), entry.Binaries...),
 		})
 	}
 	result.Network = network
@@ -332,4 +338,15 @@ func TriggerSpecToProto(trigger compose.NormalizedTriggerSpec) *agentcomposev2.T
 		result.IncludeEvent = trigger.IncludeEvent
 	}
 	return result
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }

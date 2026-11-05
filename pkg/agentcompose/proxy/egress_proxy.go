@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -34,6 +35,15 @@ type EgressProxyPolicySource interface {
 	EgressProxyPolicy(ctx context.Context, sandboxID string) (egress.Policy, error)
 }
 
+// EgressProxySessionPolicySource is the optional per-run hook: when a caller
+// supplies it, the proxy asks for a policy scoped to the sandbox-init session
+// instead of the sandbox-wide policy. A source that has no per-session policy
+// returns the sandbox policy unchanged, so implementing this interface does not
+// change behavior until a deployment actually stores per-run policies.
+type EgressProxySessionPolicySource interface {
+	EgressProxyPolicyForSession(ctx context.Context, sandboxID, sessionID, marker string) (egress.Policy, error)
+}
+
 // EgressProxyRecorder receives one account of every decision. It is optional: a
 // composition without one still enforces, it just does not persist the record.
 type EgressProxyRecorder interface {
@@ -43,10 +53,11 @@ type EgressProxyRecorder interface {
 // EgressProxyOptions configures an EgressProxy. Authorizer and Policies are
 // required; the remaining fields have production defaults.
 type EgressProxyOptions struct {
-	Authorizer EgressProxyAuthorizer
-	Policies   EgressProxyPolicySource
-	Recorder   EgressProxyRecorder
-	Logger     *slog.Logger
+	Authorizer      EgressProxyAuthorizer
+	Policies        EgressProxyPolicySource
+	SessionPolicies EgressProxySessionPolicySource
+	Recorder        EgressProxyRecorder
+	Logger          *slog.Logger
 	// LookupIP resolves the destination of a request. It defaults to the
 	// process resolver; a test injects one so a decision never depends on real
 	// name resolution.
@@ -58,6 +69,18 @@ type EgressProxyOptions struct {
 	// proxy uses its own dialer; a test injects one to exercise the decision
 	// and forwarding paths without reaching a real network.
 	Dial func(ctx context.Context, network, address string) (net.Conn, error)
+	// TLSMITM enables L7 TLS termination for an HTTPS allowance that declares
+	// methods or paths. It is opt-in: with it off, such an allowance fails
+	// closed rather than being forwarded uninspected.
+	TLSMITM bool
+	// CACertificatePEM and CAKeyPEM are the CA the proxy signs leaves with. When
+	// both are empty and TLSMITM is true, the proxy generates an ephemeral CA.
+	CACertificatePEM []byte
+	CAKeyPEM         []byte
+	// UpstreamTLSConfig is the base TLS configuration for the connection the
+	// proxy opens to the real upstream after intercepting. Nil uses the system
+	// roots. A test supplies a pool that trusts its local upstream certificate.
+	UpstreamTLSConfig *tls.Config
 }
 
 // DefaultEgressDialTimeout bounds how long the proxy waits for an upstream
@@ -84,6 +107,15 @@ const (
 	// credentials and the workloads of the platform hosting it, so the
 	// declaration cannot buy that path back.
 	EgressRuleBlockedPort = "engine.blocked-port"
+	// EgressRuleCredentialUnavailable denies an allowed L7 request whose
+	// injected credential could not be resolved from the daemon environment.
+	EgressRuleCredentialUnavailable = "engine.credential-unavailable"
+	// EgressRuleL7Unavailable denies an HTTPS allowance that declares methods or
+	// paths when the proxy cannot inspect the request. A declaration that asked
+	// for L7 enforcement is not silently downgraded to a destination-only
+	// allowance: either the deployment opts into TLS interception (and the guest
+	// trusts the CA) or the connection is refused.
+	EgressRuleL7Unavailable = "engine.l7-inspection-unavailable"
 )
 
 // blockedEnginePorts is the set of control-plane ports the proxy refuses
@@ -107,13 +139,16 @@ var blockedEnginePorts = map[int]string{
 // tunnels. It is not an open proxy — a request without a sandbox credential is
 // answered 407 and never decided.
 type EgressProxy struct {
-	authorizer  EgressProxyAuthorizer
-	policies    EgressProxyPolicySource
-	recorder    EgressProxyRecorder
-	logger      *slog.Logger
-	lookupIP    func(ctx context.Context, host string) ([]net.IP, error)
-	dial        func(ctx context.Context, network, address string) (net.Conn, error)
-	dialTimeout time.Duration
+	authorizer        EgressProxyAuthorizer
+	policies          EgressProxyPolicySource
+	sessionPolicies   EgressProxySessionPolicySource
+	recorder          EgressProxyRecorder
+	logger            *slog.Logger
+	lookupIP          func(ctx context.Context, host string) ([]net.IP, error)
+	dial              func(ctx context.Context, network, address string) (net.Conn, error)
+	dialTimeout       time.Duration
+	mitm              *egressMITMCA
+	upstreamTLSConfig *tls.Config
 }
 
 // NewEgressProxy validates the required dependencies and returns the proxy.
@@ -141,15 +176,26 @@ func NewEgressProxy(options EgressProxyOptions) (*EgressProxy, error) {
 		dialer := &net.Dialer{Timeout: dialTimeout}
 		dial = dialer.DialContext
 	}
-	return &EgressProxy{
-		authorizer:  options.Authorizer,
-		policies:    options.Policies,
-		recorder:    options.Recorder,
-		logger:      logger,
-		lookupIP:    lookupIP,
-		dial:        dial,
-		dialTimeout: dialTimeout,
-	}, nil
+	proxy := &EgressProxy{
+		authorizer:        options.Authorizer,
+		policies:          options.Policies,
+		sessionPolicies:   options.SessionPolicies,
+		recorder:          options.Recorder,
+		logger:            logger,
+		lookupIP:          lookupIP,
+		dial:              dial,
+		dialTimeout:       dialTimeout,
+		upstreamTLSConfig: options.UpstreamTLSConfig,
+	}
+	if options.TLSMITM {
+		mitm, err := newEgressMITMCA(options.CACertificatePEM, options.CAKeyPEM)
+		if err != nil {
+			return nil, fmt.Errorf("configure the egress L7 TLS authority: %w", err)
+		}
+		proxy.mitm = mitm
+		logger.Info("egress L7 TLS interception enabled")
+	}
+	return proxy, nil
 }
 
 // egressDestination is the destination a proxied request asked for, before it
@@ -169,6 +215,11 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	identity, err := egressIdentityFromRequest(r, sandboxID)
+	if err != nil {
+		http.Error(w, "agent-compose egress proxy: "+err.Error(), http.StatusForbidden)
+		return
+	}
 	destination, err := egressDestinationFromRequest(r)
 	if err != nil {
 		http.Error(w, "agent-compose egress proxy: "+err.Error(), http.StatusBadRequest)
@@ -180,8 +231,19 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	request := egress.NetworkRequest(sandboxID, endpoint)
+	request.SessionID = identity.SessionID
+	request.Marker = identity.Marker
+	request.ProcessID = identity.ProcessID
+	request.Binary = identity.Binary
+	applyEgressRequestLayer(&request, r)
+	// An HTTPS allowance that declares methods or paths can only be decided
+	// after the request line is visible. When interception is enabled, the
+	// CONNECT itself is decided with the L7 check deferred to the terminated
+	// requests; when it is not, the deferral is absent and such an allowance does
+	// not match the tunnel, so the declaration fails closed.
+	request.DeferL7 = r.Method == http.MethodConnect && (destination.protocol != egress.ProtocolHTTPS || p.mitm != nil)
 
-	policy, err := p.policies.EgressProxyPolicy(r.Context(), sandboxID)
+	policy, err := p.egressPolicy(r.Context(), sandboxID, identity)
 	if err != nil {
 		// The policy could not be read, so nothing may be forwarded: an
 		// unreadable declaration is not an absent one.
@@ -236,16 +298,175 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	result := egress.Decide(policy, request)
 	if !result.Allowed() {
+		if p.l7InspectionUnavailable(policy, request, destination) {
+			p.deny(w, r, egressDenial{sandboxID: sandboxID, destination: destination, request: request, result: egress.Result{
+				Action:     egress.Deny,
+				RuleID:     EgressRuleL7Unavailable,
+				Reason:     "the allowance declares L7 methods or paths, but TLS interception is not enabled for this destination; enable EGRESS_L7_TLS_MITM and give the sandbox the CA to trust, or remove the L7 constraint",
+				Generation: policy.Generation(),
+			}})
+			p.logger.WarnContext(r.Context(), "egress proxy denied an L7-constrained HTTPS destination because TLS interception is unavailable",
+				"sandbox_id", sandboxID, "host", destination.host, "port", destination.port)
+			return
+		}
 		p.deny(w, r, egressDenial{sandboxID: sandboxID, destination: destination, request: request, result: result})
 		return
 	}
-	p.record(r.Context(), request, result)
+	injected, injectErr := expandEgressInjectedHeaders(result.InjectHeaders)
+	if injectErr != nil {
+		denial := egress.Result{
+			Action:     egress.Deny,
+			RuleID:     EgressRuleCredentialUnavailable,
+			Reason:     injectErr.Error(),
+			Generation: result.Generation,
+		}
+		p.deny(w, r, egressDenial{sandboxID: sandboxID, destination: destination, request: request, result: denial})
+		return
+	}
+	if !isWebSocketUpgrade(r) {
+		p.record(r.Context(), request, result, http.StatusOK)
+	}
+	if result.Audit {
+		// The decision is an observation, not an enforcement: the request is
+		// still forwarded, and the record and log both state the distinct
+		// reason so an audit allowance cannot be mistaken for an enforced one.
+		p.logger.InfoContext(r.Context(), "egress proxy allowed a request in audit mode",
+			"sandbox_id", sandboxID, "host", destination.host, "port", destination.port,
+			"protocol", string(destination.protocol), "rule", result.RuleID, "reason", result.Reason)
+	}
 	target := addresses[0]
-	if err := p.forward(w, r, destination, target); err != nil {
+	if result.L7Deferred {
+		if err := p.forwardL7(w, r, sandboxID, identity, destination, target); err != nil {
+			p.logger.WarnContext(r.Context(), "egress proxy L7 TLS forward failed",
+				"sandbox_id", sandboxID, "host", destination.host, "port", destination.port,
+				"address", target.String(), "rule", result.RuleID, "error", err)
+		}
+		return
+	}
+	if err := p.forward(w, r, destination, target, injected, request, result); err != nil {
 		p.logger.WarnContext(r.Context(), "egress proxy forward failed",
 			"sandbox_id", sandboxID, "host", destination.host, "port", destination.port,
 			"address", target.String(), "rule", result.RuleID, "error", err)
 	}
+}
+
+// applyEgressRequestLayer records how much of the request the proxy observed. A
+// CONNECT is an L4 decision; an absolute-form request carries its method and
+// path, so it is decided at L7 even when the policy has no L7 constraint. Path
+// is the escaped path without the query string, which is what the policy
+// matches.
+func applyEgressRequestLayer(request *egress.Request, r *http.Request) {
+	if r.Method == http.MethodConnect {
+		request.Layer = egress.LayerL4
+		return
+	}
+	request.Layer = egress.LayerL7
+	request.Method = r.Method
+	request.Path = egressRequestPath(r)
+}
+
+func egressRequestPath(r *http.Request) string {
+	if r.URL == nil {
+		return "/"
+	}
+	if path := r.URL.EscapedPath(); path != "" {
+		return path
+	}
+	return "/"
+}
+
+// l7InspectionUnavailable reports whether the denial is only because the
+// allowance's L7 constraint could not be evaluated. It decides the same request
+// again with the check deferred: if that would have allowed it through an
+// L7-constrained rule, the refusal is the engine's missing interception rather
+// than the declaration's destination rule, and it is named as such.
+func (p *EgressProxy) l7InspectionUnavailable(policy egress.Policy, request egress.Request, destination egressDestination) bool {
+	if p.mitm != nil || request.Layer != egress.LayerL4 || destination.protocol != egress.ProtocolHTTPS {
+		return false
+	}
+	deferred := request
+	deferred.DeferL7 = true
+	candidate := egress.Decide(policy, deferred)
+	return candidate.Allowed() && candidate.L7Deferred
+}
+
+// egressIdentity is the sandbox-init attribution carried on a mediated
+// CONNECT. It is advisory: only the sandbox header is checked, because the
+// credential already authenticated the caller provides the authorization. The
+// session, marker, pid, and binary are attribution data, but the binary is
+// validated strictly because a policy may scope an allowance or denial to it.
+type egressIdentity struct {
+	SessionID string
+	Marker    string
+	ProcessID int
+	Binary    string
+}
+
+const egressIdentityHeaderLimit = 256
+
+func egressIdentityFromRequest(r *http.Request, sandboxID string) (egressIdentity, error) {
+	claimed := strings.TrimSpace(r.Header.Get(egress.IdentityHeaderSandbox))
+	if claimed != "" && claimed != sandboxID {
+		return egressIdentity{}, errors.New("the sandbox identity header disagrees with the proxy credential")
+	}
+	identity := egressIdentity{
+		SessionID: truncateIdentity(r.Header.Get(egress.IdentityHeaderSession)),
+		Marker:    truncateIdentity(r.Header.Get(egress.IdentityHeaderMarker)),
+	}
+	if raw := strings.TrimSpace(r.Header.Get(egress.IdentityHeaderPID)); raw != "" {
+		processID, err := strconv.Atoi(raw)
+		if err != nil || processID <= 0 {
+			return egressIdentity{}, errors.New("the process identity header is not a positive integer")
+		}
+		identity.ProcessID = processID
+	}
+	binary, err := egressBinaryFromHeader(r.Header.Get(egress.IdentityHeaderBinary))
+	if err != nil {
+		return egressIdentity{}, err
+	}
+	identity.Binary = binary
+	return identity, nil
+}
+
+// egressBinaryFromHeader decodes the sandbox-init executable attribution. The
+// header is base64 so an arbitrary executable path cannot break the CONNECT
+// request line or inject another header. A value that is not canonical base64, a
+// path that is not an absolute canonical executable path, and a path containing
+// a control character are errors: a malformed attribution must not be silently
+// treated as an absent one, because a policy that scopes a rule to a binary
+// would then evaluate a request the caller did not describe.
+func egressBinaryFromHeader(value string) (string, error) {
+	encoded := strings.TrimSpace(value)
+	if encoded == "" {
+		return "", nil
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil {
+		return "", errors.New("the binary identity header is not valid base64")
+	}
+	binary, err := egress.NormalizeBinaryPath(string(decoded))
+	if err != nil {
+		return "", fmt.Errorf("the binary identity header is invalid: %w", err)
+	}
+	return binary, nil
+}
+
+func truncateIdentity(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= egressIdentityHeaderLimit {
+		return value
+	}
+	return value[:egressIdentityHeaderLimit]
+}
+
+// egressPolicy resolves the policy for one request. The per-session hook, when
+// installed, may return a stricter policy for a scheduled or interactive run;
+// the default path reads the sandbox-wide declaration.
+func (p *EgressProxy) egressPolicy(ctx context.Context, sandboxID string, identity egressIdentity) (egress.Policy, error) {
+	if p.sessionPolicies != nil {
+		return p.sessionPolicies.EgressProxyPolicyForSession(ctx, sandboxID, identity.SessionID, identity.Marker)
+	}
+	return p.policies.EgressProxyPolicy(ctx, sandboxID)
 }
 
 // authenticate resolves the calling sandbox from the proxy credential. It
@@ -337,7 +558,7 @@ type egressDenial struct {
 
 // deny writes the refusal and records the decision behind it.
 func (p *EgressProxy) deny(w http.ResponseWriter, r *http.Request, denial egressDenial) {
-	p.record(r.Context(), denial.request, denial.result)
+	p.record(r.Context(), denial.request, denial.result, http.StatusForbidden)
 	reason := strings.TrimSpace(denial.result.Reason)
 	if reason == "" {
 		reason = "the sandbox network policy does not allow this destination"
@@ -350,22 +571,24 @@ func (p *EgressProxy) deny(w http.ResponseWriter, r *http.Request, denial egress
 		"protocol", string(denial.destination.protocol), "rule", denial.result.RuleID, "reason", reason)
 }
 
-func (p *EgressProxy) record(ctx context.Context, request egress.Request, result egress.Result) {
+func (p *EgressProxy) record(ctx context.Context, request egress.Request, result egress.Result, status int) {
 	if p.recorder == nil {
 		return
 	}
-	p.recorder.RecordEgressDecision(ctx, egress.NewRecord(request, result))
+	p.recorder.RecordEgressDecision(ctx, egress.NewRecord(request, result).WithStatus(status))
 }
 
 // forward delivers an allowed request. A CONNECT tunnel is established against
 // the address the proxy resolved, so the sandbox cannot re-resolve the name to
 // a different address after the decision; an absolute-form HTTP request is
 // forwarded over a connection pinned the same way.
-func (p *EgressProxy) forward(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP) error {
+//
+//nolint:revive // the relay threads the request identity and decision through the call boundary
+func (p *EgressProxy) forward(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string, networkRequest egress.Request, decision egress.Result) error {
 	if r.Method == http.MethodConnect {
 		return p.tunnel(w, r, destination, target)
 	}
-	return p.forwardHTTP(w, r, destination, target)
+	return p.forwardHTTP(w, r, destination, target, injected, networkRequest, decision)
 }
 
 func (p *EgressProxy) tunnel(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP) error {
@@ -414,12 +637,21 @@ func (p *EgressProxy) tunnel(w http.ResponseWriter, r *http.Request, destination
 // forwardHTTP relays one absolute-form request. The connection is pinned to the
 // resolved address, and the transport never consults the environment's proxy
 // settings, so a proxied request cannot loop back into this proxy.
-func (p *EgressProxy) forwardHTTP(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP) error {
+//
+//nolint:revive // the relay threads the request identity and decision through the call boundary
+func (p *EgressProxy) forwardHTTP(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string, networkRequest egress.Request, decision egress.Result) error {
+	if isWebSocketUpgrade(r) {
+		return p.forwardHTTPUpgrade(w, r, destination, target, injected, networkRequest, decision)
+	}
 	outbound := r.Clone(r.Context())
 	outbound.RequestURI = ""
 	outbound.Header = r.Header.Clone()
 	outbound.Header.Del("Proxy-Authorization")
 	outbound.Header.Del("Proxy-Connection")
+	for name, value := range injected {
+		outbound.Header.Del(name)
+		outbound.Header.Set(name, value)
+	}
 	removeHopByHopHeaders(outbound.Header)
 	address := net.JoinHostPort(target.String(), fmt.Sprint(destination.port))
 	transport := &http.Transport{
@@ -445,6 +677,27 @@ func (p *EgressProxy) forwardHTTP(w http.ResponseWriter, r *http.Request, destin
 	removeHopByHopHeaders(w.Header())
 	w.WriteHeader(response.StatusCode)
 	_, err = io.Copy(w, response.Body)
+	return err
+}
+
+// forwardHTTPUpgrade relays one plain-HTTP WebSocket handshake. HTTPS upgrade
+// traffic reaches the same relay through the terminated CONNECT path.
+//
+//nolint:revive // the relay threads the request identity and decision through the call boundary
+func (p *EgressProxy) forwardHTTPUpgrade(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string, networkRequest egress.Request, decision egress.Result) error {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "agent-compose egress proxy: this listener cannot upgrade", http.StatusInternalServerError)
+		return errors.New("response writer does not support hijacking")
+	}
+	client, buffer, err := hijacker.Hijack()
+	if err != nil {
+		return fmt.Errorf("hijack upgrade client: %w", err)
+	}
+	conn := &egressBufferedConn{Conn: client, reader: buffer.Reader}
+	_, err = p.relayUpgrade(r.Context(), conn, r, destination, target, "http", injected, func(status int) {
+		p.record(r.Context(), networkRequest, decision, status)
+	})
 	return err
 }
 

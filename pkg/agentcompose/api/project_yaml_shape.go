@@ -198,6 +198,21 @@ func policyYAMLShape(policy *agentcomposev2.SandboxSpec) map[string]any {
 			if allowed := entry.GetAllowedIps(); len(allowed) > 0 {
 				rendered["allowed_ips"] = append([]string(nil), allowed...)
 			}
+			if binaries := entry.GetBinaries(); len(binaries) > 0 {
+				rendered["binaries"] = append([]string(nil), binaries...)
+			}
+			if methods := entry.GetMethods(); len(methods) > 0 {
+				rendered["methods"] = append([]string(nil), methods...)
+			}
+			if paths := entry.GetPaths(); len(paths) > 0 {
+				rendered["paths"] = append([]string(nil), paths...)
+			}
+			if headers := entry.GetInjectHeaders(); len(headers) > 0 {
+				rendered["inject_headers"] = headers
+			}
+			if enforcement := entry.GetEnforcement(); enforcement != "" {
+				rendered["enforcement"] = enforcement
+			}
 			allow = append(allow, rendered)
 		}
 		networkShape["allow"] = allow
@@ -205,10 +220,14 @@ func policyYAMLShape(policy *agentcomposev2.SandboxSpec) map[string]any {
 	if entries := network.GetDeny(); len(entries) > 0 {
 		deny := make([]map[string]any, 0, len(entries))
 		for _, entry := range entries {
-			deny = append(deny, map[string]any{
+			rendered := map[string]any{
 				"host": entry.GetHost(),
 				"port": entry.GetPort(),
-			})
+			}
+			if binaries := entry.GetBinaries(); len(binaries) > 0 {
+				rendered["binaries"] = append([]string(nil), binaries...)
+			}
+			deny = append(deny, rendered)
 		}
 		networkShape["deny"] = deny
 	}

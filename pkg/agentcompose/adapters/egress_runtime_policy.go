@@ -11,12 +11,15 @@ import (
 // handled explicitly rather than silently becoming a valid state.
 
 // sandboxEgressPolicyRecord renders a domain egress fact as the persisted record.
-func sandboxEgressPolicyRecord(policy egress.RuntimePolicy) domain.SandboxEgressPolicy {
+// hash is the stable content hash of the same effective policy the generation
+// came from; it is empty only when the caller did not have a policy to hash.
+func sandboxEgressPolicyRecord(policy egress.RuntimePolicy, hash string) domain.SandboxEgressPolicy {
 	if !policy.Recorded() {
 		return domain.SandboxEgressPolicy{}
 	}
 	return domain.SandboxEgressPolicy{
 		Generation: uint64(policy.Generation),
+		Hash:       hash,
 		Applied:    string(policy.Application),
 	}
 }

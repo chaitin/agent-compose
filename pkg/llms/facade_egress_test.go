@@ -1,6 +1,7 @@
 package llms
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/chaitin/agent-compose/pkg/egress"
@@ -182,7 +183,7 @@ func TestFacadeEgressPolicyBlankProviderIDIsUnbound(t *testing.T) {
 	for _, requested := range []string{"gpt", "other"} {
 		got := egress.Decide(FacadeEgressPolicy(blank), FacadeEgressRequest(blank, requested))
 		want := egress.Decide(FacadeEgressPolicy(empty), FacadeEgressRequest(empty, requested))
-		if got != want {
+		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("requested %q: blank provider ID decided %+v, empty provider ID decided %+v", requested, got, want)
 		}
 	}

@@ -519,8 +519,12 @@ type RuntimeCommandResult struct {
 type ExecStreamWriter func(ExecChunk)
 
 type VMState struct {
-	Driver           string    `json:"driver"`
-	Mode             string    `json:"mode,omitempty"`
+	Driver string `json:"driver"`
+	Mode   string `json:"mode,omitempty"`
+	// SandboxInitState records whether the runtime was created with ac-init as
+	// its PID 1 (see pkg/driver/sandbox_init_capability.go). It is persisted
+	// with the runtime so a restart or resume keeps the process model.
+	SandboxInitState string    `json:"sandbox_init_state,omitempty"`
 	BoxName          string    `json:"box_name,omitempty"`
 	BoxID            string    `json:"box_id,omitempty"`
 	Image            string    `json:"image,omitempty"`
@@ -547,13 +551,18 @@ type VMState struct {
 }
 
 // SandboxEgressPolicy is the persisted form of the egress fact recorded for a
-// sandbox runtime: the generation of the policy in force when it was created and
-// the mechanism that applied it (see the egress package's Application values).
-// An empty Applied means no record, which is what a runtime created before this
-// was recorded reports.
+// sandbox runtime: the generation of the policy in force when it was created, a
+// stable hash of that policy, and the mechanism that applied it (see the egress
+// package's Application values). An empty Applied means no record, which is what
+// a runtime created before this was recorded reports.
 type SandboxEgressPolicy struct {
 	Generation uint64 `json:"generation,omitempty"`
-	Applied    string `json:"applied,omitempty"`
+	// Hash identifies the effective policy content (egress.PolicyHash) the
+	// runtime was created under. It links the runtime record to the persisted
+	// policy revision: a runtime whose hash matches the active revision was
+	// built under that policy.
+	Hash    string `json:"hash,omitempty"`
+	Applied string `json:"applied,omitempty"`
 }
 
 // Recorded reports whether this runtime has an egress record at all.
@@ -576,6 +585,9 @@ type SandboxVMInfo struct {
 	BoxID      string
 	JupyterURL string
 	ProxyState *ProxyState
+	// SandboxInitState reports the process model of the runtime that is
+	// running now (see driver.SandboxInitStateEnabled/Disabled).
+	SandboxInitState string
 	// EgressPolicy is the egress fact the runtime was created with. The driver
 	// boundary resolves the policy, so it is the only layer that can report it,
 	// and the caller persists it beside the rest of the runtime state.

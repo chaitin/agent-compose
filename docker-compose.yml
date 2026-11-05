@@ -5,6 +5,7 @@ services:
     restart: always
     environment:
       AGENT_COMPOSE_RUNTIME_BASE_URL: ${AGENT_COMPOSE_RUNTIME_BASE_URL:-http://agent-compose:7410}
+      SANDBOX_INIT_SOCKET_DIR: ${SANDBOX_INIT_SOCKET_DIR:-/data/run/agent-compose}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/localtime:/etc/localtime:ro

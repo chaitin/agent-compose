@@ -864,3 +864,86 @@ func TestCloneNormalizedSandboxSpecCopiesDenials(t *testing.T) {
 		t.Fatalf("mutating the clone changed the original: %+v", original.Network.Deny)
 	}
 }
+
+// TestNormalizeSandboxNetworkBinaries pins the binary half of a declared entry:
+// paths are canonicalized, deduplicated and sorted; an invalid path is rejected
+// at the field that caused it; and the scope plus per-entry enforcement travel
+// through the decision model.
+func TestNormalizeSandboxNetworkBinaries(t *testing.T) {
+	raw := func(extra string) string {
+		return "name: network-binaries\nagents:\n  worker:\n    provider: codex\n    policy:\n      network:\n        default: deny-all\n        allow:\n          - host: api.example.com\n            port: 443\n" + extra
+	}
+	spec := mustNormalizeCompose(t, raw("            binaries:\n              - /usr/bin/python3\n              - /usr/bin/curl\n              - /usr/bin/curl\n            enforcement: AUDIT\n"), nil)
+	normalized := spec.Agents[0].PolicyBlock().Network
+	want := []string{"/usr/bin/curl", "/usr/bin/python3"}
+	if len(normalized.Allow) != 1 || !reflect.DeepEqual(normalized.Allow[0].Binaries, want) {
+		t.Fatalf("binaries = %+v, want %v", normalized.Allow, want)
+	}
+	if normalized.Allow[0].Enforcement != string(egress.EnforcementAudit) {
+		t.Fatalf("enforcement = %q, want audit", normalized.Allow[0].Enforcement)
+	}
+	declaration, err := normalized.EgressDeclaration()
+	if err != nil {
+		t.Fatalf("EgressDeclaration returned error: %v", err)
+	}
+	if len(declaration.Allow) != 1 || !reflect.DeepEqual(declaration.Allow[0].Binaries, want) || declaration.Allow[0].Enforcement != egress.EnforcementAudit {
+		t.Fatalf("declaration = %+v, want the scope and enforcement carried into the decision model", declaration.Allow)
+	}
+	if err := declaration.Validate(); err != nil {
+		t.Fatalf("declaration did not validate: %v", err)
+	}
+
+	// Reordering the list carries no meaning; a declaration without it is
+	// different and must hash differently.
+	reordered := mustNormalizeCompose(t, raw("            binaries: [/usr/bin/curl, /usr/bin/python3]\n            enforcement: AUDIT\n"), nil)
+	if mustHash(t, spec) != mustHash(t, reordered) {
+		t.Fatal("reordering binaries changed the hash")
+	}
+	unscoped := mustNormalizeCompose(t, raw("            enforcement: AUDIT\n"), nil)
+	if mustHash(t, spec) == mustHash(t, unscoped) {
+		t.Fatal("a declaration with and without binaries hashes the same")
+	}
+
+	for name, body := range map[string]string{
+		"relative path":       "            binaries: [bin/curl]\n",
+		"parent traversal":    "            binaries: [/usr/bin/../bin/curl]\n",
+		"unknown enforcement": "            enforcement: observe\n",
+		"empty binary":        "            binaries: [\"\"]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Normalize(mustParseCompose(t, raw(body)), NormalizeOptions{})
+			if err == nil {
+				t.Fatalf("declaration was accepted for %s", name)
+			}
+			var validation *ValidationError
+			if !errors.As(err, &validation) {
+				t.Fatalf("error = %v, want a ValidationError", err)
+			}
+		})
+	}
+}
+
+// TestNormalizeSandboxNetworkDenyBinaries pins that a denial may be scoped to a
+// binary but has no enforcement field: an audit-only refusal would not refuse.
+func TestNormalizeSandboxNetworkDenyBinaries(t *testing.T) {
+	spec := mustNormalizeCompose(t, "name: network-deny-binaries\nagents:\n  worker:\n    provider: codex\n    policy:\n      network:\n        deny:\n          - host: metadata.example.com\n            port: 80\n            binaries: [/usr/bin/curl]\n", nil)
+	deny := spec.Agents[0].PolicyBlock().Network.Deny
+	if len(deny) != 1 || !reflect.DeepEqual(deny[0].Binaries, []string{"/usr/bin/curl"}) {
+		t.Fatalf("deny = %+v, want the binary scope", deny)
+	}
+	declaration, err := spec.Agents[0].PolicyBlock().Network.EgressDeclaration()
+	if err != nil {
+		t.Fatalf("EgressDeclaration returned error: %v", err)
+	}
+	if len(declaration.Deny) != 1 || !reflect.DeepEqual(declaration.Deny[0].Binaries, []string{"/usr/bin/curl"}) {
+		t.Fatalf("declaration = %+v, want the binary scope carried into the decision model", declaration.Deny)
+	}
+
+	parsed, parseErr := Parse([]byte("name: network-deny-binaries\nagents:\n  worker:\n    provider: codex\n    policy:\n      network:\n        deny:\n          - host: metadata.example.com\n            port: 80\n            enforcement: audit\n"))
+	if parseErr == nil {
+		_, parseErr = Normalize(parsed, NormalizeOptions{})
+	}
+	if parseErr == nil {
+		t.Fatal("a deny entry accepted enforcement")
+	}
+}

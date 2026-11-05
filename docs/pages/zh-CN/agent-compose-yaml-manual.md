@@ -1129,7 +1129,19 @@ Daemon 还会记录每个 runtime 创建时所依据的出网策略。启动 san
 | `ports` | int 列表 | 与 `port` 二选一 | 同一主机上多个端口的简写，例如 `[80, 443]`。规范化会把每个端口展开成独立的规范条目；`port` 与 `ports` 不能同时使用。 |
 | `allowed_ips` | list | 空 | 该条目的 `host` 允许解析到的 IP 地址或 CIDR 范围（可选）。名字解析出的每个地址都必须落在其中，否则该放行项不适用。裸地址就是它自身的单地址范围（`10.0.0.5` 即 `10.0.0.5/32`）；条目会被规范化并排序。它约束的是主机名，不是子网目标，也不能用在 `deny` 项上。 |
 
-每个 `deny` 项包含 `host`、`port` 或 `ports`，host 与端口的校验和规范化规则与放行项相同；它没有 `allowed_ips` 字段，因为拒绝的是目标本身。`ports` 中的每个端口都会展开成独立的规范条目，因此 spec hash 与准入报告和逐条写 `port` 完全等价。
+| `binaries` | list | 空 | 可选，把放行项限定到指定的可执行文件绝对路径。sandbox-init 进程会读取发起连接进程的 `/proc/<pid>/exe`，只有路径完全匹配的条目才适用。无法确定可执行文件时，binary 放行项一律不匹配；如果策略中任意条目带 binary 约束，而连接没有可执行文件归属，原本会由默认 allow 放行的请求也会被拒绝。路径必须是绝对路径、不能包含 `..`，会被清理、去重、排序，并且每项最多 64 个。 |
+| `enforcement` | string | `enforce` | `enforce` 执行该放行项；`audit` 只记录匹配并放行，不执行限制。该字段只作用于放行项；`deny` 项没有该字段，拒绝始终生效。 |
+
+
+| `methods` | list | 空 | 该放行项允许的 HTTP 方法（可选），例如 `[GET, HEAD]`；最多 16 个。省略且 `paths` 也为空时保持仅按目标放行的原有行为。方法必须是 RFC 9110 token，并会规范化为大写。 |
+| `paths` | list | 空 | 该放行项允许的请求路径（可选）。每项是精确路径，或以 `*` 结尾的前缀（`/v1/*`）；不匹配查询串。最多 64 项。省略表示允许所有路径。 |
+| `inject_headers` | map | 空 | 代理为放行的 L7 请求注入的 header 模板（可选）。值必须用 `${NAME}` 引用 daemon 环境变量；guest 永远看不到解析后的值。注入要求同时声明 `methods` 或 `paths`，使请求可被检查。禁止 `Host`、`Content-Length`、`Transfer-Encoding`、连接/代理类 header 和 `X-Agent-Compose-*`。 |
+
+一旦声明 `methods` 或 `paths`，该放行项就是 **L7** 放行项。明文 HTTP 由正向代理直接检查；HTTPS 需要可选的 TLS 终止：设置 `EGRESS_L7_TLS_MITM=true`，为 daemon 提供 CA（`EGRESS_L7_CA_CERT_FILE`/`EGRESS_L7_CA_KEY_FILE` 或内联 PEM 变量），并把该 CA 安装到 guest 镜像或挂载文件中。配置 `EGRESS_L7_CA_BUNDLE_GUEST_PATH` 后，引擎会注入 `SSL_CERT_FILE`、`CURL_CA_BUNDLE`、`REQUESTS_CA_BUNDLE`、`NODE_EXTRA_CA_CERTS` 和 `GIT_SSL_CAINFO`，但不会自行安装文件。未启用 TLS 终止时，带 L7 约束的 HTTPS 放行项会**失败关闭**（规则 `engine.l7-inspection-unavailable`），不会静默退化成仅按目标放行。没有 `methods`/`paths` 的放行项保持透明隧道行为。终止的 TLS 服务名必须与 CONNECT 目标一致；未知或不匹配的 SNI 会使握手失败。
+
+每个 `deny` 项包含 `host`、`port` 或 `ports`，host 与端口的校验和规范化规则与放行项相同；它没有 `allowed_ips` 字段，因为拒绝的是目标本身。它可以带 `binaries`，把拒绝限定到这些可执行路径；没有可执行文件归属的连接仍会被 binary 拒绝项拒绝，因此不能靠省略归属绕过它。`ports` 中的每个端口都会展开成独立的规范条目，因此 spec hash 与准入报告和逐条写 `port` 完全等价。
+
+`binaries` 与 `enforcement` 只由引擎的正向代理执行，binary 身份来自 sandbox-init 的流量中介（`SANDBOX_INIT_EGRESS=enforce`）。如果 sandbox 的 init 没有中介流量，连接就没有 binary 归属：binary 放行项会失败关闭，准入报告会把这部分 binary 约束列为未执行。由 driver 自己执行网络策略时没有逐条 audit 能力，因此该机制会把 `enforcement: audit` 当作正常执行。
 
 `allowed_ips` 的作用是把名字与地址绑定起来。没有它时，对 `api.example.com` 的放行会跟随该名字解析到的任何地方，因此被污染或被攻陷的解析结果可以把 sandbox 引到声明从未指定的地址。有了它，引擎只有在即将使用的地址落在声明范围内时才建立连接；如果一个名字同时解析出允许与不允许的地址，会被拒绝而不是被择优采用。引擎永不转发的地址——loopback、link-local（含元数据地址 `169.254.169.254`）、multicast，以及控制面端口 `2379`、`2380`、`6443`、`10250`、`10255`——无论 `allowed_ips` 怎么写都保持被拒绝。
 
@@ -1152,6 +1164,11 @@ policy:
         port: 443
       - host: 10.0.0.0/8
         port: 5432
+      - host: pypi.org
+        port: 443
+        binaries:
+          - /usr/bin/python3
+        enforcement: audit
 ```
 
 ```yaml
@@ -1162,7 +1179,11 @@ policy:
         ports: [80, 443]
       - host: metadata.example.com
         port: 80
+        binaries:
+          - /usr/bin/curl
 ```
+
+binary 放行项只匹配 sandbox init 报告的确切可执行文件路径。没有该归属的进程无法使用该条目，所以 `binaries` 是在收窄放行项，而不是替代目标匹配。binary 拒绝项的语义刻意相反：没有归属的连接会被拒绝，因为让它继续走默认放行就等于允许进程通过隐藏可执行文件来绕过拒绝。
 
 #### Daemon 全局策略
 
@@ -1205,7 +1226,7 @@ daemon 策略是**应用到所有 sandbox 的外层边界**，包括没有声明
 - 在 Microsandbox 上，SDK 的网络配置会应用该声明：引擎端点在前，`deny` 项随后，`allow` 项最后；未命中任何规则的流量回落到默认值。其能力报告在白名单模式下带有 `strength=allowlist`，在黑名单模式下带有 `strength=denylist`，并列出仍然存在的限制，同时注明真实 KVM 验证的结果：拒绝默认值与放行规则成立（未放行的名称无法解析，地址放行只对该地址和端口生效），`allowed_ips` 约束不会被应用，被放行的 HTTPS 目标未能完成 TLS 握手，因此当沙箱能访问守护进程时由引擎的正向代理承载 HTTPS 放行。当代理也处于流量路径时，准入报告会同时列出两种机制，并说明绕过代理的流量不受代理判定；若声明还带有 `allowed_ips`，报告会说明 SDK 过滤器不会对比流量应用该地址约束，而 `EGRESS_UNENFORCEABLE_POLICY=refuse` 会拒绝这样的 sandbox。
 - Microsandbox 的 VM 内 DNS 代理会拒绝解析到私有地址的回答，这正是用于阻断 DNS rebinding 的机制。该保护默认开启，对所有 sandbox 生效（无论是否声明了网络策略）。如果部署中的 guest 必须解析内网名称（例如位于 `10/8` 地址段的内网服务），可设置 `MICROSANDBOX_DNS_REBIND_PROTECTION=false`；此时 daemon 会在启动 sandbox 时输出一条 warning，而该部署内的 guest 可能被任意可解析的域名指向内网地址。该开关没有按域名豁免的能力，作用范围是整个部署。
 - 对于**任何 sandbox 能访问到 daemon 的 driver**（包括 Docker、Kubernetes 与 BoxLite），引擎会在**自己的正向代理中执行该声明**。sandbox 会拿到代理作为它的出网路径（`HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 及其小写形式，项目无法覆盖），代理会认证该 sandbox，并对每个连接做判定：命中 `deny` 条目的连接以 `403` 回复并附带拒绝它的规则；白名单模式下命中 `allow` 条目的连接被建立隧道；黑名单模式下未被任何 `deny` 命中的连接按默认放行建立隧道。因此在 Docker 上，即使 driver 自身不安装任何过滤器，声明也具有真实强度。
-- 在 Docker 上，sandbox 默认加入 daemon 自身的网络。改用 `docker-compose.sandbox-network.yml` 这个叠加文件可把新建的 Docker sandbox 放进专用的 `agent-compose-sandbox` 网络：它会创建该网络、把 daemon 双挂到该网络，并注入 `DOCKER_SANDBOX_NETWORK`，因此只需启用这个叠加文件即可完成切换。该网络必须存在、不能是 Docker 内建网络（`host`/`none`/`bridge`/`default`），且容器化 daemon 必须已挂载到该网络，否则 daemon 会让 sandbox 创建失败；在启用叠加文件之前已创建的 sandbox 会保留原网络，直到被重建。若容器化 daemon 挂了多个非默认网络、却没有显式设置 `DOCKER_SANDBOX_NETWORK`，这种状态是歧义的，daemon 会直接失败关闭而不会去猜测。该叠加文件保留了 `container_name: agent-compose` 别名，因此默认的 `AGENT_COMPOSE_RUNTIME_BASE_URL`（`http://agent-compose:7410`）在该专用网络上仍能解析；只有手工拆分网络、且没有这个别名时，才需要把该 URL 指向 daemon 在该网络上的地址。只要该 URL 是非 loopback 地址，引擎就会注入正向代理，但并不会校验它是否真的可达，因此网络配置错误时执行会静默失效，而不会把声明报告为未执行。
+- 在 Docker 上，sandbox 默认加入 daemon 自身的网络。改用 `docker-compose.sandbox-network.yml` 这个叠加文件可把新建的 Docker sandbox 放进专用的 `agent-compose-sandbox` 网络：它会创建该网络、把 daemon 双挂到该网络，并注入 `DOCKER_SANDBOX_NETWORK`，因此只需启用这个叠加文件即可完成切换。该网络必须存在、不能是 Docker 内建网络（`host`/`none`/`bridge`/`default`），且容器化 daemon 必须已挂载到该网络，否则 daemon 会让 sandbox 创建失败；在启用叠加文件之前已创建的 sandbox 会保留原网络，直到被重建。若容器化 daemon 挂了多个非默认网络、却没有显式设置 `DOCKER_SANDBOX_NETWORK`，这种状态是歧义的，daemon 会直接失败关闭而不会去猜测。该叠加文件保留了 `container_name: agent-compose` 别名，因此默认的 `AGENT_COMPOSE_RUNTIME_BASE_URL`（`http://agent-compose:7410`）在该专用网络上仍能解析；只有手工拆分网络、且没有这个别名时，才需要把该 URL 指向 daemon 在该网络上的地址。只要该 URL 是非 loopback 地址，引擎就会注入正向代理，但并不会校验它是否真的可达，因此网络配置错误时执行会静默失效，而不会把声明报告为未执行。为了在网络命名空间层实现外层默认拒绝，该叠加文件还定义了 `internal: true` 的 `agent-compose-sandbox-strict` 网络；在 `SANDBOX_INIT_EGRESS=enforce` 下设置 `DOCKER_SANDBOX_NETWORK=agent-compose-sandbox-strict` 与 `DOCKER_SANDBOX_NETWORK_STRICT=true` 后，每个 sandbox 只加入该 internal 网络，因此即使进程不是由 sandbox init 启动的（例如 `docker exec`），也无法访问 daemon 端点、宿主机网桥网关和同网络容器之外的目标。strict 模式要求网络已存在且 `Internal=true`、容器化 daemon 已挂载到该网络，并且 `AGENT_COMPOSE_RUNTIME_BASE_URL` 指向 daemon 在该网络上的别名、地址或网关；否则 sandbox 启动失败关闭，不会回退到其他网络。该开关在 enforce 之外不生效；在启用之前创建的 sandbox 必须删除并重新创建。准入报告会以 `docker_internal_network` 机制披露该层及其放行范围。
 - **无论声明怎么写，代理都拒绝引擎永不转发的目标**：loopback、link-local（含 `169.254.169.254` 元数据地址）、unspecified、multicast 地址，以及集群暴露的控制面端口——`2379`/`2380`（etcd）、`6443`（API server）、`10250`/`10255`（kubelet）。每条拒绝都记录在各自的引擎规则名下（`engine.blocked-address`、`engine.blocked-port`），并写明它拒绝的角色。对有限制性的 sandbox 来说，这堵住了它本来能自己找到的一条路；对任何 sandbox 来说，这是防止代理变成通往 daemon 自身服务或承载它的平台的新通道。
 - 代理自行解析目标，并连接它做过判定的那个地址，因此名字无法在判定与建连之间被解析成别的东西。
 - **限制是明说的，而不是暗示的。** 忽略代理环境变量的进程仍会直连外网、不被判定，直到透明捕获把所有连接都纳入代理。策略 schema 只描述主机和端口，没有 UDP 字段，正向代理只承载 TCP。IPv4/IPv6 字面量、CIDR 目标和仅 IPv6 的名称都受支持；IPv6 目标还需要 sandbox 运行时网络具备 IPv6 连通性。

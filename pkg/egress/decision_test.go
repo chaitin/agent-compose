@@ -1,6 +1,9 @@
 package egress
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestDecideTableDriven(t *testing.T) {
 	policy := NewPolicy(Deny,
@@ -232,7 +235,7 @@ func TestDecideDoesNotUseConsumerOrKind(t *testing.T) {
 	policy := NewPolicy(Deny, Rule{ID: "any", Action: Allow})
 	first := Decide(policy, Request{Consumer: "sandbox-a", Kind: KindLLMModel, Name: "m"})
 	second := Decide(policy, Request{Consumer: "sandbox-b", Kind: KindCapabilityCapset, Name: "m"})
-	if first != second {
+	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("consumer and kind must not change the outcome: %+v vs %+v", first, second)
 	}
 }

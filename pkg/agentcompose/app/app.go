@@ -165,7 +165,8 @@ func RegisterRoutes(di do.Injector) {
 		},
 	).WithRunTargetResolver(do.MustInvoke[*runs.SandboxRunTargetResolver](di)).
 		WithRemovalCoordinator(do.MustInvoke[*sandboxes.RemovalCoordinator](di)).
-		WithWorkspaceFiles(adapters.NewWorkspaceFiles(do.MustInvoke[*appconfig.Config](di)))
+		WithWorkspaceFiles(adapters.NewWorkspaceFiles(do.MustInvoke[*appconfig.Config](di))).
+		WithEgressPolicyObserver(do.MustInvoke[*adapters.SandboxEgressProxy](di))
 	path, handler = agentcomposev2connect.NewSandboxServiceHandler(sandboxHandler)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewSettingsServiceHandler(api.NewSettingsV2Handler(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)))
@@ -449,12 +450,32 @@ func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {
 // sandbox does this credential belong to) and its policy source (what does that
 // sandbox's project declare now).
 func NewEgressProxy(di do.Injector) (*proxy.EgressProxy, error) {
-	mediation := *do.MustInvoke[*adapters.SandboxEgressProxy](di)
-	return proxy.NewEgressProxy(proxy.EgressProxyOptions{
-		Authorizer: mediation,
-		Policies:   mediation,
-		Logger:     do.MustInvoke[*slog.Logger](di),
-	})
+	mediationPointer := do.MustInvoke[*adapters.SandboxEgressProxy](di)
+	mediation := *mediationPointer
+	config := do.MustInvoke[*appconfig.Config](di)
+	options := proxy.EgressProxyOptions{
+		Authorizer:      mediation,
+		Policies:        mediation,
+		SessionPolicies: mediationPointer,
+		Logger:          do.MustInvoke[*slog.Logger](di),
+	}
+	if path := strings.TrimSpace(config.EgressAuditLog); path != "" {
+		audit, err := adapters.NewEgressAuditLog(path, options.Logger)
+		if err != nil {
+			return nil, err
+		}
+		options.Recorder = audit
+	}
+	if config.EgressL7TLS.MITM {
+		certPEM, keyPEM, err := loadEgressL7CA(config)
+		if err != nil {
+			return nil, err
+		}
+		options.TLSMITM = true
+		options.CACertificatePEM = certPEM
+		options.CAKeyPEM = keyPEM
+	}
+	return proxy.NewEgressProxy(options)
 }
 
 // NewSandboxEgressMediation builds the one mediation value the daemon shares:

@@ -158,18 +158,47 @@ type SandboxNetworkAllowSpec struct {
 	// is not covered by this allowance, so a name the declaration trusts cannot
 	// be pointed at an address it does not.
 	AllowedIPs []string `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"`
+	// Binaries optionally scopes the allowance to processes whose executable
+	// is one of these absolute paths. An unknown executable never satisfies a
+	// binary-scoped allowance, so the declaration fails closed for traffic the
+	// engine cannot attribute.
+	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
+	// Methods optionally narrows the allowance to the HTTP methods listed. It
+	// requires L7 inspection: a plain HTTP request is inspected by the forward
+	// proxy, and an HTTPS request needs TLS interception (EGRESS_L7_TLS_MITM).
+	// Omitted (with an empty Paths) keeps the destination-only behavior.
+	Methods []string `yaml:"methods,omitempty" json:"methods,omitempty"`
+	// Paths optionally narrows the allowance to these request paths. Each entry
+	// is an exact path or a prefix ending in "*" (for example "/v1/*"). Queries
+	// are not matched. Omitted permits every path.
+	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
+	// InjectHeaders adds header templates to allowed HTTP requests. Values must
+	// reference environment variables with ${NAME}; the daemon resolves them
+	// and the guest never sees the value. Injection requires methods or paths
+	// so the proxy can inspect the request.
+	InjectHeaders map[string]string `yaml:"inject_headers,omitempty" json:"inject_headers,omitempty"`
+	// Enforcement selects how a matched allowance is applied. "enforce" is the
+	// default and the behavior an omitted field keeps; "audit" records the
+	// match and allows the request without enforcing it.
+	// A denial has no enforcement field: a refusal always refuses.
+	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
 }
 
 // SandboxNetworkDenySpec is one declared refusal. It has the same destination
-// shape as an allowance but no AllowedIPs field: a denial refuses the
-// destination, and constraining it to selected addresses would turn a deny
-// entry into something the declaration cannot express unambiguously.
+// shape as an allowance but no AllowedIPs or Enforcement field: a denial refuses
+// the destination, and constraining it to selected addresses would turn a deny
+// entry into something the declaration cannot express unambiguously, while an
+// audit-only refusal would not refuse.
 type SandboxNetworkDenySpec struct {
 	Host string `yaml:"host,omitempty" json:"host,omitempty"`
 	// Port and Ports are alternatives, as on an allowance; normalization
 	// expands each listed port into its own canonical denial.
 	Port  int   `yaml:"port,omitempty" json:"port,omitempty"`
 	Ports []int `yaml:"ports,omitempty" json:"ports,omitempty"`
+	// Binaries optionally scopes the denial to processes whose executable is
+	// one of these absolute paths. An unknown executable is still refused by a
+	// binary-scoped denial, so dropping the attribution cannot bypass it.
+	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 }
 
 type AgentMCPEntriesSpec []AgentMCPEntrySpec
@@ -691,10 +720,15 @@ func validateSandboxNetworkAllowList(node *yaml.Node, path string) error {
 	for index, item := range node.Content {
 		itemPath := fmt.Sprintf("%s[%d]", path, index)
 		if err := validateMapping(item, itemPath, map[string]nodeValidator{
-			"host":        validateScalar,
-			"port":        validateInt,
-			"ports":       validateIntSequence,
-			"allowed_ips": validateStringList,
+			"host":           validateScalar,
+			"port":           validateInt,
+			"ports":          validateIntSequence,
+			"allowed_ips":    validateStringList,
+			"binaries":       validateStringList,
+			"methods":        validateStringList,
+			"paths":          validateStringList,
+			"inject_headers": validateStringMap,
+			"enforcement":    validateScalar,
 		}); err != nil {
 			return err
 		}
@@ -709,9 +743,10 @@ func validateSandboxNetworkDenyList(node *yaml.Node, path string) error {
 	for index, item := range node.Content {
 		itemPath := fmt.Sprintf("%s[%d]", path, index)
 		if err := validateMapping(item, itemPath, map[string]nodeValidator{
-			"host":  validateScalar,
-			"port":  validateInt,
-			"ports": validateIntSequence,
+			"host":     validateScalar,
+			"port":     validateInt,
+			"ports":    validateIntSequence,
+			"binaries": validateStringList,
 		}); err != nil {
 			return err
 		}

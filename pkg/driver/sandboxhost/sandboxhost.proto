@@ -109,6 +109,8 @@ message AllowEntry {
   int32 port = 2;
   string protocol = 3;
   repeated string allowed_ips = 4;
+  repeated string binaries = 5;
+  string enforcement = 6;
 }
 
 // DenyEntry is one declared refusal. It mirrors egress.DenyEntry and, unlike
@@ -118,6 +120,7 @@ message DenyEntry {
   string host = 1;
   int32 port = 2;
   string protocol = 3;
+  repeated string binaries = 4;
 }
 
 message EngineEndpoint {
@@ -159,6 +162,10 @@ message VMState {
   string bootstrap_ref = 12;
   string k8s_context = 13;
   string k8s_namespace = 14;
+  // Process model of the runtime (driver.SandboxInitStateEnabled/Disabled).
+  // Persisted by the daemon and carried to the sandbox-host so flag changes do
+  // not alter an existing VM's process model.
+  string sandbox_init_state = 15;
 }
 
 message ProxyState {
@@ -205,6 +212,7 @@ message SandboxVMInfo {
   string jupyter_url = 2;
   ProxyState proxy_state = 3;
   bool runtime_created = 4;
+  string sandbox_init_state = 5;
 }
 
 // ---------- requests / responses ----------

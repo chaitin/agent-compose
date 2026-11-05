@@ -536,6 +536,8 @@ type AllowEntry struct {
 	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
 	Protocol      string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	AllowedIps    []string               `protobuf:"bytes,4,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
+	Binaries      []string               `protobuf:"bytes,5,rep,name=binaries,proto3" json:"binaries,omitempty"`
+	Enforcement   string                 `protobuf:"bytes,6,opt,name=enforcement,proto3" json:"enforcement,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -598,6 +600,20 @@ func (x *AllowEntry) GetAllowedIps() []string {
 	return nil
 }
 
+func (x *AllowEntry) GetBinaries() []string {
+	if x != nil {
+		return x.Binaries
+	}
+	return nil
+}
+
+func (x *AllowEntry) GetEnforcement() string {
+	if x != nil {
+		return x.Enforcement
+	}
+	return ""
+}
+
 // DenyEntry is one declared refusal. It mirrors egress.DenyEntry and, unlike
 // AllowEntry, deliberately carries no allowed_ips: constraining a refusal to
 // selected addresses would make one entry mean two different things.
@@ -606,6 +622,7 @@ type DenyEntry struct {
 	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
 	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
 	Protocol      string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Binaries      []string               `protobuf:"bytes,4,rep,name=binaries,proto3" json:"binaries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -659,6 +676,13 @@ func (x *DenyEntry) GetProtocol() string {
 		return x.Protocol
 	}
 	return ""
+}
+
+func (x *DenyEntry) GetBinaries() []string {
+	if x != nil {
+		return x.Binaries
+	}
+	return nil
 }
 
 type EngineEndpoint struct {
@@ -905,6 +929,10 @@ type VMState struct {
 	BootstrapRef     string                 `protobuf:"bytes,12,opt,name=bootstrap_ref,json=bootstrapRef,proto3" json:"bootstrap_ref,omitempty"`
 	K8SContext       string                 `protobuf:"bytes,13,opt,name=k8s_context,json=k8sContext,proto3" json:"k8s_context,omitempty"`
 	K8SNamespace     string                 `protobuf:"bytes,14,opt,name=k8s_namespace,json=k8sNamespace,proto3" json:"k8s_namespace,omitempty"`
+	// Process model of the runtime (driver.SandboxInitStateEnabled/Disabled).
+	// Persisted by the daemon and carried to the sandbox-host so flag changes do
+	// not alter an existing VM's process model.
+	SandboxInitState string `protobuf:"bytes,15,opt,name=sandbox_init_state,json=sandboxInitState,proto3" json:"sandbox_init_state,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1033,6 +1061,13 @@ func (x *VMState) GetK8SContext() string {
 func (x *VMState) GetK8SNamespace() string {
 	if x != nil {
 		return x.K8SNamespace
+	}
+	return ""
+}
+
+func (x *VMState) GetSandboxInitState() string {
+	if x != nil {
+		return x.SandboxInitState
 	}
 	return ""
 }
@@ -1410,13 +1445,14 @@ func (x *ExecResult) GetSecurityFacts() *ExecSecurityFacts {
 }
 
 type SandboxVMInfo struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	BoxId          string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
-	JupyterUrl     string                 `protobuf:"bytes,2,opt,name=jupyter_url,json=jupyterUrl,proto3" json:"jupyter_url,omitempty"`
-	ProxyState     *ProxyState            `protobuf:"bytes,3,opt,name=proxy_state,json=proxyState,proto3" json:"proxy_state,omitempty"`
-	RuntimeCreated bool                   `protobuf:"varint,4,opt,name=runtime_created,json=runtimeCreated,proto3" json:"runtime_created,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	BoxId            string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
+	JupyterUrl       string                 `protobuf:"bytes,2,opt,name=jupyter_url,json=jupyterUrl,proto3" json:"jupyter_url,omitempty"`
+	ProxyState       *ProxyState            `protobuf:"bytes,3,opt,name=proxy_state,json=proxyState,proto3" json:"proxy_state,omitempty"`
+	RuntimeCreated   bool                   `protobuf:"varint,4,opt,name=runtime_created,json=runtimeCreated,proto3" json:"runtime_created,omitempty"`
+	SandboxInitState string                 `protobuf:"bytes,5,opt,name=sandbox_init_state,json=sandboxInitState,proto3" json:"sandbox_init_state,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *SandboxVMInfo) Reset() {
@@ -1475,6 +1511,13 @@ func (x *SandboxVMInfo) GetRuntimeCreated() bool {
 		return x.RuntimeCreated
 	}
 	return false
+}
+
+func (x *SandboxVMInfo) GetSandboxInitState() string {
+	if x != nil {
+		return x.SandboxInitState
+	}
+	return ""
 }
 
 type SandboxRequest struct {
@@ -3355,18 +3398,21 @@ const file_sandboxhost_proto_rawDesc = "" +
 	"\bEndpoint\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1a\n" +
-	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"q\n" +
+	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"\xaf\x01\n" +
 	"\n" +
 	"AllowEntry\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1a\n" +
 	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12\x1f\n" +
 	"\vallowed_ips\x18\x04 \x03(\tR\n" +
-	"allowedIps\"O\n" +
+	"allowedIps\x12\x1a\n" +
+	"\bbinaries\x18\x05 \x03(\tR\bbinaries\x12 \n" +
+	"\venforcement\x18\x06 \x01(\tR\venforcement\"k\n" +
 	"\tDenyEntry\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1a\n" +
-	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"x\n" +
+	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12\x1a\n" +
+	"\bbinaries\x18\x04 \x03(\tR\bbinaries\"x\n" +
 	"\x0eEngineEndpoint\x12\x18\n" +
 	"\apurpose\x18\x01 \x01(\tR\apurpose\x124\n" +
 	"\bendpoint\x18\x02 \x01(\v2\x18.sandboxhost.v1.EndpointR\bendpoint\x12\x16\n" +
@@ -3384,7 +3430,7 @@ const file_sandboxhost_proto_rawDesc = "" +
 	"\tenv_items\x18\x03 \x03(\v2\x1d.sandboxhost.v1.SandboxEnvVarR\benvItems\x12G\n" +
 	"\rvolume_mounts\x18\x04 \x03(\v2\".sandboxhost.v1.SandboxVolumeMountR\fvolumeMounts\x12I\n" +
 	"\x11runtime_env_items\x18\x05 \x03(\v2\x1d.sandboxhost.v1.SandboxEnvVarR\x0fruntimeEnvItems\x12D\n" +
-	"\x0enetwork_policy\x18\x06 \x01(\v2\x1d.sandboxhost.v1.NetworkPolicyR\rnetworkPolicy\"\xb2\x03\n" +
+	"\x0enetwork_policy\x18\x06 \x01(\v2\x1d.sandboxhost.v1.NetworkPolicyR\rnetworkPolicy\"\xe0\x03\n" +
 	"\aVMState\x12\x16\n" +
 	"\x06driver\x18\x01 \x01(\tR\x06driver\x12\x12\n" +
 	"\x04mode\x18\x02 \x01(\tR\x04mode\x12\x19\n" +
@@ -3404,7 +3450,8 @@ const file_sandboxhost_proto_rawDesc = "" +
 	"\rbootstrap_ref\x18\f \x01(\tR\fbootstrapRef\x12\x1f\n" +
 	"\vk8s_context\x18\r \x01(\tR\n" +
 	"k8sContext\x12#\n" +
-	"\rk8s_namespace\x18\x0e \x01(\tR\fk8sNamespace\"\xf1\x01\n" +
+	"\rk8s_namespace\x18\x0e \x01(\tR\fk8sNamespace\x12,\n" +
+	"\x12sandbox_init_state\x18\x0f \x01(\tR\x10sandboxInitState\"\xf1\x01\n" +
 	"\n" +
 	"ProxyState\x12\x1d\n" +
 	"\n" +
@@ -3442,14 +3489,15 @@ const file_sandboxhost_proto_rawDesc = "" +
 	"\x06stderr\x18\x03 \x01(\tR\x06stderr\x12\x16\n" +
 	"\x06output\x18\x04 \x01(\tR\x06output\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12H\n" +
-	"\x0esecurity_facts\x18\x06 \x01(\v2!.sandboxhost.v1.ExecSecurityFactsR\rsecurityFacts\"\xad\x01\n" +
+	"\x0esecurity_facts\x18\x06 \x01(\v2!.sandboxhost.v1.ExecSecurityFactsR\rsecurityFacts\"\xdb\x01\n" +
 	"\rSandboxVMInfo\x12\x15\n" +
 	"\x06box_id\x18\x01 \x01(\tR\x05boxId\x12\x1f\n" +
 	"\vjupyter_url\x18\x02 \x01(\tR\n" +
 	"jupyterUrl\x12;\n" +
 	"\vproxy_state\x18\x03 \x01(\v2\x1a.sandboxhost.v1.ProxyStateR\n" +
 	"proxyState\x12'\n" +
-	"\x0fruntime_created\x18\x04 \x01(\bR\x0eruntimeCreated\"w\n" +
+	"\x0fruntime_created\x18\x04 \x01(\bR\x0eruntimeCreated\x12,\n" +
+	"\x12sandbox_init_state\x18\x05 \x01(\tR\x10sandboxInitState\"w\n" +
 	"\x0eSandboxRequest\x121\n" +
 	"\asandbox\x18\x01 \x01(\v2\x17.sandboxhost.v1.SandboxR\asandbox\x122\n" +
 	"\bvm_state\x18\x02 \x01(\v2\x17.sandboxhost.v1.VMStateR\avmState\"8\n" +

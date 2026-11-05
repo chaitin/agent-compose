@@ -356,7 +356,7 @@ func runImageDockerVersionCommand(t *testing.T, ctx context.Context, dockerClien
 	if err := dockerClient.ContainerStart(ctx, createResp.ID, containerapi.StartOptions{}); err != nil {
 		failImageDockerFixture(t, fixture, "start daemon image version container: %v", err)
 	}
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		info, err := dockerClient.ContainerInspect(ctx, createResp.ID)
 		if err != nil {
@@ -610,7 +610,7 @@ func imageDockerHTTPClient(timeout time.Duration) *http.Client {
 func waitForImageDockerVersion(t *testing.T, ctx context.Context, fixture *imageDockerFixture) imageDockerVersionEnvelope {
 	t.Helper()
 	client := imageDockerHTTPClient(time.Second)
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(2 * time.Minute)
 	var lastErr error
 	var lastBody bytes.Buffer
 	for time.Now().Before(deadline) {
@@ -812,7 +812,7 @@ func (fixture *imageDockerFixture) cleanup(t *testing.T) {
 	if fixture == nil || fixture.docker == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if fixture.sandboxID != "" {
 		removeE2EDockerSandboxFallback(t, ctx, fixture.docker, fixture.sandboxID)

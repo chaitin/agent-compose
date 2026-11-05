@@ -98,8 +98,8 @@ type NormalizedSandboxNetworkSpec struct {
 	Deny    []NormalizedSandboxNetworkDenySpec  `yaml:"deny,omitempty" json:"deny,omitempty"`
 }
 
-// NormalizedSandboxNetworkAllowSpec is one validated allowance. It names only a
-// destination; the engine does not claim an application-protocol check.
+// NormalizedSandboxNetworkAllowSpec is one validated allowance. It names a
+// destination, optionally narrowed by an L7 method/path constraint.
 type NormalizedSandboxNetworkAllowSpec struct {
 	Host string `yaml:"host" json:"host"`
 	Port int    `yaml:"port" json:"port"`
@@ -107,13 +107,33 @@ type NormalizedSandboxNetworkAllowSpec struct {
 	// allowance to apply. It is empty when the declaration left the addresses
 	// unconstrained, and it participates in the canonical JSON and spec hash.
 	AllowedIPs []string `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"`
+	// Binaries are the canonical absolute executable paths this allowance is
+	// scoped to. It is empty when the declaration did not scope the entry to a
+	// binary, and it participates in the canonical JSON and spec hash.
+	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
+	// Methods and Paths are the canonical L7 constraint. Empty means the
+	// destination-only behavior, and the fields are omitted from canonical JSON
+	// so a declaration that does not use L7 keeps its existing hash.
+	Methods []string `yaml:"methods,omitempty" json:"methods,omitempty"`
+	Paths   []string `yaml:"paths,omitempty" json:"paths,omitempty"`
+	// InjectHeaders are validated header templates; values reference daemon
+	// environment variables and are resolved only by the proxy.
+	InjectHeaders map[string]string `yaml:"inject_headers,omitempty" json:"inject_headers,omitempty"`
+	// Enforcement is the normalized per-entry enforcement. It is empty when the
+	// declaration omitted it, which keeps an existing spec byte-identical and
+	// means the global behavior (enforce).
+	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
 }
 
 // NormalizedSandboxNetworkDenySpec is one validated refusal. It carries no
-// address constraint: a denial refuses the destination itself.
+// address or enforcement constraint: a denial refuses the destination itself,
+// and an audit-only denial would not refuse.
 type NormalizedSandboxNetworkDenySpec struct {
 	Host string `yaml:"host" json:"host"`
 	Port int    `yaml:"port" json:"port"`
+	// Binaries are the canonical absolute executable paths this denial is
+	// scoped to. It is empty when the denial applies to every executable.
+	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 }
 
 type NormalizedMCPServerSpec struct {

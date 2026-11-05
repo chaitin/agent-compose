@@ -59,6 +59,10 @@ type SandboxNetworkEnforcement struct {
 	// leaves that part of a declaration unapplied rather than applying it
 	// partially without saying so.
 	AppliesAllowedAddresses bool
+	// AppliesBinaries reports whether this mechanism can scope a declaration to
+	// the executable that produced the connection. Only the forward proxy used
+	// by the sandbox init process can attribute a connection to a binary.
+	AppliesBinaries bool
 	// Notes is the human-readable limit of what the driver applies, so a report
 	// never presents a partial mechanism as complete.
 	Notes string
@@ -156,7 +160,8 @@ func SandboxEgressForwardProxyEnforcement(driver string) SandboxNetworkEnforceme
 		AppliesDenyEntries:      true,
 		AppliesEngineEndpoints:  true,
 		AppliesAllowedAddresses: true,
-		Notes:                   "the engine's forward proxy decides every connection the sandbox routes through it: the declared allowances and the engine-owned endpoints are applied in the daemon, the guest is given the proxy as its egress path, and a change to the declaration reaches a running sandbox because the policy is read per request; a process that ignores the proxy environment is not decided until transparent capture is in place",
+		AppliesBinaries:         true,
+		Notes:                   "the engine's forward proxy decides every connection the sandbox routes through it: the declared allowances and the engine-owned endpoints are applied in the daemon, the guest is given the proxy as its egress path, and a change to the declaration reaches a running sandbox because the policy is read per request; the binary identity used to scope an entry comes from the sandbox init process reading /proc/<pid>/exe, so a connection that does not cross that process carries no executable attribution; a process that ignores the proxy environment is not decided until transparent capture is in place",
 	}
 }
 

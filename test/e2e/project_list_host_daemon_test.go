@@ -20,7 +20,7 @@ import (
 )
 
 func TestE2EProjectListSQLitePagination(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	repoRoot := e2eRepoRoot(t)

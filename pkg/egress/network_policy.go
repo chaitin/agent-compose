@@ -14,16 +14,37 @@ type AllowEntry struct {
 	// a name resolves to. Each entry is a canonical CIDR, as produced by
 	// NormalizeAllowedIPs.
 	AllowedIPs []string
+	// Binaries scopes the allowance to processes whose executable is one of
+	// these absolute paths. It is empty when the allowance is not scoped to a
+	// binary; that is a different declaration from an entry whose scoped list
+	// is empty after validation. An unknown request binary never satisfies a
+	// scoped allowance.
+	Binaries []string
+	// L7 optionally narrows this allowance to HTTP methods and paths. An empty
+	// constraint keeps the destination-only behavior.
+	L7 L7Constraint
+	// InjectHeaders are header templates the proxy adds to allowed HTTP
+	// requests. Values must reference environment variables; the guest never
+	// sees the resolved values. Injection requires an L7 constraint.
+	InjectHeaders map[string]string
+	// Enforcement selects how a matched allowance is applied: enforce decides
+	// normally, audit records the match and allows the request. The zero value
+	// means the global behavior, which is enforce.
+	Enforcement Enforcement
 }
 
 // DenyEntry is one declared refusal: a host (which may be a label-wise
 // pattern), a concrete port, and a protocol. A denial refuses the destination
 // itself; it deliberately has no AllowedIPs field, because constraining a
 // refusal to selected addresses would make one entry mean two different things.
+// Binaries optionally scopes the refusal to processes whose executable is one
+// of these absolute paths; an unknown request binary is still refused by a
+// binary-scoped denial, so it cannot be bypassed by omitting the attribution.
 type DenyEntry struct {
 	Host     string
 	Port     int
 	Protocol Protocol
+	Binaries []string
 }
 
 // NetworkDeclaration is a declared sandbox outbound network policy. It is the
@@ -71,6 +92,23 @@ func (d NetworkDeclaration) Validate() error {
 				return fmt.Errorf("allow[%d]: %w", i, err)
 			}
 		}
+		if _, err := NormalizeBinaries(entry.Binaries); err != nil {
+			return fmt.Errorf("allow[%d]: %w", i, err)
+		}
+		l7, err := NormalizeL7Constraint(entry.L7.Methods, entry.L7.Paths)
+		if err != nil {
+			return fmt.Errorf("allow[%d]: %w", i, err)
+		}
+		injected, err := NormalizeInjectHeaders(entry.InjectHeaders)
+		if err != nil {
+			return fmt.Errorf("allow[%d]: %w", i, err)
+		}
+		if len(injected) > 0 && l7.Empty() {
+			return fmt.Errorf("allow[%d]: injected headers require methods or paths, because an opaque L4 tunnel cannot carry them", i)
+		}
+		if _, err := ParseEnforcement(string(entry.Enforcement)); err != nil {
+			return fmt.Errorf("allow[%d]: %w", i, err)
+		}
 	}
 	for i, entry := range d.Deny {
 		if err := ValidateHostPattern(entry.Host); err != nil {
@@ -80,6 +118,9 @@ func (d NetworkDeclaration) Validate() error {
 			return fmt.Errorf("deny[%d]: %w", i, err)
 		}
 		if _, err := ParseProtocol(string(entry.Protocol)); err != nil {
+			return fmt.Errorf("deny[%d]: %w", i, err)
+		}
+		if _, err := NormalizeBinaries(entry.Binaries); err != nil {
 			return fmt.Errorf("deny[%d]: %w", i, err)
 		}
 	}
@@ -121,11 +162,16 @@ func CompileNetworkPolicy(declaration NetworkDeclaration, engine []EngineEndpoin
 	// Denials precede allowances, so a denial wins over an allowance that
 	// matches the same destination in either mode.
 	for _, entry := range declaration.Deny {
+		binaries, err := NormalizeBinaries(entry.Binaries)
+		if err != nil {
+			return Policy{}, fmt.Errorf("deny entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
 		rules = append(rules, Rule{
-			ID:     "network.deny",
-			Match:  MatchEndpoint,
-			Names:  []string{FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol)},
-			Action: Deny,
+			ID:       "network.deny",
+			Match:    MatchEndpoint,
+			Names:    []string{FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol)},
+			Action:   Deny,
+			Binaries: binaries,
 		})
 	}
 	for _, entry := range declaration.Allow {
@@ -133,12 +179,35 @@ func CompileNetworkPolicy(declaration NetworkDeclaration, engine []EngineEndpoin
 		if err != nil {
 			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
 		}
+		binaries, err := NormalizeBinaries(entry.Binaries)
+		if err != nil {
+			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		l7, err := NormalizeL7Constraint(entry.L7.Methods, entry.L7.Paths)
+		if err != nil {
+			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		injected, err := NormalizeInjectHeaders(entry.InjectHeaders)
+		if err != nil {
+			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		if len(injected) > 0 && l7.Empty() {
+			return Policy{}, fmt.Errorf("allow entry %q port %d: injected headers require methods or paths", entry.Host, entry.Port)
+		}
+		enforcement, err := ParseEnforcement(string(entry.Enforcement))
+		if err != nil {
+			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
 		rules = append(rules, Rule{
-			ID:         "network.allow",
-			Match:      MatchEndpoint,
-			Names:      []string{FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol)},
-			Action:     Allow,
-			AllowedIPs: allowed,
+			ID:            "network.allow",
+			Match:         MatchEndpoint,
+			Names:         []string{FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol)},
+			Action:        Allow,
+			AllowedIPs:    allowed,
+			Binaries:      binaries,
+			L7:            l7,
+			InjectHeaders: injected,
+			Enforcement:   enforcement,
 		})
 	}
 	return NewPolicy(declaration.Default, rules...), nil

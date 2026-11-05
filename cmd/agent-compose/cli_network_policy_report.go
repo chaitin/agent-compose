@@ -41,13 +41,16 @@ type composeNetworkPolicyOutput struct {
 }
 
 type composeNetworkAllowOutput struct {
-	Endpoint   string   `json:"endpoint"`
-	AllowedIPs []string `json:"allowed_ips,omitempty"`
-	Sources    []string `json:"sources,omitempty"`
+	Endpoint    string   `json:"endpoint"`
+	AllowedIPs  []string `json:"allowed_ips,omitempty"`
+	Binaries    []string `json:"binaries,omitempty"`
+	Enforcement string   `json:"enforcement,omitempty"`
+	Sources     []string `json:"sources,omitempty"`
 }
 
 type composeNetworkDenyOutput struct {
 	Endpoint string   `json:"endpoint"`
+	Binaries []string `json:"binaries,omitempty"`
 	Sources  []string `json:"sources,omitempty"`
 }
 
@@ -60,15 +63,18 @@ func composeNetworkPoliciesFromProto(reports []*agentcomposev2.AgentNetworkPolic
 		allow := make([]composeNetworkAllowOutput, 0, len(report.GetAllow()))
 		for _, entry := range report.GetAllow() {
 			allow = append(allow, composeNetworkAllowOutput{
-				Endpoint:   entry.GetEndpoint(),
-				AllowedIPs: append([]string(nil), entry.GetAllowedIps()...),
-				Sources:    append([]string(nil), entry.GetSources()...),
+				Endpoint:    entry.GetEndpoint(),
+				AllowedIPs:  append([]string(nil), entry.GetAllowedIps()...),
+				Binaries:    append([]string(nil), entry.GetBinaries()...),
+				Enforcement: entry.GetEnforcement(),
+				Sources:     append([]string(nil), entry.GetSources()...),
 			})
 		}
 		deny := make([]composeNetworkDenyOutput, 0, len(report.GetDeny()))
 		for _, entry := range report.GetDeny() {
 			deny = append(deny, composeNetworkDenyOutput{
 				Endpoint: entry.GetEndpoint(),
+				Binaries: append([]string(nil), entry.GetBinaries()...),
 				Sources:  append([]string(nil), entry.GetSources()...),
 			})
 		}
@@ -165,7 +171,7 @@ func writeComposeAgentNetworkPolicy(out io.Writer, policy composeNetworkPolicyOu
 		return err
 	}
 	for _, entry := range policy.Deny {
-		if _, err := fmt.Fprintf(out, "      deny  %s%s\n", entry.Endpoint, networkPolicySourcesSuffix(entry.Sources)); err != nil {
+		if _, err := fmt.Fprintf(out, "      deny  %s%s%s\n", entry.Endpoint, networkPolicyBinariesSuffix(entry.Binaries), networkPolicySourcesSuffix(entry.Sources)); err != nil {
 			return err
 		}
 	}
@@ -229,10 +235,27 @@ func networkPolicySourcesSuffix(sources []string) string {
 	return " [" + strings.Join(sources, "+") + "]"
 }
 
+func networkPolicyBinariesSuffix(binaries []string) string {
+	if len(binaries) == 0 {
+		return ""
+	}
+	return " (binaries " + strings.Join(binaries, " ") + ")"
+}
+
 func writeComposeNetworkAllowances(out io.Writer, allow []composeNetworkAllowOutput) error {
 	for _, entry := range allow {
+		details := make([]string, 0, 3)
 		if len(entry.AllowedIPs) > 0 {
-			if _, err := fmt.Fprintf(out, "      allow %s (addresses %s)%s\n", entry.Endpoint, strings.Join(entry.AllowedIPs, " "), networkPolicySourcesSuffix(entry.Sources)); err != nil {
+			details = append(details, "addresses "+strings.Join(entry.AllowedIPs, " "))
+		}
+		if len(entry.Binaries) > 0 {
+			details = append(details, "binaries "+strings.Join(entry.Binaries, " "))
+		}
+		if entry.Enforcement == string(egress.EnforcementAudit) {
+			details = append(details, "audit only")
+		}
+		if len(details) > 0 {
+			if _, err := fmt.Fprintf(out, "      allow %s (%s)%s\n", entry.Endpoint, strings.Join(details, ", "), networkPolicySourcesSuffix(entry.Sources)); err != nil {
 				return err
 			}
 			continue
@@ -318,8 +341,18 @@ func writeDeclaredNetworkPolicy(out io.Writer, agent string, report egress.Netwo
 		}
 	}
 	for _, entry := range report.Allow {
+		details := make([]string, 0, 3)
 		if len(entry.AllowedIPs) > 0 {
-			if _, err := fmt.Fprintf(out, "    allow %s (addresses %s)\n", entry.Endpoint, strings.Join(entry.AllowedIPs, " ")); err != nil {
+			details = append(details, "addresses "+strings.Join(entry.AllowedIPs, " "))
+		}
+		if len(entry.Binaries) > 0 {
+			details = append(details, "binaries "+strings.Join(entry.Binaries, " "))
+		}
+		if entry.Enforcement == egress.EnforcementAudit {
+			details = append(details, "audit only")
+		}
+		if len(details) > 0 {
+			if _, err := fmt.Fprintf(out, "    allow %s (%s)\n", entry.Endpoint, strings.Join(details, ", ")); err != nil {
 				return err
 			}
 			continue
@@ -329,7 +362,7 @@ func writeDeclaredNetworkPolicy(out io.Writer, agent string, report egress.Netwo
 		}
 	}
 	for _, entry := range report.Deny {
-		if _, err := fmt.Fprintf(out, "    deny  %s\n", entry.Endpoint); err != nil {
+		if _, err := fmt.Fprintf(out, "    deny  %s%s\n", entry.Endpoint, networkPolicyBinariesSuffix(entry.Binaries)); err != nil {
 			return err
 		}
 	}

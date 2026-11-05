@@ -203,6 +203,21 @@ type composeSandboxOutput struct {
 	StoppedRuntimeState      string                             `json:"stopped_runtime_state"`
 	StoppedRuntimeError      string                             `json:"stopped_runtime_last_error,omitempty"`
 	StoppedRuntimeReleasedAt string                             `json:"stopped_runtime_released_at,omitempty"`
+	EgressPolicy             *composeSandboxEgressPolicyOutput  `json:"egress_policy,omitempty"`
+}
+
+// composeSandboxEgressPolicyOutput is the inspect account of one sandbox's
+// egress policy revision: the active revision and hash, whether the enforcement
+// point has read it, and the policy the running runtime was created with. It is
+// rendered from the daemon's response so the CLI never re-derives a policy.
+type composeSandboxEgressPolicyOutput struct {
+	Revision           uint64 `json:"revision"`
+	Hash               string `json:"hash,omitempty"`
+	AppliedAt          string `json:"applied_at,omitempty"`
+	Acknowledged       bool   `json:"acknowledged"`
+	AcknowledgedAt     string `json:"acknowledged_at,omitempty"`
+	RuntimeGeneration  uint64 `json:"runtime_generation,omitempty"`
+	RuntimeApplication string `json:"runtime_application,omitempty"`
 }
 
 func listAllSandboxes(ctx context.Context, client agentcomposev2connect.SandboxServiceClient) ([]*agentcomposev2.Sandbox, error) {
@@ -321,6 +336,17 @@ func composeSandboxOutputFromSummary(summary *agentcomposev2.Sandbox) composeSan
 		result.WorkspaceReclamation = &composeWorkspaceReclamationOutput{
 			State: state, StartedAt: formatProtoTimestamp(summary.GetWorkspaceReclamationStartedAt()),
 			CompletedAt: formatProtoTimestamp(summary.GetWorkspaceReclamationCompletedAt()), LastError: summary.GetWorkspaceReclamationLastError(),
+		}
+	}
+	if policy := summary.GetEgressPolicy(); policy != nil && (policy.GetRevision() > 0 || policy.GetRuntimeApplication() != "") {
+		result.EgressPolicy = &composeSandboxEgressPolicyOutput{
+			Revision:           policy.GetRevision(),
+			Hash:               policy.GetHash(),
+			AppliedAt:          formatProtoTimestamp(policy.GetAppliedAt()),
+			Acknowledged:       policy.GetAcknowledged(),
+			AcknowledgedAt:     formatProtoTimestamp(policy.GetAcknowledgedAt()),
+			RuntimeGeneration:  policy.GetRuntimeGeneration(),
+			RuntimeApplication: policy.GetRuntimeApplication(),
 		}
 	}
 	return result

@@ -170,6 +170,7 @@ func TestSandboxDriverStartSandboxVMSavesRuntimeState(t *testing.T) {
 		JupyterGuestPort:     8888,
 		JupyterProxyBasePath: "/agent-compose/session",
 		SandboxStartTimeout:  2 * time.Second,
+		SandboxInitEnabled:   true,
 	}
 	store, err := sandboxstore.NewWithConfig(config)
 	if err != nil {
@@ -188,9 +189,10 @@ func TestSandboxDriverStartSandboxVMSavesRuntimeState(t *testing.T) {
 		Token:      "secret",
 	}
 	driver := newTestSandboxDriver(config, store, nil, fakeRuntimeProvider{runtime: fakeSessionRuntime{info: domain.SandboxVMInfo{
-		BoxID:      "container-1",
-		JupyterURL: updatedProxyState.JupyterURL,
-		ProxyState: &updatedProxyState,
+		BoxID:            "container-1",
+		JupyterURL:       updatedProxyState.JupyterURL,
+		ProxyState:       &updatedProxyState,
+		SandboxInitState: driverpkg.SandboxInitStateEnabled,
 	}}})
 
 	if err := driver.StartSandboxVM(ctx, session); err != nil {
@@ -209,6 +211,9 @@ func TestSandboxDriverStartSandboxVMSavesRuntimeState(t *testing.T) {
 	}
 	if vmState.BoxID != "container-1" || vmState.BootstrapRef != updatedProxyState.JupyterURL {
 		t.Fatalf("vm state = %+v, want box id and bootstrap ref from runtime", vmState)
+	}
+	if vmState.SandboxInitState != driverpkg.SandboxInitStateEnabled {
+		t.Fatalf("sandbox init state = %q, want the runtime-reported enabled state", vmState.SandboxInitState)
 	}
 }
 

@@ -280,3 +280,137 @@ func TestNetworkPolicyApplyErrorClassifiesTheDeclaration(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentNetworkPolicyReportsIncludeTheEnforceDefaultDeny(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	config := &appconfig.Config{SandboxInitEgress: "enforce"}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("reports = %+v, want one report for the enforce default-deny", reports)
+	}
+	report := reports[0]
+	if !report.Declared || !report.Restricts || report.Default != egress.Deny {
+		t.Fatalf("report = %+v, want a declared default-deny policy", report)
+	}
+	if report.Enforcement.Mechanism != "forward_proxy" || !report.Mediated {
+		t.Fatalf("report = %+v, want mediated forward_proxy enforcement", report)
+	}
+	if len(report.Mechanisms) == 0 || report.Mechanisms[len(report.Mechanisms)-1] != "seccomp_redirect" {
+		t.Fatalf("mechanisms = %v, want seccomp_redirect", report.Mechanisms)
+	}
+}
+
+// TestAgentNetworkPolicyReportsSkipUndeclaredAgentsUnderStrictProfile pins the
+// rollout behavior: the strict profile keeps an undeclared agent on an allow-all
+// policy, so admission must not fabricate the default-deny report that explicit
+// enforce mode produces.
+func TestAgentNetworkPolicyReportsSkipUndeclaredAgentsUnderStrictProfile(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	config := &appconfig.Config{
+		SandboxInitEnabled:   true,
+		SandboxInitEgress:    "enforce",
+		SandboxEgressProfile: "strict",
+	}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 0 {
+		t.Fatalf("reports = %+v, want no synthetic default-deny under the strict profile", reports)
+	}
+}
+
+func TestAgentNetworkPolicyReportsNameTheK8sEgressNetworkPolicy(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "k8s", nil),
+	}}
+	config := &appconfig.Config{SandboxInitEnabled: true, SandboxInitEgress: "enforce"}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"k8s": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("reports = %+v, want one", reports)
+	}
+	found := false
+	for _, mechanism := range reports[0].Mechanisms {
+		if mechanism == "kubernetes_network_policy" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("mechanisms = %v, want kubernetes_network_policy", reports[0].Mechanisms)
+	}
+}
+
+func TestAgentNetworkPolicyReportsNameTheDockerInternalNetwork(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	config := &appconfig.Config{
+		SandboxInitEgress:          "enforce",
+		DockerSandboxNetwork:       "agent-compose-sandbox-strict",
+		DockerSandboxNetworkStrict: true,
+	}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("reports = %+v, want one", reports)
+	}
+	found := false
+	for _, mechanism := range reports[0].Mechanisms {
+		if mechanism == "docker_internal_network" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("mechanisms = %v, want docker_internal_network", reports[0].Mechanisms)
+	}
+}
+
+func TestAgentNetworkPolicyReportsOmitDockerInternalNetworkWithoutStrictSelection(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	tests := []struct {
+		name   string
+		config *appconfig.Config
+	}{
+		{
+			name:   "strict switch off",
+			config: &appconfig.Config{SandboxInitEgress: "enforce", DockerSandboxNetwork: "agent-compose-sandbox-strict"},
+		},
+		{
+			name:   "no configured network name",
+			config: &appconfig.Config{SandboxInitEgress: "enforce", DockerSandboxNetworkStrict: true},
+		},
+		{
+			name:   "audit mode ignores the strict switch",
+			config: &appconfig.Config{SandboxInitEgress: "audit", DockerSandboxNetwork: "agent-compose-sandbox-strict", DockerSandboxNetworkStrict: true},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, test.config)
+			if err != nil {
+				t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+			}
+			for _, report := range reports {
+				for _, mechanism := range report.Mechanisms {
+					if mechanism == "docker_internal_network" {
+						t.Fatalf("mechanisms = %v, want no docker_internal_network for %s", report.Mechanisms, test.name)
+					}
+				}
+			}
+		})
+	}
+}

@@ -3342,6 +3342,7 @@
       "cell_count": "number",
       "created_at": "string",
       "driver": "string",
+      "egress_policy": "object",
       "event_count": "number",
       "guest_image": "string",
       "proxy_path": "string",
