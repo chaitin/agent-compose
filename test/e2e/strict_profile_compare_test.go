@@ -51,7 +51,15 @@ func TestE2EStrictProfileCompare(t *testing.T) {
 	for _, strict := range []bool{false, true} {
 		strict := strict
 		t.Run(fmt.Sprintf("strict=%v", strict), func(t *testing.T) {
-			root, err := os.MkdirTemp(repoRoot, ".strict-compare-")
+			// SQLite and the sandbox working data are latency-sensitive; keep
+			// them off a busy repository disk. The VM drivers need the larger
+			// repository filesystem for their base/rootfs disks, so only the
+			// container/API drivers move to the system temporary directory.
+			rootBase := repoRoot
+			if driver == "docker" || driver == "k8s" {
+				rootBase = os.TempDir()
+			}
+			root, err := os.MkdirTemp(rootBase, ".strict-compare-")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -153,8 +161,11 @@ func TestE2EStrictProfileCompare(t *testing.T) {
 			if out := strictCompareExec(t, ctx, binary, baseURL, projectRoot, openID, curlCode+" http://"+fixture.address()+"/open"); !strings.Contains(out, "code=200") {
 				t.Fatalf("strict undeclared sandbox could not reach the fixture through the proxy: %q", out)
 			}
-			if out := strictCompareExec(t, ctx, binary, baseURL, projectRoot, openID, `env | grep -ci _proxy=`); strictCompareFirstLine(out) != "6" {
-				t.Fatalf("strict open sandbox proxy variables = %q, want 6", out)
+			// init consumes the proxy environment for its own mediation and
+			// deliberately does not expose it to the workload; the successful
+			// request above is the contract, not the guest's environment.
+			if out := strictCompareExec(t, ctx, binary, baseURL, projectRoot, openID, `env | grep -ci _proxy=`); strictCompareFirstLine(out) != "0" {
+				t.Fatalf("strict open sandbox proxy variables = %q, want none in the mediated workload", out)
 			}
 			if out := strictCompareExec(t, ctx, binary, baseURL, projectRoot, lockedID, curlCode+" http://"+fixture.address()+"/open"); !strings.Contains(out, "code=200") {
 				t.Fatalf("strict locked sandbox could not use the declared allowance: %q", out)
