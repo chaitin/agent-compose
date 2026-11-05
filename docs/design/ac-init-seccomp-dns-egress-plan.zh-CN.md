@@ -307,8 +307,11 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
   bounding set 去掉；
 - `connect`/CONNECT 有 10s 超时；通知处理并发（每 session 一个 goroutine），不阻塞
   init 的 accept/reaper；
-- enforce 是 default-deny：未声明 policy 时 daemon 生成合成 deny-all，只为 engine
-  endpoints 自动放行；因此“未声明”不再等于无限制，admission 也按 deny-all 报告。
+- 显式 `SANDBOX_INIT_EGRESS=enforce` 是 default-deny：未声明 policy 时 daemon 生成
+  合成 deny-all，只为 engine endpoints 自动放行；admission 也按 deny-all 报告。
+- `SANDBOX_EGRESS_PROFILE=strict` 是例外：为了让已有部署可以安全开启，strict 对未声明
+  policy 的 agent 保持 allow-all，但仍下发 proxy 环境并记录 mediated，所有连接仍经过
+  daemon forward proxy；声明了策略的 agent 语义不变。
 - 声明了 restricting policy 且 proxy 可达时，daemon 要求 ready init 广告
   `egress-mediate`/`egress-hardening`；缺失则拒绝启动（fail closed），不会退回 off。
   proxy 不可达由 `EGRESS_UNENFORCEABLE_POLICY=warn|refuse` 决定，strict 用 `refuse`。

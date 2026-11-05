@@ -471,11 +471,17 @@ CNI/SDK 网络策略。
 `SANDBOX_EGRESS_PROFILE=strict` 是一个统一开关：隐含 `SANDBOX_INIT_ENABLED=true`、
 `SANDBOX_INIT_EGRESS=enforce` 和 Docker `SANDBOX_SUPERVISOR=enforce`。因此：
 - Docker 使用独立 host supervisor + `NetworkMode=none`；
-- K8s 使用每 sandbox default-deny egress NetworkPolicy；
-- Microsandbox 使用 SDK network policy；
+- K8s 对声明了 restricting policy 的 sandbox 使用每 sandbox default-deny egress
+  NetworkPolicy；
+- Microsandbox 对声明了 restricting policy 的 sandbox 使用 SDK network policy；
+- **未声明 policy 的 agent 默认放行**：strict 不生成合成 deny-all，而是仍下发 proxy
+  环境并记录为 mediated；proxy 以 allow-all 策略放行，避免开启 strict 后现有 agent
+  整体断网。显式 `SANDBOX_INIT_EGRESS=enforce`（不带 strict）仍保持原来的合成
+  deny-all 语义。
 三者共享同一个 egress 声明/决策语义（daemon forward proxy 做策略判定），外层边界按驱动
 采用各自的结构性默认拒绝。Jupyter 与 Docker no-NIC 不兼容，profile 开启时 Docker Jupyter
-sandbox 启动失败；`SANDBOX_SUPERVISOR=off` 与 strict 冲突。默认 off，保持现有逐开关行为。
+sandbox 启动失败；`SANDBOX_SUPERVISOR=off` 与 strict 冲突；proxy 不可达时 strict 拒绝
+启动。默认 off，保持现有逐开关行为。
 
 ### 7.8.1 非 root workload（opt-in）
 

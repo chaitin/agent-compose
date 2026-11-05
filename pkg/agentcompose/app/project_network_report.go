@@ -56,11 +56,16 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 			}
 			declaration = &compiled
 		}
-		if declaration == nil && global == nil && config != nil &&
-			strings.TrimSpace(config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce) {
-			// Enforce mode is default-deny even when the agent declared no
-			// network policy. Report that synthetic declaration so admission
-			// does not omit the sandboxes the new default now restricts.
+		// Explicit enforce mode (without the unified strict profile) is
+		// default-deny even when the agent declared no network policy. Report
+		// that synthetic declaration so admission does not omit the sandboxes
+		// the new default now restricts. The strict profile keeps undeclared
+		// agents on an allow-all mediated policy, so it stays silent about them
+		// just like the pre-enforce behavior did.
+		enforceWithoutDeclaration := config != nil &&
+			strings.TrimSpace(config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce) &&
+			strings.TrimSpace(config.SandboxEgressProfile) != "strict"
+		if declaration == nil && global == nil && enforceWithoutDeclaration {
 			declaration = &egress.NetworkDeclaration{Default: egress.Deny}
 		}
 		if declaration == nil && global == nil {

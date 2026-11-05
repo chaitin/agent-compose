@@ -163,7 +163,10 @@ type Config struct {
 	SandboxInitEgress string
 	// SandboxEgressProfile selects the unified experimental egress profile.
 	// "strict" turns on init, enforce, and the Docker supervisor so K8s CNI,
-	// Micro SDK, and Docker no-NIC share one policy boundary.
+	// Micro SDK, and Docker no-NIC share one policy boundary. Unlike explicit
+	// enforce mode, strict keeps an undeclared agent on an allow-all policy
+	// that is still mediated through the proxy, so enabling the profile on an
+	// existing deployment does not remove its egress.
 	SandboxEgressProfile string
 	// SandboxInitEgressAuditLog makes the daemon inject an init-side audit
 	// JSONL path under GuestLogRoot. It is opt-in because Docker and Kubernetes

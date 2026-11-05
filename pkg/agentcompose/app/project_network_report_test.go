@@ -305,6 +305,28 @@ func TestAgentNetworkPolicyReportsIncludeTheEnforceDefaultDeny(t *testing.T) {
 	}
 }
 
+// TestAgentNetworkPolicyReportsSkipUndeclaredAgentsUnderStrictProfile pins the
+// rollout behavior: the strict profile keeps an undeclared agent on an allow-all
+// policy, so admission must not fabricate the default-deny report that explicit
+// enforce mode produces.
+func TestAgentNetworkPolicyReportsSkipUndeclaredAgentsUnderStrictProfile(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	config := &appconfig.Config{
+		SandboxInitEnabled:   true,
+		SandboxInitEgress:    "enforce",
+		SandboxEgressProfile: "strict",
+	}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 0 {
+		t.Fatalf("reports = %+v, want no synthetic default-deny under the strict profile", reports)
+	}
+}
+
 func TestAgentNetworkPolicyReportsNameTheK8sEgressNetworkPolicy(t *testing.T) {
 	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
 		normalizedAgentWithNetwork("plain", "k8s", nil),

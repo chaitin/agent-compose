@@ -54,13 +54,17 @@ func (d driverSandboxNetworkPolicy) inputs(ctx context.Context, session *domain.
 	if d.config != nil {
 		global = d.config.GlobalNetworkPolicy
 	}
-	if declaration == nil && global == nil && d.config != nil &&
-		strings.TrimSpace(d.config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce) {
-		// The experimental enforce mode is a default-deny posture: a sandbox
-		// that declared nothing must not silently keep unrestricted egress just
-		// because the policy compiler treats an absent declaration as allow
-		// (D3). Engine-owned endpoints are still derived below and compiled in
-		// as allow rules, so the facade and control plane stay reachable.
+	// Explicit enforce mode is a default-deny posture: a sandbox that declared
+	// nothing must not silently keep unrestricted egress just because the policy
+	// compiler treats an absent declaration as allow (D3). The unified strict
+	// profile is deliberately different: it must be safe to enable on an
+	// existing deployment, so an undeclared agent keeps an allow-all policy that
+	// is still mediated through the engine proxy. Declared policies are
+	// unaffected.
+	enforceWithoutDeclaration := d.config != nil &&
+		strings.TrimSpace(d.config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce) &&
+		strings.TrimSpace(d.config.SandboxEgressProfile) != "strict"
+	if declaration == nil && global == nil && enforceWithoutDeclaration {
 		declaration = &egress.NetworkDeclaration{Default: egress.Deny}
 	}
 	if declaration == nil && global == nil {

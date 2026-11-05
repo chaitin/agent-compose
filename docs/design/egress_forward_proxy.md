@@ -274,6 +274,16 @@ The strict network profile closes that with a network-namespace boundary:
   keeps its old network; its next start fails closed and it must be removed and
   created again.
 
+`SANDBOX_EGRESS_PROFILE=strict` is a separate, unified experimental switch:
+it selects init, enforce, and the Docker supervisor together. Because it is
+meant to be enabled on an existing deployment, it deliberately does **not**
+apply enforce mode's synthetic default-deny to an agent that declared no
+policy. An undeclared agent keeps the allow-all policy, but the daemon still
+issues its proxy credential and records the runtime as mediated, so its
+connections continue to flow through the engine proxy. A declared restricting
+policy keeps its existing semantics. Explicit `SANDBOX_INIT_EGRESS=enforce`
+without the profile retains the earlier default-deny behavior.
+
 Deployment requirement: the network has to exist before the daemon starts a
 sandbox. `docker-compose.sandbox-network.yml` defines
 `agent-compose-sandbox-strict` with `internal: true` and attaches the daemon to

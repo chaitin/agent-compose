@@ -294,6 +294,16 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 	if err != nil {
 		return nil, domain.SandboxEgressPolicy{}, err
 	}
+	// The unified strict profile mediates every sandbox, including one that
+	// declared no policy, because the Docker workload has no interface and the
+	// other drivers rely on init to send its traffic through the proxy. An
+	// undeclared sandbox keeps the allow-all policy, so enabling the profile
+	// does not cut an existing deployment off.
+	strictProfile := r.strictEgressProfile()
+	proxyAvailable := r.egressProxy.available(session)
+	if strictProfile && !proxyAvailable {
+		return nil, domain.SandboxEgressPolicy{}, fmt.Errorf("sandbox egress profile strict requires the engine forward proxy, but it is unavailable for sandbox %s", session.Summary.ID)
+	}
 	mediated := false
 	if driverSandbox != nil {
 		if auditLog := strings.TrimSpace(r.sandboxInitAuditLog); auditLog != "" {
@@ -314,9 +324,12 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 		// credentials no guest could ever present. Whether the engine can mediate
 		// at all is a pure fact about the deployment and this sandbox, so the
 		// report below still knows it before the driver runs.
-		if policy != nil && policy.Restricts() && r.egressProxy.available(session) {
+		needsMediation := strictProfile || (policy != nil && policy.Restricts())
+		if needsMediation && proxyAvailable {
 			driverSandbox.ProxyEnv = r.egressProxy.proxyEnvProvider(session)
-			policy.MediatedByForwardProxy = true
+			if policy != nil {
+				policy.MediatedByForwardProxy = true
+			}
 			mediated = true
 		}
 	}
@@ -326,6 +339,14 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 	// declaration that is in force then.
 	record := r.egressRuntimePolicy(session, policy, effective, mediated)
 	return driverSandbox, record, nil
+}
+
+// strictEgressProfile reports whether the unified experimental profile is
+// selected. The profile mediates every sandbox, including one that declared no
+// policy, so the default remains allow rather than denying an upgrade.
+func (r driverRuntimeAdapter) strictEgressProfile() bool {
+	return r.networkPolicies.config != nil &&
+		strings.TrimSpace(r.networkPolicies.config.SandboxEgressProfile) == "strict"
 }
 
 // egressRuntimePolicy describes the effective policy this creation installs for
