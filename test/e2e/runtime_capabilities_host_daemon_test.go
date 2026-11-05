@@ -154,18 +154,22 @@ func TestE2EDockerRuntimeCapabilities(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = connection.Close() }()
-	revokedCtx, stop := context.WithTimeout(ctx, 5*time.Second)
-	defer stop()
-	revokedCtx = metadata.NewOutgoingContext(revokedCtx, metadata.Pairs("x-capability-sandbox-token", captured.Token, "x-octobus-capset", "tools/dev", "x-octobus-instance", "ip-evidence-test"))
+	credentialCtx := metadata.NewOutgoingContext(ctx, metadata.Pairs("x-capability-sandbox-token", captured.Token, "x-octobus-capset", "tools/dev", "x-octobus-instance", "ip-evidence-test"))
+	activeCtx, stopActive := context.WithTimeout(credentialCtx, 5*time.Second)
 	// SearchRequest has one string at field 1; use its standard wire-equivalent
 	// message to confirm the captured credential is valid before removal.
-	err = connection.Invoke(revokedCtx, "/ac.evidence.v1.EvidenceService/SearchEvents", wrapperspb.String("192.0.2.44"), &emptypb.Empty{})
+	err = connection.Invoke(activeCtx, "/ac.evidence.v1.EvidenceService/SearchEvents", wrapperspb.String("192.0.2.44"), &emptypb.Empty{})
+	stopActive()
 	if err != nil {
 		t.Fatalf("captured credential was not valid before removal: %s", status.Code(err))
 	}
 	removeE2ESandboxPublic(t, ctx, sandboxes, id)
 	removed = true
 	assertE2EDockerSandboxContainerCount(t, ctx, dockerClient, id, 0)
+	// Removal may take longer than an RPC deadline; give each assertion its own
+	// budget so a slow container shutdown cannot masquerade as an auth failure.
+	revokedCtx, stopRevoked := context.WithTimeout(credentialCtx, 5*time.Second)
+	defer stopRevoked()
 	err = connection.Invoke(revokedCtx, "/ac.evidence.v1.EvidenceService/SearchEvents", wrapperspb.String("192.0.2.44"), &emptypb.Empty{})
 	if status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("removed sandbox's credential status=%s, want Unauthenticated", status.Code(err))
