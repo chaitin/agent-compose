@@ -608,6 +608,12 @@ tasks:
     cmds:
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} ./scripts/build-agent-compose-binary.sh --profile linux-full --goarch "$AGENT_COMPOSE_BUILD_TARGET_ARCH" --output ./build/agent-compose --version "$AGENT_COMPOSE_BUILD_VERSION"
 
+  build:ac-init:
+    desc: Build the Linux sandbox init binary (stage-1 sandbox PID 1)
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - CGO_ENABLED=0 GOOS=linux GOARCH={{.GOARCH}} go build -trimpath -o build/ac-init ./cmd/ac-init
+
   build:proto:
     desc: Verify maintained agent-compose protobuf Go packages build
     dir: '{{.TASKFILE_DIR}}'

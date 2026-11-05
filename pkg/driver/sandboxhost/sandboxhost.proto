@@ -159,6 +159,10 @@ message VMState {
   string bootstrap_ref = 12;
   string k8s_context = 13;
   string k8s_namespace = 14;
+  // Process model of the runtime (driver.SandboxInitStateEnabled/Disabled).
+  // Persisted by the daemon and carried to the sandbox-host so flag changes do
+  // not alter an existing VM's process model.
+  string sandbox_init_state = 15;
 }
 
 message ProxyState {
@@ -205,6 +209,7 @@ message SandboxVMInfo {
   string jupyter_url = 2;
   ProxyState proxy_state = 3;
   bool runtime_created = 4;
+  string sandbox_init_state = 5;
 }
 
 // ---------- requests / responses ----------

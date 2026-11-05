@@ -138,6 +138,17 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	}
 	vmState.Driver = driver
 	vmState.Mode = driver
+	// Record the process model for a new runtime before the start-attempt fence.
+	// A runtime that already exists keeps its recorded model even when the
+	// daemon flag changed; an empty record is resolved by the driver from the
+	// existing runtime or, when there is no runtime, from the current flag.
+	if vmState.SandboxInitState == "" && freshRuntime {
+		if driverpkg.SandboxInitCapabilityFor(driver).Supported && d.Config.SandboxInitEnabled {
+			vmState.SandboxInitState = driverpkg.SandboxInitStateEnabled
+		} else {
+			vmState.SandboxInitState = driverpkg.SandboxInitStateDisabled
+		}
+	}
 	vmState.BoxName = firstNonEmpty(vmState.BoxName, session.Summary.RuntimeRef)
 	vmState.RuntimeHome = firstNonEmpty(vmState.RuntimeHome, driverpkg.RuntimeHomeForDriver(d.Config, driver))
 	if err := d.prepareSandboxStart(ctx, driver, session, &vmState); err != nil {

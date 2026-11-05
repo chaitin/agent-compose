@@ -31,4 +31,11 @@ type Request struct {
 	// leaves this empty, which such a rule treats as unsatisfied rather than as
 	// unconstrained.
 	ResolvedIPs []string
+	// SessionID, Marker, and ProcessID identify the sandbox-init exec session
+	// that produced a mediated connection. They are advisory attribution data
+	// from the init process: the policy outcome never depends on them, and a
+	// path that has no such identity leaves them empty.
+	SessionID string
+	Marker    string
+	ProcessID int
 }

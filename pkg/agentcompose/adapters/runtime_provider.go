@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -152,6 +153,14 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	provider := &runtimeProvider{config: config}
 	for _, option := range opts {
 		option(provider)
+	}
+	if config.SandboxInitEnabled {
+		driver := driverpkg.ResolveRuntimeDriver(config.RuntimeDriver)
+		if !driverpkg.SandboxInitSupported(driver) {
+			slog.Warn("sandbox init is enabled but this runtime driver keeps the legacy process model",
+				"driver", driver,
+				"capability", driverpkg.SandboxInitCapabilityFor(driver))
+		}
 	}
 
 	// VM drivers are held by the sandbox-host process, not the daemon: the

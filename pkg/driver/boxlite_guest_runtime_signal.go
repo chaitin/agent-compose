@@ -11,10 +11,17 @@ import (
 // SignalGuestRuntime sends a signal through a short BoxLite control exec. It uses
 // a separately attached box handle so signaling can proceed concurrently with
 // the execution being stopped.
-func (r *cgoSandboxRuntime) SignalGuestRuntime(ctx context.Context, _ *Sandbox, vmState VMState, executionID string, signal RuntimeSignal) error {
+func (r *cgoSandboxRuntime) SignalGuestRuntime(ctx context.Context, sandbox *Sandbox, vmState VMState, executionID string, signal RuntimeSignal) error {
 	command, err := guestRuntimeSignalCommand(executionID, signal)
 	if err != nil {
 		return err
+	}
+	if r.sandboxInitConfigured(sandbox, vmState) {
+		result, err := runSandboxInitExec(ctx, r.sandboxInitClient(sandbox), sandbox.Summary.ID, "/", ExecSpec{Command: command[0], Args: command[1:]}, nil)
+		if err != nil {
+			return err
+		}
+		return guestRuntimeSignalExitError(result.ExitCode)
 	}
 	if strings.TrimSpace(vmState.BoxID) == "" {
 		return ErrGuestRuntimeGone

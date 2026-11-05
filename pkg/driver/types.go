@@ -64,8 +64,14 @@ type SandboxVolumeMount struct {
 }
 
 type VMState struct {
-	Driver           string    `json:"driver"`
-	Mode             string    `json:"mode,omitempty"`
+	Driver string `json:"driver"`
+	Mode   string `json:"mode,omitempty"`
+	// SandboxInitState records whether the runtime was created with ac-init as
+	// its PID 1. It is persisted with the runtime so recreating a stopped
+	// sandbox keeps the process model it was created with even when the daemon
+	// flag changed in between. Empty means "unknown" for states written before
+	// this field existed.
+	SandboxInitState string    `json:"sandbox_init_state,omitempty"`
 	BoxName          string    `json:"box_name,omitempty"`
 	BoxID            string    `json:"box_id,omitempty"`
 	Image            string    `json:"image,omitempty"`
@@ -190,6 +196,10 @@ type SandboxVMInfo struct {
 	BoxID      string
 	JupyterURL string
 	ProxyState *ProxyState
+	// SandboxInitState reports the process model of the runtime that is
+	// running now (enabled or disabled), so the engine can persist it. Empty
+	// means the driver did not report it.
+	SandboxInitState string
 	// RuntimeCreated reports that this call created the runtime rather than
 	// reusing one that already existed. The engine asks a start to *ensure* a
 	// runtime, so this is the only fact that distinguishes "built under the

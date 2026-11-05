@@ -194,6 +194,24 @@ Two findings from running it:
   above). The proxy is what carries an HTTPS allowance today, which is the
   mechanism the engine installs whenever the sandbox can reach it.
 
+## Delivered: identity, persistent audit, and init mediation
+
+The proxy now consumes the identity the sandbox init process adds to a mediated
+`CONNECT` (`X-Agent-Compose-Sandbox/Session/Marker/Pid`). The sandbox header
+must agree with the proxy credential; the rest is attribution data that never
+changes a decision. `EGRESS_AUDIT_LOG` points the daemon at an append-only JSONL
+file, and every allow/deny is written with the sandbox, destination, resolved
+addresses, action, rule, generation, identity, and time. A write failure is
+logged and does not change enforcement.
+
+When `SANDBOX_INIT_EGRESS=enforce`, admission reports the `seccomp_redirect`
+mechanism next to `forward_proxy`: init redirects every TCP connect through the
+proxy, so the old limitation "only traffic that honors the proxy environment is
+decided" no longer applies. The report discloses the residual gaps instead:
+non-DNS UDP is refused, DNS is answered by the sandbox-local policy resolver, and
+a `sendmmsg`-based resolver can still bypass that resolver (TCP egress remains
+mediated).
+
 ## Still open
 
 - **The bypass list exempts a host, not an endpoint.** `NO_PROXY` names the

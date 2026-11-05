@@ -909,3 +909,159 @@ func TestEgressProxyPrefersIPv4ForADualStackDestination(t *testing.T) {
 		t.Fatalf("dialed address = %q, want the IPv4 answer", dialed)
 	}
 }
+
+func TestEgressProxyRecordsSandboxInitIdentity(t *testing.T) {
+	policies := &proxyTestPolicies{policies: []egress.Policy{allowEndpointPolicy("allowed.example:443/https")}}
+	upstreamSide, upstream := net.Pipe()
+	defer func() { _ = upstreamSide.Close() }()
+	proxyServer, recorder := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.Dial = func(_ context.Context, _, _ string) (net.Conn, error) {
+			return upstream, nil
+		}
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	connection := dialProxy(t, server)
+	defer func() { _ = connection.Close() }()
+	writeConnectWithHeaders(t, connection, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderSandbox: testSandboxID,
+		egress.IdentityHeaderSession: "session-1",
+		egress.IdentityHeaderMarker:  "run-1",
+		egress.IdentityHeaderPID:     "42",
+	})
+	reader := bufio.NewReader(connection)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the tunnel response: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("CONNECT status = %d, want 200", response.StatusCode)
+	}
+	records := recorder.collected()
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	request := records[0].Request
+	if request.Consumer != testSandboxID || request.SessionID != "session-1" || request.Marker != "run-1" || request.ProcessID != 42 {
+		t.Fatalf("record request identity = %+v, want the sandbox-init identity", request)
+	}
+}
+
+func TestEgressProxyRejectsSandboxIdentityMismatch(t *testing.T) {
+	policies := &proxyTestPolicies{policies: []egress.Policy{egress.NewPolicy(egress.Allow)}}
+	proxyServer, recorder := newTestEgressProxy(t, policies)
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	connection := dialProxy(t, server)
+	defer func() { _ = connection.Close() }()
+	writeConnectWithHeaders(t, connection, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderSandbox: "another-sandbox",
+	})
+	reader := bufio.NewReader(connection)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the response: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("CONNECT status = %d, want 403", response.StatusCode)
+	}
+	if records := recorder.collected(); len(records) != 0 {
+		t.Fatalf("records = %d, want no decision for a rejected identity", len(records))
+	}
+}
+
+func TestEgressProxyRejectsMalformedProcessIdentity(t *testing.T) {
+	policies := &proxyTestPolicies{policies: []egress.Policy{egress.NewPolicy(egress.Allow)}}
+	proxyServer, _ := newTestEgressProxy(t, policies)
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	connection := dialProxy(t, server)
+	defer func() { _ = connection.Close() }()
+	writeConnectWithHeaders(t, connection, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderPID: "not-a-number",
+	})
+	reader := bufio.NewReader(connection)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the response: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("CONNECT status = %d, want 403", response.StatusCode)
+	}
+}
+
+func writeConnectWithHeaders(t *testing.T, connection net.Conn, target, user, secret string, headers map[string]string) {
+	t.Helper()
+	var builder strings.Builder
+	builder.WriteString("CONNECT " + target + " HTTP/1.1\r\n")
+	builder.WriteString("Host: " + target + "\r\n")
+	builder.WriteString("Proxy-Authorization: " + proxyBasicAuth(user, secret) + "\r\n")
+	for name, value := range headers {
+		builder.WriteString(name + ": " + value + "\r\n")
+	}
+	builder.WriteString("\r\n")
+	if _, err := connection.Write([]byte(builder.String())); err != nil {
+		t.Fatalf("writing CONNECT: %v", err)
+	}
+}
+
+type proxyTestSessionPolicies struct {
+	blocked string
+}
+
+func (p proxyTestSessionPolicies) EgressProxyPolicyForSession(_ context.Context, _ string, sessionID, _ string) (egress.Policy, error) {
+	if sessionID == p.blocked {
+		return egress.NewPolicy(egress.Deny), nil
+	}
+	return egress.NewPolicy(egress.Allow), nil
+}
+
+func TestEgressProxyUsesThePerSessionPolicyWhenPresent(t *testing.T) {
+	upstreamSide, upstream := net.Pipe()
+	defer func() { _ = upstreamSide.Close() }()
+	proxyServer, recorder := newTestEgressProxy(t, &proxyTestPolicies{}, func(options *EgressProxyOptions) {
+		options.SessionPolicies = proxyTestSessionPolicies{blocked: "blocked-session"}
+		options.Dial = func(_ context.Context, _, _ string) (net.Conn, error) {
+			return upstream, nil
+		}
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+
+	allowed := dialProxy(t, server)
+	writeConnectWithHeaders(t, allowed, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderSession: "interactive-session",
+	})
+	reader := bufio.NewReader(allowed)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the allowed response: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("allowed session status = %d, want 200", response.StatusCode)
+	}
+	_ = allowed.Close()
+
+	blocked := dialProxy(t, server)
+	defer func() { _ = blocked.Close() }()
+	writeConnectWithHeaders(t, blocked, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderSession: "blocked-session",
+	})
+	blockedReader := bufio.NewReader(blocked)
+	blockedResponse, err := http.ReadResponse(blockedReader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the blocked response: %v", err)
+	}
+	defer func() { _ = blockedResponse.Body.Close() }()
+	if blockedResponse.StatusCode != http.StatusForbidden {
+		t.Fatalf("blocked session status = %d, want 403", blockedResponse.StatusCode)
+	}
+	records := recorder.collected()
+	if len(records) != 2 || !records[0].Allowed() || records[1].Allowed() {
+		t.Fatalf("records = %+v, want allow then deny", records)
+	}
+}

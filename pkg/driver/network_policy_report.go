@@ -82,15 +82,37 @@ type AgentNetworkPolicyReport struct {
 	Warning string
 }
 
+// mechanismSeccompRedirect names the sandbox-init mediation that makes the
+// forward proxy authoritative even for process that ignores the proxy
+// environment.
+const mechanismSeccompRedirect = "seccomp_redirect"
+
 // ReportAgentNetworkPolicy accounts for one agent's declared policy on one
 // resolved driver. mediated reports whether the engine's forward proxy will be
-// in this sandbox's traffic path; mode is the deployment's
+// in this sandbox's traffic path; options.InitMediated reports whether the sandbox init
+// process redirects connects to that proxy. mode is the deployment's
 // EGRESS_UNENFORCEABLE_POLICY, which decides what an unenforceable declaration
 // means so the report can state the outcome instead of restating the knob.
 //
 // A nil declaration reports Declared false: the engine cannot restrict a sandbox
 // that did not ask, so there is no mechanism to name and no gap to report.
-func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkDeclaration, mediated bool, mode config.EgressUnenforceablePolicy) (AgentNetworkPolicyReport, error) {
+// NetworkPolicyReportOptions is the deployment-dependent half of a network
+// policy report.
+type NetworkPolicyReportOptions struct {
+	// Mediated reports whether the engine's forward proxy is in the traffic
+	// path.
+	Mediated bool
+	// InitMediated reports whether the sandbox init process redirects connects
+	// to that proxy.
+	InitMediated bool
+	// Mode is the deployment's EGRESS_UNENFORCEABLE_POLICY.
+	Mode config.EgressUnenforceablePolicy
+}
+
+func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkDeclaration, options NetworkPolicyReportOptions) (AgentNetworkPolicyReport, error) {
+	mediated := options.Mediated
+	initMediated := options.InitMediated
+	mode := options.Mode
 	resolved := resolveRuntimeDriver(driver)
 	report := AgentNetworkPolicyReport{Agent: agent, Driver: resolved}
 	if declaration == nil {
@@ -119,6 +141,9 @@ func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkD
 	}
 	if mediated {
 		report.Mechanisms = append(report.Mechanisms, mechanismForwardProxy)
+	}
+	if initMediated {
+		report.Mechanisms = append(report.Mechanisms, mechanismSeccompRedirect)
 	}
 	enforcement := driverEnforcement
 	if mediated {
@@ -156,8 +181,13 @@ func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkD
 		report.Unapplied = append(report.Unapplied, "the engine's own sandbox endpoints")
 	}
 	if mediated {
-		report.Limitations = append(report.Limitations,
-			"the engine's forward proxy decides only traffic that honors the proxy environment; a process that bypasses it is not decided by the proxy")
+		if initMediated {
+			report.Limitations = append(report.Limitations,
+				"the sandbox init process redirects every TCP connect through the forward proxy, so a process that ignores the proxy environment is still decided; non-DNS UDP is refused and DNS is answered by a sandbox-local policy resolver (a sendmmsg-based resolver can still bypass it)")
+		} else {
+			report.Limitations = append(report.Limitations,
+				"the engine's forward proxy decides only traffic that honors the proxy environment; a process that bypasses it is not decided by the proxy")
+		}
 		if addresses > 0 && driverEnforcement.Strength != SandboxEgressStrengthNone && !driverEnforcement.AppliesAllowedAddresses {
 			report.Limitations = append(report.Limitations, fmt.Sprintf(
 				"%s applies the declared destinations but not allowed_ips; traffic that bypasses the forward proxy is not address-constrained",

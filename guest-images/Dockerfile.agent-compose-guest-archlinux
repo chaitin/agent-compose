@@ -34,6 +34,18 @@ RUN CGO_ENABLED=0 \
     GOPROXY="${GOPROXY}" \
     go install github.com/fullstorydev/grpcurl/cmd/grpcurl@"${GRPCURL_VERSION}"
 
+FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS sandbox-init-builder
+ARG GOPROXY
+ARG TARGETARCH
+WORKDIR /src
+COPY go.mod go.sum ./
+COPY proto/go.mod ./proto/go.mod
+RUN GOPROXY="${GOPROXY}" go mod download
+COPY pkg/sandboxinit ./pkg/sandboxinit
+COPY cmd/ac-init ./cmd/ac-init
+RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-amd64}" \
+    go build -trimpath -ldflags='-s -w' -o /out/ac-init ./cmd/ac-init
+
 FROM ${REGISTRY_MIRROR}/library/archlinux:${ARCHLINUX_TAG}
 ARG ARCHLINUX_MIRROR
 ARG PIP_INDEX_URL
@@ -57,6 +69,8 @@ ARG GUEST_ABI=1
 LABEL io.agent-compose.guest-abi="${GUEST_ABI}"
 
 COPY --from=grpcurl-builder /out/grpcurl /usr/local/bin/grpcurl
+COPY --from=sandbox-init-builder /out/ac-init /.agent-compose/ac-init
+RUN chmod 0700 /.agent-compose && chmod 0755 /.agent-compose/ac-init
 
 RUN if [ -n "${BUILDPLATFORM}" ] && [ "${BUILDPLATFORM}" != "${TARGETPLATFORM}" ]; then \
       sed -i 's/^#DisableSandboxSyscalls/DisableSandboxSyscalls/' /etc/pacman.conf; \

@@ -1291,3 +1291,24 @@ func TestK8sPodExecOptionsAttachStdinOnlyForInternalTransfers(t *testing.T) {
 		t.Fatalf("transfer exec command = %q", got)
 	}
 }
+
+func TestK8sCreatePodLaunchesInitWithoutKeepalive(t *testing.T) {
+	r, clientset := newTestK8sRuntime()
+	r.config.SandboxInitEnabled = true
+	r.config.SandboxInitBinary = "/.agent-compose/ac-init"
+	sandbox := testSandbox(t, "sandbox-init")
+	pod, err := r.createPod(context.Background(), clientset, sandbox, VMState{}, ProxyState{})
+	if err != nil {
+		t.Fatalf("createPod() error = %v", err)
+	}
+	container := pod.Spec.Containers[0]
+	if len(container.Command) != 1 || container.Command[0] != "/.agent-compose/ac-init" {
+		t.Fatalf("container command = %+v, want ac-init as PID 1", container.Command)
+	}
+	if strings.Join(container.Args, " ") != "--control-socket /run/agent-compose/init.sock" {
+		t.Fatalf("container args = %+v, want only the control socket (no tail)", container.Args)
+	}
+	if pod.Labels[k8sSandboxLabelInit] != "true" {
+		t.Fatalf("init label = %q, want true", pod.Labels[k8sSandboxLabelInit])
+	}
+}

@@ -3,6 +3,7 @@ package driver
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 )
 
 func TestReportAgentNetworkPolicyUndeclaredIsNotDeny(t *testing.T) {
-	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, nil, false, config.EgressUnenforceableWarn)
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, nil, NetworkPolicyReportOptions{Mediated: false, InitMediated: false, Mode: config.EgressUnenforceableWarn})
 	if err != nil {
 		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
 	}
@@ -31,7 +32,7 @@ func TestReportAgentNetworkPolicyAllowListWithoutDenyDoesNotRestrict(t *testing.
 		Default: egress.Allow,
 		Allow:   []egress.AllowEntry{{Host: "api.example.com", Port: 443, Protocol: egress.ProtocolHTTPS}},
 	}
-	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, false, config.EgressUnenforceableWarn)
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, NetworkPolicyReportOptions{Mediated: false, InitMediated: false, Mode: config.EgressUnenforceableWarn})
 	if err != nil {
 		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
 	}
@@ -51,7 +52,7 @@ func TestReportAgentNetworkPolicyDenyListIsReported(t *testing.T) {
 		Default: egress.Allow,
 		Deny:    []egress.DenyEntry{{Host: "metadata.example.com", Port: 80, Protocol: egress.ProtocolTCP}},
 	}
-	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, true, config.EgressUnenforceableWarn)
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, NetworkPolicyReportOptions{Mediated: true, InitMediated: false, Mode: config.EgressUnenforceableWarn})
 	if err != nil {
 		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
 	}
@@ -74,7 +75,7 @@ func TestReportAgentNetworkPolicyMediatedDenyIsEnforced(t *testing.T) {
 			AllowedIPs: []string{"203.0.113.0/24"},
 		}},
 	}
-	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, true, config.EgressUnenforceableWarn)
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, NetworkPolicyReportOptions{Mediated: true, InitMediated: false, Mode: config.EgressUnenforceableWarn})
 	if err != nil {
 		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
 	}
@@ -150,7 +151,7 @@ func TestReportAgentNetworkPolicyNamesWhatTheMechanismLeavesUnapplied(t *testing
 					AllowedIPs: []string{"203.0.113.0/24"},
 				}},
 			}
-			report, err := ReportAgentNetworkPolicy("worker", test.driver, declaration, test.mediated, test.mode)
+			report, err := ReportAgentNetworkPolicy("worker", test.driver, declaration, NetworkPolicyReportOptions{Mediated: test.mediated, InitMediated: false, Mode: test.mode})
 			if err != nil {
 				t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
 			}
@@ -176,7 +177,7 @@ func TestReportAgentNetworkPolicyRefusesAnInvalidDeclaration(t *testing.T) {
 		Default: egress.Deny,
 		Allow:   []egress.AllowEntry{{Host: "bad host", Port: 443, Protocol: egress.ProtocolHTTPS}},
 	}
-	if _, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, true, config.EgressUnenforceableWarn); err == nil {
+	if _, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, NetworkPolicyReportOptions{Mediated: true, InitMediated: false, Mode: config.EgressUnenforceableWarn}); err == nil {
 		t.Fatal("ReportAgentNetworkPolicy() error = nil, want a validation error")
 	}
 }
@@ -214,7 +215,7 @@ func TestAdmissionReportAgreesWithTheCreationGate(t *testing.T) {
 					}
 					policy.MediatedByForwardProxy = mediated
 					gateErr := RequireSandboxNetworkEnforcement(driver, "sandbox-1", &policy, config.EgressUnenforceableRefuse)
-					report, err := ReportAgentNetworkPolicy("worker", driver, &declaration, mediated, config.EgressUnenforceableRefuse)
+					report, err := ReportAgentNetworkPolicy("worker", driver, &declaration, NetworkPolicyReportOptions{Mediated: mediated, InitMediated: false, Mode: config.EgressUnenforceableRefuse})
 					if err != nil {
 						t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
 					}
@@ -251,7 +252,7 @@ func TestAdmissionReportCannotSeeUnappliedDenyDomains(t *testing.T) {
 		t.Fatalf("creation gate error = %v, want the unapplied deny domains refused", err)
 	}
 
-	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, &declaration, true, config.EgressUnenforceableRefuse)
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, &declaration, NetworkPolicyReportOptions{Mediated: true, InitMediated: false, Mode: config.EgressUnenforceableRefuse})
 	if err != nil {
 		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
 	}
@@ -271,7 +272,7 @@ func TestReportAgentNetworkPolicyNamesEveryMechanism(t *testing.T) {
 			AllowedIPs: []string{"203.0.113.0/24"},
 		}},
 	}
-	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverMicrosandbox, declaration, true, config.EgressUnenforceableWarn)
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverMicrosandbox, declaration, NetworkPolicyReportOptions{Mediated: true, InitMediated: false, Mode: config.EgressUnenforceableWarn})
 	if err != nil {
 		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
 	}
@@ -286,5 +287,26 @@ func TestReportAgentNetworkPolicyNamesEveryMechanism(t *testing.T) {
 	}
 	if len(report.Unapplied) == 0 || !strings.Contains(strings.Join(report.Unapplied, " "), "bypasses the forward proxy") {
 		t.Fatalf("Unapplied = %v, want the bypass-only address gap", report.Unapplied)
+	}
+}
+
+func TestReportAgentNetworkPolicyNamesSandboxInitMediation(t *testing.T) {
+	declaration := &egress.NetworkDeclaration{
+		Default: egress.Deny,
+		Allow:   []egress.AllowEntry{{Host: "allowed.example", Port: 443, Protocol: egress.ProtocolHTTPS}},
+	}
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, NetworkPolicyReportOptions{Mediated: true, InitMediated: true, Mode: config.EgressUnenforceableWarn})
+	if err != nil {
+		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
+	}
+	if !report.Enforced || !report.Mediated {
+		t.Fatalf("report = %+v, want an enforced mediated declaration", report)
+	}
+	if !slices.Contains(report.Mechanisms, mechanismSeccompRedirect) {
+		t.Fatalf("mechanisms = %v, want %q", report.Mechanisms, mechanismSeccompRedirect)
+	}
+	limitations := strings.Join(report.Limitations, "\n")
+	if !strings.Contains(limitations, "sandbox init") || !strings.Contains(limitations, "policy resolver") || !strings.Contains(limitations, "sendmmsg") {
+		t.Fatalf("limitations = %v, want the init mediation and its policy resolver", report.Limitations)
 	}
 }

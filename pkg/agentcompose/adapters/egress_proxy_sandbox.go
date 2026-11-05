@@ -280,3 +280,11 @@ func egressProxyEnvItems(proxyURL string, bypass []string) []driverpkg.SandboxEn
 	}
 	return items
 }
+
+// EgressProxyPolicyForSession is the per-run policy hook. No per-run policy
+// store exists yet, so it returns the sandbox-wide policy; the proxy calls this
+// only when a session identity is present, which makes the future per-run
+// storage a change here instead of a change in the proxy.
+func (p *SandboxEgressProxy) EgressProxyPolicyForSession(ctx context.Context, sandboxID, sessionID, marker string) (egress.Policy, error) {
+	return p.EgressProxyPolicy(ctx, sandboxID)
+}
