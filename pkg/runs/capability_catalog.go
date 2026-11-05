@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
-	"os"
 	"path/filepath"
 
 	"github.com/chaitin/agent-compose/pkg/capabilities"
@@ -22,10 +21,7 @@ func writeCapabilityCatalog(ctx context.Context, deps CapabilityGuideDeps, sandb
 	catalog := capabilities.BuildRuntimeCatalog(ctx, deps.Provider, scope, sandbox.Summary.ID, ids)
 	content, err := json.Marshal(catalog)
 	if err == nil {
-		err = os.MkdirAll(filepath.Dir(filePath), 0o755)
-	}
-	if err == nil {
-		err = os.WriteFile(filePath, content, 0o644)
+		err = publishCapabilityFile(filePath, content)
 	}
 	if err == nil && deps.WriteGuestFile != nil && deps.Config != nil {
 		appconfig.ApplyDefaultGuestPaths(deps.Config)

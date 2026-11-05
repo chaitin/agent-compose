@@ -9,7 +9,6 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -76,12 +75,7 @@ func WriteCapabilityGuide(ctx context.Context, deps CapabilityGuideDeps, sandbox
 	if preamble := capabilities.GuidePreamble(capabilities.ProxyTarget(deps.Provider)); preamble != "" {
 		content = preamble + content
 	}
-	if err := os.MkdirAll(filepath.Dir(catalogPath), 0o755); err != nil {
-		slog.Warn("capability guide dir create failed", "sandbox_id", sandbox.Summary.ID, "error", err)
-		recordCapabilityGuideWarning(ctx, deps, sandbox.Summary.ID, "capability guide directory create failed")
-		return
-	}
-	if err := os.WriteFile(catalogPath, []byte(content), 0o644); err != nil {
+	if err := publishCapabilityFile(catalogPath, []byte(content)); err != nil {
 		slog.Warn("capability guide write failed", "sandbox_id", sandbox.Summary.ID, "error", err)
 		recordCapabilityGuideWarning(ctx, deps, sandbox.Summary.ID, "capability guide write failed")
 		return
