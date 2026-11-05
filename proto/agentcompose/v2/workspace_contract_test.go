@@ -106,6 +106,7 @@ func TestSandboxFullWireContract(t *testing.T) {
 		"23:stopped_runtime_last_error:stoppedRuntimeLastError:string:optional:false",
 		"24:stopped_runtime_released_at:stoppedRuntimeReleasedAt:message:google.protobuf.Timestamp:optional:true",
 		"25:workspace_delivery:workspaceDelivery:message:agentcompose.v2.SandboxWorkspaceDelivery:optional:true",
+		"26:egress_policy:egressPolicy:message:agentcompose.v2.SandboxEgressPolicy:optional:true",
 	}
 	fields := (&Sandbox{}).ProtoReflect().Descriptor().Fields()
 	got := make([]string, fields.Len())

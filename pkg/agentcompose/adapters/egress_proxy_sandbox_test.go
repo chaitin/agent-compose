@@ -76,7 +76,7 @@ func denyDeclaration() *egress.NetworkDeclaration {
 	}
 }
 
-func egressProxyTestMediation(store *egressProxyTestStore, sandboxes egressProxyTestSandboxes, declaration *egress.NetworkDeclaration) SandboxEgressProxy {
+func egressProxyTestMediation(store *egressProxyTestStore, sandboxes SandboxByIDLoader, declaration *egress.NetworkDeclaration) SandboxEgressProxy {
 	return NewSandboxEgressProxy(
 		networkPolicyTestConfig(),
 		store,

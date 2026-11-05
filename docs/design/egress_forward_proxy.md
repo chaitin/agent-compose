@@ -204,6 +204,32 @@ file, and every allow/deny is written with the sandbox, destination, resolved
 addresses, action, rule, generation, identity, and time. A write failure is
 logged and does not change enforcement.
 
+Each sandbox also carries a persisted, monotonic **egress policy revision**.
+`egress.PolicyHash` is a stable SHA-256 of the effective policy content and is
+deliberately separate from `egress.Generation`, which decisions carry. A revision
+advances only when that hash changes, and its applied time is when the daemon
+first persisted it. The revision is acknowledged when the enforcement point that
+decides the running sandbox has read exactly that revision: the forward proxy for
+a mediated sandbox (per request, so an edit is acknowledged hot), or the runtime
+creation that installed a driver-applied policy. `agent-compose inspect sandbox`
+reports the active revision, hash, applied/acknowledged timestamps, and the
+generation and mechanism the running runtime was created under. An inspect
+refreshes the active revision from the declaration but never acknowledges it, so
+a driver-applied sandbox whose declaration changed after it started stays
+unacknowledged until its runtime is recreated.
+
+`SANDBOX_INIT_EGRESS_AUDIT_LOG=true` opts into a guest-side JSONL sink for
+connections the init process observes. The daemon injects
+`SANDBOX_INIT_AUDIT_LOG=<GUEST_LOG_ROOT>/egress-audit.jsonl` (and the launch
+policy generation) only when this is set and the egress mode is `audit` or
+`enforce`. It is off by default because Docker and Kubernetes already capture
+init stderr; the file is an additional, queryable copy for drivers such as
+Microsandbox whose guest stderr is not collected. The sink appends one complete
+line per event with `sandbox_id`, `session_id`, `marker`, `process_id`,
+`destination`, `host`, `port`, `action`, `decision`, `reason`, and `generation`.
+Writes use `O_APPEND` under a mutex; an external log shipper may rotate the file,
+but init keeps writing to the descriptor it opened until the process exits.
+
 When `SANDBOX_INIT_EGRESS=enforce`, admission reports the `seccomp_redirect`
 mechanism next to `forward_proxy`: init redirects every TCP connect through the
 proxy, so the old limitation "only traffic that honors the proxy environment is

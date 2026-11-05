@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,6 +109,10 @@ type driverRuntimeAdapter struct {
 	// can differ from the daemon's; the daemon must remain the authority for
 	// the mode it reports as enforced.
 	sandboxInitEgress string
+	// sandboxInitAuditLog is the guest path of the opt-in init-side JSONL audit
+	// sink. Empty keeps the sink disabled, so a deployment that already captures
+	// init stderr does not gain a second copy.
+	sandboxInitAuditLog string
 }
 
 // guestFileRuntimeAdapter adds the no-shared-filesystem capabilities only to
@@ -200,13 +205,14 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	// The mediation decides with the same resolved declaration and engine
 	// endpoints as the driver-boundary policy, so both read one seam.
 	provider.egressProxy.networkPolicies = networkPolicies
+	auditLog, _ := driverpkg.SandboxInitEgressAuditLogPath(config)
 	provider.runtimes = map[string]SandboxRuntime{
-		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress},
-		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress},
-		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress},
+		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
+		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
+		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
 		driverpkg.RuntimeDriverK8s: guestFileRuntimeAdapter{driverRuntimeAdapter{
 			runtime: k8sRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy,
-			sandboxInitEgress: config.SandboxInitEgress,
+			sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog,
 		}},
 	}
 	return provider, nil
@@ -290,6 +296,12 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 	}
 	mediated := false
 	if driverSandbox != nil {
+		if auditLog := strings.TrimSpace(r.sandboxInitAuditLog); auditLog != "" {
+			driverSandbox.RuntimeEnvItems = append(driverSandbox.RuntimeEnvItems,
+				driverpkg.SandboxEnvVar{Name: sandboxinit.EgressAuditLogEnvVar, Value: auditLog},
+				driverpkg.SandboxEnvVar{Name: sandboxinit.EgressGenerationEnvVar, Value: strconv.FormatUint(uint64(effective.Generation()), 10)},
+			)
+		}
 		driverSandbox.NetworkPolicy = policy
 		// A declaration that restricts egress is only really enforced where the
 		// engine is in the traffic path. Routing the guest through the forward
@@ -336,7 +348,10 @@ func (r driverRuntimeAdapter) egressRuntimePolicy(session *domain.Sandbox, polic
 			application = egress.ApplicationDriverApplied
 		}
 	}
-	return sandboxEgressPolicyRecord(egress.RuntimePolicy{Generation: effective.Generation(), Application: application})
+	return sandboxEgressPolicyRecord(
+		egress.RuntimePolicy{Generation: effective.Generation(), Application: application},
+		egress.PolicyHash(effective),
+	)
 }
 
 func (r driverRuntimeAdapter) EnsureSandbox(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, proxyState domain.ProxyState) (domain.SandboxVMInfo, error) {

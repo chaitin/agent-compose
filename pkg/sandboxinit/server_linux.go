@@ -43,9 +43,15 @@ type Options struct {
 	// EgressAuditSink receives observed connections. A nil sink logs them, which
 	// is the production behavior and keeps the dependency explicit in tests.
 	EgressAuditSink EgressAuditSink
+
 	// Landlock selects workload filesystem confinement. Off is the default;
 	// enforce applies the resolved policy in every exec trampoline.
 	Landlock LandlockOptions
+
+	// EgressGeneration is the advisory policy generation the runtime was created
+	// under. It is stamped on audit events when no caller supplied one.
+	EgressGeneration uint64
+
 	// Hooks is the future isolation extension point.
 	Hooks Hooks
 }
@@ -136,7 +142,7 @@ func Run(ctx context.Context, opts Options) error {
 			slog.Warn("sandbox init egress is unavailable on this guest; continuing without it",
 				"mode", egressMode, "error", err)
 		} else {
-			egress, err = newEgressSupervisor(egressMode, strings.TrimSpace(opts.SandboxID), opts.EgressAuditSink)
+			egress, err = newEgressSupervisor(egressMode, strings.TrimSpace(opts.SandboxID), opts.EgressAuditSink, opts.EgressGeneration)
 			if err != nil {
 				// Enforce is often configured daemon-wide while a particular
 				// sandbox has no proxy credential (an undeclared policy). Keep

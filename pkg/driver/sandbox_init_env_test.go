@@ -30,6 +30,28 @@ func TestSandboxInitEgressEnv(t *testing.T) {
 	}
 }
 
+func TestSandboxInitEgressAuditLogPath(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		config *appconfig.Config
+		want   string
+		ok     bool
+	}{
+		{name: "nil config", config: nil},
+		{name: "disabled", config: &appconfig.Config{SandboxInitEgress: "audit", GuestLogRoot: "/data/logs"}},
+		{name: "enabled with off mode", config: &appconfig.Config{SandboxInitEgress: "off", SandboxInitEgressAuditLog: true}},
+		{name: "enabled without a log root", config: &appconfig.Config{SandboxInitEgress: "audit", SandboxInitEgressAuditLog: true}, want: "/data/logs/egress-audit.jsonl", ok: true},
+		{name: "enabled with a custom log root", config: &appconfig.Config{SandboxInitEgress: "enforce", GuestLogRoot: "/var/log/ac", SandboxInitEgressAuditLog: true}, want: "/var/log/ac/egress-audit.jsonl", ok: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := SandboxInitEgressAuditLogPath(test.config)
+			if ok != test.ok || got != test.want {
+				t.Fatalf("SandboxInitEgressAuditLogPath() = %q, %v; want %q, %v", got, ok, test.want, test.ok)
+			}
+		})
+	}
+}
+
 func TestSandboxInitEgressRequiresPtrace(t *testing.T) {
 	for _, test := range []struct {
 		name   string

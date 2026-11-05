@@ -158,6 +158,11 @@ type Config struct {
 	// them; "enforce" is reserved for mediated egress and is rejected until it
 	// exists.
 	SandboxInitEgress string
+	// SandboxInitEgressAuditLog makes the daemon inject an init-side audit
+	// JSONL path under GuestLogRoot. It is opt-in because Docker and Kubernetes
+	// already capture init stderr.
+	SandboxInitEgressAuditLog bool
+
 	// SandboxInitLandlock selects the init process's filesystem confinement.
 	// "off" is the default; "enforce" applies a Landlock ruleset to every
 	// workload and requires a supporting guest kernel.
@@ -446,6 +451,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		SandboxInitBinary:           sources.SandboxInit.Binary,
 		SandboxInitSocketDir:        sources.SandboxInit.SocketDir,
 		SandboxInitEgress:           string(sources.SandboxInit.Egress),
+		SandboxInitEgressAuditLog:   sources.SandboxInit.EgressAuditLog,
 		SandboxInitLandlock:         string(sources.SandboxInit.Landlock),
 		SandboxInitLandlockFallback: string(sources.SandboxInit.LandlockFallback),
 		DockerDefaultImage:          images.DockerDefaultImage,
@@ -898,10 +904,14 @@ type imageEnvConfig struct {
 
 // sandboxInitConfig holds the experimental sandbox init switch.
 type sandboxInitConfig struct {
-	Enabled          bool
-	Binary           string
-	SocketDir        string
-	Egress           sandboxinit.EgressMode
+	Enabled   bool
+	Binary    string
+	SocketDir string
+	Egress    sandboxinit.EgressMode
+	// EgressAuditLog makes the daemon inject the guest path of an init-side
+	// JSONL audit sink. It is opt-in because Docker and Kubernetes already
+	// capture init stderr; the file is an additional, queryable copy.
+	EgressAuditLog   bool
 	Landlock         sandboxinit.LandlockMode
 	LandlockFallback sandboxinit.LandlockFallback
 }
@@ -938,6 +948,17 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 		return sandboxInitConfig{}, err
 	}
 	config.Egress = egressMode
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_EGRESS_AUDIT_LOG")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_EGRESS_AUDIT_LOG must be true or false: %w", err)
+		}
+		config.EgressAuditLog = enabled
+	}
+	if config.EgressAuditLog && config.Egress == sandboxinit.EgressModeOff {
+		return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_EGRESS_AUDIT_LOG requires %s=audit or enforce, got off", sandboxinit.EgressModeEnvVar)
+	}
+
 	landlockMode, err := sandboxinit.ParseLandlockMode(os.Getenv(sandboxinit.LandlockModeEnvVar))
 	if err != nil {
 		return sandboxInitConfig{}, err
@@ -948,6 +969,7 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 		return sandboxInitConfig{}, err
 	}
 	config.LandlockFallback = landlockFallback
+
 	socketDir := strings.TrimSpace(os.Getenv("SANDBOX_INIT_SOCKET_DIR"))
 	if socketDir == "" {
 		socketDir = defaultSandboxInitSocketDir()

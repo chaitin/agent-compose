@@ -20,6 +20,7 @@ type egressSupervisor struct {
 	mode           EgressMode
 	sandboxID      string
 	binary         string
+	generation     uint64
 	sink           EgressAuditSink
 	logger         *slog.Logger
 	proxy          *egressProxyTarget
@@ -34,7 +35,7 @@ type egressSupervisor struct {
 // newEgressSupervisor resolves the init binary the trampoline re-executes. A
 // supervisor that cannot find it cannot start a filtered child, so the failure
 // is returned at init startup rather than at the first exec.
-func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink) (*egressSupervisor, error) {
+func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink, generation uint64) (*egressSupervisor, error) {
 	binary, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("resolve sandbox init binary for egress audit: %w", err)
@@ -43,6 +44,7 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 		mode:           mode,
 		sandboxID:      sandboxID,
 		binary:         binary,
+		generation:     generation,
 		sink:           sink,
 		logger:         slog.Default(),
 		connectTimeout: egressConnectTimeout,
@@ -188,6 +190,9 @@ func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNo
 }
 
 func (s *egressSupervisor) record(event EgressAuditEvent) {
+	if event.Generation == 0 {
+		event.Generation = s.generation
+	}
 	if s.sink != nil {
 		s.sink(event)
 		return

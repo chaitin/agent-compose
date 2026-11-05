@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strings"
@@ -53,6 +54,11 @@ type SandboxEgressProxy struct {
 	credentials     EgressProxyCredentialStore
 	sandboxes       SandboxByIDLoader
 	networkPolicies driverSandboxNetworkPolicy
+	// revisions is the process-local read-through cache of the persisted policy
+	// revision. It is a pointer because the mediation is copied by value into
+	// the runtime provider and the proxy; the copies must agree about what they
+	// have already observed.
+	revisions *egressPolicyRevisionCache
 }
 
 // NewSandboxEgressProxy builds the mediation from the daemon's own dependencies.
@@ -69,6 +75,7 @@ func NewSandboxEgressProxy(
 		credentials:     credentials,
 		sandboxes:       sandboxes,
 		networkPolicies: driverSandboxNetworkPolicy{config: config, declarations: declarations},
+		revisions:       newEgressPolicyRevisionCache(),
 	}
 }
 
@@ -195,7 +202,19 @@ func (p SandboxEgressProxy) EgressProxyPolicy(ctx context.Context, sandboxID str
 	if err != nil {
 		return egress.Policy{}, fmt.Errorf("load sandbox %s for the egress decision: %w", sandboxID, err)
 	}
-	return p.policyForSession(ctx, session)
+	policy, err := p.policyForSession(ctx, session)
+	if err != nil {
+		return egress.Policy{}, err
+	}
+	// The proxy is the enforcement point for a mediated sandbox, so reading the
+	// policy here is what acknowledges the revision. A failure to persist the
+	// acknowledgement is reported and does not change the decision: the policy
+	// is still the one this request is evaluated against.
+	if _, err := p.observePolicyRevision(ctx, session, policy, true); err != nil {
+		slog.WarnContext(ctx, "egress policy revision was not acknowledged by the proxy",
+			"sandbox_id", sandboxID, "error", err)
+	}
+	return policy, nil
 }
 
 // policyForSession compiles the policy the proxy would decide this sandbox's

@@ -1571,6 +1571,36 @@ message Sandbox {
   google.protobuf.Timestamp stopped_runtime_released_at = 24;
   // Safe delivery metadata from this sandbox snapshot, when available.
   SandboxWorkspaceDelivery workspace_delivery = 25;
+  // The egress policy revision currently observed for this sandbox. Empty when
+  // the engine has no policy revision record for it (the driver does not
+  // support egress policy, or the sandbox predates this record).
+  SandboxEgressPolicy egress_policy = 26;
+}
+
+// SandboxEgressPolicy reports the persisted egress policy revision for one
+// sandbox and whether the enforcement point that decides its traffic has read
+// it. A revision advances only when the effective policy content changes; the
+// hash and revision are therefore stable across an idempotent apply.
+message SandboxEgressPolicy {
+  // Monotonic revision within this sandbox, starting at 1. Zero means no
+  // revision has been observed.
+  uint64 revision = 1;
+  // Stable content hash of the effective policy (egress.PolicyHash), prefixed
+  // with "sha256:".
+  string hash = 2;
+  // When this revision was first persisted by the daemon.
+  google.protobuf.Timestamp applied_at = 3;
+  // When the enforcement point for the running sandbox first read exactly this
+  // revision. Unset while the running sandbox has not acknowledged it.
+  google.protobuf.Timestamp acknowledged_at = 4;
+  // Whether acknowledged_at is set. Convenience for clients that only need the
+  // boolean; it is always consistent with acknowledged_at.
+  bool acknowledged = 5;
+  // The egress content generation the running runtime was created under, and
+  // the mechanism that applied it ("open", "driver-applied",
+  // "declared-unenforced", or "mediated"). Empty when no runtime record exists.
+  uint64 runtime_generation = 6;
+  string runtime_application = 7;
 }
 
 message SandboxWorkspaceDelivery {

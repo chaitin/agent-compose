@@ -28,6 +28,18 @@ const (
 // makes an older guest init reject its entrypoint arguments.
 const EgressModeEnvVar = "SANDBOX_INIT_EGRESS"
 
+// EgressAuditLogEnvVar carries the guest path of the init-side audit JSONL sink.
+// It is read by ac-init; an empty value keeps the existing behavior of logging
+// each observed connection to stderr. The daemon injects it only when the
+// deployment opted in, because Docker and Kubernetes deployments already
+// capture the init's stderr.
+const EgressAuditLogEnvVar = "SANDBOX_INIT_AUDIT_LOG"
+
+// EgressGenerationEnvVar carries the egress policy generation the runtime was
+// created under, so an audit line written before any proxy request can name the
+// policy that governed the launch. It is advisory: init never decides policy.
+const EgressGenerationEnvVar = "SANDBOX_INIT_EGRESS_GENERATION"
+
 // ParseEgressMode validates the configured mode. Enforce is recognized so the
 // error names the missing implementation instead of reporting an unknown value.
 func ParseEgressMode(raw string) (EgressMode, error) {
@@ -52,12 +64,16 @@ type EgressAuditEvent struct {
 	SessionID string
 	Marker    string
 	PID       int
-	Family    string
-	Host      string
-	Port      int
-	UnixPath  string
-	Decision  string
-	Reason    string
+	// Binary names the executable that attempted the connection when the
+	// platform can attribute it. It stays empty unless a caller fills it.
+	Binary     string
+	Family     string
+	Host       string
+	Port       int
+	UnixPath   string
+	Decision   string
+	Reason     string
+	Generation uint64
 }
 
 // EgressAuditSink receives audit events. It is injectable so tests can observe

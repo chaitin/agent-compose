@@ -179,3 +179,34 @@ func TestSandboxInitLandlockReadsAndValidatesTheMode(t *testing.T) {
 		})
 	}
 }
+
+func TestSandboxInitEgressAuditLogIsOptInAndRequiresObservation(t *testing.T) {
+	t.Setenv("SANDBOX_INIT_EGRESS_AUDIT_LOG", "")
+	t.Setenv("SANDBOX_INIT_EGRESS", "audit")
+	config, err := loadSandboxInitConfig()
+	if err != nil {
+		t.Fatalf("loadSandboxInitConfig() error = %v", err)
+	}
+	if config.EgressAuditLog {
+		t.Fatal("init audit log is enabled by default, want opt-in")
+	}
+
+	t.Setenv("SANDBOX_INIT_EGRESS_AUDIT_LOG", "true")
+	config, err = loadSandboxInitConfig()
+	if err != nil {
+		t.Fatalf("loadSandboxInitConfig() with the audit log enabled error = %v", err)
+	}
+	if !config.EgressAuditLog {
+		t.Fatal("init audit log was not enabled from the environment")
+	}
+
+	t.Setenv("SANDBOX_INIT_EGRESS", "off")
+	if _, err := loadSandboxInitConfig(); err == nil {
+		t.Fatal("loadSandboxInitConfig() accepted the audit log with egress off")
+	}
+	t.Setenv("SANDBOX_INIT_EGRESS_AUDIT_LOG", "sometimes")
+	t.Setenv("SANDBOX_INIT_EGRESS", "audit")
+	if _, err := loadSandboxInitConfig(); err == nil {
+		t.Fatal("loadSandboxInitConfig() accepted a non-boolean audit log switch")
+	}
+}

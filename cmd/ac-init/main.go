@@ -68,6 +68,7 @@ func main() {
 		slog.Error("sandbox init egress configuration is invalid", "error", err)
 		os.Exit(1)
 	}
+
 	landlockMode, err := sandboxinit.ParseLandlockMode(os.Getenv(sandboxinit.LandlockModeEnvVar))
 	if err != nil {
 		slog.Error("sandbox init Landlock configuration is invalid", "error", err)
@@ -78,14 +79,42 @@ func main() {
 		slog.Error("sandbox init Landlock fallback configuration is invalid", "error", err)
 		os.Exit(1)
 	}
+
+	egressGeneration, err := sandboxinit.ParseEgressGeneration(os.Getenv(sandboxinit.EgressGenerationEnvVar))
+	if err != nil {
+		slog.Error("sandbox init egress generation is invalid", "error", err)
+		os.Exit(1)
+	}
+	auditLogPath, err := sandboxinit.ParseEgressAuditLogPath(os.Getenv(sandboxinit.EgressAuditLogEnvVar))
+	if err != nil {
+		slog.Error("sandbox init audit log configuration is invalid", "error", err)
+		os.Exit(1)
+	}
+	var auditSink sandboxinit.EgressAuditSink
+	if auditLogPath != "" {
+		auditLog, err := sandboxinit.OpenEgressAuditLog(auditLogPath, nil)
+		if err != nil {
+			slog.Error("sandbox init audit log could not be opened", "error", err)
+			os.Exit(1)
+		}
+		defer func() {
+			if err := auditLog.Close(); err != nil {
+				slog.Error("sandbox init audit log could not be closed", "error", err)
+			}
+		}()
+		auditSink = auditLog.Record
+	}
+
 	err = sandboxinit.Run(ctx, sandboxinit.Options{
 		ControlSocket: *controlSocket,
 		MainShell:     *mainShell,
 		// The drivers already export SANDBOX_ID into the sandbox environment.
 		// Reading it here, rather than adding a flag, keeps an older guest init
 		// working when a newer daemon starts it.
-		SandboxID:  strings.TrimSpace(os.Getenv(sandboxinit.SandboxIDEnvVar)),
-		EgressMode: egressMode,
+		SandboxID:        strings.TrimSpace(os.Getenv(sandboxinit.SandboxIDEnvVar)),
+		EgressMode:       egressMode,
+		EgressAuditSink:  auditSink,
+		EgressGeneration: egressGeneration,
 		Landlock: sandboxinit.LandlockOptions{
 			Mode:     landlockMode,
 			Fallback: landlockFallback,

@@ -3,6 +3,8 @@ package driver
 import (
 	"fmt"
 	"log/slog"
+	"path"
+
 	"strings"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -32,6 +34,26 @@ func sandboxInitEgressEnv(config *appconfig.Config) (string, bool) {
 		return "", false
 	}
 	return mode, true
+}
+
+// SandboxInitEgressAuditLogPath returns the guest path of the opt-in init-side
+// audit JSONL sink. It is under GuestLogRoot, which every driver bind-mounts
+// into the sandbox, so the file survives the sandbox process and is visible to
+// the daemon. A deployment that did not opt in, or that left egress off, gets no
+// path and therefore no second copy of the stderr audit.
+func SandboxInitEgressAuditLogPath(config *appconfig.Config) (string, bool) {
+	if config == nil || !config.SandboxInitEgressAuditLog {
+		return "", false
+	}
+	mode := strings.TrimSpace(config.SandboxInitEgress)
+	if mode != string(sandboxinit.EgressModeAudit) && mode != string(sandboxinit.EgressModeEnforce) {
+		return "", false
+	}
+	root := strings.TrimSpace(config.GuestLogRoot)
+	if root == "" {
+		root = "/data/logs"
+	}
+	return path.Join(root, "egress-audit.jsonl"), true
 }
 
 // requireSandboxInitEgressCapabilities turns a requested enforce mode into a
