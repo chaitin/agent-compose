@@ -123,6 +123,9 @@ func (r *k8sRuntime) waitForK8sSandboxInit(ctx context.Context, clientset kubern
 			if err := requireSandboxInitEgressCapabilities(info, r.config, sandbox.NetworkPolicy); err != nil {
 				return err
 			}
+			if err := requireSandboxInitLandlockCapability(info, r.config); err != nil {
+				return err
+			}
 			return nil
 		} else if errors.Is(err, sandboxinit.ErrSandboxMismatch) {
 			return err

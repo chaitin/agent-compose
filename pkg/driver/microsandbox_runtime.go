@@ -454,6 +454,9 @@ func (r *microsandboxRuntime) waitForSandboxInit(ctx context.Context, session *S
 			if err := requireSandboxInitEgressCapabilities(info, r.config, session.NetworkPolicy); err != nil {
 				return err
 			}
+			if err := requireSandboxInitLandlockCapability(info, r.config); err != nil {
+				return err
+			}
 			return nil
 		} else if errors.Is(err, sandboxinit.ErrSandboxMismatch) {
 			return err
@@ -1315,14 +1318,15 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	env["WORKSPACE"] = r.config.GuestWorkspacePath
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
+	env["LOG_ROOT"] = r.config.GuestLogRoot
 	env["JUPYTER_TOKEN"] = proxyState.Token
-	if _, explicit := env[sandboxinit.EgressModeEnvVar]; !explicit {
+	for key, value := range sandboxInitIsolationEnv(r.config) {
 		// The daemon carries its mode in the create-time environment. Fall
 		// back to this process's configuration only for an older daemon that
 		// did not send one, so a sandbox-host started with a different mode
 		// cannot silently override the daemon's admission report.
-		if egress, ok := sandboxInitEgressEnv(r.config); ok {
-			env[sandboxinit.EgressModeEnvVar] = egress
+		if _, explicit := env[key]; !explicit {
+			env[key] = value
 		}
 	}
 	// The declared network policy decides egress. DNS rebind protection is a

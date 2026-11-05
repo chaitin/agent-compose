@@ -43,6 +43,9 @@ type Options struct {
 	// EgressAuditSink receives observed connections. A nil sink logs them, which
 	// is the production behavior and keeps the dependency explicit in tests.
 	EgressAuditSink EgressAuditSink
+	// Landlock selects workload filesystem confinement. Off is the default;
+	// enforce applies the resolved policy in every exec trampoline.
+	Landlock LandlockOptions
 	// Hooks is the future isolation extension point.
 	Hooks Hooks
 }
@@ -74,8 +77,21 @@ func Run(ctx context.Context, opts Options) error {
 	if err := unix.Prctl(unix.PR_SET_DUMPABLE, 0, 0, 0, 0); err != nil {
 		return fmt.Errorf("make sandbox init non-dumpable: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
+	if warning := initExecutableDirectoryWarning(); warning != "" {
+		slog.Warn(warning)
+	}
+	controlDir := filepath.Dir(socketPath)
+	// New control directories are private; an existing bind mount keeps the
+	// mode the daemon created it with.
+	if err := os.MkdirAll(controlDir, 0o700); err != nil {
 		return fmt.Errorf("create sandbox init control directory: %w", err)
+	}
+	// The directory is the access gate for the socket. A group- or
+	// world-writable directory would let another local user replace the socket
+	// and impersonate init, so reject it instead of relying on the 0666 socket
+	// mode that a non-root native daemon needs in order to connect.
+	if err := validateControlDirectory(controlDir); err != nil {
+		return err
 	}
 	// The socket is unique to this container/init generation. Removing a
 	// stale path prevents a container restart from inheriting a dead socket.
@@ -135,8 +151,19 @@ func Run(ctx context.Context, opts Options) error {
 	if egress != nil {
 		defer egress.close()
 	}
+	landlock, landlockWarning, err := prepareLandlockSpawn(opts.Landlock)
+	if err != nil {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+		return err
+	}
+	if landlockWarning != "" {
+		slog.Warn("sandbox init Landlock enforcement is unavailable; running workloads without filesystem confinement",
+			"reason", landlockWarning)
+	}
 	manager := newProcessManager(opts.Hooks)
 	manager.egress = egress
+	manager.landlock = landlock
 	go manager.runReaper()
 	capabilities := ServerCapabilities()
 	if egress.enabled() {
@@ -149,6 +176,9 @@ func Run(ctx context.Context, opts Options) error {
 		} else {
 			capabilities = append(capabilities, CapabilityEgressAudit)
 		}
+	}
+	if landlock != nil {
+		capabilities = append(capabilities, CapabilityLandlockEnforce)
 	}
 
 	server := &initServer{

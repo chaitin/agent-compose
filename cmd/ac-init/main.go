@@ -68,6 +68,16 @@ func main() {
 		slog.Error("sandbox init egress configuration is invalid", "error", err)
 		os.Exit(1)
 	}
+	landlockMode, err := sandboxinit.ParseLandlockMode(os.Getenv(sandboxinit.LandlockModeEnvVar))
+	if err != nil {
+		slog.Error("sandbox init Landlock configuration is invalid", "error", err)
+		os.Exit(1)
+	}
+	landlockFallback, err := sandboxinit.ParseLandlockFallback(os.Getenv(sandboxinit.LandlockFallbackEnvVar))
+	if err != nil {
+		slog.Error("sandbox init Landlock fallback configuration is invalid", "error", err)
+		os.Exit(1)
+	}
 	err = sandboxinit.Run(ctx, sandboxinit.Options{
 		ControlSocket: *controlSocket,
 		MainShell:     *mainShell,
@@ -76,6 +86,10 @@ func main() {
 		// working when a newer daemon starts it.
 		SandboxID:  strings.TrimSpace(os.Getenv(sandboxinit.SandboxIDEnvVar)),
 		EgressMode: egressMode,
+		Landlock: sandboxinit.LandlockOptions{
+			Mode:     landlockMode,
+			Fallback: landlockFallback,
+		},
 	})
 	if err == nil {
 		return

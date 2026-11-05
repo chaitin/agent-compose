@@ -166,6 +166,7 @@ type processManager struct {
 	byPID      map[int]*process
 	hooks      Hooks
 	egress     *egressSupervisor
+	landlock   *landlockSpawn
 	stopOnce   sync.Once
 	stopped    chan struct{}
 	reaperDone chan struct{}
@@ -356,32 +357,64 @@ type childEgress struct {
 	child  *os.File
 }
 
-// buildCommand returns the process init should start. When egress audit is
-// active the started process is this binary's trampoline, which installs the
-// filter and execs the requested command; otherwise it is the command itself.
+// buildCommand returns the process init should start. When egress interception
+// or Landlock enforcement is active the started process is this binary's
+// trampoline, which installs them and execs the requested command; otherwise it
+// is the command itself.
 func (m *processManager) buildCommand(request Request, marker string) (*exec.Cmd, *childEgress, error) {
-	if m.egress == nil || !m.egress.enabled() {
+	egressEnabled := m.egress != nil && m.egress.enabled()
+	landlockEnabled := m.landlock.enabled()
+	if !egressEnabled && !landlockEnabled {
 		cmd := exec.Command(request.Command, request.Args...)
 		cmd.Env = processEnvironment(request.Env, marker)
 		return cmd, nil, nil
 	}
-	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create sandbox init egress handoff socket: %w", err)
+	var pair *childEgress
+	var binary string
+	if egressEnabled {
+		created, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create sandbox init egress handoff socket: %w", err)
+		}
+		parent := os.NewFile(uintptr(created[0]), "sandbox-init-egress-parent")
+		child := os.NewFile(uintptr(created[1]), "sandbox-init-egress-child")
+		if parent == nil || child == nil {
+			_ = unix.Close(created[0])
+			_ = unix.Close(created[1])
+			return nil, nil, errors.New("wrap sandbox init egress handoff socket")
+		}
+		unix.CloseOnExec(created[0])
+		pair = &childEgress{parent: parent, child: child}
+		binary = m.egress.binary
+	} else {
+		binary = m.landlock.binary
 	}
-	parent := os.NewFile(uintptr(pair[0]), "sandbox-init-egress-parent")
-	child := os.NewFile(uintptr(pair[1]), "sandbox-init-egress-child")
-	if parent == nil || child == nil {
-		_ = unix.Close(pair[0])
-		_ = unix.Close(pair[1])
-		return nil, nil, errors.New("wrap sandbox init egress handoff socket")
-	}
-	unix.CloseOnExec(pair[0])
 	args := append([]string{"--exec-child", "--", request.Command}, request.Args...)
-	cmd := exec.Command(m.egress.binary, args...)
-	cmd.Env = appendEnvOverride(processEnvironment(request.Env, marker), EgressModeEnvVar, string(m.egress.mode))
-	cmd.ExtraFiles = []*os.File{child}
-	return cmd, &childEgress{parent: parent, child: child}, nil
+	cmd := exec.Command(binary, args...)
+	env := processEnvironment(request.Env, marker)
+	if egressEnabled {
+		env = appendEnvOverride(env, EgressModeEnvVar, string(m.egress.mode))
+	} else {
+		// The daemon may have put an egress mode in the sandbox environment;
+		// this init did not start a supervisor, so the trampoline must not try
+		// to install a filter without its handoff descriptor.
+		env = removeEnv(env, EgressModeEnvVar)
+	}
+	if landlockEnabled {
+		env = appendEnvOverride(env, LandlockModeEnvVar, string(LandlockModeEnforce))
+		env = appendEnvOverride(env, landlockPolicyEnvVar, m.landlock.policyJSON)
+	} else {
+		// A daemon-requested enforce mode that init could not honor (for
+		// example an older guest image or the explicit warn fallback) must not
+		// reach the trampoline as enforce without a policy.
+		env = appendEnvOverride(env, LandlockModeEnvVar, string(LandlockModeOff))
+		env = removeEnv(env, landlockPolicyEnvVar)
+	}
+	cmd.Env = env
+	if pair != nil {
+		cmd.ExtraFiles = []*os.File{pair.child}
+	}
+	return cmd, pair, nil
 }
 
 // prepareChild runs the configured hook after the base SysProcAttr is set, so a
@@ -437,6 +470,19 @@ func appendEnvOverride(env []string, key, value string) []string {
 		}
 	}
 	return append(filtered, prefix+value)
+}
+
+// removeEnv drops an environment entry the trampoline must not inherit from a
+// daemon-provided sandbox environment.
+func removeEnv(env []string, key string) []string {
+	prefix := key + "="
+	filtered := env[:0]
+	for _, item := range env {
+		if !strings.HasPrefix(item, prefix) {
+			filtered = append(filtered, item)
+		}
+	}
+	return filtered
 }
 
 func processEnvironment(extra map[string]string, marker string) []string {

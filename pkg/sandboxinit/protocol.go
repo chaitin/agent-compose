@@ -40,6 +40,11 @@ const (
 	// CapabilityEgressHardening is the listener-less deny filter installed
 	// after the notification listener is handed over.
 	CapabilityEgressHardening = "egress-hardening"
+	// CapabilityLandlockEnforce is filesystem confinement of every workload:
+	// init resolved a Landlock policy and its exec trampoline applies it. It is
+	// advertised only when the guest kernel supports Landlock and init did not
+	// degrade under the configured fallback.
+	CapabilityLandlockEnforce = "landlock-enforce"
 )
 
 // SandboxIDEnvVar is the environment variable that carries the sandbox ID into

@@ -157,48 +157,56 @@ type Config struct {
 	// the default; "audit" reports workload connect calls without changing
 	// them; "enforce" is reserved for mediated egress and is rejected until it
 	// exists.
-	SandboxInitEgress          string
-	MicrosandboxHome           string
-	MicrosandboxMSBPath        string
-	MicrosandboxLibPath        string
-	MicrosandboxDefaultImage   string
-	MicrosandboxInsecure       []string
-	K8sHome                    string
-	K8sKubeconfigPath          string
-	K8sNamespace               string
-	K8sDefaultImage            string
-	K8sRuntimeBaseURL          string
-	DefaultImage               string
-	BoxRootfsPath              string
-	ImageRegistry              string
-	ImageStoreMode             string
-	ImageCacheRoot             string
-	ImageInsecureRegistries    []string
-	SandboxCPUs                uint8
-	SandboxMemoryMiB           uint32
-	SandboxDiskSizeGB          int32
-	CacheTTL                   time.Duration
-	CleanupInterval            time.Duration
-	WorkspaceCleanupTTL        time.Duration
-	SandboxRetentionTTL        time.Duration
-	SandboxArchiveRoot         string
-	ImageCacheCleanupTTL       time.Duration
-	ImagePullTimeout           time.Duration
-	GuestWorkspacePath         string
-	GuestHomePath              string
-	GuestStateRoot             string
-	GuestRuntimeRoot           string
-	GuestLogRoot               string
-	GuestAbiManifestPath       string
-	JupyterGuestPort           int
-	SandboxStartTimeout        time.Duration
-	SandboxStopTimeout         time.Duration
-	SandboxGracefulStopTimeout time.Duration
-	JupyterReadyTimeout        time.Duration
-	JupyterProxyBasePath       string
-	CapGRPCListen              string
-	CapGRPCTarget              string
-	Version                    string
+	SandboxInitEgress string
+	// SandboxInitLandlock selects the init process's filesystem confinement.
+	// "off" is the default; "enforce" applies a Landlock ruleset to every
+	// workload and requires a supporting guest kernel.
+	SandboxInitLandlock string
+	// SandboxInitLandlockFallback decides what init does when Landlock is
+	// requested but unavailable: "fail" (the default) refuses to start
+	// workloads unconfined; "warn" starts them and reports the degradation.
+	SandboxInitLandlockFallback string
+	MicrosandboxHome            string
+	MicrosandboxMSBPath         string
+	MicrosandboxLibPath         string
+	MicrosandboxDefaultImage    string
+	MicrosandboxInsecure        []string
+	K8sHome                     string
+	K8sKubeconfigPath           string
+	K8sNamespace                string
+	K8sDefaultImage             string
+	K8sRuntimeBaseURL           string
+	DefaultImage                string
+	BoxRootfsPath               string
+	ImageRegistry               string
+	ImageStoreMode              string
+	ImageCacheRoot              string
+	ImageInsecureRegistries     []string
+	SandboxCPUs                 uint8
+	SandboxMemoryMiB            uint32
+	SandboxDiskSizeGB           int32
+	CacheTTL                    time.Duration
+	CleanupInterval             time.Duration
+	WorkspaceCleanupTTL         time.Duration
+	SandboxRetentionTTL         time.Duration
+	SandboxArchiveRoot          string
+	ImageCacheCleanupTTL        time.Duration
+	ImagePullTimeout            time.Duration
+	GuestWorkspacePath          string
+	GuestHomePath               string
+	GuestStateRoot              string
+	GuestRuntimeRoot            string
+	GuestLogRoot                string
+	GuestAbiManifestPath        string
+	JupyterGuestPort            int
+	SandboxStartTimeout         time.Duration
+	SandboxStopTimeout          time.Duration
+	SandboxGracefulStopTimeout  time.Duration
+	JupyterReadyTimeout         time.Duration
+	JupyterProxyBasePath        string
+	CapGRPCListen               string
+	CapGRPCTarget               string
+	Version                     string
 
 	// MicrosandboxDNSRebindProtection keeps the in-VM DNS proxy from returning
 	// answers that point at private addresses. It defaults to true; deployments
@@ -389,96 +397,99 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 	images, resources, cleanup := sources.Images, sources.Resources, sources.Cleanup
 	guestPaths, sandboxTimeouts, httpLimits := sources.GuestPaths, sources.SandboxTimeouts, sources.HTTPLimits
 	return &Config{
-		AgentTelemetry:             sources.AgentTelemetry,
-		DbAddr:                     database.DbAddr,
-		DbName:                     database.DbName,
-		DbTimeout:                  database.DbTimeout,
-		SQLiteMaxOpenConns:         database.SQLiteMaxOpenConns,
-		DataRoot:                   normalized.DataRoot,
-		SandboxRoot:                normalized.SandboxRoot,
-		SandboxRootExplicit:        sandbox.Explicit,
-		HttpListen:                 daemonHTTP.HttpListen,
-		DaemonAuthToken:            daemonHTTP.DaemonAuthToken,
-		AgentComposeSocket:         daemonHTTP.AgentComposeSocket,
-		AgentComposeHost:           daemonHTTP.AgentComposeHost,
-		SandboxHostSocket:          daemonHTTP.SandboxHostSocket,
-		SandboxHostMode:            daemonHTTP.SandboxHostMode,
-		WebhookBodyLimitBytes:      httpLimits.WebhookBodyLimitBytes,
-		WebhookQueueRulesJSON:      httpLimits.WebhookQueueRulesJSON,
-		WebhookQueueDefaultWorkers: httpLimits.WebhookQueueDefaultWorkers,
-		WorkspaceUploadLimitBytes:  httpLimits.WorkspaceUploadLimitBytes,
-		LLMAPIEndpoint:             llm.LLMAPIEndpoint,
-		LLMAPIProtocol:             llm.LLMAPIProtocol,
-		LLMAPIKey:                  llm.LLMAPIKey,
-		LLMModel:                   llm.LLMModel,
-		LLMTimeout:                 llm.LLMTimeout,
-		LLMMaxOutputTokens:         llm.LLMMaxOutputTokens,
-		LLMUpstreamProbe:           llm.LLMUpstreamProbe,
-		LLMProbeTimeout:            llm.LLMProbeTimeout,
-		CodexRequestMaxRetries:     llm.CodexRequestMaxRetries,
-		CodexStreamMaxRetries:      llm.CodexStreamMaxRetries,
-		CodexStreamIdleTimeout:     llm.CodexStreamIdleTimeout,
-		RuntimeBaseURL:             llm.RuntimeBaseURL,
-		AgentTimeout:               timeouts.AgentTimeout,
-		SchedulerRunTimeout:        timeouts.SchedulerRunTimeout,
-		EventDeliveryScope:         sources.EventDelivery,
-		RuntimeDriver:              drivers.RuntimeDriver,
-		EgressUnenforceablePolicy:  sources.EgressEnforce,
-		GlobalNetworkPolicy:        sources.GlobalPolicy,
-		GlobalNetworkPolicyInfo:    sources.GlobalPolicyInfo,
-		EgressAuditLog:             sources.EgressAuditLog,
-		BoxliteHome:                normalized.BoxliteHome,
-		BoxliteRuntimeDir:          normalized.BoxliteRuntimeDir,
-		DockerHome:                 normalized.DockerHome,
-		DockerHostSandboxRoot:      normalized.DockerHostSandboxRoot,
-		DockerSandboxNetwork:       drivers.DockerSandboxNetwork,
-		DockerSandboxNetworkStrict: drivers.DockerSandboxNetworkStrict,
-		SandboxInitEnabled:         sources.SandboxInit.Enabled,
-		SandboxInitBinary:          sources.SandboxInit.Binary,
-		SandboxInitSocketDir:       sources.SandboxInit.SocketDir,
-		SandboxInitEgress:          string(sources.SandboxInit.Egress),
-		DockerDefaultImage:         images.DockerDefaultImage,
-		MicrosandboxHome:           normalized.MicrosandboxHome,
-		MicrosandboxMSBPath:        normalized.MicrosandboxMSBPath,
-		MicrosandboxLibPath:        normalized.MicrosandboxLibPath,
-		MicrosandboxDefaultImage:   images.MicrosandboxDefaultImage,
-		MicrosandboxInsecure:       images.MicrosandboxInsecure,
-		K8sHome:                    normalized.K8sHome,
-		K8sKubeconfigPath:          drivers.K8sKubeconfigPath,
-		K8sNamespace:               drivers.K8sNamespace,
-		K8sDefaultImage:            images.K8sDefaultImage,
-		K8sRuntimeBaseURL:          drivers.K8sRuntimeBaseURL,
-		DefaultImage:               images.DefaultImage,
-		BoxRootfsPath:              normalized.BoxRootfsPath,
-		ImageRegistry:              images.ImageRegistry,
-		ImageStoreMode:             images.ImageStoreMode,
-		ImageCacheRoot:             normalized.ImageCacheRoot,
-		ImageInsecureRegistries:    images.ImageInsecureRegistries,
-		SandboxCPUs:                resources.SandboxCPUs,
-		SandboxMemoryMiB:           resources.SandboxMemoryMiB,
-		SandboxDiskSizeGB:          resources.SandboxDiskSizeGB,
-		CacheTTL:                   resources.CacheTTL,
-		CleanupInterval:            cleanup.CleanupInterval,
-		WorkspaceCleanupTTL:        cleanup.WorkspaceCleanupTTL,
-		SandboxRetentionTTL:        cleanup.SandboxRetentionTTL,
-		SandboxArchiveRoot:         normalized.SandboxArchiveRoot,
-		ImageCacheCleanupTTL:       cleanup.ImageCacheCleanupTTL,
-		ImagePullTimeout:           timeouts.ImagePullTimeout,
-		GuestWorkspacePath:         guestPaths.GuestWorkspacePath,
-		GuestHomePath:              guestPaths.GuestHomePath,
-		GuestStateRoot:             guestPaths.GuestStateRoot,
-		GuestRuntimeRoot:           guestPaths.GuestRuntimeRoot,
-		GuestLogRoot:               guestPaths.GuestLogRoot,
-		GuestAbiManifestPath:       sources.GuestABI,
-		JupyterGuestPort:           sandboxTimeouts.JupyterGuestPort,
-		SandboxStartTimeout:        sandboxTimeouts.StartTimeout,
-		SandboxStopTimeout:         sandboxTimeouts.StopTimeout,
-		SandboxGracefulStopTimeout: sandboxTimeouts.GracefulStopTimeout,
-		JupyterReadyTimeout:        sandboxTimeouts.JupyterReadyTimeout,
-		JupyterProxyBasePath:       sandboxTimeouts.JupyterProxyBase,
-		CapGRPCListen:              strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
-		CapGRPCTarget:              strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
-		Version:                    BuildVersion,
+
+		AgentTelemetry:              sources.AgentTelemetry,
+		DbAddr:                      database.DbAddr,
+		DbName:                      database.DbName,
+		DbTimeout:                   database.DbTimeout,
+		SQLiteMaxOpenConns:          database.SQLiteMaxOpenConns,
+		DataRoot:                    normalized.DataRoot,
+		SandboxRoot:                 normalized.SandboxRoot,
+		SandboxRootExplicit:         sandbox.Explicit,
+		HttpListen:                  daemonHTTP.HttpListen,
+		DaemonAuthToken:             daemonHTTP.DaemonAuthToken,
+		AgentComposeSocket:          daemonHTTP.AgentComposeSocket,
+		AgentComposeHost:            daemonHTTP.AgentComposeHost,
+		SandboxHostSocket:           daemonHTTP.SandboxHostSocket,
+		SandboxHostMode:             daemonHTTP.SandboxHostMode,
+		WebhookBodyLimitBytes:       httpLimits.WebhookBodyLimitBytes,
+		WebhookQueueRulesJSON:       httpLimits.WebhookQueueRulesJSON,
+		WebhookQueueDefaultWorkers:  httpLimits.WebhookQueueDefaultWorkers,
+		WorkspaceUploadLimitBytes:   httpLimits.WorkspaceUploadLimitBytes,
+		LLMAPIEndpoint:              llm.LLMAPIEndpoint,
+		LLMAPIProtocol:              llm.LLMAPIProtocol,
+		LLMAPIKey:                   llm.LLMAPIKey,
+		LLMModel:                    llm.LLMModel,
+		LLMTimeout:                  llm.LLMTimeout,
+		LLMMaxOutputTokens:          llm.LLMMaxOutputTokens,
+		LLMUpstreamProbe:            llm.LLMUpstreamProbe,
+		LLMProbeTimeout:             llm.LLMProbeTimeout,
+		CodexRequestMaxRetries:      llm.CodexRequestMaxRetries,
+		CodexStreamMaxRetries:       llm.CodexStreamMaxRetries,
+		CodexStreamIdleTimeout:      llm.CodexStreamIdleTimeout,
+		RuntimeBaseURL:              llm.RuntimeBaseURL,
+		AgentTimeout:                timeouts.AgentTimeout,
+		SchedulerRunTimeout:         timeouts.SchedulerRunTimeout,
+		EventDeliveryScope:          sources.EventDelivery,
+		RuntimeDriver:               drivers.RuntimeDriver,
+		EgressUnenforceablePolicy:   sources.EgressEnforce,
+		GlobalNetworkPolicy:         sources.GlobalPolicy,
+		GlobalNetworkPolicyInfo:     sources.GlobalPolicyInfo,
+		EgressAuditLog:              sources.EgressAuditLog,
+		BoxliteHome:                 normalized.BoxliteHome,
+		BoxliteRuntimeDir:           normalized.BoxliteRuntimeDir,
+		DockerHome:                  normalized.DockerHome,
+		DockerHostSandboxRoot:       normalized.DockerHostSandboxRoot,
+		DockerSandboxNetwork:        drivers.DockerSandboxNetwork,
+		DockerSandboxNetworkStrict:  drivers.DockerSandboxNetworkStrict,
+		SandboxInitEnabled:          sources.SandboxInit.Enabled,
+		SandboxInitBinary:           sources.SandboxInit.Binary,
+		SandboxInitSocketDir:        sources.SandboxInit.SocketDir,
+		SandboxInitEgress:           string(sources.SandboxInit.Egress),
+		SandboxInitLandlock:         string(sources.SandboxInit.Landlock),
+		SandboxInitLandlockFallback: string(sources.SandboxInit.LandlockFallback),
+		DockerDefaultImage:          images.DockerDefaultImage,
+		MicrosandboxHome:            normalized.MicrosandboxHome,
+		MicrosandboxMSBPath:         normalized.MicrosandboxMSBPath,
+		MicrosandboxLibPath:         normalized.MicrosandboxLibPath,
+		MicrosandboxDefaultImage:    images.MicrosandboxDefaultImage,
+		MicrosandboxInsecure:        images.MicrosandboxInsecure,
+		K8sHome:                     normalized.K8sHome,
+		K8sKubeconfigPath:           drivers.K8sKubeconfigPath,
+		K8sNamespace:                drivers.K8sNamespace,
+		K8sDefaultImage:             images.K8sDefaultImage,
+		K8sRuntimeBaseURL:           drivers.K8sRuntimeBaseURL,
+		DefaultImage:                images.DefaultImage,
+		BoxRootfsPath:               normalized.BoxRootfsPath,
+		ImageRegistry:               images.ImageRegistry,
+		ImageStoreMode:              images.ImageStoreMode,
+		ImageCacheRoot:              normalized.ImageCacheRoot,
+		ImageInsecureRegistries:     images.ImageInsecureRegistries,
+		SandboxCPUs:                 resources.SandboxCPUs,
+		SandboxMemoryMiB:            resources.SandboxMemoryMiB,
+		SandboxDiskSizeGB:           resources.SandboxDiskSizeGB,
+		CacheTTL:                    resources.CacheTTL,
+		CleanupInterval:             cleanup.CleanupInterval,
+		WorkspaceCleanupTTL:         cleanup.WorkspaceCleanupTTL,
+		SandboxRetentionTTL:         cleanup.SandboxRetentionTTL,
+		SandboxArchiveRoot:          normalized.SandboxArchiveRoot,
+		ImageCacheCleanupTTL:        cleanup.ImageCacheCleanupTTL,
+		ImagePullTimeout:            timeouts.ImagePullTimeout,
+		GuestWorkspacePath:          guestPaths.GuestWorkspacePath,
+		GuestHomePath:               guestPaths.GuestHomePath,
+		GuestStateRoot:              guestPaths.GuestStateRoot,
+		GuestRuntimeRoot:            guestPaths.GuestRuntimeRoot,
+		GuestLogRoot:                guestPaths.GuestLogRoot,
+		GuestAbiManifestPath:        sources.GuestABI,
+		JupyterGuestPort:            sandboxTimeouts.JupyterGuestPort,
+		SandboxStartTimeout:         sandboxTimeouts.StartTimeout,
+		SandboxStopTimeout:          sandboxTimeouts.StopTimeout,
+		SandboxGracefulStopTimeout:  sandboxTimeouts.GracefulStopTimeout,
+		JupyterReadyTimeout:         sandboxTimeouts.JupyterReadyTimeout,
+		JupyterProxyBasePath:        sandboxTimeouts.JupyterProxyBase,
+		CapGRPCListen:               strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
+		CapGRPCTarget:               strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
+		Version:                     BuildVersion,
 
 		MicrosandboxDNSRebindProtection: drivers.MicrosandboxDNSRebindProtection,
 	}
@@ -887,10 +898,12 @@ type imageEnvConfig struct {
 
 // sandboxInitConfig holds the experimental sandbox init switch.
 type sandboxInitConfig struct {
-	Enabled   bool
-	Binary    string
-	SocketDir string
-	Egress    sandboxinit.EgressMode
+	Enabled          bool
+	Binary           string
+	SocketDir        string
+	Egress           sandboxinit.EgressMode
+	Landlock         sandboxinit.LandlockMode
+	LandlockFallback sandboxinit.LandlockFallback
 }
 
 // DefaultSandboxInitBinary is the guest path shipped by the guest image. A
@@ -925,6 +938,16 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 		return sandboxInitConfig{}, err
 	}
 	config.Egress = egressMode
+	landlockMode, err := sandboxinit.ParseLandlockMode(os.Getenv(sandboxinit.LandlockModeEnvVar))
+	if err != nil {
+		return sandboxInitConfig{}, err
+	}
+	config.Landlock = landlockMode
+	landlockFallback, err := sandboxinit.ParseLandlockFallback(os.Getenv(sandboxinit.LandlockFallbackEnvVar))
+	if err != nil {
+		return sandboxInitConfig{}, err
+	}
+	config.LandlockFallback = landlockFallback
 	socketDir := strings.TrimSpace(os.Getenv("SANDBOX_INIT_SOCKET_DIR"))
 	if socketDir == "" {
 		socketDir = defaultSandboxInitSocketDir()

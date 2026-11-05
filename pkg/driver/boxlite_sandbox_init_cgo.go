@@ -59,6 +59,9 @@ func (r *cgoSandboxRuntime) waitForSandboxInit(ctx context.Context, sandbox *San
 			if err := requireSandboxInitEgressCapabilities(info, r.config, sandbox.NetworkPolicy); err != nil {
 				return err
 			}
+			if err := requireSandboxInitLandlockCapability(info, r.config); err != nil {
+				return err
+			}
 			return nil
 		} else if errors.Is(err, sandboxinit.ErrSandboxMismatch) {
 			return err

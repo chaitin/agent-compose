@@ -1392,12 +1392,13 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	baseEnv["WORKSPACE"] = r.config.GuestWorkspacePath
 	baseEnv["STATE_ROOT"] = r.config.GuestStateRoot
 	baseEnv["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
+	baseEnv["LOG_ROOT"] = r.config.GuestLogRoot
 	baseEnv["JUPYTER_TOKEN"] = proxyState.Token
-	if _, explicit := baseEnv[sandboxinit.EgressModeEnvVar]; !explicit {
+	for key, value := range sandboxInitIsolationEnv(r.config) {
 		// The daemon carries its mode in the create-time environment; the
 		// sandbox-host's own configuration is only an older-daemon fallback.
-		if egress, ok := sandboxInitEgressEnv(r.config); ok {
-			baseEnv[sandboxinit.EgressModeEnvVar] = egress
+		if _, explicit := baseEnv[key]; !explicit {
+			baseEnv[key] = value
 		}
 	}
 	if len(baseEnv) > 0 {

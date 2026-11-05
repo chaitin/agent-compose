@@ -32,14 +32,25 @@ func RunExecChild(args []string) error {
 	if len(args) == 0 {
 		return errors.New("sandbox init exec child requires a command")
 	}
-	mode, err := ParseEgressMode(os.Getenv(EgressModeEnvVar))
+	egressMode, err := ParseEgressMode(os.Getenv(EgressModeEnvVar))
 	if err != nil {
 		return err
 	}
+	landlockMode, err := ParseLandlockMode(os.Getenv(LandlockModeEnvVar))
+	if err != nil {
+		return err
+	}
+	// Resolve the command before confinement: a target outside the ruleset must
+	// fail with a useful exec error, not be misreported as "not found" after
+	// Landlock denies the PATH stat.
+	path, err := exec.LookPath(args[0])
+	if err != nil {
+		return fmt.Errorf("resolve sandbox init exec child command %q: %w", args[0], err)
+	}
 	runtime.LockOSThread()
-	if mode == EgressModeAudit || mode == EgressModeEnforce {
-		if err := installEgressFilterForMode(mode); err != nil {
-			if mode == EgressModeEnforce {
+	if egressMode == EgressModeAudit || egressMode == EgressModeEnforce {
+		if err := installEgressFilterForMode(egressMode); err != nil {
+			if egressMode == EgressModeEnforce {
 				return err
 			}
 			// A filter installed without a reachable supervisor makes every
@@ -52,13 +63,54 @@ func RunExecChild(args []string) error {
 			slog.Warn("sandbox init egress audit is unavailable; running the workload unfiltered", "error", err)
 		}
 	}
-	path, err := exec.LookPath(args[0])
-	if err != nil {
-		return fmt.Errorf("resolve sandbox init exec child command %q: %w", args[0], err)
+	if landlockMode == LandlockModeEnforce {
+		// The egress path already set no_new_privs and dropped the bounding
+		// set before handing the listener over. A Landlock-only trampoline
+		// does the same here so the workload cannot regain a capability that
+		// weakens the confinement.
+		if egressMode != EgressModeAudit && egressMode != EgressModeEnforce {
+			if err := prepareLandlockOnlyChild(); err != nil {
+				return err
+			}
+		}
+		if err := installLandlockFromEnvironment(); err != nil {
+			// Enforce never degrades at exec time. Init decided at startup
+			// whether the kernel can enforce; a failure here means the
+			// resolved policy or kernel state changed under us.
+			return err
+		}
 	}
 	argv := append([]string(nil), args...)
 	if err := syscall.Exec(path, argv, os.Environ()); err != nil {
 		return fmt.Errorf("exec sandbox init child %q: %w", path, err)
+	}
+	return nil
+}
+
+// prepareLandlockOnlyChild applies the prerequisites a Landlock-only exec
+// trampoline needs. The capability drop is best-effort for the same reason as
+// the egress audit path: a non-root init cannot drop bounding-set capabilities,
+// and no_new_privs already prevents an exec from gaining them.
+func prepareLandlockOnlyChild() error {
+	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+		return fmt.Errorf("set no_new_privs before the Landlock ruleset: %w", err)
+	}
+	if err := dropEgressUnsafeCapabilities(); err != nil {
+		slog.Warn("sandbox init Landlock could not drop workload capabilities", "error", err)
+	}
+	return nil
+}
+
+// installLandlockFromEnvironment applies the policy init resolved at startup.
+// A missing or invalid policy is fatal: enforce mode must not exec an
+// unrestricted workload because init and the trampoline disagreed.
+func installLandlockFromEnvironment() error {
+	policy, err := decodeLandlockPolicy(os.Getenv(landlockPolicyEnvVar))
+	if err != nil {
+		return fmt.Errorf("resolve sandbox init Landlock policy: %w", err)
+	}
+	if err := applyLandlockPolicy(policy); err != nil {
+		return fmt.Errorf("apply sandbox init Landlock policy: %w", err)
 	}
 	return nil
 }

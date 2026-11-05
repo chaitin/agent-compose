@@ -330,14 +330,40 @@ Stage 2 的 `Prepare` 会在 `fork/exec` 前完成：
 - 架构：x86_64 + aarch64 分别编译 filter；未知架构 fail closed；
 - 失败语义：filter 安装失败不能退回无 seccomp；拒绝启动。
 
-### 7.4 Landlock 设计
+### 7.4 Landlock 文件系统隔离（MVP 已实现，opt-in）
 
-- 要求 Linux Landlock ABI ≥ 3；不满足时按 profile 的 `hard_requirement` 拒绝启动，或 `best_effort` 记录 finding；
-- baseline：只读系统路径 + workspace 读写；
-- 额外规则：项目声明的只读/读写路径；
-- 规则在 child 的 `pre_exec` 中 `restrict_self`；path FDs 在 `Prepare` 中打开；
-- 不能访问控制 socket、`/.agent-compose` 下的 init binary/profile（如果它们不在 baseline）；
-- 失败语义：`enforce` 拒绝启动；`audit` 记录但不回退到“无规则”。
+当前分支交付的是 **enforce-only、默认关闭** 的 MVP，不包含 profile 文件、audit 模式和项目自定义路径。
+
+- 配置：`SANDBOX_INIT_LANDLOCK=off|enforce`（默认 `off`）和
+  `SANDBOX_INIT_LANDLOCK_FALLBACK=fail|warn`（默认 `fail`）。daemon 解析后随 sandbox
+  环境注入，init 读取；老 guest 的 init 忽略这些变量。
+- 安装位置：init 在启动时解析策略；每次 exec 由 `--exec-child` trampoline 在
+  `PR_SET_NO_NEW_PRIVS` 和 capability bounding-set drop 之后、`execve` 之前调用
+  `landlock_restrict_self`。规则随 exec 和后代继承，workload 无法移除。
+- baseline 规则（全部为 deny-by-default）：
+  - 只读+可执行：`/usr`、`/bin`、`/sbin`、`/lib*`、`/opt`；
+  - 只读：`/etc`、`/var`、`/sys`，以及 `/etc/resolv.conf`、`/etc/hosts`、
+    `/etc/hostname` 等常见 bind mount 文件；
+  - 读写：`$WORKSPACE`、`$HOME`、`$STATE_ROOT`、`$RUNTIME_ROOT`、`$LOG_ROOT`、
+    `$TMPDIR`、`/var/tmp`、`/dev`、`/proc`（默认值分别对应
+    `/workspace`、`/root`、`/data/state`、`/data/runtime`、`/data/logs`、`/tmp`）；
+  - 其余路径（包括 `/.agent-compose` 和 `/run/agent-compose`）一律拒绝。
+- ABI：按内核版本选择 handled access；ABI≥2 才包含 `REFER`、ABI≥3 才包含
+  `TRUNCATE`。ABI≥1 即可用；不设置 `handled_access_net`，因此不改变 TCP/DNS/egress
+  路径（Landlock 网络权限与 init 的 seccomp egress 互不替代）。
+- 不支持的内核（`ENOSYS`/`EOPNOTSUPP`/ABI 0）：`fallback=fail` 时 init 启动失败；
+  `fallback=warn` 时记录告警并以无 Landlock 模式继续，pong **不会**广告
+  `landlock-enforce`。daemon 在 `fallback=fail` 时要求 ready 握手里出现该 capability，
+  否则 sandbox 启动失败；`warn` 时只记录降级告警。
+- 已知限制：Landlock 不约束 `connect(2)` 到 `AF_UNIX`，因此无法保护控制 socket；
+  `/dev`、`/proc` 为兼容性放宽；不支持按 exec/按项目的额外规则；不处理
+  `IOCTL_DEV`（保持不限制）。真正把控制面移出 workload 可信域需要独立 supervisor，
+  见 [sandbox_supervisor_isolation](sandbox_supervisor_isolation.zh-CN.md)。
+
+```text
+SANDBOX_INIT_LANDLOCK=off|enforce
+SANDBOX_INIT_LANDLOCK_FALLBACK=fail|warn
+```
 
 ### 7.5 进程身份与 cgroup
 
@@ -347,19 +373,27 @@ Stage 2 的 `Prepare` 会在 `fork/exec` 前完成：
 
 ### 7.6 配置与灰度
 
-建议新增（默认关闭）：
+已实现（默认关闭）：
+
+```text
+SANDBOX_INIT_LANDLOCK=off|enforce
+SANDBOX_INIT_LANDLOCK_FALLBACK=fail|warn
+```
+
+仍为设计（未实现）：
 
 ```text
 SANDBOX_INIT_SECCOMP=off|audit|enforce
-SANDBOX_INIT_LANDLOCK=off|audit|enforce
 SANDBOX_INIT_CGROUP=off|on
 SANDBOX_INIT_PROFILE=/.agent-compose/security.json
 ```
 
-- Stage 2 首版默认 `off`，不影响 Stage 1；
-- 先在 Docker 上 `audit`，收集 1–2 个版本的真实 syscall/路径数据，再切 `enforce`；
-- Microsandbox/BoxLite/K8s 在接入 init 后按同样顺序验证；
-- 每次 profile 变更都有 digest/命令审计；失败时 fail closed；
+- Landlock 首版默认 `off`，不影响 Stage 1；启用后先在无关键数据的 sandbox 上验证
+  workspace 写入、系统目录读取和 agent/provider CLI 启动；
+- 严格部署使用 `fallback=fail`（默认）；只有明确接受“无文件系统隔离但 sandbox 可运行”
+  时才切 `warn`；
+- seccomp/cgroup/profile 仍按后续阶段推进，先 audit 再 enforce；
+- 每次 profile 变更都要有 digest/命令审计；失败时 fail closed；
 - 与 egress/credential 的集成仍由 daemon 侧负责，init 只做进程边界。
 
 ### 7.7 Egress audit（PR2）
@@ -489,8 +523,15 @@ TCP DNS：
 - init 二进制放在 `/.agent-compose/ac-init`（目录 0700、文件 0755），不在 PATH 中；Stage 2 的 profile 也规划放在 `/.agent-compose/`，避免和普通 workload 文件混在一起。Stage 1 仍以容器用户运行 init，所以这只是目录规整，不是安全边界。
 - 直接 `docker exec` / `docker compose exec` 不使用 init 控制协议：Docker 仍能进入容器，但该进程的 PPID 在容器 PID namespace 中显示为 0，不属于 init 的 workload 树；调试可以用，daemon 的正式 exec 路径不会走它。
 - 控制 socket 在 sandbox 内可见；agent 本来就能 `exec`/kill 自己的进程，因此不构成额外提权。目录 0700 + socket 0666 是为了让非 root 的 native daemon 能连接 root init 创建的 socket。
-- 控制协议没有额外认证：能访问 socket 等价于能控制该 sandbox 的进程；socket 只在 sandbox 的 bind mount 内。
-- 后续阶段可在 `Hooks.Prepare` 中注入 seccomp/Landlock/资源限制；那时 init 会成为真正的 boundary，需要重新评估 socket 认证、降权和进程身份。
+- **控制目录加固（已实现）**：init 新建控制目录用 0700，并拒绝 group/world-writable
+  的现有目录；`/.agent-compose` 等 init binary 所在目录若 group/world-writable，启动时
+  记录告警。这些检查降低 socket/binary 被替换的风险，但不是新的 uid/namespace 边界。
+- 控制协议没有额外认证：能访问 socket 等价于能控制该 sandbox 的进程；socket 只在 sandbox 的 bind mount 内。Landlock 也不能阻止 `AF_UNIX` connect，因此控制面隔离仍依赖独立 supervisor（设计见
+  [sandbox_supervisor_isolation.zh-CN.md](sandbox_supervisor_isolation.zh-CN.md)）。
+- 启用 Landlock enforce 后，init 仍与 workload 同容器、同用户；Landlock 只约束
+  workload 的文件系统视角，不改变 init 的权限边界。真正的 boundary 需要独立
+  supervisor + 认证的控制通道。
+- 后续阶段可在 `Hooks.Prepare` 中注入 seccomp/cgroup/资源限制；那时 init 会成为真正的 boundary，需要重新评估 socket 认证、降权和进程身份。
 
 ---
 
@@ -542,6 +583,8 @@ Stage 1 已包含：
 | init 入口 | `cmd/ac-init/main.go` |
 | 协议/客户端 | `pkg/sandboxinit/{protocol,client}.go` |
 | Linux 进程/回收/PTY | `pkg/sandboxinit/{process_linux,server_linux}.go` |
+| Landlock 模式/策略/安装 | `pkg/sandboxinit/{landlock,landlock_linux}.go` |
+| 控制目录加固 | `pkg/sandboxinit/control_dir_linux.go` |
 | Docker 集成 | `pkg/driver/docker_sandbox_init.go`、`pkg/driver/docker_runtime.go` |
 | K8s 集成 | `pkg/driver/k8s_sandbox_init.go`、`pkg/driver/k8s_runtime.go` |
 | BoxLite/Microsandbox 集成 | `pkg/driver/{boxlite,microsandbox}_runtime.go`、`pkg/driver/sandbox_init_runtime.go` |

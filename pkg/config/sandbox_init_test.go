@@ -130,3 +130,52 @@ func TestSandboxInitEgressReadsAndValidatesTheMode(t *testing.T) {
 		})
 	}
 }
+
+func TestSandboxInitLandlockDefaultsOffAndFailsClosed(t *testing.T) {
+	t.Setenv("SANDBOX_INIT_LANDLOCK", "")
+	t.Setenv("SANDBOX_INIT_LANDLOCK_FALLBACK", "")
+	config, err := loadSandboxInitConfig()
+	if err != nil {
+		t.Fatalf("loadSandboxInitConfig() error = %v", err)
+	}
+	if config.Landlock != sandboxinit.LandlockModeOff {
+		t.Fatalf("landlock = %q, want off", config.Landlock)
+	}
+	if config.LandlockFallback != sandboxinit.LandlockFallbackFail {
+		t.Fatalf("landlock fallback = %q, want fail", config.LandlockFallback)
+	}
+}
+
+func TestSandboxInitLandlockReadsAndValidatesTheMode(t *testing.T) {
+	for _, test := range []struct {
+		mode         string
+		fallback     string
+		want         sandboxinit.LandlockMode
+		wantFallback sandboxinit.LandlockFallback
+		wantError    bool
+	}{
+		{mode: "off", fallback: "", want: sandboxinit.LandlockModeOff, wantFallback: sandboxinit.LandlockFallbackFail},
+		{mode: "enforce", fallback: "fail", want: sandboxinit.LandlockModeEnforce, wantFallback: sandboxinit.LandlockFallbackFail},
+		{mode: " ENFORCE ", fallback: " WARN ", want: sandboxinit.LandlockModeEnforce, wantFallback: sandboxinit.LandlockFallbackWarn},
+		{mode: "audit", fallback: "fail", wantError: true},
+		{mode: "enforce", fallback: "ignore", wantError: true},
+	} {
+		t.Run(test.mode+"/"+test.fallback, func(t *testing.T) {
+			t.Setenv("SANDBOX_INIT_LANDLOCK", test.mode)
+			t.Setenv("SANDBOX_INIT_LANDLOCK_FALLBACK", test.fallback)
+			config, err := loadSandboxInitConfig()
+			if test.wantError {
+				if err == nil {
+					t.Fatal("loadSandboxInitConfig() accepted an invalid Landlock configuration")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadSandboxInitConfig() error = %v", err)
+			}
+			if config.Landlock != test.want || config.LandlockFallback != test.wantFallback {
+				t.Fatalf("landlock = %q/%q, want %q/%q", config.Landlock, config.LandlockFallback, test.want, test.wantFallback)
+			}
+		})
+	}
+}

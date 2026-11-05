@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
-	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 	"io"
 	"log/slog"
 	"math"
@@ -1309,9 +1308,10 @@ func (r *dockerRuntime) containerEnv(ctx context.Context, sandbox *Sandbox, prox
 	env["WORKSPACE"] = r.config.GuestWorkspacePath
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
+	env["LOG_ROOT"] = r.config.GuestLogRoot
 	env["JUPYTER_TOKEN"] = proxyState.Token
-	if egress, ok := sandboxInitEgressEnv(r.config); ok {
-		env[sandboxinit.EgressModeEnvVar] = egress
+	for key, value := range sandboxInitIsolationEnv(r.config) {
+		env[key] = value
 	}
 	return dockerEnvList(env), nil
 }

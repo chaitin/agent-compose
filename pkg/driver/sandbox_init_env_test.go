@@ -77,3 +77,94 @@ func TestRequireSandboxInitEgressCapabilities(t *testing.T) {
 		})
 	}
 }
+
+func TestSandboxInitLandlockEnv(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		config *appconfig.Config
+		want   map[string]string
+		ok     bool
+	}{
+		{name: "nil config", config: nil},
+		{name: "off", config: &appconfig.Config{SandboxInitLandlock: "off"}},
+		{name: "empty", config: &appconfig.Config{}},
+		{
+			name:   "enforce with fallback",
+			config: &appconfig.Config{SandboxInitLandlock: "enforce", SandboxInitLandlockFallback: "warn"},
+			want: map[string]string{
+				sandboxinit.LandlockModeEnvVar:     "enforce",
+				sandboxinit.LandlockFallbackEnvVar: "warn",
+			},
+			ok: true,
+		},
+		{
+			name:   "padded enforce",
+			config: &appconfig.Config{SandboxInitLandlock: " ENFORCE "},
+			want:   map[string]string{sandboxinit.LandlockModeEnvVar: "ENFORCE"},
+			ok:     true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := sandboxInitLandlockEnv(test.config)
+			if ok != test.ok {
+				t.Fatalf("sandboxInitLandlockEnv() ok = %v, want %v", ok, test.ok)
+			}
+			if len(got) != len(test.want) {
+				t.Fatalf("sandboxInitLandlockEnv() = %#v, want %#v", got, test.want)
+			}
+			for key, want := range test.want {
+				if got[key] != want {
+					t.Fatalf("sandboxInitLandlockEnv()[%q] = %q, want %q", key, got[key], want)
+				}
+			}
+		})
+	}
+}
+
+func TestSandboxInitIsolationEnvCombinesEgressAndLandlock(t *testing.T) {
+	config := &appconfig.Config{
+		SandboxInitEgress:           "audit",
+		SandboxInitLandlock:         "enforce",
+		SandboxInitLandlockFallback: "fail",
+	}
+	got := sandboxInitIsolationEnv(config)
+	for key, want := range map[string]string{
+		sandboxinit.EgressModeEnvVar:       "audit",
+		sandboxinit.LandlockModeEnvVar:     "enforce",
+		sandboxinit.LandlockFallbackEnvVar: "fail",
+	} {
+		if got[key] != want {
+			t.Fatalf("isolation env[%q] = %q, want %q", key, got[key], want)
+		}
+	}
+	if env := sandboxInitIsolationEnv(nil); len(env) != 0 {
+		t.Fatalf("isolation env for nil config = %#v, want empty", env)
+	}
+}
+
+func TestRequireSandboxInitLandlockCapability(t *testing.T) {
+	enforce := &appconfig.Config{SandboxInitLandlock: "enforce", SandboxInitLandlockFallback: "fail"}
+	warn := &appconfig.Config{SandboxInitLandlock: "enforce", SandboxInitLandlockFallback: "warn"}
+	for _, test := range []struct {
+		name    string
+		info    sandboxinit.ServerInfo
+		config  *appconfig.Config
+		wantErr bool
+	}{
+		{name: "nil config", config: nil},
+		{name: "off", info: sandboxinit.ServerInfo{}, config: &appconfig.Config{SandboxInitLandlock: "off"}},
+		{name: "enforce absent fails closed", info: sandboxinit.ServerInfo{}, config: enforce, wantErr: true},
+		{name: "enforce present", info: sandboxinit.ServerInfo{Capabilities: []string{sandboxinit.CapabilityLandlockEnforce}}, config: enforce},
+		{name: "warn absent degrades", info: sandboxinit.ServerInfo{}, config: warn},
+		{name: "warn present", info: sandboxinit.ServerInfo{Capabilities: []string{sandboxinit.CapabilityLandlockEnforce}}, config: warn},
+		{name: "invalid mode", config: &appconfig.Config{SandboxInitLandlock: "audit"}, wantErr: true},
+		{name: "invalid fallback", info: sandboxinit.ServerInfo{}, config: &appconfig.Config{SandboxInitLandlock: "enforce", SandboxInitLandlockFallback: "ignore"}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := requireSandboxInitLandlockCapability(test.info, test.config)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("requireSandboxInitLandlockCapability() error = %v, wantErr %v", err, test.wantErr)
+			}
+		})
+	}
+}
