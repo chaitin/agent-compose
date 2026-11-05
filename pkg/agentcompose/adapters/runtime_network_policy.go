@@ -3,12 +3,14 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/egress"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 )
 
 // SandboxNetworkDeclarationResolver resolves the outbound network policy a
@@ -51,6 +53,15 @@ func (d driverSandboxNetworkPolicy) inputs(ctx context.Context, session *domain.
 	var global *egress.NetworkDeclaration
 	if d.config != nil {
 		global = d.config.GlobalNetworkPolicy
+	}
+	if declaration == nil && global == nil && d.config != nil &&
+		strings.TrimSpace(d.config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce) {
+		// The experimental enforce mode is a default-deny posture: a sandbox
+		// that declared nothing must not silently keep unrestricted egress just
+		// because the policy compiler treats an absent declaration as allow
+		// (D3). Engine-owned endpoints are still derived below and compiled in
+		// as allow rules, so the facade and control plane stay reachable.
+		declaration = &egress.NetworkDeclaration{Default: egress.Deny}
 	}
 	if declaration == nil && global == nil {
 		return nil, nil, nil

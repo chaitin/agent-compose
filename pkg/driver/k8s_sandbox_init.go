@@ -119,7 +119,10 @@ func (r *k8sRuntime) waitForK8sSandboxInit(ctx context.Context, clientset kubern
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		if _, err := client.VerifySandbox(waitCtx, sandbox.Summary.ID); err == nil {
+		if info, err := client.VerifySandbox(waitCtx, sandbox.Summary.ID); err == nil {
+			if err := requireSandboxInitEgressCapabilities(info, r.config, sandbox.NetworkPolicy); err != nil {
+				return err
+			}
 			return nil
 		} else if errors.Is(err, sandboxinit.ErrSandboxMismatch) {
 			return err

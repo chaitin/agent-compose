@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -49,6 +50,13 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 			}
 			declaration = &compiled
 		}
+		if declaration == nil && global == nil && config != nil &&
+			strings.TrimSpace(config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce) {
+			// Enforce mode is default-deny even when the agent declared no
+			// network policy. Report that synthetic declaration so admission
+			// does not omit the sandboxes the new default now restricts.
+			declaration = &egress.NetworkDeclaration{Default: egress.Deny}
+		}
 		if declaration == nil && global == nil {
 			continue
 		}
@@ -60,9 +68,10 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 		mediated := mediation != nil && mediation.MediatesDriver(driver)
 		initMediated := mediated && config != nil && config.SandboxInitEgress == string(sandboxinit.EgressModeEnforce)
 		report, err := driverpkg.ReportAgentNetworkPolicy(agent.Name, driver, effective, driverpkg.NetworkPolicyReportOptions{
-			Mediated:     mediated,
-			InitMediated: initMediated,
-			Mode:         mode,
+			Mediated:               mediated,
+			InitMediated:           initMediated,
+			K8sEgressNetworkPolicy: driver == driverpkg.RuntimeDriverK8s && mediated && config != nil && config.SandboxInitEnabled && strings.TrimSpace(config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce),
+			Mode:                   mode,
 		})
 		if err != nil {
 			return nil, err

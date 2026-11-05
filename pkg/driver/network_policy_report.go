@@ -87,6 +87,11 @@ type AgentNetworkPolicyReport struct {
 // environment.
 const mechanismSeccompRedirect = "seccomp_redirect"
 
+// mechanismKubernetesEgressPolicy is the per-sandbox CNI default-deny egress
+// NetworkPolicy. It is a real outer boundary for every process in the Pod, not
+// only for processes started through ac-init.
+const mechanismKubernetesEgressPolicy = "kubernetes_network_policy"
+
 // ReportAgentNetworkPolicy accounts for one agent's declared policy on one
 // resolved driver. mediated reports whether the engine's forward proxy will be
 // in this sandbox's traffic path; options.InitMediated reports whether the sandbox init
@@ -105,6 +110,10 @@ type NetworkPolicyReportOptions struct {
 	// InitMediated reports whether the sandbox init process redirects connects
 	// to that proxy.
 	InitMediated bool
+	// K8sEgressNetworkPolicy reports whether the k8s driver installs a
+	// per-sandbox default-deny egress NetworkPolicy. It is only effective when
+	// the cluster's CNI enforces NetworkPolicy.
+	K8sEgressNetworkPolicy bool
 	// Mode is the deployment's EGRESS_UNENFORCEABLE_POLICY.
 	Mode config.EgressUnenforceablePolicy
 }
@@ -144,6 +153,11 @@ func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkD
 	}
 	if initMediated {
 		report.Mechanisms = append(report.Mechanisms, mechanismSeccompRedirect)
+	}
+	if resolved == RuntimeDriverK8s && options.K8sEgressNetworkPolicy {
+		report.Mechanisms = append(report.Mechanisms, mechanismKubernetesEgressPolicy)
+		report.Limitations = append(report.Limitations,
+			"the per-sandbox NetworkPolicy admits only the engine-owned endpoints; a cluster whose CNI does not enforce NetworkPolicy does not provide this layer")
 	}
 	enforcement := driverEnforcement
 	if mediated {

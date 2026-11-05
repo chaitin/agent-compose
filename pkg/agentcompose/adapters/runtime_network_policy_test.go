@@ -404,3 +404,31 @@ func TestEnsureSandboxAppliesTheDaemonGlobalPolicyWithoutAnAgentDeclaration(t *t
 		t.Fatalf("global deny-all allowed an undeclared destination: %+v", result)
 	}
 }
+
+func TestEnsureSandboxEnforceDefaultsToDenyWithoutADeclaration(t *testing.T) {
+	config := networkPolicyTestConfig()
+	config.SandboxInitEgress = "enforce"
+	runtime := &capturingNetworkRuntime{}
+	adapter := driverRuntimeAdapter{
+		runtime:    runtime,
+		executions: newSandboxExecutions(),
+		networkPolicies: driverSandboxNetworkPolicy{
+			config:       config,
+			declarations: stubNetworkDeclarationResolver{declaration: nil},
+		},
+		sandboxInitEgress: "enforce",
+	}
+	if _, err := adapter.EnsureSandbox(context.Background(), networkPolicyTestSession(), domain.VMState{}, domain.ProxyState{}); err != nil {
+		t.Fatalf("EnsureSandbox returned error: %v", err)
+	}
+	policy := runtime.sandbox.NetworkPolicy
+	if policy == nil {
+		t.Fatal("NetworkPolicy is nil, want a default deny policy for enforce without a declaration")
+	}
+	if policy.Default != egress.Deny {
+		t.Fatalf("policy default = %q, want deny", policy.Default)
+	}
+	if len(policy.EngineEndpoints) == 0 {
+		t.Fatal("policy has no engine endpoints; the facade must stay reachable")
+	}
+}

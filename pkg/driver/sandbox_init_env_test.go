@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	"github.com/chaitin/agent-compose/pkg/egress"
 	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 )
 
@@ -44,6 +45,34 @@ func TestSandboxInitEgressRequiresPtrace(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if got := sandboxInitEgressRequiresPtrace(test.config); got != test.want {
 				t.Fatalf("sandboxInitEgressRequiresPtrace() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestRequireSandboxInitEgressCapabilities(t *testing.T) {
+	enforce := &appconfig.Config{SandboxInitEgress: "enforce"}
+	restricting := &SandboxNetworkPolicy{Default: egress.Deny, MediatedByForwardProxy: true}
+	allowAll := &SandboxNetworkPolicy{Default: egress.Allow}
+	for _, test := range []struct {
+		name    string
+		info    sandboxinit.ServerInfo
+		config  *appconfig.Config
+		policy  *SandboxNetworkPolicy
+		wantErr bool
+	}{
+		{name: "not enforce", info: sandboxinit.ServerInfo{}, config: &appconfig.Config{SandboxInitEgress: "audit"}, policy: restricting},
+		{name: "no restricting policy", info: sandboxinit.ServerInfo{}, config: enforce, policy: allowAll},
+		{name: "nil policy", info: sandboxinit.ServerInfo{}, config: enforce},
+		{name: "unmediated policy", info: sandboxinit.ServerInfo{}, config: enforce, policy: &SandboxNetworkPolicy{Default: egress.Deny}},
+		{name: "enforce missing mediate", info: sandboxinit.ServerInfo{}, config: enforce, policy: restricting, wantErr: true},
+		{name: "enforce missing hardening", info: sandboxinit.ServerInfo{Capabilities: []string{sandboxinit.CapabilityEgressMediate}}, config: enforce, policy: restricting, wantErr: true},
+		{name: "enforce complete", info: sandboxinit.ServerInfo{Capabilities: []string{sandboxinit.CapabilityEgressMediate, sandboxinit.CapabilityEgressHardening}}, config: enforce, policy: restricting},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := requireSandboxInitEgressCapabilities(test.info, test.config, test.policy)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("requireSandboxInitEgressCapabilities() error = %v, wantErr %v", err, test.wantErr)
 			}
 		})
 	}

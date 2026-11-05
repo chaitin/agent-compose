@@ -102,6 +102,13 @@ func (s *egressSupervisor) adopt(sock *os.File, sessionID, marker string, done <
 		defer closeListener()
 		go func() {
 			<-done
+			// A detached run's supervisor outlives the start session that
+			// installed the filter. Closing the listener with the leader would
+			// make every later connect from that tree fail with ENOSYS, so keep
+			// serving while any process still carries this session's marker.
+			for marker != "" && markedProcessesExist(marker) {
+				time.Sleep(time.Second)
+			}
 			closeListener()
 		}()
 		s.serve(listenerFD, sessionID, marker)

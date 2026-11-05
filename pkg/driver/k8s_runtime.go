@@ -293,6 +293,12 @@ func (r *k8sRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmStat
 		}
 		created = true
 	}
+	if err := r.ensureK8sEgressNetworkPolicy(ctx, clientset, pod, sandbox, vmState); err != nil {
+		if created {
+			_ = clientset.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{GracePeriodSeconds: new(int64)})
+		}
+		return SandboxVMInfo{}, err
+	}
 	if pod.Status.Phase != corev1.PodRunning {
 		attempt := k8sEnsureAttemptState{Namespace: r.namespaceFor(vmState), PodName: pod.Name, Created: created}
 		pod, err = r.waitForPodRunning(ctx, clientset, attempt.Namespace, attempt.PodName)
@@ -532,6 +538,17 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 			// namespace that forbids SYS_PTRACE must be able to reject the pod;
 			// the capability report reflects whatever the cluster admits.
 			container.SecurityContext.Capabilities.Add = []corev1.Capability{"SYS_PTRACE"}
+			// The policy DNS stub answers the queried name and maps the
+			// synthetic IP back to it. A Pod's default ndots:5 search list
+			// makes glibc query <name>.<namespace>.svc.cluster.local first for
+			// ordinary external names, so the proxy would receive the search
+			// FQDN and the declared hostname policy would not match. ndots:1
+			// tries a name with a dot as written first while keeping cluster
+			// search for single-label service names.
+			ndots := "1"
+			pod.Spec.DNSConfig = &corev1.PodDNSConfig{
+				Options: []corev1.PodDNSConfigOption{{Name: "ndots", Value: &ndots}},
+			}
 		}
 	}
 	created, err := clientset.CoreV1().Pods(r.namespaceFor(vmState)).Create(ctx, pod, metav1.CreateOptions{})

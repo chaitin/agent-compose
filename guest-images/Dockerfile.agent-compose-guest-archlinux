@@ -41,6 +41,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 COPY proto/go.mod ./proto/go.mod
 RUN GOPROXY="${GOPROXY}" go mod download
+COPY pkg/egress ./pkg/egress
 COPY pkg/sandboxinit ./pkg/sandboxinit
 COPY cmd/ac-init ./cmd/ac-init
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-amd64}" \

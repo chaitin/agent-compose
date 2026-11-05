@@ -280,3 +280,50 @@ func TestNetworkPolicyApplyErrorClassifiesTheDeclaration(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentNetworkPolicyReportsIncludeTheEnforceDefaultDeny(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	config := &appconfig.Config{SandboxInitEgress: "enforce"}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("reports = %+v, want one report for the enforce default-deny", reports)
+	}
+	report := reports[0]
+	if !report.Declared || !report.Restricts || report.Default != egress.Deny {
+		t.Fatalf("report = %+v, want a declared default-deny policy", report)
+	}
+	if report.Enforcement.Mechanism != "forward_proxy" || !report.Mediated {
+		t.Fatalf("report = %+v, want mediated forward_proxy enforcement", report)
+	}
+	if len(report.Mechanisms) == 0 || report.Mechanisms[len(report.Mechanisms)-1] != "seccomp_redirect" {
+		t.Fatalf("mechanisms = %v, want seccomp_redirect", report.Mechanisms)
+	}
+}
+
+func TestAgentNetworkPolicyReportsNameTheK8sEgressNetworkPolicy(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "k8s", nil),
+	}}
+	config := &appconfig.Config{SandboxInitEnabled: true, SandboxInitEgress: "enforce"}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"k8s": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("reports = %+v, want one", reports)
+	}
+	found := false
+	for _, mechanism := range reports[0].Mechanisms {
+		if mechanism == "kubernetes_network_policy" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("mechanisms = %v, want kubernetes_network_policy", reports[0].Mechanisms)
+	}
+}

@@ -410,17 +410,49 @@ func duplicateTargetFD(pid, targetFD int) (int, error) {
 	if pid <= 0 || targetFD < 0 {
 		return -1, errors.New("invalid pid or file descriptor")
 	}
-	pidfd, err := unix.PidfdOpen(pid, 0)
+	tgid := threadGroupID(pid)
+	pidfd, err := unix.PidfdOpen(tgid, 0)
 	if err != nil {
-		return -1, fmt.Errorf("open pidfd for %d: %w", pid, err)
+		return -1, fmt.Errorf("open pidfd for %d (thread %d): %w", tgid, pid, err)
 	}
 	defer func() { _ = unix.Close(pidfd) }()
 	fd, err := unix.PidfdGetfd(pidfd, targetFD, 0)
 	if err != nil {
-		return -1, fmt.Errorf("pidfd_getfd(%d, %d): %w", pid, targetFD, err)
+		return -1, fmt.Errorf("pidfd_getfd(%d, %d): %w", tgid, targetFD, err)
 	}
 	unix.CloseOnExec(fd)
 	return fd, nil
+}
+
+// threadGroupID maps a seccomp notification's thread ID to its thread-group
+// leader. The notification reports the thread that executed connect, which for
+// pooled runtimes is usually not the leader, and pidfd_open only accepts the
+// leader unless the newer PIDFD_THREAD flag is supported. The fd table is
+// shared by the whole thread group, so any live thread resolves the same file
+// description.
+func threadGroupID(pid int) int {
+	if pid <= 0 {
+		return pid
+	}
+	status, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status")
+	if err != nil {
+		return pid
+	}
+	for _, line := range strings.Split(string(status), "\n") {
+		if !strings.HasPrefix(line, "Tgid:") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return pid
+		}
+		tgid, err := strconv.Atoi(fields[1])
+		if err != nil || tgid <= 0 {
+			return pid
+		}
+		return tgid
+	}
+	return pid
 }
 
 // connectSockaddr connects fd to a raw sockaddr. A non-blocking socket returns

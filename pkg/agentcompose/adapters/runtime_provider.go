@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -13,6 +14,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 	"github.com/chaitin/agent-compose/pkg/telemetry"
 )
 
@@ -101,6 +103,11 @@ type driverRuntimeAdapter struct {
 	// policy as mediated, so the driver reports enforcement instead of warning
 	// that the declaration is unenforced.
 	egressProxy SandboxEgressProxy
+	// sandboxInitEgress carries the daemon's egress mode into the create-time
+	// environment. VM drivers run in the sandbox-host, whose own configuration
+	// can differ from the daemon's; the daemon must remain the authority for
+	// the mode it reports as enforced.
+	sandboxInitEgress string
 }
 
 // guestFileRuntimeAdapter adds the no-shared-filesystem capabilities only to
@@ -194,11 +201,12 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	// endpoints as the driver-boundary policy, so both read one seam.
 	provider.egressProxy.networkPolicies = networkPolicies
 	provider.runtimes = map[string]SandboxRuntime{
-		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy},
-		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy},
-		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy},
+		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress},
+		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress},
+		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress},
 		driverpkg.RuntimeDriverK8s: guestFileRuntimeAdapter{driverRuntimeAdapter{
 			runtime: k8sRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy,
+			sandboxInitEgress: config.SandboxInitEgress,
 		}},
 	}
 	return provider, nil
@@ -256,6 +264,21 @@ func (p *runtimeProvider) ForSession(session *domain.Sandbox) (SandboxRuntime, e
 // call site must use this helper rather than execution.ToDriverSandbox directly.
 func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain.Sandbox) (*driverpkg.Sandbox, domain.SandboxEgressPolicy, error) {
 	driverSandbox := execution.ToDriverSandbox(session)
+	if driverSandbox != nil {
+		// The daemon owns the egress mode it reports as enforced. VM drivers
+		// execute in the sandbox-host, whose own configuration can be older or
+		// different; carry the mode in the create-time environment so the host
+		// cannot silently run a different mode than the daemon's admission
+		// report describes.
+		mode := strings.TrimSpace(r.sandboxInitEgress)
+		if mode == "" {
+			mode = string(sandboxinit.EgressModeOff)
+		}
+		driverSandbox.RuntimeEnvItems = append(driverSandbox.RuntimeEnvItems, driverpkg.SandboxEnvVar{
+			Name:  sandboxinit.EgressModeEnvVar,
+			Value: mode,
+		})
+	}
 	// The driver-boundary policy is derived from the project's normalized
 	// declaration, not from the domain session, and only a declared policy sets
 	// it. An undeclared sandbox keeps a nil policy and today's behavior (D3).

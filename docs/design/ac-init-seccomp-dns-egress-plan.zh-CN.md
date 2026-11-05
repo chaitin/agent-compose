@@ -307,8 +307,11 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
   bounding set 去掉；
 - `connect`/CONNECT 有 10s 超时；通知处理并发（每 session 一个 goroutine），不阻塞
   init 的 accept/reaper；
-- 没有 proxy credential 时（未声明 policy）enforce 记录告警并退回 off；能力报告的
-  daemon 侧接入放到 PR6。
+- enforce 是 default-deny：未声明 policy 时 daemon 生成合成 deny-all，只为 engine
+  endpoints 自动放行；因此“未声明”不再等于无限制，admission 也按 deny-all 报告。
+- 声明了 restricting policy 且 proxy 可达时，daemon 要求 ready init 广告
+  `egress-mediate`/`egress-hardening`；缺失则拒绝启动（fail closed），不会退回 off。
+  proxy 不可达由 `EGRESS_UNENFORCEABLE_POLICY=warn|refuse` 决定，strict 用 `refuse`。
 
 验收与实测：
 

@@ -175,6 +175,16 @@ Mount $SANDBOX_INIT_SOCKET_DIR/<sandbox-id> -> /run/agent-compose (rw)
 
 没有 Jupyter 时不传 `--main-shell`，init 自己保持容器存活；不创建 `tail -f /dev/null`。
 
+**Kubernetes 的外层默认拒绝（enforce）**
+
+enforce 且策略由 forward proxy 中介时，k8s driver 会为每个 sandbox 建一个
+`NetworkPolicy`（Pod 为 owner）：`policyTypes: [Egress]`，只放行 engine endpoints
+（facade/telemetry/proxy）的 CIDR+端口，其余 egress 默认拒绝。这样即使进程不是
+ac-init 启动的（例如 `kubectl exec`、探针或未来新增的入口），也无法绕过声明；
+声明的 allow/deny 仍由 forward proxy 判定。它要求集群 CNI 真正执行
+NetworkPolicy（k3s 已实测）；admission 的 `kubernetes_network_policy` 机制会披露
+这一依赖，RBAC 不允许创建时 sandbox 启动失败而不是静默降级。
+
 **Kubernetes**
 
 ```text
@@ -374,9 +384,14 @@ enforce 模式在 audit 的拦截基础上把连接改道到 daemon egress proxy
   seccomp profile 只在该 cap 下允许 `pidfd_getfd`）；trampoline 在 exec 前把
   `SYS_PTRACE/SYS_ADMIN/NET_ADMIN/NET_RAW/BPF/PERFMON/SYS_MODULE` 从 workload 的
   bounding set 去掉，workload 无法用这些能力绕过拦截或读取 init 内存；
-- enforce 需要 daemon 实际下发了 proxy credential（声明了网络策略且 proxy 可达）。
-  没有 credential 时（例如项目未声明 policy）init 记录告警并以 off 运行，不做不可用的
-  fail closed；admission/capability 的诚实报告在 PR6 接入；
+- enforce 是 **default-deny**：项目未声明 policy 时 daemon 生成合成的 deny-all 声明并只
+  自动放行 engine endpoints（facade/Jupyter/telemetry/proxy），因此不会因为“没写策略”
+  而退回无限制；admission 同样把这类 sandbox 报成 default deny + `seccomp_redirect`。
+- enforcing policy 已通过 proxy 下发（`MediatedByForwardProxy`）时，daemon 在 ready
+  握手里要求 init 广告 `egress-mediate` 与 `egress-hardening`；guest 内核不支持/旧 init/
+  未启用代理凭据导致 init 实际 off 时，**sandbox 启动失败**，不会接受一个无法强制的
+  sandbox。proxy 不可达属于另一条路径，由 `EGRESS_UNENFORCEABLE_POLICY=warn|refuse`
+  决定（strict 部署应设为 `refuse`）；
 - 已知限制：需要 `CAP_SYS_PTRACE` 的集群（受限 PodSecurity）不可用；`getpeername`
   会返回 proxy 地址；proxy-aware 客户端如果保留 proxy env 会直连 proxy（init 的 bypass
   路径），enforce 下我们已 unset，因此不会发生。

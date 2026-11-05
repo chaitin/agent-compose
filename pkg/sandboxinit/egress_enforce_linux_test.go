@@ -9,6 +9,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -270,6 +272,42 @@ func requireEnforceSupport(t *testing.T) {
 	duplicate, err := unix.PidfdGetfd(pidfd, int(source.Fd()), 0)
 	if err != nil {
 		t.Skipf("pidfd_getfd is unavailable: %v", err)
+	}
+	_ = unix.Close(duplicate)
+}
+
+// TestDuplicateTargetFDFromNonLeaderThread is the regression test for seccomp
+// notifications that report a pooled worker thread instead of the thread-group
+// leader: pidfd_open rejects a non-leader TID, so the init must resolve the
+// group ID before duplicating the workload socket.
+func TestDuplicateTargetFDFromNonLeaderThread(t *testing.T) {
+	requireEnforceSupport(t)
+	// Pin the test goroutine to the leader thread so the helper below is
+	// guaranteed to get a different TID.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	source, err := os.Open("/dev/null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = source.Close() }()
+
+	tids := make(chan int, 1)
+	release := make(chan struct{})
+	go func() {
+		runtime.LockOSThread()
+		tids <- unix.Gettid()
+		<-release
+	}()
+	tid := <-tids
+	defer close(release)
+	if tid == os.Getpid() {
+		t.Skip("the test goroutine unexpectedly became the thread-group leader")
+	}
+
+	duplicate, err := duplicateTargetFD(tid, int(source.Fd()))
+	if err != nil {
+		t.Fatalf("duplicateTargetFD(thread %d) error = %v", tid, err)
 	}
 	_ = unix.Close(duplicate)
 }
@@ -540,5 +578,33 @@ func TestInitEgressEnforceHardeningDeniesSyscalls(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Fatalf("helper output = %q, want %q", output, want)
 		}
+	}
+}
+
+func TestMarkedProcessesExistTracksDetachedProcesses(t *testing.T) {
+	marker := fmt.Sprintf("test-marker-%d", time.Now().UnixNano())
+	cmd := exec.Command("/bin/sleep", "30")
+	cmd.Env = append(os.Environ(), markerEnv+"="+marker)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	})
+	if !markedProcessesExist(marker) {
+		t.Fatalf("markedProcessesExist(%q) = false while the marked process runs", marker)
+	}
+	_ = cmd.Process.Kill()
+	_, _ = cmd.Process.Wait()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if !markedProcessesExist(marker) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("markedProcessesExist(%q) = true after the marked process exited", marker)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

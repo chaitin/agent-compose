@@ -450,7 +450,10 @@ func (r *microsandboxRuntime) waitForSandboxInit(ctx context.Context, session *S
 	defer ticker.Stop()
 	var lastErr error
 	for {
-		if _, err := client.VerifySandbox(waitCtx, session.Summary.ID); err == nil {
+		if info, err := client.VerifySandbox(waitCtx, session.Summary.ID); err == nil {
+			if err := requireSandboxInitEgressCapabilities(info, r.config, session.NetworkPolicy); err != nil {
+				return err
+			}
 			return nil
 		} else if errors.Is(err, sandboxinit.ErrSandboxMismatch) {
 			return err
@@ -572,10 +575,7 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 				r.closeSandboxHandle(sandbox)
 			}
 		}()
-		if err := sandbox.Stop(ctx); err != nil {
-			if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
-				return true, nil
-			}
+		if err := stopMicrosandbox(ctx, sandbox); err != nil {
 			r.trackLifecycleHandle(name, sandbox)
 			sandbox = nil
 			return false, err
@@ -592,13 +592,36 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 		return true, nil
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
-	if err := sandbox.Stop(ctx); err != nil {
-		if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
-			return true, nil
-		}
+	if err := stopMicrosandbox(ctx, sandbox); err != nil {
 		return false, err
 	}
 	return false, nil
+}
+
+// microsandboxGracefulStopTimeout bounds the graceful wait. The SDK's Stop
+// waits for the exact sandbox run to finish and its context does not force a
+// kill, so an init that does not exit leaves the daemon blocked indefinitely.
+// After this budget the VM is force-killed: a stop request has already decided
+// the runtime must not keep running.
+const microsandboxGracefulStopTimeout = 10 * time.Second
+
+func stopMicrosandbox(ctx context.Context, sandbox *microsandbox.Sandbox) error {
+	if sandbox == nil {
+		return nil
+	}
+	stopCtx, cancel := context.WithTimeout(ctx, microsandboxGracefulStopTimeout)
+	defer cancel()
+	err := sandbox.Stop(stopCtx, microsandbox.WithStopTimeout(microsandboxGracefulStopTimeout))
+	if err == nil || microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
+		return nil
+	}
+	slog.Warn("agent-compose microsandbox graceful stop did not finish; forcing termination", "error", err)
+	killCtx, killCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer killCancel()
+	if killErr := sandbox.Kill(killCtx); killErr != nil && !microsandbox.IsKind(killErr, microsandbox.ErrSandboxNotFound) {
+		return fmt.Errorf("microsandbox graceful stop failed (%v) and forced kill failed: %w", err, killErr)
+	}
+	return nil
 }
 
 func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbox, vmState VMState) error {
@@ -1293,8 +1316,14 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
 	env["JUPYTER_TOKEN"] = proxyState.Token
-	if egress, ok := sandboxInitEgressEnv(r.config); ok {
-		env[sandboxinit.EgressModeEnvVar] = egress
+	if _, explicit := env[sandboxinit.EgressModeEnvVar]; !explicit {
+		// The daemon carries its mode in the create-time environment. Fall
+		// back to this process's configuration only for an older daemon that
+		// did not send one, so a sandbox-host started with a different mode
+		// cannot silently override the daemon's admission report.
+		if egress, ok := sandboxInitEgressEnv(r.config); ok {
+			env[sandboxinit.EgressModeEnvVar] = egress
+		}
 	}
 	// The declared network policy decides egress. DNS rebind protection is a
 	// daemon-level setting that defaults to on; a deployment that turns it off

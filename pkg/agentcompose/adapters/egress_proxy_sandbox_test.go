@@ -477,3 +477,24 @@ func envValues(items []driverpkg.SandboxEnvVar) map[string]string {
 	}
 	return values
 }
+
+func TestDriverSandboxCarriesTheDaemonSandboxInitEgress(t *testing.T) {
+	for _, mode := range []string{"off", "audit", "enforce"} {
+		t.Run(mode, func(t *testing.T) {
+			adapter := driverRuntimeAdapter{sandboxInitEgress: mode}
+			driverSandbox, _, err := adapter.driverSandbox(context.Background(), networkPolicyTestSession())
+			if err != nil {
+				t.Fatalf("driverSandbox() error = %v", err)
+			}
+			found := ""
+			for _, item := range driverSandbox.RuntimeEnvItems {
+				if item.Name == "SANDBOX_INIT_EGRESS" {
+					found = item.Value
+				}
+			}
+			if found != mode {
+				t.Fatalf("RuntimeEnvItems SANDBOX_INIT_EGRESS = %q, want %q", found, mode)
+			}
+		})
+	}
+}
