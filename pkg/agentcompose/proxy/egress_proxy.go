@@ -107,6 +107,9 @@ const (
 	// credentials and the workloads of the platform hosting it, so the
 	// declaration cannot buy that path back.
 	EgressRuleBlockedPort = "engine.blocked-port"
+	// EgressRuleCredentialUnavailable denies an allowed L7 request whose
+	// injected credential could not be resolved from the daemon environment.
+	EgressRuleCredentialUnavailable = "engine.credential-unavailable"
 	// EgressRuleL7Unavailable denies an HTTPS allowance that declares methods or
 	// paths when the proxy cannot inspect the request. A declaration that asked
 	// for L7 enforcement is not silently downgraded to a destination-only
@@ -309,6 +312,17 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.deny(w, r, egressDenial{sandboxID: sandboxID, destination: destination, request: request, result: result})
 		return
 	}
+	injected, injectErr := expandEgressInjectedHeaders(result.InjectHeaders)
+	if injectErr != nil {
+		denial := egress.Result{
+			Action:     egress.Deny,
+			RuleID:     EgressRuleCredentialUnavailable,
+			Reason:     injectErr.Error(),
+			Generation: result.Generation,
+		}
+		p.deny(w, r, egressDenial{sandboxID: sandboxID, destination: destination, request: request, result: denial})
+		return
+	}
 	p.record(r.Context(), request, result, http.StatusOK)
 	if result.Audit {
 		// The decision is an observation, not an enforcement: the request is
@@ -327,7 +341,7 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if err := p.forward(w, r, destination, target); err != nil {
+	if err := p.forward(w, r, destination, target, injected); err != nil {
 		p.logger.WarnContext(r.Context(), "egress proxy forward failed",
 			"sandbox_id", sandboxID, "host", destination.host, "port", destination.port,
 			"address", target.String(), "rule", result.RuleID, "error", err)
@@ -566,11 +580,11 @@ func (p *EgressProxy) record(ctx context.Context, request egress.Request, result
 // the address the proxy resolved, so the sandbox cannot re-resolve the name to
 // a different address after the decision; an absolute-form HTTP request is
 // forwarded over a connection pinned the same way.
-func (p *EgressProxy) forward(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP) error {
+func (p *EgressProxy) forward(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string) error {
 	if r.Method == http.MethodConnect {
 		return p.tunnel(w, r, destination, target)
 	}
-	return p.forwardHTTP(w, r, destination, target)
+	return p.forwardHTTP(w, r, destination, target, injected)
 }
 
 func (p *EgressProxy) tunnel(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP) error {
@@ -619,12 +633,16 @@ func (p *EgressProxy) tunnel(w http.ResponseWriter, r *http.Request, destination
 // forwardHTTP relays one absolute-form request. The connection is pinned to the
 // resolved address, and the transport never consults the environment's proxy
 // settings, so a proxied request cannot loop back into this proxy.
-func (p *EgressProxy) forwardHTTP(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP) error {
+func (p *EgressProxy) forwardHTTP(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string) error {
 	outbound := r.Clone(r.Context())
 	outbound.RequestURI = ""
 	outbound.Header = r.Header.Clone()
 	outbound.Header.Del("Proxy-Authorization")
 	outbound.Header.Del("Proxy-Connection")
+	for name, value := range injected {
+		outbound.Header.Del(name)
+		outbound.Header.Set(name, value)
+	}
 	removeHopByHopHeaders(outbound.Header)
 	address := net.JoinHostPort(target.String(), fmt.Sprint(destination.port))
 	transport := &http.Transport{

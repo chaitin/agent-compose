@@ -268,13 +268,11 @@
       "optional": true
     },
     {
-
       "path": "agents.*.policy.network.allow[].binaries",
       "go_type": "sequence\u003cstring\u003e",
       "optional": true
     },
     {
-
       "path": "agents.*.policy.network.allow[].enforcement",
       "go_type": "string",
       "optional": true
@@ -282,6 +280,11 @@
     {
       "path": "agents.*.policy.network.allow[].host",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "agents.*.policy.network.allow[].inject_headers",
+      "go_type": "mapping\u003cstring,string\u003e",
       "optional": true
     },
     {
@@ -365,13 +368,11 @@
       "optional": true
     },
     {
-
       "path": "agents.*.sandbox.network.allow[].binaries",
       "go_type": "sequence\u003cstring\u003e",
       "optional": true
     },
     {
-
       "path": "agents.*.sandbox.network.allow[].enforcement",
       "go_type": "string",
       "optional": true
@@ -379,6 +380,11 @@
     {
       "path": "agents.*.sandbox.network.allow[].host",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "agents.*.sandbox.network.allow[].inject_headers",
+      "go_type": "mapping\u003cstring,string\u003e",
       "optional": true
     },
     {
@@ -787,13 +793,11 @@
       "optional": true
     },
     {
-
       "path": "policies.*.network.allow[].binaries",
       "go_type": "sequence\u003cstring\u003e",
       "optional": true
     },
     {
-
       "path": "policies.*.network.allow[].enforcement",
       "go_type": "string",
       "optional": true
@@ -801,6 +805,11 @@
     {
       "path": "policies.*.network.allow[].host",
       "go_type": "string",
+      "optional": true
+    },
+    {
+      "path": "policies.*.network.allow[].inject_headers",
+      "go_type": "mapping\u003cstring,string\u003e",
       "optional": true
     },
     {

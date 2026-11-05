@@ -254,6 +254,10 @@ func normalizeSandboxNetworkEndpoints(field string, entries []egress.AllowEntry)
 		if err != nil {
 			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
 		}
+		injectHeaders, err := egress.NormalizeInjectHeaders(entry.InjectHeaders)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
+		}
 		parsedEnforcement, err := egress.ParseEnforcement(string(entry.Enforcement))
 		if err != nil {
 			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
@@ -264,12 +268,13 @@ func normalizeSandboxNetworkEndpoints(field string, entries []egress.AllowEntry)
 		}
 		seen[key] = struct{}{}
 		normalized = append(normalized, egress.AllowEntry{
-			Host:       endpoint.Host,
-			Port:       endpoint.Port,
-			Protocol:   endpoint.Protocol,
-			AllowedIPs: allowed,
-			Binaries:   binaries,
-			L7:         l7,
+			Host:          endpoint.Host,
+			Port:          endpoint.Port,
+			Protocol:      endpoint.Protocol,
+			AllowedIPs:    allowed,
+			Binaries:      binaries,
+			L7:            l7,
+			InjectHeaders: injectHeaders,
 			// The default stays the zero value so an unchanged declaration
 			// produces the same boundary policy it did before this field
 			// existed; the decision model normalizes it to enforce.

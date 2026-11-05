@@ -41,6 +41,9 @@ type DeclaredAllowance struct {
 	// audited.
 
 	Enforcement Enforcement
+	// InjectedHeaders names the headers the proxy will add; values are never
+	// reported.
+	InjectedHeaders []string
 	// Sources names the declaration layers that contributed this allowance.
 	// The values are "daemon" and "agent"; both are present when the effective
 	// entry came from both layers. It is empty when the caller did not annotate
@@ -112,9 +115,10 @@ func ReportNetworkPolicy(declaration *NetworkDeclaration, engine []EngineEndpoin
 
 			Binaries: append([]string(nil), entry.Binaries...),
 
-			Methods:     append([]string(nil), entry.L7.Methods...),
-			Paths:       append([]string(nil), entry.L7.Paths...),
-			Enforcement: enforcement,
+			Methods:         append([]string(nil), entry.L7.Methods...),
+			Paths:           append([]string(nil), entry.L7.Paths...),
+			Enforcement:     enforcement,
+			InjectedHeaders: InjectedHeaderNames(entry.InjectHeaders),
 		})
 	}
 	for _, entry := range declaration.Deny {

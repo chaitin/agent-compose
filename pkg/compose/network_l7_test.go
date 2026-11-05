@@ -149,3 +149,49 @@ func TestCloneNormalizedNetworkAllowCopiesL7Slices(t *testing.T) {
 		t.Fatalf("clone shares the L7 backing arrays with the source: %+v", values[0])
 	}
 }
+
+func TestNormalizeSandboxNetworkSpecInjectedHeadersRequireL7AndCarryTemplates(t *testing.T) {
+	normalized, err := NormalizeSandboxNetworkSpec("policy.network", &SandboxNetworkSpec{
+		Default: SandboxNetworkDefaultDenyAll,
+		Allow: []SandboxNetworkAllowSpec{{
+			Host: "api.example.com", Port: 443,
+			Methods: []string{"GET"},
+			InjectHeaders: map[string]string{
+				"Authorization": "Bearer ${AGENT_COMPOSE_TEST_TOKEN}",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NormalizeSandboxNetworkSpec() error = %v", err)
+	}
+	entry := normalized.Allow[0]
+	if entry.InjectHeaders["Authorization"] != "Bearer ${AGENT_COMPOSE_TEST_TOKEN}" {
+		t.Fatalf("inject headers = %+v, want the env template", entry.InjectHeaders)
+	}
+	declaration, err := normalized.EgressDeclaration()
+	if err != nil {
+		t.Fatalf("EgressDeclaration() error = %v", err)
+	}
+	if declaration.Allow[0].InjectHeaders["Authorization"] != "Bearer ${AGENT_COMPOSE_TEST_TOKEN}" {
+		t.Fatalf("compiled inject headers = %+v, want the env template", declaration.Allow[0].InjectHeaders)
+	}
+	if _, err := NormalizeSandboxNetworkSpec("policy.network", &SandboxNetworkSpec{
+		Default: SandboxNetworkDefaultDenyAll,
+		Allow: []SandboxNetworkAllowSpec{{
+			Host:          "api.example.com",
+			Port:          443,
+			InjectHeaders: map[string]string{"Authorization": "Bearer ${TOKEN}"},
+		}},
+	}); err == nil {
+		t.Fatal("NormalizeSandboxNetworkSpec() accepted injection without an L7 constraint")
+	}
+	if _, err := NormalizeSandboxNetworkSpec("policy.network", &SandboxNetworkSpec{
+		Default: SandboxNetworkDefaultDenyAll,
+		Allow: []SandboxNetworkAllowSpec{{
+			Host: "api.example.com", Port: 443, Methods: []string{"GET"},
+			InjectHeaders: map[string]string{"Authorization": "literal-secret"},
+		}},
+	}); err == nil {
+		t.Fatal("NormalizeSandboxNetworkSpec() accepted a literal secret")
+	}
+}

@@ -116,6 +116,9 @@ type NormalizedSandboxNetworkAllowSpec struct {
 	// so a declaration that does not use L7 keeps its existing hash.
 	Methods []string `yaml:"methods,omitempty" json:"methods,omitempty"`
 	Paths   []string `yaml:"paths,omitempty" json:"paths,omitempty"`
+	// InjectHeaders are validated header templates; values reference daemon
+	// environment variables and are resolved only by the proxy.
+	InjectHeaders map[string]string `yaml:"inject_headers,omitempty" json:"inject_headers,omitempty"`
 	// Enforcement is the normalized per-entry enforcement. It is empty when the
 	// declaration omitted it, which keeps an existing spec byte-identical and
 	// means the global behavior (enforce).

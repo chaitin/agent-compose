@@ -607,6 +607,13 @@ tasks:
       AGENT_COMPOSE_BUILD_VERSION: '{{.VERSION}}'
     cmds:
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} ./scripts/build-agent-compose-binary.sh --profile linux-full --goarch "$AGENT_COMPOSE_BUILD_TARGET_ARCH" --output ./build/agent-compose --version "$AGENT_COMPOSE_BUILD_VERSION"
+      - CGO_ENABLED=0 GOOS=linux GOARCH={{.GOARCH}} go build -trimpath -ldflags='-s -w' -o build/ac-supervisor ./cmd/ac-supervisor
+
+  build:ac-supervisor:
+    desc: Build the Linux per-sandbox egress supervisor binary
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - CGO_ENABLED=0 GOOS=linux GOARCH={{.GOARCH}} go build -trimpath -ldflags='-s -w' -o build/ac-supervisor ./cmd/ac-supervisor
 
   build:ac-init:
     desc: Build the Linux sandbox init binary (stage-1 sandbox PID 1)

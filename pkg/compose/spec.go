@@ -172,6 +172,11 @@ type SandboxNetworkAllowSpec struct {
 	// is an exact path or a prefix ending in "*" (for example "/v1/*"). Queries
 	// are not matched. Omitted permits every path.
 	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
+	// InjectHeaders adds header templates to allowed HTTP requests. Values must
+	// reference environment variables with ${NAME}; the daemon resolves them
+	// and the guest never sees the value. Injection requires methods or paths
+	// so the proxy can inspect the request.
+	InjectHeaders map[string]string `yaml:"inject_headers,omitempty" json:"inject_headers,omitempty"`
 	// Enforcement selects how a matched allowance is applied. "enforce" is the
 	// default and the behavior an omitted field keeps; "audit" records the
 	// match and allows the request without enforcing it.
@@ -715,14 +720,15 @@ func validateSandboxNetworkAllowList(node *yaml.Node, path string) error {
 	for index, item := range node.Content {
 		itemPath := fmt.Sprintf("%s[%d]", path, index)
 		if err := validateMapping(item, itemPath, map[string]nodeValidator{
-			"host":        validateScalar,
-			"port":        validateInt,
-			"ports":       validateIntSequence,
-			"allowed_ips": validateStringList,
-			"binaries":    validateStringList,
-			"methods":     validateStringList,
-			"paths":       validateStringList,
-			"enforcement": validateScalar,
+			"host":           validateScalar,
+			"port":           validateInt,
+			"ports":          validateIntSequence,
+			"allowed_ips":    validateStringList,
+			"binaries":       validateStringList,
+			"methods":        validateStringList,
+			"paths":          validateStringList,
+			"inject_headers": validateStringMap,
+			"enforcement":    validateScalar,
 		}); err != nil {
 			return err
 		}

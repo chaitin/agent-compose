@@ -27,6 +27,10 @@ type Result struct {
 	Audit bool
 	// Generation is the policy generation this result was evaluated against.
 	Generation Generation
+	// InjectHeaders are the validated header templates of the matched allow
+	// rule. The proxy resolves them at request time; reports and audit lines
+	// expose names only.
+	InjectHeaders map[string]string
 	// Enforcement is the enforcement mode of the matched rule. An audit-only
 	// allow carries EnforcementAudit so a consumer can report that the request
 	// was allowed (and would have been refused under enforce); an unmatched
@@ -113,13 +117,14 @@ func Decide(policy Policy, request Request) Result {
 			target = request.Name
 		}
 		result := Result{
-			Action:      rule.Action,
-			RuleID:      rule.ID,
-			Target:      target,
-			Reason:      rule.Reason,
-			Generation:  policy.generation,
-			Enforcement: rule.Enforcement,
-			L7Deferred:  !rule.L7.Empty() && request.DeferL7,
+			Action:        rule.Action,
+			RuleID:        rule.ID,
+			Target:        target,
+			Reason:        rule.Reason,
+			Generation:    policy.generation,
+			Enforcement:   rule.Enforcement,
+			L7Deferred:    !rule.L7.Empty() && request.DeferL7,
+			InjectHeaders: cloneInjectHeaders(rule.InjectHeaders),
 		}
 		if rule.Action == Allow && normalizeEnforcement(rule.Enforcement) == EnforcementAudit {
 			// Audit is an observation mode for one declared allowance: the

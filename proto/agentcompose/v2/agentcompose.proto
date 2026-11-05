@@ -558,6 +558,9 @@ message DeclaredNetworkAllowance {
   // Optional L7 constraint echoed in the admission report.
   repeated string methods = 7;
   repeated string paths = 8;
+  // Header names the proxy injects into allowed requests; values are never
+  // exposed in the report.
+  repeated string injected_headers = 9;
 }
 
 // DeclaredNetworkDenial is one declared refusal as it appears in a report.
@@ -1111,6 +1114,9 @@ message SandboxNetworkAllowSpec {
   // Optional. Request paths this allowance permits, exact or prefix ending in
   // "*". Empty keeps the destination-only behavior.
   repeated string paths = 8;
+  // Optional. Header templates the proxy injects. Values reference daemon
+  // environment variables with ${NAME}; the guest never sees the value.
+  map<string, string> inject_headers = 9;
 }
 
 // SandboxNetworkDenySpec is one declared refusal. It has no allowed_ips: a

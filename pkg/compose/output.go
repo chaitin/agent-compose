@@ -575,6 +575,7 @@ func cloneNormalizedNetworkAllow(values []NormalizedSandboxNetworkAllowSpec) []N
 		value.Binaries = append([]string(nil), value.Binaries...)
 		value.Methods = append([]string(nil), value.Methods...)
 		value.Paths = append([]string(nil), value.Paths...)
+		value.InjectHeaders = cloneInjectHeaders(value.InjectHeaders)
 		cloned[i] = value
 	}
 	return cloned

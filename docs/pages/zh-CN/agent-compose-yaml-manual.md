@@ -1135,6 +1135,7 @@ Daemon 还会记录每个 runtime 创建时所依据的出网策略。启动 san
 
 | `methods` | list | 空 | 该放行项允许的 HTTP 方法（可选），例如 `[GET, HEAD]`；最多 16 个。省略且 `paths` 也为空时保持仅按目标放行的原有行为。方法必须是 RFC 9110 token，并会规范化为大写。 |
 | `paths` | list | 空 | 该放行项允许的请求路径（可选）。每项是精确路径，或以 `*` 结尾的前缀（`/v1/*`）；不匹配查询串。最多 64 项。省略表示允许所有路径。 |
+| `inject_headers` | map | 空 | 代理为放行的 L7 请求注入的 header 模板（可选）。值必须用 `${NAME}` 引用 daemon 环境变量；guest 永远看不到解析后的值。注入要求同时声明 `methods` 或 `paths`，使请求可被检查。禁止 `Host`、`Content-Length`、`Transfer-Encoding`、连接/代理类 header 和 `X-Agent-Compose-*`。 |
 
 一旦声明 `methods` 或 `paths`，该放行项就是 **L7** 放行项。明文 HTTP 由正向代理直接检查；HTTPS 需要可选的 TLS 终止：设置 `EGRESS_L7_TLS_MITM=true`，为 daemon 提供 CA（`EGRESS_L7_CA_CERT_FILE`/`EGRESS_L7_CA_KEY_FILE` 或内联 PEM 变量），并把该 CA 安装到 guest 镜像或挂载文件中。配置 `EGRESS_L7_CA_BUNDLE_GUEST_PATH` 后，引擎会注入 `SSL_CERT_FILE`、`CURL_CA_BUNDLE`、`REQUESTS_CA_BUNDLE`、`NODE_EXTRA_CA_CERTS` 和 `GIT_SSL_CAINFO`，但不会自行安装文件。未启用 TLS 终止时，带 L7 约束的 HTTPS 放行项会**失败关闭**（规则 `engine.l7-inspection-unavailable`），不会静默退化成仅按目标放行。没有 `methods`/`paths` 的放行项保持透明隧道行为。终止的 TLS 服务名必须与 CONNECT 目标一致；未知或不匹配的 SNI 会使握手失败。
 

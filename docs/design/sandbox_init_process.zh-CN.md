@@ -466,6 +466,17 @@ daemon），engine endpoints 直连。`SANDBOX_SUPERVISOR_UID/GID` 可让 superv
 supervisor 进程以 uid 1000 运行。限制：仅 Docker；Jupyter 与该模式不兼容；K8s/Micro 仍用
 CNI/SDK 网络策略。
 
+### 7.8.0.1 统一实验 profile
+
+`SANDBOX_EGRESS_PROFILE=strict` 是一个统一开关：隐含 `SANDBOX_INIT_ENABLED=true`、
+`SANDBOX_INIT_EGRESS=enforce` 和 Docker `SANDBOX_SUPERVISOR=enforce`。因此：
+- Docker 使用独立 host supervisor + `NetworkMode=none`；
+- K8s 使用每 sandbox default-deny egress NetworkPolicy；
+- Microsandbox 使用 SDK network policy；
+三者共享同一个 egress 声明/决策语义（daemon forward proxy 做策略判定），外层边界按驱动
+采用各自的结构性默认拒绝。Jupyter 与 Docker no-NIC 不兼容，profile 开启时 Docker Jupyter
+sandbox 启动失败；`SANDBOX_SUPERVISOR=off` 与 strict 冲突。默认 off，保持现有逐开关行为。
+
 ### 7.8.1 非 root workload（opt-in）
 
 `SANDBOX_INIT_WORKLOAD_UID/GID`（必须同时设置，非 0）让 init 在每次 exec 的

@@ -236,3 +236,27 @@ func TestSandboxInitWorkloadIdentityReadsAndValidates(t *testing.T) {
 		t.Fatal("loadSandboxInitConfig() accepted an out-of-range uid")
 	}
 }
+
+func TestSandboxEgressStrictProfileUnifiesInitEgressAndSupervisor(t *testing.T) {
+	t.Setenv("SANDBOX_EGRESS_PROFILE", "strict")
+	t.Setenv("SANDBOX_INIT_ENABLED", "")
+	t.Setenv("SANDBOX_INIT_EGRESS", "")
+	t.Setenv("SANDBOX_SUPERVISOR", "")
+	config, err := loadSandboxInitConfig()
+	if err != nil {
+		t.Fatalf("loadSandboxInitConfig() error = %v", err)
+	}
+	if !config.Enabled || config.Egress != sandboxinit.EgressModeEnforce || !config.Supervisor {
+		t.Fatalf("strict profile = enabled=%v egress=%q supervisor=%v, want true/enforce/true", config.Enabled, config.Egress, config.Supervisor)
+	}
+
+	t.Setenv("SANDBOX_INIT_ENABLED", "false")
+	if _, err := loadSandboxInitConfig(); err == nil {
+		t.Fatal("strict profile accepted SANDBOX_INIT_ENABLED=false")
+	}
+	t.Setenv("SANDBOX_INIT_ENABLED", "")
+	t.Setenv("SANDBOX_SUPERVISOR", "off")
+	if _, err := loadSandboxInitConfig(); err == nil {
+		t.Fatal("strict profile accepted SANDBOX_SUPERVISOR=off")
+	}
+}

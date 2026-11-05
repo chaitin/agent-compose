@@ -19,13 +19,14 @@ func NetworkPolicyReportsToProto(reports []driverpkg.AgentNetworkPolicyReport) [
 		allow := make([]*agentcomposev2.DeclaredNetworkAllowance, 0, len(report.Allow))
 		for _, entry := range report.Allow {
 			allow = append(allow, &agentcomposev2.DeclaredNetworkAllowance{
-				Endpoint:    entry.Endpoint,
-				AllowedIps:  append([]string(nil), entry.AllowedIPs...),
-				Sources:     append([]string(nil), entry.Sources...),
-				Binaries:    append([]string(nil), entry.Binaries...),
-				Enforcement: string(entry.Enforcement),
-				Methods:     append([]string(nil), entry.Methods...),
-				Paths:       append([]string(nil), entry.Paths...),
+				Endpoint:        entry.Endpoint,
+				AllowedIps:      append([]string(nil), entry.AllowedIPs...),
+				Sources:         append([]string(nil), entry.Sources...),
+				Binaries:        append([]string(nil), entry.Binaries...),
+				Enforcement:     string(entry.Enforcement),
+				Methods:         append([]string(nil), entry.Methods...),
+				Paths:           append([]string(nil), entry.Paths...),
+				InjectedHeaders: append([]string(nil), entry.InjectedHeaders...),
 			})
 		}
 		deny := make([]*agentcomposev2.DeclaredNetworkDenial, 0, len(report.Deny))

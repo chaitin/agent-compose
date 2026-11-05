@@ -78,6 +78,9 @@ type Rule struct {
 	// constraint matches a request only when the engine observed its method and
 	// path, or when the caller deferred the check to a payload it will inspect.
 	L7 L7Constraint
+	// InjectHeaders are validated header templates the proxy resolves and adds
+	// to an allowed L7 request.
+	InjectHeaders map[string]string
 	// Enforcement selects how a matched allow rule is applied. It is enforced
 	// by default; audit records the match and allows the request.
 	Enforcement Enforcement
@@ -105,6 +108,7 @@ func NewPolicy(defaultAction Action, rules ...Rule) Policy {
 		copied[i].AllowedIPs = append([]string(nil), rule.AllowedIPs...)
 		copied[i].Binaries = append([]string(nil), rule.Binaries...)
 		copied[i].L7 = canonicalL7Constraint(rule.L7)
+		copied[i].InjectHeaders = cloneInjectHeaders(rule.InjectHeaders)
 		copied[i].Enforcement = normalizeEnforcement(rule.Enforcement)
 	}
 	policy := Policy{defaultAction: normalizeAction(defaultAction), rules: copied}
@@ -140,6 +144,7 @@ func (p Policy) Rules() []Rule {
 		copied[i].AllowedIPs = append([]string(nil), rule.AllowedIPs...)
 		copied[i].Binaries = append([]string(nil), rule.Binaries...)
 		copied[i].L7 = rule.L7.Clone()
+		copied[i].InjectHeaders = cloneInjectHeaders(rule.InjectHeaders)
 	}
 	return copied
 }
@@ -303,6 +308,14 @@ func (p Policy) contentGeneration() Generation {
 			}
 			writeField(h, "\x00")
 		}
+		if len(rule.InjectHeaders) > 0 {
+			writeField(h, "inject_headers")
+			for _, name := range InjectedHeaderNames(rule.InjectHeaders) {
+				writeField(h, name)
+				writeField(h, rule.InjectHeaders[name])
+			}
+			writeField(h, "\x00")
+		}
 		if !rule.L7.Empty() {
 			writeField(h, "l7")
 			for _, method := range rule.L7.Methods {
@@ -324,4 +337,15 @@ func writeField(h hash.Hash64, value string) {
 	// hash.Hash never fails a write; the error is always nil.
 	_, _ = h.Write(length[:])
 	_, _ = h.Write([]byte(value))
+}
+
+func cloneInjectHeaders(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for name, value := range values {
+		cloned[name] = value
+	}
+	return cloned
 }

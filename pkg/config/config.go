@@ -161,6 +161,10 @@ type Config struct {
 	// them; "enforce" is reserved for mediated egress and is rejected until it
 	// exists.
 	SandboxInitEgress string
+	// SandboxEgressProfile selects the unified experimental egress profile.
+	// "strict" turns on init, enforce, and the Docker supervisor so K8s CNI,
+	// Micro SDK, and Docker no-NIC share one policy boundary.
+	SandboxEgressProfile string
 	// SandboxInitEgressAuditLog makes the daemon inject an init-side audit
 	// JSONL path under GuestLogRoot. It is opt-in because Docker and Kubernetes
 	// already capture init stderr.
@@ -482,6 +486,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		SandboxInitBinary:           sources.SandboxInit.Binary,
 		SandboxInitSocketDir:        sources.SandboxInit.SocketDir,
 		SandboxInitEgress:           string(sources.SandboxInit.Egress),
+		SandboxEgressProfile:        string(sources.SandboxInit.EgressProfile),
 		SandboxInitEgressAuditLog:   sources.SandboxInit.EgressAuditLog,
 		SandboxSupervisorEnabled:    sources.SandboxInit.Supervisor,
 		SandboxSupervisorBinary:     sources.SandboxInit.SupervisorBinary,
@@ -941,10 +946,11 @@ type imageEnvConfig struct {
 
 // sandboxInitConfig holds the experimental sandbox init switch.
 type sandboxInitConfig struct {
-	Enabled   bool
-	Binary    string
-	SocketDir string
-	Egress    sandboxinit.EgressMode
+	Enabled       bool
+	Binary        string
+	SocketDir     string
+	Egress        sandboxinit.EgressMode
+	EgressProfile string
 	// EgressAuditLog makes the daemon inject the guest path of an init-side
 	// JSONL audit sink. It is opt-in because Docker and Kubernetes already
 	// capture init stderr; the file is an additional, queryable copy.
@@ -986,11 +992,32 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 	if binary := strings.TrimSpace(os.Getenv("SANDBOX_INIT_BINARY")); binary != "" {
 		config.Binary = binary
 	}
+	profile := strings.ToLower(strings.TrimSpace(os.Getenv("SANDBOX_EGRESS_PROFILE")))
+	switch profile {
+	case "", "off":
+		config.EgressProfile = ""
+	case "strict":
+		if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_ENABLED")); raw != "" {
+			if enabled, err := strconv.ParseBool(raw); err == nil && !enabled {
+				return sandboxInitConfig{}, fmt.Errorf("SANDBOX_EGRESS_PROFILE=strict requires SANDBOX_INIT_ENABLED=true")
+			}
+		}
+		config.Enabled = true
+		config.EgressProfile = "strict"
+	default:
+		return sandboxInitConfig{}, fmt.Errorf("SANDBOX_EGRESS_PROFILE must be off or strict, got %q", profile)
+	}
 	egressMode, err := sandboxinit.ParseEgressMode(os.Getenv(sandboxinit.EgressModeEnvVar))
 	if err != nil {
 		return sandboxInitConfig{}, err
 	}
 	config.Egress = egressMode
+	if config.EgressProfile == "strict" {
+		if rawEgress := strings.TrimSpace(os.Getenv(sandboxinit.EgressModeEnvVar)); rawEgress != "" && egressMode != sandboxinit.EgressModeEnforce {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_EGRESS_PROFILE=strict requires %s=enforce, got %q", sandboxinit.EgressModeEnvVar, rawEgress)
+		}
+		config.Egress = sandboxinit.EgressModeEnforce
+	}
 	if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_EGRESS_AUDIT_LOG")); raw != "" {
 		enabled, err := strconv.ParseBool(raw)
 		if err != nil {
@@ -1047,7 +1074,7 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 		}
 	}
 	config.SocketDir = socketDir
-	if err := loadSandboxSupervisorConfig(&config); err != nil {
+	if err := loadSandboxSupervisorConfig(&config, config.EgressProfile == "strict"); err != nil {
 		return sandboxInitConfig{}, err
 	}
 	return config, nil
@@ -1058,7 +1085,7 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 // workload with no external interface and no relay is not a sandbox, it is a
 // broken one, so a partial configuration is rejected at startup instead of
 // discovered when the first connection fails.
-func loadSandboxSupervisorConfig(config *sandboxInitConfig) error {
+func loadSandboxSupervisorConfig(config *sandboxInitConfig, strictProfile bool) error {
 	raw := strings.ToLower(strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR")))
 	switch raw {
 	case "", "off", "false", "0":
@@ -1067,6 +1094,12 @@ func loadSandboxSupervisorConfig(config *sandboxInitConfig) error {
 		config.Supervisor = true
 	default:
 		return fmt.Errorf("SANDBOX_SUPERVISOR must be off or enforce, got %q", raw)
+	}
+	if strictProfile {
+		if raw == "off" || raw == "false" || raw == "0" {
+			return fmt.Errorf("SANDBOX_EGRESS_PROFILE=strict conflicts with SANDBOX_SUPERVISOR=%s", raw)
+		}
+		config.Supervisor = true
 	}
 	config.SupervisorBinary = strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR_BINARY"))
 	if raw := strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR_UID")); raw != "" {

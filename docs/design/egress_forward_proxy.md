@@ -315,6 +315,13 @@ for inspection cannot be satisfied by forwarding it blindly.
 - **Audit** records `layer` (`l4`/`l7`), `method`, `path`, `status`,
   `enforcement`, `rule_id`, `action`, and `reason` per decision. An `audit`
   allowance allows the request and records the reason it would have been denied.
+- **HTTP/2** is negotiated by ALPN for intercepted TLS. Intercepted h2 streams
+  are handled by an `http2.Server`; the upstream transport enables h2 as well.
+- **Credential injection** is declared as `inject_headers` with `${ENV}`
+  templates. The proxy resolves them from its own environment at request time,
+  overwrites any guest-supplied value, and fails closed under
+  `engine.credential-unavailable` when a variable is missing. Reports and audit
+  lines carry header names only, never values.
 
 Not implemented in this slice: L7 fields are not yet on the protobuf API surface
 (a client must deliver them through the compose file/CLI path); upstream

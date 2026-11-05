@@ -23,6 +23,10 @@ type AllowEntry struct {
 	// L7 optionally narrows this allowance to HTTP methods and paths. An empty
 	// constraint keeps the destination-only behavior.
 	L7 L7Constraint
+	// InjectHeaders are header templates the proxy adds to allowed HTTP
+	// requests. Values must reference environment variables; the guest never
+	// sees the resolved values. Injection requires an L7 constraint.
+	InjectHeaders map[string]string
 	// Enforcement selects how a matched allowance is applied: enforce decides
 	// normally, audit records the match and allows the request. The zero value
 	// means the global behavior, which is enforce.
@@ -91,8 +95,16 @@ func (d NetworkDeclaration) Validate() error {
 		if _, err := NormalizeBinaries(entry.Binaries); err != nil {
 			return fmt.Errorf("allow[%d]: %w", i, err)
 		}
-		if _, err := NormalizeL7Constraint(entry.L7.Methods, entry.L7.Paths); err != nil {
+		l7, err := NormalizeL7Constraint(entry.L7.Methods, entry.L7.Paths)
+		if err != nil {
 			return fmt.Errorf("allow[%d]: %w", i, err)
+		}
+		injected, err := NormalizeInjectHeaders(entry.InjectHeaders)
+		if err != nil {
+			return fmt.Errorf("allow[%d]: %w", i, err)
+		}
+		if len(injected) > 0 && l7.Empty() {
+			return fmt.Errorf("allow[%d]: injected headers require methods or paths, because an opaque L4 tunnel cannot carry them", i)
 		}
 		if _, err := ParseEnforcement(string(entry.Enforcement)); err != nil {
 			return fmt.Errorf("allow[%d]: %w", i, err)
@@ -175,19 +187,27 @@ func CompileNetworkPolicy(declaration NetworkDeclaration, engine []EngineEndpoin
 		if err != nil {
 			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
 		}
+		injected, err := NormalizeInjectHeaders(entry.InjectHeaders)
+		if err != nil {
+			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		if len(injected) > 0 && l7.Empty() {
+			return Policy{}, fmt.Errorf("allow entry %q port %d: injected headers require methods or paths", entry.Host, entry.Port)
+		}
 		enforcement, err := ParseEnforcement(string(entry.Enforcement))
 		if err != nil {
 			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
 		}
 		rules = append(rules, Rule{
-			ID:          "network.allow",
-			Match:       MatchEndpoint,
-			Names:       []string{FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol)},
-			Action:      Allow,
-			AllowedIPs:  allowed,
-			Binaries:    binaries,
-			L7:          l7,
-			Enforcement: enforcement,
+			ID:            "network.allow",
+			Match:         MatchEndpoint,
+			Names:         []string{FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol)},
+			Action:        Allow,
+			AllowedIPs:    allowed,
+			Binaries:      binaries,
+			L7:            l7,
+			InjectHeaders: injected,
+			Enforcement:   enforcement,
 		})
 	}
 	return NewPolicy(declaration.Default, rules...), nil

@@ -83,13 +83,14 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() (egress.NetworkDeclar
 			declaredEnforcement = egress.EnforcementAudit
 		}
 		declaration.Allow = append(declaration.Allow, egress.AllowEntry{
-			Host:        entry.Host,
-			Port:        entry.Port,
-			Protocol:    egress.ProtocolAny,
-			AllowedIPs:  append([]string(nil), entry.AllowedIPs...),
-			Binaries:    append([]string(nil), entry.Binaries...),
-			L7:          l7,
-			Enforcement: declaredEnforcement,
+			Host:          entry.Host,
+			Port:          entry.Port,
+			Protocol:      egress.ProtocolAny,
+			AllowedIPs:    append([]string(nil), entry.AllowedIPs...),
+			Binaries:      append([]string(nil), entry.Binaries...),
+			L7:            l7,
+			InjectHeaders: cloneInjectHeaders(entry.InjectHeaders),
+			Enforcement:   declaredEnforcement,
 		})
 	}
 	for _, entry := range n.Deny {
@@ -229,6 +230,13 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 			// operator which entry and field to fix.
 			return nil, &ValidationError{Path: entryPath, Message: err.Error()}
 		}
+		injectHeaders, err := egress.NormalizeInjectHeaders(value.InjectHeaders)
+		if err != nil {
+			return nil, &ValidationError{Path: entryPath + ".inject_headers", Message: err.Error()}
+		}
+		if len(injectHeaders) > 0 && l7.Empty() {
+			return nil, &ValidationError{Path: entryPath + ".inject_headers", Message: "injected headers require methods or paths"}
+		}
 		enforcement, err := egress.ParseEnforcement(value.Enforcement)
 		if err != nil {
 			return nil, &ValidationError{Path: entryPath + ".enforcement", Message: err.Error()}
@@ -254,13 +262,14 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 			}
 			seen[dedupeKey] = struct{}{}
 			normalized = append(normalized, NormalizedSandboxNetworkAllowSpec{
-				Host:        host,
-				Port:        port,
-				AllowedIPs:  append([]string(nil), allowedIPs...),
-				Binaries:    append([]string(nil), binaries...),
-				Methods:     append([]string(nil), l7.Methods...),
-				Paths:       append([]string(nil), l7.Paths...),
-				Enforcement: normalizedEnforcement,
+				Host:          host,
+				Port:          port,
+				AllowedIPs:    append([]string(nil), allowedIPs...),
+				Binaries:      append([]string(nil), binaries...),
+				Methods:       append([]string(nil), l7.Methods...),
+				Paths:         append([]string(nil), l7.Paths...),
+				InjectHeaders: cloneInjectHeaders(injectHeaders),
+				Enforcement:   normalizedEnforcement,
 			})
 		}
 		if len(normalized) > maxSandboxNetworkAllowEntries {
@@ -313,4 +322,15 @@ func normalizeSandboxNetworkPorts(path string, port int, ports []int, max int) (
 		normalized = append(normalized, candidate)
 	}
 	return normalized, nil
+}
+
+func cloneInjectHeaders(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for name, value := range values {
+		cloned[name] = value
+	}
+	return cloned
 }

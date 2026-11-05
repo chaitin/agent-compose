@@ -20,6 +20,9 @@ type AuditRecord struct {
 	Path   string `json:"path,omitempty"`
 	// Status is the response status the enforcing boundary answered with.
 	Status int `json:"status,omitempty"`
+	// InjectedHeaders names the headers the proxy added to an allowed L7
+	// request. Values are never recorded.
+	InjectedHeaders []string `json:"injected_headers,omitempty"`
 	// Enforcement is the matched rule's mode ("enforce" or "audit"). An audit
 	// line whose action is allow and whose enforcement is audit reports a
 	// request the declared constraint would have refused.
@@ -42,25 +45,26 @@ type AuditRecord struct {
 // boundary that owns the clock so the record and its timestamp stay testable.
 func AuditRecordFrom(record Record, at time.Time) AuditRecord {
 	return AuditRecord{
-		Time:        at.UTC(),
-		SandboxID:   record.Request.Consumer,
-		Kind:        string(record.Request.Kind),
-		Destination: record.Request.Name,
-		ResolvedIPs: append([]string(nil), record.Request.ResolvedIPs...),
-		Layer:       string(record.Request.Layer),
-		Method:      record.Request.Method,
-		Path:        record.Request.Path,
-		Status:      record.Status,
-		Enforcement: string(record.Result.Enforcement),
-		Action:      string(record.Result.Action),
-		RuleID:      record.Result.RuleID,
-		Target:      record.Result.Target,
-		Reason:      record.Result.Reason,
-		Generation:  uint64(record.Result.Generation),
-		SessionID:   record.Request.SessionID,
-		Marker:      record.Request.Marker,
-		ProcessID:   record.Request.ProcessID,
-		Binary:      record.Request.Binary,
-		Audit:       record.Result.Audit,
+		Time:            at.UTC(),
+		SandboxID:       record.Request.Consumer,
+		Kind:            string(record.Request.Kind),
+		Destination:     record.Request.Name,
+		ResolvedIPs:     append([]string(nil), record.Request.ResolvedIPs...),
+		Layer:           string(record.Request.Layer),
+		Method:          record.Request.Method,
+		Path:            record.Request.Path,
+		Status:          record.Status,
+		Enforcement:     string(record.Result.Enforcement),
+		InjectedHeaders: InjectedHeaderNames(record.Result.InjectHeaders),
+		Action:          string(record.Result.Action),
+		RuleID:          record.Result.RuleID,
+		Target:          record.Result.Target,
+		Reason:          record.Result.Reason,
+		Generation:      uint64(record.Result.Generation),
+		SessionID:       record.Request.SessionID,
+		Marker:          record.Request.Marker,
+		ProcessID:       record.Request.ProcessID,
+		Binary:          record.Request.Binary,
+		Audit:           record.Result.Audit,
 	}
 }

@@ -9,11 +9,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/chaitin/agent-compose/pkg/egress"
+	"golang.org/x/net/http2"
 )
 
 // forwardL7 handles a CONNECT tunnel whose destination allowance declared L7
@@ -60,6 +62,9 @@ func (p *EgressProxy) forwardL7(w http.ResponseWriter, r *http.Request, sandboxI
 			return fmt.Errorf("terminate client TLS for %s: %w", destination.host, err)
 		}
 		_ = terminated.SetDeadline(time.Time{})
+		if terminated.ConnectionState().NegotiatedProtocol == "h2" {
+			return p.serveL7HTTP2(r.Context(), terminated, sandboxID, identity, destination, target)
+		}
 		return p.serveL7Tunnel(r.Context(), terminated, sandboxID, identity, destination, target, "https")
 	}
 	return p.serveL7Tunnel(r.Context(), conn, sandboxID, identity, destination, target, "http")
@@ -87,7 +92,7 @@ func (p *EgressProxy) mitmServerConfig(destination egressDestination) *tls.Confi
 	expectedHost := normalizeMITMHost(destination.host)
 	return &tls.Config{
 		MinVersion: tls.VersionTLS12,
-		NextProtos: []string{"http/1.1"},
+		NextProtos: []string{"h2", "http/1.1"},
 		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
 			requested := normalizeMITMHost(hello.ServerName)
 			if requested == "" {
@@ -104,7 +109,7 @@ func (p *EgressProxy) mitmServerConfig(destination egressDestination) *tls.Confi
 			}
 			return &tls.Config{
 				MinVersion:   tls.VersionTLS12,
-				NextProtos:   []string{"http/1.1"},
+				NextProtos:   []string{"h2", "http/1.1"},
 				Certificates: []tls.Certificate{*leaf},
 			}, nil
 		},
@@ -158,16 +163,131 @@ func (p *EgressProxy) decideAndForwardL7(ctx context.Context, conn net.Conn, req
 		p.record(ctx, networkRequest, decision, http.StatusForbidden)
 		return false, writeL7Error(conn, request, http.StatusForbidden, decision.RuleID, decision.Reason)
 	}
+	// Resolve injected credentials before recording success. A missing secret
+	// must not turn into an unauthenticated upstream request.
+	injected, err := expandEgressInjectedHeaders(decision.InjectHeaders)
+	if err != nil {
+		denial := egress.Result{
+			Action:     egress.Deny,
+			RuleID:     EgressRuleCredentialUnavailable,
+			Reason:     err.Error(),
+			Generation: decision.Generation,
+		}
+		p.record(ctx, networkRequest, denial, http.StatusForbidden)
+		return false, writeL7Error(conn, request, http.StatusForbidden, denial.RuleID, denial.Reason)
+	}
 	// The status records the proxy decision, which is the same meaning it has
 	// for an L4 tunnel; a later upstream failure is a transport outcome, not a
 	// second policy decision.
 	p.record(ctx, networkRequest, decision, http.StatusOK)
 
-	keepAlive, err := p.relayL7Request(ctx, conn, request, destination, target, scheme)
+	keepAlive, err := p.relayL7Request(ctx, conn, request, destination, target, scheme, injected)
 	if err != nil {
 		return false, err
 	}
 	return keepAlive, nil
+}
+
+// serveL7HTTP2 handles an intercepted HTTP/2 connection. Each stream is
+// decided on its own method/path and forwarded through the pinned upstream
+// address; response bodies are streamed without buffering.
+//
+//nolint:revive // the L7 relay threads the request identity and destination through the call boundary
+func (p *EgressProxy) serveL7HTTP2(ctx context.Context, conn net.Conn, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP) error {
+	server := &http2.Server{}
+	server.ServeConn(conn, &http2.ServeConnOpts{
+		Context: ctx,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			p.handleL7HTTP2Request(w, request, sandboxID, identity, destination, target)
+		}),
+	})
+	return nil
+}
+
+//nolint:revive // the L7 relay threads the request identity and destination through the call boundary
+func (p *EgressProxy) handleL7HTTP2Request(w http.ResponseWriter, request *http.Request, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP) {
+	networkRequest, err := interceptedNetworkRequest(sandboxID, identity, destination, target, request)
+	if err != nil {
+		writeL7HTTPError(w, http.StatusBadRequest, "engine.l7-request", err.Error())
+		return
+	}
+	policy, err := p.egressPolicy(request.Context(), sandboxID, identity)
+	if err != nil {
+		denial := egress.Result{Action: egress.Deny, RuleID: EgressRulePolicyUnavailable, Reason: "the sandbox network policy could not be read"}
+		p.record(request.Context(), networkRequest, denial, http.StatusForbidden)
+		writeL7HTTPError(w, http.StatusForbidden, denial.RuleID, denial.Reason)
+		return
+	}
+	decision := egress.Decide(policy, networkRequest)
+	if !decision.Allowed() {
+		p.record(request.Context(), networkRequest, decision, http.StatusForbidden)
+		writeL7HTTPError(w, http.StatusForbidden, decision.RuleID, decision.Reason)
+		return
+	}
+	injected, err := expandEgressInjectedHeaders(decision.InjectHeaders)
+	if err != nil {
+		denial := egress.Result{Action: egress.Deny, RuleID: EgressRuleCredentialUnavailable, Reason: err.Error(), Generation: decision.Generation}
+		p.record(request.Context(), networkRequest, denial, http.StatusForbidden)
+		writeL7HTTPError(w, http.StatusForbidden, denial.RuleID, denial.Reason)
+		return
+	}
+	p.record(request.Context(), networkRequest, decision, http.StatusOK)
+	if err := p.relayL7HTTP2(w, request, destination, target, injected); err != nil {
+		writeL7HTTPError(w, http.StatusBadGateway, "engine.upstream-http2", "the upstream request failed")
+	}
+}
+
+func (p *EgressProxy) relayL7HTTP2(w http.ResponseWriter, request *http.Request, destination egressDestination, target net.IP, injected map[string]string) error {
+	outbound := request.Clone(request.Context())
+	outbound.RequestURI = ""
+	outbound.URL.Scheme = "https"
+	outbound.URL.Host = net.JoinHostPort(destination.host, strconv.Itoa(destination.port))
+	if strings.TrimSpace(outbound.Host) == "" {
+		outbound.Host = destination.host
+	}
+	outbound.Header = request.Header.Clone()
+	outbound.Header.Del("Proxy-Authorization")
+	outbound.Header.Del("Proxy-Connection")
+	for name, value := range injected {
+		outbound.Header.Del(name)
+		outbound.Header.Set(name, value)
+	}
+	removeHopByHopHeaders(outbound.Header)
+	transport := &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return p.dial(ctx, network, net.JoinHostPort(target.String(), strconv.Itoa(destination.port)))
+		},
+		TLSClientConfig:       p.upstreamTLSConfigFor(destination.host),
+		ForceAttemptHTTP2:     true,
+		ResponseHeaderTimeout: p.dialTimeout,
+		DisableKeepAlives:     true,
+	}
+	defer transport.CloseIdleConnections()
+	response, err := transport.RoundTrip(outbound)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
+	removeHopByHopHeaders(response.Header)
+	for name, values := range response.Header {
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
+	w.WriteHeader(response.StatusCode)
+	_, _ = io.Copy(w, response.Body)
+	return nil
+}
+
+// writeL7HTTPError writes a refusal through the net/http response writer, which
+// works for HTTP/2 streams as well as an HTTP/1 response.
+func writeL7HTTPError(w http.ResponseWriter, status int, rule, reason string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("X-Agent-Compose-Egress-Rule", rule)
+	w.Header().Set("X-Agent-Compose-Egress-Reason", reason)
+	w.WriteHeader(status)
+	_, _ = io.WriteString(w, fmt.Sprintf("agent-compose egress proxy: %s (rule %s)\n", reason, rule))
 }
 
 // interceptedNetworkRequest rebuilds the decision request for one HTTP request
@@ -193,12 +313,16 @@ func interceptedNetworkRequest(sandboxID string, identity egressIdentity, destin
 // writes the answer back over the terminated connection.
 //
 //nolint:revive // the L7 relay threads the request identity and destination through the call boundary
-func (p *EgressProxy) relayL7Request(ctx context.Context, conn net.Conn, request *http.Request, destination egressDestination, target net.IP, scheme string) (bool, error) {
+func (p *EgressProxy) relayL7Request(ctx context.Context, conn net.Conn, request *http.Request, destination egressDestination, target net.IP, scheme string, injected map[string]string) (bool, error) {
 	outbound := request.Clone(ctx)
 	outbound.RequestURI = ""
 	outbound.Header = request.Header.Clone()
 	outbound.Header.Del("Proxy-Authorization")
 	outbound.Header.Del("Proxy-Connection")
+	for name, value := range injected {
+		outbound.Header.Del(name)
+		outbound.Header.Set(name, value)
+	}
 	removeHopByHopHeaders(outbound.Header)
 	if outbound.URL == nil {
 		return false, errors.New("the intercepted request has no URL")
@@ -231,6 +355,13 @@ func (p *EgressProxy) relayL7Request(ctx context.Context, conn net.Conn, request
 		return false, fmt.Errorf("write the intercepted response: %w", err)
 	}
 	return !response.Close, nil
+}
+
+// expandEgressInjectedHeaders resolves ${ENV} credential templates from the
+// daemon environment. Values remain in memory and are never logged or exposed
+// to the guest.
+func expandEgressInjectedHeaders(templates map[string]string) (map[string]string, error) {
+	return egress.ExpandInjectHeaders(templates, os.LookupEnv)
 }
 
 // upstreamTLSConfigFor builds the TLS configuration the proxy presents to the

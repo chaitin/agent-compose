@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/chaitin/agent-compose/pkg/egress"
+	"golang.org/x/net/http2"
 )
 
 func l7AllowPolicy(pattern, method, path string, enforcement egress.Enforcement) egress.Policy {
@@ -268,6 +269,7 @@ func testMITMUpstream(t *testing.T, handler http.Handler) (*httptest.Server, *x5
 		t.Fatalf("issuing the upstream leaf: %v", err)
 	}
 	server := httptest.NewUnstartedServer(handler)
+	server.EnableHTTP2 = true
 	server.TLS = &tls.Config{Certificates: []tls.Certificate{*leaf}, MinVersion: tls.VersionTLS12}
 	server.StartTLS()
 	t.Cleanup(server.Close)
@@ -455,5 +457,171 @@ func TestEgressProxyRefusesAMismatchedSNI(t *testing.T) {
 	if err := terminated.Handshake(); err == nil {
 		_ = terminated.Close()
 		t.Fatal("the intercepted proxy completed a handshake for an SNI that does not match the CONNECT destination")
+	}
+}
+
+func TestEgressProxyInjectsCredentialHeadersForL7(t *testing.T) {
+	t.Setenv("AGENT_COMPOSE_TEST_INJECT_TOKEN", "injected-secret")
+	var upstreamAuth string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamAuth = r.Header.Get("Authorization")
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer upstream.Close()
+	policy := egress.NewPolicy(egress.Deny, egress.Rule{
+		ID:     "network.allow",
+		Match:  egress.MatchEndpoint,
+		Names:  []string{"allowed.example:80/http"},
+		Action: egress.Allow,
+		L7:     egress.L7Constraint{Methods: []string{"GET"}, Paths: []string{"/allowed/*"}},
+		InjectHeaders: map[string]string{
+			"Authorization": "Bearer ${AGENT_COMPOSE_TEST_INJECT_TOKEN}",
+		},
+	})
+	policies := &proxyTestPolicies{policies: []egress.Policy{policy}}
+	proxyServer, recorder := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.Dial = dialUpstreamFunc(upstream.Listener.Addr())
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	response, err := proxyHTTPClient(t, server).Get("http://allowed.example/allowed/items")
+	if err != nil {
+		t.Fatalf("GET through the proxy: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", response.StatusCode)
+	}
+	if upstreamAuth != "Bearer injected-secret" {
+		t.Fatalf("upstream Authorization = %q, want the injected credential", upstreamAuth)
+	}
+	records := recorder.collected()
+	if len(records) != 1 || len(records[0].Result.InjectHeaders) != 1 {
+		t.Fatalf("records = %+v, want one decision carrying the injection template", records)
+	}
+}
+
+func TestEgressProxyFailsClosedWhenInjectedCredentialIsMissing(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("upstream must not be reached when the credential is missing")
+	}))
+	defer upstream.Close()
+	policy := egress.NewPolicy(egress.Deny, egress.Rule{
+		ID:     "network.allow",
+		Match:  egress.MatchEndpoint,
+		Names:  []string{"allowed.example:80/http"},
+		Action: egress.Allow,
+		L7:     egress.L7Constraint{Methods: []string{"GET"}, Paths: []string{"/allowed/*"}},
+		InjectHeaders: map[string]string{
+			"Authorization": "Bearer ${AGENT_COMPOSE_MISSING_TEST_TOKEN}",
+		},
+	})
+	policies := &proxyTestPolicies{policies: []egress.Policy{policy}}
+	proxyServer, recorder := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.Dial = dialUpstreamFunc(upstream.Listener.Addr())
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	response, err := proxyHTTPClient(t, server).Get("http://allowed.example/allowed/items")
+	if err != nil {
+		t.Fatalf("GET through the proxy: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.StatusCode)
+	}
+	records := recorder.collected()
+	if len(records) != 1 || records[0].Allowed() || records[0].Result.RuleID != EgressRuleCredentialUnavailable {
+		t.Fatalf("records = %+v, want one credential-unavailable denial", records)
+	}
+}
+
+func connectInterceptedHTTP2(t *testing.T, proxyServer *httptest.Server, proxyRoots *x509.CertPool) *http2.ClientConn {
+	t.Helper()
+	connection := dialProxy(t, proxyServer)
+	writeConnect(t, connection, "upstream.example:443", testSandboxID, testCredential)
+	reader := bufio.NewReader(connection)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the CONNECT response: %v", err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		_ = connection.Close()
+		t.Fatalf("CONNECT status = %d, want 200", response.StatusCode)
+	}
+	terminated := tls.Client(&egressBufferedConn{Conn: connection, reader: reader}, &tls.Config{
+		ServerName: "upstream.example",
+		RootCAs:    proxyRoots,
+		NextProtos: []string{"h2"},
+		MinVersion: tls.VersionTLS12,
+	})
+	if err := terminated.Handshake(); err != nil {
+		_ = connection.Close()
+		t.Fatalf("TLS handshake with the intercepted proxy: %v", err)
+	}
+	if got := terminated.ConnectionState().NegotiatedProtocol; got != "h2" {
+		_ = connection.Close()
+		t.Fatalf("negotiated protocol = %q, want h2", got)
+	}
+	transport := &http2.Transport{}
+	client, err := transport.NewClientConn(terminated)
+	if err != nil {
+		_ = connection.Close()
+		t.Fatalf("build the h2 client connection: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close(); _ = connection.Close() })
+	return client
+}
+
+func TestEgressProxyInterceptsHTTP2AndInjectsCredential(t *testing.T) {
+	t.Setenv("AGENT_COMPOSE_TEST_HTTP2_TOKEN", "h2-secret")
+	var upstreamAuth, upstreamPath string
+	upstream, upstreamRoots := testMITMUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamAuth = r.Header.Get("Authorization")
+		upstreamPath = r.URL.EscapedPath()
+		_, _ = io.WriteString(w, "h2-ok")
+	}))
+	policy := egress.NewPolicy(egress.Deny, egress.Rule{
+		ID:     "network.allow",
+		Match:  egress.MatchEndpoint,
+		Names:  []string{"upstream.example:443/https"},
+		Action: egress.Allow,
+		L7:     egress.L7Constraint{Methods: []string{"GET"}, Paths: []string{"/allowed/*"}},
+		InjectHeaders: map[string]string{
+			"Authorization": "Bearer ${AGENT_COMPOSE_TEST_HTTP2_TOKEN}",
+		},
+	})
+	policies := &proxyTestPolicies{policies: []egress.Policy{policy}}
+	proxyServer, _ := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.TLSMITM = true
+		options.Dial = dialUpstreamFunc(upstream.Listener.Addr())
+		options.UpstreamTLSConfig = &tls.Config{RootCAs: upstreamRoots, MinVersion: tls.VersionTLS12}
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	proxyRoots := x509.NewCertPool()
+	if !proxyRoots.AppendCertsFromPEM(proxyServer.mitm.CACertificatePEM()) {
+		t.Fatal("appending the proxy CA failed")
+	}
+	client := connectInterceptedHTTP2(t, server, proxyRoots)
+	request, err := http.NewRequest(http.MethodGet, "https://upstream.example/allowed/items", nil)
+	if err != nil {
+		t.Fatalf("building the h2 request: %v", err)
+	}
+	response, err := client.RoundTrip(request)
+	if err != nil {
+		t.Fatalf("h2 request through the intercepted proxy: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("reading the h2 response: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || string(body) != "h2-ok" {
+		t.Fatalf("response = %d %q, want 200 h2-ok", response.StatusCode, body)
+	}
+	if upstreamAuth != "Bearer h2-secret" || upstreamPath != "/allowed/items" {
+		t.Fatalf("upstream saw auth=%q path=%q, want injected credential and /allowed/items", upstreamAuth, upstreamPath)
 	}
 }
