@@ -167,7 +167,8 @@ func (c *RemovalCoordinator) Remove(ctx context.Context, sandboxID string, force
 	}
 
 	result := RemovalResult{SandboxID: sandboxID, Stopped: record.StopRequired && record.StageCompleted(DeletionStageRuntimeStop)}
-	if !record.StageCompleted(DeletionStageRuntimeStop) {
+	runtimeStopPending := !record.StageCompleted(DeletionStageRuntimeStop)
+	if runtimeStopPending {
 		if sandboxErr != nil {
 			return result, c.rollbackDeletionIntent(ctx, nil, record, fmt.Errorf("load sandbox for runtime stop: %w", sandboxErr))
 		}
@@ -178,14 +179,17 @@ func (c *RemovalCoordinator) Remove(ctx context.Context, sandboxID string, force
 			result.Stopped = true
 		}
 		record.Complete(DeletionStageRuntimeStop)
-		if err := WriteOwnershipRecord(c.SandboxRoot, record); err != nil {
-			return result, err
-		}
 	}
 	// Removal stops the runtime directly rather than through LifecycleService.
 	// Withdraw cached CAP bindings too, including resumed deletion attempts.
 	if c.AccessRevoker != nil {
 		c.AccessRevoker.RevokeSandbox(sandboxID)
+	}
+	// A journal failure must not retain credentials for an already stopped VM.
+	if runtimeStopPending {
+		if err := WriteOwnershipRecord(c.SandboxRoot, record); err != nil {
+			return result, err
+		}
 	}
 	if !record.StageCompleted(DeletionStageRuntime) {
 		if sandboxErr != nil {

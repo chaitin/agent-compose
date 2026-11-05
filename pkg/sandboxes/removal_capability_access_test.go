@@ -3,6 +3,7 @@ package sandboxes_test
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -13,6 +14,38 @@ import (
 type removalAccessProbe struct {
 	t       *testing.T
 	revoked string
+}
+
+type journalFailureRuntime struct {
+	removalTestRuntime
+	journal string
+}
+
+func (r *journalFailureRuntime) StopSandboxVM(context.Context, *domain.Sandbox) error {
+	if err := os.Remove(r.journal); err != nil {
+		return err
+	}
+	// Make the next journal rename fail after the runtime has stopped.
+	return os.Mkdir(r.journal, 0o700)
+}
+
+func TestRemovalRevokesAccessBeforePersistingTheStoppedStage(t *testing.T) {
+	root := t.TempDir()
+	sandbox := removalTestSandbox(t, removalTestSandboxSpec{Root: root, ID: "journal-failure", Status: domain.VMStatusRunning, Updated: time.Now()})
+	journal, err := sandboxes.OwnershipRecordPath(root, sandbox.Summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &journalFailureRuntime{journal: journal}
+	probe := &removalAccessProbe{t: t}
+	coordinator := &sandboxes.RemovalCoordinator{SandboxRoot: root, Store: &removalTestStore{sandboxes: map[string]*domain.Sandbox{sandbox.Summary.ID: sandbox}}, Runtime: runtime, AccessRevoker: probe}
+	result, err := coordinator.Remove(context.Background(), sandbox.Summary.ID, true)
+	if err == nil || !result.Stopped || runtime.removeCalls != 0 {
+		t.Fatalf("journal failure not exercised: stopped=%t removeCalls=%d err=%v", result.Stopped, runtime.removeCalls, err)
+	}
+	if probe.revoked != sandbox.Summary.ID {
+		t.Fatal("stopped runtime retained capability access after journal failure")
+	}
 }
 
 func (p *removalAccessProbe) RevokeSandbox(id string) { p.revoked = id }
