@@ -653,3 +653,71 @@ func TestEgressBypassMatchesOnlyTheProxyEndpoint(t *testing.T) {
 		t.Fatal("another port on the proxy host is bypassed; that exposes host services to the workload")
 	}
 }
+
+// TestInitEgressEnforceDeniesSendmsgWithAncillaryData is the regression test for
+// a sendmsg that carries a control message. Continuing such a call would let the
+// kernel send the datagram to a destination the policy never inspected, so the
+// supervisor must refuse it instead of forwarding it unmediated.
+func TestInitEgressEnforceDeniesSendmsgWithAncillaryData(t *testing.T) {
+	requireEnforceSupport(t)
+	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
+	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	output, err := runEgressHelperUDP(ctx, socket, "udp-sendmsg-ancillary", "")
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	if !strings.Contains(output, "sendmsg-error:connection refused") {
+		t.Fatalf("helper output = %q, want the ancillary sendmsg to be refused", output)
+	}
+	if requests := proxy.received(); len(requests) != 0 {
+		t.Fatalf("proxy received %d requests for a datagram", len(requests))
+	}
+}
+
+func TestPruneDNSSocketsDropsExpiredEntriesBeforeLiveOnes(t *testing.T) {
+	now := time.Now()
+	supervisor := &egressSupervisor{dnsSockets: make(map[uint64]dnsSocketDestination)}
+	for inode := uint64(0); inode < 3000; inode++ {
+		supervisor.dnsSockets[inode] = dnsSocketDestination{expires: now.Add(-time.Minute)}
+	}
+	for inode := uint64(3000); inode < 3100; inode++ {
+		supervisor.dnsSockets[inode] = dnsSocketDestination{expires: now.Add(time.Minute)}
+	}
+	supervisor.pruneDNSSockets(now)
+	if got := len(supervisor.dnsSockets); got != 100 {
+		t.Fatalf("cache size = %d, want the 100 live entries", got)
+	}
+	for inode := uint64(3000); inode < 3100; inode++ {
+		if _, ok := supervisor.dnsSockets[inode]; !ok {
+			t.Fatalf("live socket %d was evicted while expired entries remained", inode)
+		}
+	}
+}
+
+func TestPruneDNSSocketsEvictsEarliestExpiryAtTheLimit(t *testing.T) {
+	now := time.Now()
+	supervisor := &egressSupervisor{dnsSockets: make(map[uint64]dnsSocketDestination)}
+	total := dnsSocketCacheLimit + 500
+	for inode := 0; inode < total; inode++ {
+		supervisor.dnsSockets[uint64(inode)] = dnsSocketDestination{expires: now.Add(time.Duration(inode) * time.Second)}
+	}
+	supervisor.pruneDNSSockets(now)
+	if got, want := len(supervisor.dnsSockets), dnsSocketCacheLimit-1; got != want {
+		t.Fatalf("cache size = %d, want %d so the next insert fits", got, want)
+	}
+	for inode := 0; inode < 501; inode++ {
+		if _, ok := supervisor.dnsSockets[uint64(inode)]; ok {
+			t.Fatalf("earliest-expiring socket %d was not evicted", inode)
+		}
+	}
+	if _, ok := supervisor.dnsSockets[uint64(total-1)]; !ok {
+		t.Fatalf("newest socket %d was evicted", total-1)
+	}
+}

@@ -370,6 +370,21 @@ func TestEgressHelperProcess(t *testing.T) {
 		fmt.Printf("no-proxy:%s\n", os.Getenv("NO_PROXY"))
 		return
 	}
+	if mode == "udp-sendmsg-ancillary" {
+		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+		if err != nil {
+			fmt.Printf("socket-error:%v\n", err)
+			os.Exit(1)
+		}
+		defer func() { _ = unix.Close(fd) }()
+		control := unix.PktInfo4(&unix.Inet4Pktinfo{Spec_dst: [4]byte{127, 0, 0, 1}})
+		if _, err := unix.SendmsgN(fd, []byte("probe"), control, &unix.SockaddrInet4{Addr: [4]byte{8, 8, 8, 8}, Port: 9999}, 0); err != nil {
+			fmt.Printf("sendmsg-error:%v\n", err)
+			return
+		}
+		fmt.Println("sendmsg-ok")
+		return
+	}
 	target := os.Getenv("INIT_EGRESS_HELPER_TARGET")
 	if mode == "udp-connected-dns" {
 		query := buildDNSQuery(os.Getenv("INIT_EGRESS_HELPER_DNS_NAME"), dnsmessage.TypeA)

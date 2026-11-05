@@ -743,8 +743,16 @@ func (s *egressSupervisor) handleEnforceDatagram(listenerFD int, request *seccom
 			return
 		}
 		if message.Control != 0 && message.Controllen > 0 {
-			// Ancillary data has no safe mediated representation.
-			replyContinue(listenerFD, request.ID)
+			// Ancillary data (for example IP_PKTINFO) has no mediated
+			// representation. Continuing would let the kernel send the
+			// datagram to a destination the policy never inspected, so refuse
+			// it rather than forwarding an unmediated datagram.
+			destination.SandboxID = event.SandboxID
+			destination.SessionID = event.SessionID
+			destination.Marker = event.Marker
+			destination.PID = event.PID
+			destination.Binary = event.Binary
+			s.denyDatagram(listenerFD, request.ID, destination, "sendmsg with ancillary data is not mediated")
 			return
 		}
 		payload, err = readTargetIovecs(pid, message.Iov, message.Iovlen)
@@ -903,6 +911,16 @@ func sendDatagram(fd int, payload, address []byte, timeout time.Duration) unix.E
 	}
 }
 
+// dnsSocketCacheLimit bounds remembered redirected DNS sockets, and
+// dnsSocketLifetime bounds how long a mapping can be restored. The cache is
+// only an address-restoration aid for the workload's own socket queue; dropping
+// a live entry makes a client reject a valid response, so expired entries are
+// removed before any live one.
+const (
+	dnsSocketCacheLimit = 4096
+	dnsSocketLifetime   = 5 * time.Minute
+)
+
 // rememberDNSSocket records the nameserver a socket was redirected away from.
 func (s *egressSupervisor) rememberDNSSocket(fd int, rawDestination []byte) {
 	if s == nil || fd < 0 || len(rawDestination) == 0 {
@@ -915,18 +933,38 @@ func (s *egressSupervisor) rememberDNSSocket(fd int, rawDestination []byte) {
 	now := time.Now()
 	entry := dnsSocketDestination{
 		raw:     append([]byte(nil), rawDestination...),
-		expires: now.Add(5 * time.Minute),
+		expires: now.Add(dnsSocketLifetime),
 	}
 	s.dnsMu.Lock()
 	defer s.dnsMu.Unlock()
-	if len(s.dnsSockets) > 4096 {
-		for inode, candidate := range s.dnsSockets {
-			if now.After(candidate.expires) || len(s.dnsSockets) > 4096 {
-				delete(s.dnsSockets, inode)
-			}
+	s.pruneDNSSockets(now)
+	s.dnsSockets[stat.Ino] = entry
+}
+
+// pruneDNSSockets keeps the cache under its limit. Expired mappings are always
+// removed first; only when the live set itself exceeds the limit are the
+// earliest-expiring entries evicted, so a slot never loses its mapping while
+// an expired entry still occupies the cache. The caller must hold dnsMu.
+func (s *egressSupervisor) pruneDNSSockets(now time.Time) {
+	for inode, candidate := range s.dnsSockets {
+		if now.After(candidate.expires) {
+			delete(s.dnsSockets, inode)
 		}
 	}
-	s.dnsSockets[stat.Ino] = entry
+	for len(s.dnsSockets) >= dnsSocketCacheLimit {
+		var oldestInode uint64
+		var oldestExpiry time.Time
+		found := false
+		for inode, candidate := range s.dnsSockets {
+			if !found || candidate.expires.Before(oldestExpiry) {
+				oldestInode, oldestExpiry, found = inode, candidate.expires, true
+			}
+		}
+		if !found {
+			return
+		}
+		delete(s.dnsSockets, oldestInode)
+	}
 }
 
 // dnsSocketSource returns the nameserver address a redirected socket was
