@@ -105,14 +105,15 @@ type PruneResult struct {
 }
 
 type RemovalCoordinator struct {
-	SandboxRoot string
-	Store       RemovalStore
-	Runtime     RemovalRuntime
-	Accessories SandboxAccessoryReleaser
-	Targets     SandboxOwnershipTargetResolver
-	Residues    RuntimeResidueManager
-	Locks       *LifecycleLocks
-	Now         func() time.Time
+	SandboxRoot   string
+	Store         RemovalStore
+	Runtime       RemovalRuntime
+	Accessories   SandboxAccessoryReleaser
+	AccessRevoker SandboxAccessRevoker
+	Targets       SandboxOwnershipTargetResolver
+	Residues      RuntimeResidueManager
+	Locks         *LifecycleLocks
+	Now           func() time.Time
 
 	locks LifecycleLocks
 }
@@ -180,6 +181,11 @@ func (c *RemovalCoordinator) Remove(ctx context.Context, sandboxID string, force
 		if err := WriteOwnershipRecord(c.SandboxRoot, record); err != nil {
 			return result, err
 		}
+	}
+	// Removal stops the runtime directly rather than through LifecycleService.
+	// Withdraw cached CAP bindings too, including resumed deletion attempts.
+	if c.AccessRevoker != nil {
+		c.AccessRevoker.RevokeSandbox(sandboxID)
 	}
 	if !record.StageCompleted(DeletionStageRuntime) {
 		if sandboxErr != nil {
