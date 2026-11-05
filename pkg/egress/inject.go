@@ -121,7 +121,11 @@ func expandInjectHeaderValue(template string, lookup func(string) (string, bool)
 	if !found {
 		return "", fmt.Errorf("template has no environment reference")
 	}
-	return builder.String(), nil
+	resolved := builder.String()
+	if !httpguts.ValidHeaderFieldValue(resolved) {
+		return "", fmt.Errorf("resolved header value contains an invalid character")
+	}
+	return resolved, nil
 }
 
 func validEnvName(name string) bool {

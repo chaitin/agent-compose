@@ -176,6 +176,9 @@ func (p *EgressProxy) decideAndForwardL7(ctx context.Context, conn net.Conn, req
 		p.record(ctx, networkRequest, denial, http.StatusForbidden)
 		return false, writeL7Error(conn, request, http.StatusForbidden, denial.RuleID, denial.Reason)
 	}
+	if isWebSocketUpgrade(request) {
+		return false, p.relayL7Upgrade(ctx, conn, request, destination, target, scheme, injected, networkRequest, decision)
+	}
 	// The status records the proxy decision, which is the same meaning it has
 	// for an L4 tunnel; a later upstream failure is a transport outcome, not a
 	// second policy decision.
@@ -362,6 +365,106 @@ func (p *EgressProxy) relayL7Request(ctx context.Context, conn net.Conn, request
 // to the guest.
 func expandEgressInjectedHeaders(templates map[string]string) (map[string]string, error) {
 	return egress.ExpandInjectHeaders(templates, os.LookupEnv)
+}
+
+// isWebSocketUpgrade reports whether this request asks to switch to a raw
+// WebSocket stream. L7 policy is evaluated on the establishment request; after
+// a 101 response the bytes are relayed without further HTTP parsing, which is
+// required for Jupyter and other long-lived upgrade protocols.
+func isWebSocketUpgrade(request *http.Request) bool {
+	if request == nil || !strings.EqualFold(strings.TrimSpace(request.Header.Get("Upgrade")), "websocket") {
+		return false
+	}
+	for _, token := range strings.Split(request.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "upgrade") {
+			return true
+		}
+	}
+	return false
+}
+
+// relayL7Upgrade forwards a WebSocket (or other HTTP Upgrade) establishment
+// request and then relays the raw connection. The upstream is pinned to the
+// address the L4 decision resolved; the injected credentials are applied only
+// to the handshake.
+//
+//nolint:revive // the L7 relay threads the request identity and destination through the call boundary
+func (p *EgressProxy) relayL7Upgrade(ctx context.Context, conn net.Conn, request *http.Request, destination egressDestination, target net.IP, scheme string, injected map[string]string, networkRequest egress.Request, decision egress.Result) error {
+	_, err := p.relayUpgrade(ctx, conn, request, destination, target, scheme, injected, func(status int) {
+		p.record(ctx, networkRequest, decision, status)
+	})
+	return err
+}
+
+// relayUpgrade forwards one HTTP Upgrade handshake, then relays raw bytes. The
+// policy decision happens before this call; after a 101 the proxy deliberately
+// stops parsing HTTP, which is what makes Jupyter and WebSocket traffic work.
+//
+//nolint:revive // the upgrade relay threads the request identity and destination through the call boundary
+func (p *EgressProxy) relayUpgrade(ctx context.Context, conn net.Conn, request *http.Request, destination egressDestination, target net.IP, scheme string, injected map[string]string, recordStatus func(int)) (int, error) {
+	upstream, err := p.dialUpgrade(ctx, destination, target, scheme)
+	if err != nil {
+		if writeErr := writeL7Error(conn, request, http.StatusBadGateway, "engine.upstream-upgrade", "the upstream upgrade connection failed"); writeErr != nil {
+			return http.StatusBadGateway, writeErr
+		}
+		return http.StatusBadGateway, err
+	}
+	defer func() { _ = upstream.Close() }()
+	outbound := request.Clone(ctx)
+	outbound.RequestURI = ""
+	outbound.Header = request.Header.Clone()
+	outbound.Header.Del("Proxy-Authorization")
+	outbound.Header.Del("Proxy-Connection")
+	for name, value := range injected {
+		outbound.Header.Del(name)
+		outbound.Header.Set(name, value)
+	}
+	if err := outbound.Write(upstream); err != nil {
+		return http.StatusBadGateway, fmt.Errorf("write upgrade request upstream: %w", err)
+	}
+	reader := bufio.NewReader(upstream)
+	response, err := http.ReadResponse(reader, outbound)
+	if err != nil {
+		return http.StatusBadGateway, fmt.Errorf("read upgrade response: %w", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	status := response.StatusCode
+	recordStatus(status)
+	if err := response.Write(conn); err != nil {
+		return status, fmt.Errorf("write upgrade response to client: %w", err)
+	}
+	if status != http.StatusSwitchingProtocols {
+		return status, nil
+	}
+	errCh := make(chan error, 2)
+	go func() {
+		_, copyErr := io.Copy(upstream, conn)
+		errCh <- copyErr
+	}()
+	go func() {
+		_, copyErr := io.Copy(conn, io.MultiReader(reader, upstream))
+		errCh <- copyErr
+	}()
+	<-errCh
+	return status, nil
+}
+
+func (p *EgressProxy) dialUpgrade(ctx context.Context, destination egressDestination, target net.IP, scheme string) (net.Conn, error) {
+	raw, err := p.dial(ctx, "tcp", net.JoinHostPort(target.String(), strconv.Itoa(destination.port)))
+	if err != nil {
+		return nil, err
+	}
+	if scheme != "https" {
+		return raw, nil
+	}
+	terminated := tls.Client(raw, p.upstreamTLSConfigFor(destination.host))
+	handshakeContext, cancel := context.WithTimeout(ctx, p.dialTimeout)
+	defer cancel()
+	if err := terminated.HandshakeContext(handshakeContext); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
+	return terminated, nil
 }
 
 // upstreamTLSConfigFor builds the TLS configuration the proxy presents to the

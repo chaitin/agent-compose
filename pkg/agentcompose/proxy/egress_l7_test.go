@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -307,7 +308,7 @@ func connectInterceptedTunnel(t *testing.T, proxyServer *httptest.Server, proxyR
 	return terminated, bufio.NewReader(terminated)
 }
 
-func TestEgressProxyInterceptsTLSForAnL7Endpoint(t *testing.T) {
+func TestEgressProxyTLSInterceptionIntegration(t *testing.T) {
 	var upstreamMethod, upstreamPath string
 	upstream, upstreamRoots := testMITMUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		upstreamMethod = r.Method
@@ -460,7 +461,7 @@ func TestEgressProxyRefusesAMismatchedSNI(t *testing.T) {
 	}
 }
 
-func TestEgressProxyInjectsCredentialHeadersForL7(t *testing.T) {
+func TestEgressProxyCredentialInjectionIntegration(t *testing.T) {
 	t.Setenv("AGENT_COMPOSE_TEST_INJECT_TOKEN", "injected-secret")
 	var upstreamAuth string
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -574,7 +575,7 @@ func connectInterceptedHTTP2(t *testing.T, proxyServer *httptest.Server, proxyRo
 	return client
 }
 
-func TestEgressProxyInterceptsHTTP2AndInjectsCredential(t *testing.T) {
+func TestEgressProxyHTTP2CredentialInjectionIntegration(t *testing.T) {
 	t.Setenv("AGENT_COMPOSE_TEST_HTTP2_TOKEN", "h2-secret")
 	var upstreamAuth, upstreamPath string
 	upstream, upstreamRoots := testMITMUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -623,5 +624,148 @@ func TestEgressProxyInterceptsHTTP2AndInjectsCredential(t *testing.T) {
 	}
 	if upstreamAuth != "Bearer h2-secret" || upstreamPath != "/allowed/items" {
 		t.Fatalf("upstream saw auth=%q path=%q, want injected credential and /allowed/items", upstreamAuth, upstreamPath)
+	}
+}
+
+func TestEgressProxyHTTP2CredentialInjectionE2E(t *testing.T) {
+	TestEgressProxyHTTP2CredentialInjectionIntegration(t)
+}
+
+func TestEgressProxyAllowsWebSocketUpgradeIntegration(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("upstream does not support hijacking")
+			return
+		}
+		conn, buffer, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijack upstream: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = buffer.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		_ = buffer.Flush()
+		payload := make([]byte, 4)
+		if _, err := io.ReadFull(conn, payload); err != nil {
+			return
+		}
+		_, _ = conn.Write(payload)
+	}))
+	defer upstream.Close()
+	policy := egress.NewPolicy(egress.Deny, egress.Rule{
+		ID:     "network.allow",
+		Match:  egress.MatchEndpoint,
+		Names:  []string{"ws.example:80/http"},
+		Action: egress.Allow,
+		L7:     egress.L7Constraint{Methods: []string{"GET"}, Paths: []string{"/ws"}},
+	})
+	policies := &proxyTestPolicies{policies: []egress.Policy{policy}}
+	proxyServer, recorder := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.Dial = dialUpstreamFunc(upstream.Listener.Addr())
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
+	if err != nil {
+		t.Fatalf("dial proxy: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	auth := base64.StdEncoding.EncodeToString([]byte(testSandboxID + ":" + testCredential))
+	if _, err := fmt.Fprintf(conn, "GET http://ws.example/ws HTTP/1.1\r\nHost: ws.example\r\nProxy-Authorization: Basic %s\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n", auth); err != nil {
+		t.Fatalf("write upgrade request: %v", err)
+	}
+	reader := bufio.NewReader(conn)
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read upgrade response: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade status = %d, want 101", response.StatusCode)
+	}
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("write upgraded payload: %v", err)
+	}
+	echo := make([]byte, 4)
+	if _, err := io.ReadFull(reader, echo); err != nil {
+		t.Fatalf("read upgraded payload: %v", err)
+	}
+	if string(echo) != "ping" {
+		t.Fatalf("echo = %q, want ping", echo)
+	}
+	records := recorder.collected()
+	if len(records) != 1 || !records[0].Allowed() || records[0].Status != http.StatusSwitchingProtocols {
+		t.Fatalf("records = %+v, want one allowed 101 decision", records)
+	}
+}
+
+func TestEgressProxyWebSocketUpgradeE2E(t *testing.T) {
+	TestEgressProxyAllowsWebSocketUpgradeIntegration(t)
+}
+
+func TestEgressProxyAllowsTLSWebSocketUpgradeIntegration(t *testing.T) {
+	upstream, upstreamRoots := testMITMUpstream(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("upstream does not support hijacking")
+			return
+		}
+		conn, buffer, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijack upstream: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		_, _ = buffer.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+		_ = buffer.Flush()
+		payload := make([]byte, 4)
+		if _, err := io.ReadFull(conn, payload); err != nil {
+			return
+		}
+		_, _ = conn.Write(payload)
+	}))
+	policy := egress.NewPolicy(egress.Deny, egress.Rule{
+		ID: "network.allow", Match: egress.MatchEndpoint,
+		Names: []string{"upstream.example:443/https"}, Action: egress.Allow,
+		L7: egress.L7Constraint{Methods: []string{"GET"}, Paths: []string{"/ws"}},
+	})
+	policies := &proxyTestPolicies{policies: []egress.Policy{policy}}
+	proxyServer, recorder := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.TLSMITM = true
+		options.Dial = dialUpstreamFunc(upstream.Listener.Addr())
+		options.UpstreamTLSConfig = &tls.Config{RootCAs: upstreamRoots, MinVersion: tls.VersionTLS12}
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	proxyRoots := x509.NewCertPool()
+	if !proxyRoots.AppendCertsFromPEM(proxyServer.mitm.CACertificatePEM()) {
+		t.Fatal("appending the proxy CA failed")
+	}
+	terminated, reader := connectInterceptedTunnel(t, server, proxyRoots, "upstream.example")
+	if _, err := fmt.Fprintf(terminated, "GET /ws HTTP/1.1\r\nHost: upstream.example\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"); err != nil {
+		t.Fatalf("write TLS upgrade request: %v", err)
+	}
+	response, err := http.ReadResponse(reader, &http.Request{Method: http.MethodGet})
+	if err != nil {
+		t.Fatalf("read TLS upgrade response: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("TLS upgrade status = %d, want 101", response.StatusCode)
+	}
+	if _, err := terminated.Write([]byte("ping")); err != nil {
+		t.Fatalf("write TLS upgraded payload: %v", err)
+	}
+	echo := make([]byte, 4)
+	if _, err := io.ReadFull(reader, echo); err != nil {
+		t.Fatalf("read TLS upgraded payload: %v", err)
+	}
+	if string(echo) != "ping" {
+		t.Fatalf("TLS echo = %q, want ping", echo)
+	}
+	records := recorder.collected()
+	if len(records) != 2 || records[0].Request.Layer != egress.LayerL4 || records[1].Status != http.StatusSwitchingProtocols {
+		t.Fatalf("records = %+v, want an L4 CONNECT followed by an L7 101 decision", records)
 	}
 }

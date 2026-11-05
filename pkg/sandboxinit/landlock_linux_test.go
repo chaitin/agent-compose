@@ -29,6 +29,12 @@ func landlockTestPolicy(workspace string) LandlockPolicy {
 		rules = append(rules, LandlockRule{Path: path, Scope: LandlockScopeRead})
 	}
 	rules = append(rules, LandlockRule{Path: workspace, Scope: LandlockScopeReadWrite})
+	if coverageDir := strings.TrimSpace(os.Getenv("GOCOVERDIR")); filepath.IsAbs(coverageDir) {
+		// The Go coverage runtime writes its counters from the confined helper
+		// process too. Allow only that exact build directory; the test's denied
+		// fixture lives elsewhere under TMPDIR and stays denied.
+		rules = append(rules, LandlockRule{Path: filepath.Clean(coverageDir), Scope: LandlockScopeReadWrite})
+	}
 	return LandlockPolicy{Rules: rules}
 }
 

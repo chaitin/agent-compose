@@ -323,7 +323,9 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.deny(w, r, egressDenial{sandboxID: sandboxID, destination: destination, request: request, result: denial})
 		return
 	}
-	p.record(r.Context(), request, result, http.StatusOK)
+	if !isWebSocketUpgrade(r) {
+		p.record(r.Context(), request, result, http.StatusOK)
+	}
 	if result.Audit {
 		// The decision is an observation, not an enforcement: the request is
 		// still forwarded, and the record and log both state the distinct
@@ -341,7 +343,7 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if err := p.forward(w, r, destination, target, injected); err != nil {
+	if err := p.forward(w, r, destination, target, injected, request, result); err != nil {
 		p.logger.WarnContext(r.Context(), "egress proxy forward failed",
 			"sandbox_id", sandboxID, "host", destination.host, "port", destination.port,
 			"address", target.String(), "rule", result.RuleID, "error", err)
@@ -580,11 +582,13 @@ func (p *EgressProxy) record(ctx context.Context, request egress.Request, result
 // the address the proxy resolved, so the sandbox cannot re-resolve the name to
 // a different address after the decision; an absolute-form HTTP request is
 // forwarded over a connection pinned the same way.
-func (p *EgressProxy) forward(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string) error {
+//
+//nolint:revive // the relay threads the request identity and decision through the call boundary
+func (p *EgressProxy) forward(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string, networkRequest egress.Request, decision egress.Result) error {
 	if r.Method == http.MethodConnect {
 		return p.tunnel(w, r, destination, target)
 	}
-	return p.forwardHTTP(w, r, destination, target, injected)
+	return p.forwardHTTP(w, r, destination, target, injected, networkRequest, decision)
 }
 
 func (p *EgressProxy) tunnel(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP) error {
@@ -633,7 +637,12 @@ func (p *EgressProxy) tunnel(w http.ResponseWriter, r *http.Request, destination
 // forwardHTTP relays one absolute-form request. The connection is pinned to the
 // resolved address, and the transport never consults the environment's proxy
 // settings, so a proxied request cannot loop back into this proxy.
-func (p *EgressProxy) forwardHTTP(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string) error {
+//
+//nolint:revive // the relay threads the request identity and decision through the call boundary
+func (p *EgressProxy) forwardHTTP(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string, networkRequest egress.Request, decision egress.Result) error {
+	if isWebSocketUpgrade(r) {
+		return p.forwardHTTPUpgrade(w, r, destination, target, injected, networkRequest, decision)
+	}
 	outbound := r.Clone(r.Context())
 	outbound.RequestURI = ""
 	outbound.Header = r.Header.Clone()
@@ -668,6 +677,27 @@ func (p *EgressProxy) forwardHTTP(w http.ResponseWriter, r *http.Request, destin
 	removeHopByHopHeaders(w.Header())
 	w.WriteHeader(response.StatusCode)
 	_, err = io.Copy(w, response.Body)
+	return err
+}
+
+// forwardHTTPUpgrade relays one plain-HTTP WebSocket handshake. HTTPS upgrade
+// traffic reaches the same relay through the terminated CONNECT path.
+//
+//nolint:revive // the relay threads the request identity and decision through the call boundary
+func (p *EgressProxy) forwardHTTPUpgrade(w http.ResponseWriter, r *http.Request, destination egressDestination, target net.IP, injected map[string]string, networkRequest egress.Request, decision egress.Result) error {
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "agent-compose egress proxy: this listener cannot upgrade", http.StatusInternalServerError)
+		return errors.New("response writer does not support hijacking")
+	}
+	client, buffer, err := hijacker.Hijack()
+	if err != nil {
+		return fmt.Errorf("hijack upgrade client: %w", err)
+	}
+	conn := &egressBufferedConn{Conn: client, reader: buffer.Reader}
+	_, err = p.relayUpgrade(r.Context(), conn, r, destination, target, "http", injected, func(status int) {
+		p.record(r.Context(), networkRequest, decision, status)
+	})
 	return err
 }
 

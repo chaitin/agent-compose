@@ -63,13 +63,13 @@ fi
 # the standard -run/-skip regexps instead of passing every name back.
 case "$shape" in
   unit)
-    shape_args=(-run '^Test' -skip 'Integration|E2E')
+    shape_args=(-run '^Test' -skip 'Integration|E2E' -parallel 1)
     ;;
   integration)
-    shape_args=(-run 'Integration' -skip 'E2E')
+    shape_args=(-run 'Integration' -skip 'E2E' -parallel 1)
     ;;
   e2e)
-    shape_args=(-run 'E2E')
+    shape_args=(-run 'E2E' -parallel 1)
     ;;
 esac
 go test "${shape_args[@]}" "$@" "${packages[@]}" "${coverage_binary_args[@]}"

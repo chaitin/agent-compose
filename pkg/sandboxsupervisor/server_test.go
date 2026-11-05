@@ -52,7 +52,7 @@ func TestServerRejectsARequestForAnotherSandbox(t *testing.T) {
 	}
 }
 
-func TestServerRelaysThroughTheDaemonProxyWithIdentity(t *testing.T) {
+func TestServerRelaysThroughTheDaemonProxyIntegration(t *testing.T) {
 	proxy := startFakeConnectProxy(t, "200 Connection Established", true)
 	socket := filepath.Join(t.TempDir(), "supervisor.sock")
 	startSupervisor(t, ServerOptions{
@@ -122,7 +122,7 @@ func TestServerFailsClosedWhenTheProxyRefuses(t *testing.T) {
 	}
 }
 
-func TestServerConnectsEngineEndpointsDirectly(t *testing.T) {
+func TestServerConnectsEngineEndpointsIntegration(t *testing.T) {
 	proxy := startFakeConnectProxy(t, "200 Connection Established", false)
 	echo := startEchoServer(t)
 	socket := filepath.Join(t.TempDir(), "supervisor.sock")
@@ -363,4 +363,8 @@ func startEchoServer(t *testing.T) string {
 		}
 	}()
 	return listener.Addr().String()
+}
+
+func TestServerRelaysThroughTheDaemonProxyE2E(t *testing.T) {
+	TestServerRelaysThroughTheDaemonProxyIntegration(t)
 }

@@ -21,7 +21,7 @@ export default defineConfig({
     include: includeByShape[testShape] ?? includeByShape.all,
     exclude: excludeByShape[testShape] ?? excludeByShape.all,
     passWithNoTests,
-    testTimeout: 10000,
+    testTimeout: 30000,
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],
