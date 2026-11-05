@@ -238,7 +238,7 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// CONNECT itself is decided with the L7 check deferred to the terminated
 	// requests; when it is not, the deferral is absent and such an allowance does
 	// not match the tunnel, so the declaration fails closed.
-	request.DeferL7 = p.mitm != nil && r.Method == http.MethodConnect && destination.protocol == egress.ProtocolHTTPS
+	request.DeferL7 = r.Method == http.MethodConnect && (destination.protocol != egress.ProtocolHTTPS || p.mitm != nil)
 
 	policy, err := p.egressPolicy(r.Context(), sandboxID, identity)
 	if err != nil {
@@ -320,7 +320,7 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	target := addresses[0]
 	if result.L7Deferred {
-		if err := p.forwardL7TLS(w, r, sandboxID, identity, destination, target); err != nil {
+		if err := p.forwardL7(w, r, sandboxID, identity, destination, target); err != nil {
 			p.logger.WarnContext(r.Context(), "egress proxy L7 TLS forward failed",
 				"sandbox_id", sandboxID, "host", destination.host, "port", destination.port,
 				"address", target.String(), "rule", result.RuleID, "error", err)

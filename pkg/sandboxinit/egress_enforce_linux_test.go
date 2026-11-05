@@ -636,3 +636,13 @@ func TestProcessBinaryReportsTheRunningExecutable(t *testing.T) {
 		t.Fatalf("processBinary(0) = %q, want empty", got)
 	}
 }
+
+func TestEgressBypassMatchesOnlyTheProxyEndpoint(t *testing.T) {
+	s := &egressSupervisor{proxyHost: "10.0.0.1", proxyPort: 7410}
+	if !s.isBypassed(EgressAuditEvent{Family: "inet", Host: "10.0.0.1", Port: 7410}) {
+		t.Fatal("the proxy endpoint is not bypassed")
+	}
+	if s.isBypassed(EgressAuditEvent{Family: "inet", Host: "10.0.0.1", Port: 22}) {
+		t.Fatal("another port on the proxy host is bypassed; that exposes host services to the workload")
+	}
+}

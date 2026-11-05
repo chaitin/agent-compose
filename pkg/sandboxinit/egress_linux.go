@@ -27,6 +27,8 @@ type egressSupervisor struct {
 	dns            *egressDNS
 	bypassIPs      map[string]struct{}
 	localIPs       map[string]struct{}
+	proxyHost      string
+	proxyPort      int
 	dnsMu          sync.Mutex
 	dnsSockets     map[uint64]dnsSocketDestination
 	connectTimeout time.Duration
@@ -57,6 +59,10 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 		}
 		supervisor.proxy = proxy
 		supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(proxy)
+		if address, ok := tcpAddrFromSockaddr(proxy.rawAddr); ok {
+			supervisor.proxyHost = address.IP.String()
+			supervisor.proxyPort = address.Port
+		}
 		dns, dnsErr := startEgressDNS(sandboxID, egressDNSPassthrough(proxy))
 		if dnsErr != nil {
 			// Mediation still works without the DNS stub; port 53 then keeps

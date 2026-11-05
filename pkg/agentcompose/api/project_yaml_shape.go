@@ -201,6 +201,12 @@ func policyYAMLShape(policy *agentcomposev2.SandboxSpec) map[string]any {
 			if binaries := entry.GetBinaries(); len(binaries) > 0 {
 				rendered["binaries"] = append([]string(nil), binaries...)
 			}
+			if methods := entry.GetMethods(); len(methods) > 0 {
+				rendered["methods"] = append([]string(nil), methods...)
+			}
+			if paths := entry.GetPaths(); len(paths) > 0 {
+				rendered["paths"] = append([]string(nil), paths...)
+			}
 			if enforcement := entry.GetEnforcement(); enforcement != "" {
 				rendered["enforcement"] = enforcement
 			}

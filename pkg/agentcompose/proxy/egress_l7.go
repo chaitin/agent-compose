@@ -16,6 +16,53 @@ import (
 	"github.com/chaitin/agent-compose/pkg/egress"
 )
 
+// forwardL7 handles a CONNECT tunnel whose destination allowance declared L7
+// constraints. It inspects the first byte: a TLS record takes the existing
+// interception path, while a plain HTTP request is decided on its request line
+// without requiring a CA. An L7-constrained HTTPS destination with no configured
+// interception fails closed rather than being forwarded uninspected.
+func (p *EgressProxy) forwardL7(w http.ResponseWriter, r *http.Request, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP) error {
+	if r.ProtoMajor != 1 {
+		http.Error(w, "agent-compose egress proxy: CONNECT requires HTTP/1.1", http.StatusHTTPVersionNotSupported)
+		return nil
+	}
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "agent-compose egress proxy: this listener cannot inspect CONNECT", http.StatusInternalServerError)
+		return errors.New("response writer does not support hijacking")
+	}
+	client, buffer, err := hijacker.Hijack()
+	if err != nil {
+		return fmt.Errorf("hijack client connection for L7 inspection: %w", err)
+	}
+	defer func() { _ = client.Close() }()
+	if _, err := buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
+		return fmt.Errorf("write tunnel response: %w", err)
+	}
+	if err := buffer.Flush(); err != nil {
+		return fmt.Errorf("flush tunnel response: %w", err)
+	}
+	conn := &egressBufferedConn{Conn: client, reader: buffer.Reader}
+	first, err := conn.reader.Peek(1)
+	if err != nil {
+		return fmt.Errorf("read the start of the L7 tunnel: %w", err)
+	}
+	if first[0] == 0x16 {
+		if p.mitm == nil {
+			return errors.New("the destination declares L7 constraints but TLS interception is not enabled")
+		}
+		terminated := tls.Server(conn, p.mitmServerConfig(destination))
+		handshakeContext, cancel := context.WithTimeout(r.Context(), p.dialTimeout)
+		defer cancel()
+		if err := terminated.HandshakeContext(handshakeContext); err != nil {
+			return fmt.Errorf("terminate client TLS for %s: %w", destination.host, err)
+		}
+		_ = terminated.SetDeadline(time.Time{})
+		return p.serveL7Tunnel(r.Context(), terminated, sandboxID, identity, destination, target, "https")
+	}
+	return p.serveL7Tunnel(r.Context(), conn, sandboxID, identity, destination, target, "http")
+}
+
 // forwardL7TLS terminates TLS for one CONNECT tunnel whose destination allowance
 // declares L7 methods or paths, then decides every HTTP request the guest sends
 // over the terminated connection. The CONNECT itself was already decided at L4
@@ -60,7 +107,7 @@ func (p *EgressProxy) forwardL7TLS(w http.ResponseWriter, r *http.Request, sandb
 		return fmt.Errorf("terminate client TLS for %s: %w", destination.host, err)
 	}
 	_ = terminated.SetDeadline(time.Time{})
-	return p.serveL7Tunnel(r.Context(), terminated, sandboxID, identity, destination, target)
+	return p.serveL7Tunnel(r.Context(), terminated, sandboxID, identity, destination, target, "https")
 }
 
 // egressBufferedConn reads buffered bytes before the connection so a ClientHello
@@ -113,7 +160,7 @@ func (p *EgressProxy) mitmServerConfig(destination egressDestination) *tls.Confi
 // decides each one against the policy in force now. Denying one request closes
 // the tunnel: the request body has not necessarily been drained, so continuing
 // would risk parsing body bytes as the next request line.
-func (p *EgressProxy) serveL7Tunnel(ctx context.Context, conn *tls.Conn, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP) error {
+func (p *EgressProxy) serveL7Tunnel(ctx context.Context, conn net.Conn, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP, scheme string) error {
 	reader := bufio.NewReader(conn)
 	for {
 		request, err := http.ReadRequest(reader)
@@ -123,7 +170,7 @@ func (p *EgressProxy) serveL7Tunnel(ctx context.Context, conn *tls.Conn, sandbox
 			}
 			return fmt.Errorf("read an intercepted request: %w", err)
 		}
-		keepAlive, err := p.decideAndForwardL7(ctx, conn, request, sandboxID, identity, destination, target)
+		keepAlive, err := p.decideAndForwardL7(ctx, conn, request, sandboxID, identity, destination, target, scheme)
 		if err != nil {
 			return err
 		}
@@ -133,7 +180,7 @@ func (p *EgressProxy) serveL7Tunnel(ctx context.Context, conn *tls.Conn, sandbox
 	}
 }
 
-func (p *EgressProxy) decideAndForwardL7(ctx context.Context, conn *tls.Conn, request *http.Request, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP) (bool, error) {
+func (p *EgressProxy) decideAndForwardL7(ctx context.Context, conn net.Conn, request *http.Request, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP, scheme string) (bool, error) {
 	networkRequest, err := interceptedNetworkRequest(sandboxID, identity, destination, target, request)
 	if err != nil {
 		return false, err
@@ -158,7 +205,7 @@ func (p *EgressProxy) decideAndForwardL7(ctx context.Context, conn *tls.Conn, re
 	// second policy decision.
 	p.record(ctx, networkRequest, decision, http.StatusOK)
 
-	keepAlive, err := p.relayL7Request(ctx, conn, request, destination, target)
+	keepAlive, err := p.relayL7Request(ctx, conn, request, destination, target, scheme)
 	if err != nil {
 		return false, err
 	}
@@ -186,7 +233,7 @@ func interceptedNetworkRequest(sandboxID string, identity egressIdentity, destin
 
 // relayL7Request forwards one allowed intercepted request to the upstream and
 // writes the answer back over the terminated connection.
-func (p *EgressProxy) relayL7Request(ctx context.Context, conn *tls.Conn, request *http.Request, destination egressDestination, target net.IP) (bool, error) {
+func (p *EgressProxy) relayL7Request(ctx context.Context, conn net.Conn, request *http.Request, destination egressDestination, target net.IP, scheme string) (bool, error) {
 	outbound := request.Clone(ctx)
 	outbound.RequestURI = ""
 	outbound.Header = request.Header.Clone()
@@ -196,7 +243,7 @@ func (p *EgressProxy) relayL7Request(ctx context.Context, conn *tls.Conn, reques
 	if outbound.URL == nil {
 		return false, errors.New("the intercepted request has no URL")
 	}
-	outbound.URL.Scheme = "https"
+	outbound.URL.Scheme = scheme
 	outbound.URL.Host = net.JoinHostPort(destination.host, strconv.Itoa(destination.port))
 	if strings.TrimSpace(outbound.Host) == "" {
 		outbound.Host = destination.host
@@ -206,9 +253,11 @@ func (p *EgressProxy) relayL7Request(ctx context.Context, conn *tls.Conn, reques
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return p.dial(ctx, network, net.JoinHostPort(target.String(), strconv.Itoa(destination.port)))
 		},
-		TLSClientConfig:       p.upstreamTLSConfigFor(destination.host),
 		ResponseHeaderTimeout: p.dialTimeout,
 		DisableKeepAlives:     true,
+	}
+	if scheme == "https" {
+		transport.TLSClientConfig = p.upstreamTLSConfigFor(destination.host)
 	}
 	defer transport.CloseIdleConnections()
 	response, err := transport.RoundTrip(outbound)

@@ -24,6 +24,8 @@ func NetworkPolicyReportsToProto(reports []driverpkg.AgentNetworkPolicyReport) [
 				Sources:     append([]string(nil), entry.Sources...),
 				Binaries:    append([]string(nil), entry.Binaries...),
 				Enforcement: string(entry.Enforcement),
+				Methods:     append([]string(nil), entry.Methods...),
+				Paths:       append([]string(nil), entry.Paths...),
 			})
 		}
 		deny := make([]*agentcomposev2.DeclaredNetworkDenial, 0, len(report.Deny))

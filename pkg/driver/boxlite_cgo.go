@@ -157,7 +157,6 @@ import (
 	"errors"
 	"fmt"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
-	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 	"io"
 	"log/slog"
 	"os"

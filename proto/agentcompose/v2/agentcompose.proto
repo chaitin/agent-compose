@@ -555,6 +555,9 @@ message DeclaredNetworkAllowance {
   // The declared per-entry enforcement: "enforce" when omitted or declared,
   // "audit" when the allowance records a match without enforcing it.
   string enforcement = 6;
+  // Optional L7 constraint echoed in the admission report.
+  repeated string methods = 7;
+  repeated string paths = 8;
 }
 
 // DeclaredNetworkDenial is one declared refusal as it appears in a report.
@@ -1102,6 +1105,12 @@ message SandboxNetworkAllowSpec {
   // Optional. "enforce" (the omitted default) applies the allowance; "audit"
   // records a match and allows the request without enforcing it.
   string enforcement = 6;
+  // Optional. HTTP methods this allowance permits. Empty keeps the
+  // destination-only behavior. Requires L7 inspection.
+  repeated string methods = 7;
+  // Optional. Request paths this allowance permits, exact or prefix ending in
+  // "*". Empty keeps the destination-only behavior.
+  repeated string paths = 8;
 }
 
 // SandboxNetworkDenySpec is one declared refusal. It has no allowed_ips: a

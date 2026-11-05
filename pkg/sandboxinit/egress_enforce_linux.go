@@ -120,16 +120,15 @@ func firstProxyEnv() string {
 }
 
 // buildAddressSets separates sandbox-local addresses (local services, safe to
-// reach directly for any socket type) from the wider bypass set that also
-// includes the proxy itself (a proxy-aware client must not be proxied twice).
+// reach directly for any socket type) from the daemon network addresses that
+// must not be proxied twice. The proxy endpoint itself is matched by host and
+// port in isBypassed; an IP-wide bypass here would expose every other service
+// on the daemon host to the workload, which is exactly what the outer default
+// deny exists to prevent.
 func buildAddressSets(proxy *egressProxyTarget) (map[string]struct{}, map[string]struct{}) {
 	local := make(map[string]struct{})
 	bypass := make(map[string]struct{})
-	if proxy != nil {
-		if address, ok := tcpAddrFromSockaddr(proxy.rawAddr); ok {
-			bypass[address.IP.String()] = struct{}{}
-		}
-	}
+	_ = proxy
 	addresses, err := net.InterfaceAddrs()
 	if err == nil {
 		for _, address := range addresses {
@@ -234,7 +233,13 @@ func (s *egressSupervisor) handleEnforce(listenerFD int, request *seccompNotif, 
 }
 
 func (s *egressSupervisor) isBypassed(destination EgressAuditEvent) bool {
-	return s.isLocalDestination(destination) || s.ipInSet(destination.Host, s.bypassIPs)
+	if s.isLocalDestination(destination) {
+		return true
+	}
+	if s.proxyHost != "" && destination.Host == s.proxyHost && destination.Port == s.proxyPort {
+		return true
+	}
+	return s.ipInSet(destination.Host, s.bypassIPs)
 }
 
 // isLocalDestination reports a sandbox-local address: loopback or one of the
