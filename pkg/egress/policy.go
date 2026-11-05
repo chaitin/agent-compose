@@ -2,7 +2,6 @@ package egress
 
 import (
 	"encoding/binary"
-	"fmt"
 	"hash"
 	"hash/fnv"
 )
@@ -16,41 +15,6 @@ const (
 	// Deny refuses the request.
 	Deny Action = "deny"
 )
-
-// Enforcement selects how a matched allowance is applied.
-type Enforcement string
-
-const (
-	// EnforcementEnforce applies the allowance to the connection. It is the
-	// zero value so an entry that does not state one keeps the previous
-	// behavior.
-	EnforcementEnforce Enforcement = "enforce"
-	// EnforcementAudit records the match and allows the request. It is an
-	// observation mode for one declared allowance, not a second decision.
-	EnforcementAudit Enforcement = "audit"
-)
-
-// ParseEnforcement validates a declared per-entry enforcement value. An empty
-// value means enforcement: the global behavior, which the declaration may only
-// narrow by asking for audit.
-func ParseEnforcement(value string) (Enforcement, error) {
-	switch normalized := Enforcement(value); normalized {
-	case "", EnforcementEnforce:
-		return EnforcementEnforce, nil
-	case EnforcementAudit:
-		return EnforcementAudit, nil
-	default:
-		return "", fmt.Errorf("enforcement must be %q or %q", EnforcementEnforce, EnforcementAudit)
-	}
-}
-
-func normalizeEnforcement(value Enforcement) Enforcement {
-	normalized, err := ParseEnforcement(string(value))
-	if err != nil {
-		return EnforcementEnforce
-	}
-	return normalized
-}
 
 // Generation identifies one policy snapshot. A decision records the generation
 // it was evaluated against, so a consumer holding a newer policy can tell that
@@ -109,6 +73,11 @@ type Rule struct {
 	// with binaries refuses an unknown binary as well, so omitting the
 	// attribution cannot bypass a binary-scoped refusal.
 	Binaries []string
+	// L7 optionally narrows an allowance to HTTP methods and paths. An empty
+	// constraint keeps the L4 destination-only behavior. A rule with a
+	// constraint matches a request only when the engine observed its method and
+	// path, or when the caller deferred the check to a payload it will inspect.
+	L7 L7Constraint
 	// Enforcement selects how a matched allow rule is applied. It is enforced
 	// by default; audit records the match and allows the request.
 	Enforcement Enforcement
@@ -135,6 +104,7 @@ func NewPolicy(defaultAction Action, rules ...Rule) Policy {
 		copied[i].Names = append([]string(nil), rule.Names...)
 		copied[i].AllowedIPs = append([]string(nil), rule.AllowedIPs...)
 		copied[i].Binaries = append([]string(nil), rule.Binaries...)
+		copied[i].L7 = canonicalL7Constraint(rule.L7)
 		copied[i].Enforcement = normalizeEnforcement(rule.Enforcement)
 	}
 	policy := Policy{defaultAction: normalizeAction(defaultAction), rules: copied}
@@ -169,6 +139,7 @@ func (p Policy) Rules() []Rule {
 		copied[i].Names = append([]string(nil), rule.Names...)
 		copied[i].AllowedIPs = append([]string(nil), rule.AllowedIPs...)
 		copied[i].Binaries = append([]string(nil), rule.Binaries...)
+		copied[i].L7 = rule.L7.Clone()
 	}
 	return copied
 }
@@ -184,6 +155,19 @@ func (p Policy) hasBinaryConstraints() bool {
 		}
 	}
 	return false
+}
+
+// canonicalL7Constraint returns the normalized form of a constraint for a
+// policy built without a validation step. NewPolicy cannot return an error, so
+// an invalid value is kept as written: a malformed method or path then matches
+// nothing, which fails closed under a deny default and never turns into an
+// unconstrained allowance.
+func canonicalL7Constraint(value L7Constraint) L7Constraint {
+	normalized, err := NormalizeL7Constraint(value.Methods, value.Paths)
+	if err != nil {
+		return value.Clone()
+	}
+	return normalized
 }
 
 func (r Rule) matches(request Request) bool {
@@ -245,6 +229,25 @@ func (r Rule) matchesEndpoint(request Request) bool {
 	return false
 }
 
+// matchesL7 reports whether the request satisfies the rule's optional L7
+// constraint. A rule without one matches every request, which keeps the
+// destination-only behavior. A rule with one requires the engine to have
+// observed the request (LayerL7) or the caller to have promised to inspect the
+// payload after connecting (DeferL7); an uninspected CONNECT never satisfies an
+// L7 declaration by itself.
+func (r Rule) matchesL7(request Request) bool {
+	if r.L7.Empty() {
+		return true
+	}
+	if request.DeferL7 {
+		return true
+	}
+	if request.Layer != LayerL7 {
+		return false
+	}
+	return r.L7.Matches(request.Method, request.Path)
+}
+
 func normalizeAction(action Action) Action {
 	if action == Allow {
 		return Allow
@@ -285,7 +288,7 @@ func (p Policy) contentGeneration() Generation {
 		}
 		writeField(h, "\x00")
 		// The remaining fields are written only when they carry a non-default
-		// value, so a rule that existed before binary scoping and per-entry
+		// value, so a rule that existed before binary/L7 scoping and per-entry
 		// audit keeps the same generation after an upgrade. A generation is
 		// recorded with a running sandbox, and changing it for an unchanged
 		// declaration would make that record look stale.
@@ -294,11 +297,20 @@ func (p Policy) contentGeneration() Generation {
 			writeField(h, string(enforcement))
 		}
 		if len(rule.Binaries) > 0 {
-			// Binary scoping changes which requests a rule can decide, so it
-			// must change the generation for the same reason.
 			writeField(h, "binaries")
 			for _, binary := range rule.Binaries {
 				writeField(h, binary)
+			}
+			writeField(h, "\x00")
+		}
+		if !rule.L7.Empty() {
+			writeField(h, "l7")
+			for _, method := range rule.L7.Methods {
+				writeField(h, method)
+			}
+			writeField(h, "\x00")
+			for _, path := range rule.L7.Paths {
+				writeField(h, path)
 			}
 			writeField(h, "\x00")
 		}

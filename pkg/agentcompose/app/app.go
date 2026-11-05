@@ -466,6 +466,15 @@ func NewEgressProxy(di do.Injector) (*proxy.EgressProxy, error) {
 		}
 		options.Recorder = audit
 	}
+	if config.EgressL7TLS.MITM {
+		certPEM, keyPEM, err := loadEgressL7CA(config)
+		if err != nil {
+			return nil, err
+		}
+		options.TLSMITM = true
+		options.CACertificatePEM = certPEM
+		options.CAKeyPEM = keyPEM
+	}
 	return proxy.NewEgressProxy(options)
 }
 

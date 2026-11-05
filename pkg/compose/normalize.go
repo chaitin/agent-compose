@@ -98,8 +98,8 @@ type NormalizedSandboxNetworkSpec struct {
 	Deny    []NormalizedSandboxNetworkDenySpec  `yaml:"deny,omitempty" json:"deny,omitempty"`
 }
 
-// NormalizedSandboxNetworkAllowSpec is one validated allowance. It names only a
-// destination; the engine does not claim an application-protocol check.
+// NormalizedSandboxNetworkAllowSpec is one validated allowance. It names a
+// destination, optionally narrowed by an L7 method/path constraint.
 type NormalizedSandboxNetworkAllowSpec struct {
 	Host string `yaml:"host" json:"host"`
 	Port int    `yaml:"port" json:"port"`
@@ -111,6 +111,11 @@ type NormalizedSandboxNetworkAllowSpec struct {
 	// scoped to. It is empty when the declaration did not scope the entry to a
 	// binary, and it participates in the canonical JSON and spec hash.
 	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
+	// Methods and Paths are the canonical L7 constraint. Empty means the
+	// destination-only behavior, and the fields are omitted from canonical JSON
+	// so a declaration that does not use L7 keeps its existing hash.
+	Methods []string `yaml:"methods,omitempty" json:"methods,omitempty"`
+	Paths   []string `yaml:"paths,omitempty" json:"paths,omitempty"`
 	// Enforcement is the normalized per-entry enforcement. It is empty when the
 	// declaration omitted it, which keeps an existing spec byte-identical and
 	// means the global behavior (enforce).

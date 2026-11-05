@@ -562,9 +562,9 @@ func cloneNormalizedSandboxSpec(value *NormalizedSandboxSpec) *NormalizedSandbox
 }
 
 // cloneNormalizedNetworkAllow copies the allowances deeply, including each
-// entry's address list. A shallow copy would share that backing array with the
-// source declaration, so an in-place edit through one view would change the
-// canonical JSON and hash the clone exists to protect.
+// entry's address list and L7 constraint. A shallow copy would share those
+// backing arrays with the source declaration, so an in-place edit through one
+// view would change the canonical JSON and hash the clone exists to protect.
 func cloneNormalizedNetworkAllow(values []NormalizedSandboxNetworkAllowSpec) []NormalizedSandboxNetworkAllowSpec {
 	if values == nil {
 		return nil
@@ -573,6 +573,8 @@ func cloneNormalizedNetworkAllow(values []NormalizedSandboxNetworkAllowSpec) []N
 	for i, value := range values {
 		value.AllowedIPs = append([]string(nil), value.AllowedIPs...)
 		value.Binaries = append([]string(nil), value.Binaries...)
+		value.Methods = append([]string(nil), value.Methods...)
+		value.Paths = append([]string(nil), value.Paths...)
 		cloned[i] = value
 	}
 	return cloned

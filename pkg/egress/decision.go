@@ -20,13 +20,22 @@ type Result struct {
 	// populated only when the matched rule recorded one.
 	Target string
 	// Reason explains a deny, or why an allowed match was recorded instead of
-	// enforced. It is empty for an ordinary allow.
+	// enforced, including an audit-only L7 decision.
 	Reason string
 	// Audit reports that the matched allowance is declared in audit mode: the
 	// request is allowed, and the decision is recorded rather than enforced.
 	Audit bool
 	// Generation is the policy generation this result was evaluated against.
 	Generation Generation
+	// Enforcement is the enforcement mode of the matched rule. An audit-only
+	// allow carries EnforcementAudit so a consumer can report that the request
+	// was allowed (and would have been refused under enforce); an unmatched
+	// default carries the zero value.
+	Enforcement Enforcement
+	// L7Deferred reports that an L7-constrained rule decided a request whose
+	// payload the caller promised to inspect after connecting (Request.DeferL7).
+	// The caller must perform that inspection; the allowance is not an L4 one.
+	L7Deferred bool
 }
 
 // Allowed reports whether the action permits the request.
@@ -59,6 +68,29 @@ func Decide(policy Policy, request Request) Result {
 		if !rule.matches(request) {
 			continue
 		}
+		// A rule that declares methods or paths narrows the allowance to an
+		// inspected request. A request the engine did not inspect does not
+		// silently satisfy it; only a caller that promised to inspect the
+		// payload after connecting (DeferL7) may defer the check. An audit-only
+		// rule allows the request and says why, so the decision is visible
+		// without yet denying traffic.
+		if !rule.matchesL7(request) {
+			if rule.Action == Allow && rule.Enforcement == EnforcementAudit {
+				target := rule.Target
+				if target == "" {
+					target = request.Name
+				}
+				return Result{
+					Action:      Allow,
+					RuleID:      rule.ID,
+					Target:      target,
+					Reason:      "the endpoint is declared with enforcement: audit, and this request does not match its methods or paths; it would be denied under enforcement: enforce",
+					Generation:  policy.generation,
+					Enforcement: EnforcementAudit,
+				}
+			}
+			continue
+		}
 		if rule.Action == Allow {
 			if refusal, allowed := rule.allowsAddresses(request); !allowed {
 				// An address constraint narrows one declared allowance. Under a
@@ -81,11 +113,13 @@ func Decide(policy Policy, request Request) Result {
 			target = request.Name
 		}
 		result := Result{
-			Action:     rule.Action,
-			RuleID:     rule.ID,
-			Target:     target,
-			Reason:     rule.Reason,
-			Generation: policy.generation,
+			Action:      rule.Action,
+			RuleID:      rule.ID,
+			Target:      target,
+			Reason:      rule.Reason,
+			Generation:  policy.generation,
+			Enforcement: rule.Enforcement,
+			L7Deferred:  !rule.L7.Empty() && request.DeferL7,
 		}
 		if rule.Action == Allow && normalizeEnforcement(rule.Enforcement) == EnforcementAudit {
 			// Audit is an observation mode for one declared allowance: the
@@ -142,9 +176,10 @@ func (r Rule) allowsAddresses(request Request) (Result, bool) {
 		return Result{}, true
 	}
 	refusal := Result{
-		Action: Deny,
-		RuleID: r.ID,
-		Target: request.Name,
+		Action:      Deny,
+		RuleID:      r.ID,
+		Target:      request.Name,
+		Enforcement: r.Enforcement,
 	}
 	if len(request.ResolvedIPs) == 0 {
 		refusal.Reason = fmt.Sprintf("the rule allows only %s, and the destination address was not resolved", strings.Join(r.AllowedIPs, ", "))

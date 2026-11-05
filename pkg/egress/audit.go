@@ -12,15 +12,27 @@ type AuditRecord struct {
 	Kind        string    `json:"kind,omitempty"`
 	Destination string    `json:"destination,omitempty"`
 	ResolvedIPs []string  `json:"resolved_ips,omitempty"`
-	Action      string    `json:"action"`
-	RuleID      string    `json:"rule_id,omitempty"`
-	Target      string    `json:"target,omitempty"`
-	Reason      string    `json:"reason,omitempty"`
-	Generation  uint64    `json:"generation,omitempty"`
-	SessionID   string    `json:"session_id,omitempty"`
-	Marker      string    `json:"marker,omitempty"`
-	ProcessID   int       `json:"process_id,omitempty"`
-	Binary      string    `json:"binary,omitempty"`
+	// Layer, Method, and Path report how much of the request the engine
+	// observed and what it decided on. They are empty for a non-network
+	// decision, and Method and Path are empty for an L4 tunnel.
+	Layer  string `json:"layer,omitempty"`
+	Method string `json:"method,omitempty"`
+	Path   string `json:"path,omitempty"`
+	// Status is the response status the enforcing boundary answered with.
+	Status int `json:"status,omitempty"`
+	// Enforcement is the matched rule's mode ("enforce" or "audit"). An audit
+	// line whose action is allow and whose enforcement is audit reports a
+	// request the declared constraint would have refused.
+	Enforcement string `json:"enforcement,omitempty"`
+	Action      string `json:"action"`
+	RuleID      string `json:"rule_id,omitempty"`
+	Target      string `json:"target,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Generation  uint64 `json:"generation,omitempty"`
+	SessionID   string `json:"session_id,omitempty"`
+	Marker      string `json:"marker,omitempty"`
+	ProcessID   int    `json:"process_id,omitempty"`
+	Binary      string `json:"binary,omitempty"`
 	// Audit reports that the decision matched an allowance declared in audit
 	// mode. The action stays "allow"; Reason explains the observation.
 	Audit bool `json:"audit,omitempty"`
@@ -35,6 +47,11 @@ func AuditRecordFrom(record Record, at time.Time) AuditRecord {
 		Kind:        string(record.Request.Kind),
 		Destination: record.Request.Name,
 		ResolvedIPs: append([]string(nil), record.Request.ResolvedIPs...),
+		Layer:       string(record.Request.Layer),
+		Method:      record.Request.Method,
+		Path:        record.Request.Path,
+		Status:      record.Status,
+		Enforcement: string(record.Result.Enforcement),
 		Action:      string(record.Result.Action),
 		RuleID:      record.Result.RuleID,
 		Target:      record.Result.Target,

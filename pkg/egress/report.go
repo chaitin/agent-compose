@@ -25,11 +25,21 @@ type DeclaredAllowance struct {
 	// which the report must state rather than imply a constraint that is not
 	// there.
 	AllowedIPs []string
+
 	// Binaries lists the absolute executable paths this allowance is scoped to.
 	// It is empty when the allowance is not scoped to a binary.
 	Binaries []string
 	// Enforcement is the declared per-entry enforcement: "enforce" when omitted
 	// or declared, "audit" when the allowance only records a match.
+
+	// Methods and Paths are the entry's optional L7 constraint. Both empty is
+	// the destination-only behavior; a non-empty list is a declaration the
+	// mechanism must inspect to enforce.
+	Methods []string
+	Paths   []string
+	// Enforcement reports whether the L7 constraint is enforced or only
+	// audited.
+
 	Enforcement Enforcement
 	// Sources names the declaration layers that contributed this allowance.
 	// The values are "daemon" and "agent"; both are present when the effective
@@ -92,11 +102,19 @@ func ReportNetworkPolicy(declaration *NetworkDeclaration, engine []EngineEndpoin
 	}
 	report := NetworkPolicyReport{Declared: true, Restricts: declaration.Restricts(), Default: declaration.Default}
 	for _, entry := range declaration.Allow {
+		enforcement, err := ParseEnforcement(string(entry.Enforcement))
+		if err != nil {
+			return NetworkPolicyReport{}, err
+		}
 		report.Allow = append(report.Allow, DeclaredAllowance{
-			Endpoint:    FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol),
-			AllowedIPs:  append([]string(nil), entry.AllowedIPs...),
-			Binaries:    append([]string(nil), entry.Binaries...),
-			Enforcement: normalizeEnforcement(entry.Enforcement),
+			Endpoint:   FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol),
+			AllowedIPs: append([]string(nil), entry.AllowedIPs...),
+
+			Binaries: append([]string(nil), entry.Binaries...),
+
+			Methods:     append([]string(nil), entry.L7.Methods...),
+			Paths:       append([]string(nil), entry.L7.Paths...),
+			Enforcement: enforcement,
 		})
 	}
 	for _, entry := range declaration.Deny {

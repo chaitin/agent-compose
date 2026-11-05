@@ -1128,8 +1128,15 @@ Daemon 还会记录每个 runtime 创建时所依据的出网策略。启动 san
 | `port` | int | 与 `ports` 二选一 | 单个目标端口，取值 1–65535。 |
 | `ports` | int 列表 | 与 `port` 二选一 | 同一主机上多个端口的简写，例如 `[80, 443]`。规范化会把每个端口展开成独立的规范条目；`port` 与 `ports` 不能同时使用。 |
 | `allowed_ips` | list | 空 | 该条目的 `host` 允许解析到的 IP 地址或 CIDR 范围（可选）。名字解析出的每个地址都必须落在其中，否则该放行项不适用。裸地址就是它自身的单地址范围（`10.0.0.5` 即 `10.0.0.5/32`）；条目会被规范化并排序。它约束的是主机名，不是子网目标，也不能用在 `deny` 项上。 |
+
 | `binaries` | list | 空 | 可选，把放行项限定到指定的可执行文件绝对路径。sandbox-init 进程会读取发起连接进程的 `/proc/<pid>/exe`，只有路径完全匹配的条目才适用。无法确定可执行文件时，binary 放行项一律不匹配；如果策略中任意条目带 binary 约束，而连接没有可执行文件归属，原本会由默认 allow 放行的请求也会被拒绝。路径必须是绝对路径、不能包含 `..`，会被清理、去重、排序，并且每项最多 64 个。 |
 | `enforcement` | string | `enforce` | `enforce` 执行该放行项；`audit` 只记录匹配并放行，不执行限制。该字段只作用于放行项；`deny` 项没有该字段，拒绝始终生效。 |
+
+
+| `methods` | list | 空 | 该放行项允许的 HTTP 方法（可选），例如 `[GET, HEAD]`；最多 16 个。省略且 `paths` 也为空时保持仅按目标放行的原有行为。方法必须是 RFC 9110 token，并会规范化为大写。 |
+| `paths` | list | 空 | 该放行项允许的请求路径（可选）。每项是精确路径，或以 `*` 结尾的前缀（`/v1/*`）；不匹配查询串。最多 64 项。省略表示允许所有路径。 |
+
+一旦声明 `methods` 或 `paths`，该放行项就是 **L7** 放行项。明文 HTTP 由正向代理直接检查；HTTPS 需要可选的 TLS 终止：设置 `EGRESS_L7_TLS_MITM=true`，为 daemon 提供 CA（`EGRESS_L7_CA_CERT_FILE`/`EGRESS_L7_CA_KEY_FILE` 或内联 PEM 变量），并把该 CA 安装到 guest 镜像或挂载文件中。配置 `EGRESS_L7_CA_BUNDLE_GUEST_PATH` 后，引擎会注入 `SSL_CERT_FILE`、`CURL_CA_BUNDLE`、`REQUESTS_CA_BUNDLE`、`NODE_EXTRA_CA_CERTS` 和 `GIT_SSL_CAINFO`，但不会自行安装文件。未启用 TLS 终止时，带 L7 约束的 HTTPS 放行项会**失败关闭**（规则 `engine.l7-inspection-unavailable`），不会静默退化成仅按目标放行。没有 `methods`/`paths` 的放行项保持透明隧道行为。终止的 TLS 服务名必须与 CONNECT 目标一致；未知或不匹配的 SNI 会使握手失败。
 
 每个 `deny` 项包含 `host`、`port` 或 `ports`，host 与端口的校验和规范化规则与放行项相同；它没有 `allowed_ips` 字段，因为拒绝的是目标本身。它可以带 `binaries`，把拒绝限定到这些可执行路径；没有可执行文件归属的连接仍会被 binary 拒绝项拒绝，因此不能靠省略归属绕过它。`ports` 中的每个端口都会展开成独立的规范条目，因此 spec hash 与准入报告和逐条写 `port` 完全等价。
 

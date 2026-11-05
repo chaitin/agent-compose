@@ -101,7 +101,10 @@ type Config struct {
 	GlobalNetworkPolicyInfo GlobalNetworkPolicyInfo
 	// EgressAuditLog is the append-only JSONL file the forward proxy writes
 	// one decision record per line to. Empty disables persistent audit.
-	EgressAuditLog        string
+	EgressAuditLog string
+	// EgressL7TLS is the opt-in TLS interception configuration. Its zero value
+	// keeps the proxy on its L4 behavior.
+	EgressL7TLS           EgressL7TLSConfig
 	BoxliteHome           string
 	BoxliteRuntimeDir     string
 	DockerHome            string
@@ -281,6 +284,7 @@ type configSources struct {
 	GlobalPolicy     *egress.NetworkDeclaration
 	GlobalPolicyInfo GlobalNetworkPolicyInfo
 	EgressAuditLog   string
+	EgressL7TLS      EgressL7TLSConfig
 }
 
 func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, error) {
@@ -347,6 +351,13 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 	if err != nil {
 		return configSources{}, err
 	}
+	egressL7TLS, err := loadEgressL7TLSConfig()
+	if err != nil {
+		return configSources{}, err
+	}
+	if egressL7TLS.MITM && !egressL7TLS.ConfiguredCA() {
+		logger.Warn("egress L7 TLS interception is enabled without a configured CA; an ephemeral CA will be generated, so a sandbox cannot trust it across a daemon restart")
+	}
 	if globalPolicyInfo.Path != "" {
 		// Name the exact bytes in the startup log as well as the admission
 		// report, so a daemon restart is auditable even before a project is
@@ -375,6 +386,7 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		GlobalPolicy:     globalPolicy,
 		GlobalPolicyInfo: globalPolicyInfo,
 		EgressAuditLog:   egressAuditLog,
+		EgressL7TLS:      egressL7TLS,
 	}, nil
 }
 
@@ -441,6 +453,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		GlobalNetworkPolicy:         sources.GlobalPolicy,
 		GlobalNetworkPolicyInfo:     sources.GlobalPolicyInfo,
 		EgressAuditLog:              sources.EgressAuditLog,
+		EgressL7TLS:                 sources.EgressL7TLS,
 		BoxliteHome:                 normalized.BoxliteHome,
 		BoxliteRuntimeDir:           normalized.BoxliteRuntimeDir,
 		DockerHome:                  normalized.DockerHome,

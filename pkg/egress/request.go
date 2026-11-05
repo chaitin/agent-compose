@@ -38,10 +38,30 @@ type Request struct {
 	SessionID string
 	Marker    string
 	ProcessID int
+
 	// Binary is the absolute executable path of the process that produced a
 	// mediated connection, as reported by the sandbox init process. It scopes a
 	// rule that declares binaries; a path that cannot be established leaves it
 	// empty, which no binary-scoped allowance can satisfy and every
 	// binary-scoped denial refuses.
 	Binary string
+
+	// Layer reports how much of the request the engine observed. The zero value
+	// is an unspecified layer, which is what a non-network decision such as the
+	// capability gateway carries; the forward proxy sets L4 for a tunnel it
+	// forwards and L7 for a request whose method and path it read.
+	Layer Layer
+	// Method and Path are the HTTP request line the engine observed. They are
+	// empty for an L4 decision and are matched only by a rule that declares L7
+	// constraints. Path is the escaped path without the query string.
+	Method string
+	Path   string
+	// DeferL7 tells the decision that the caller will establish the connection
+	// first and enforce L7 constraints on the requests that follow. Only a
+	// caller that actually terminates the payload may set it; the forward proxy
+	// sets it after CONNECT only when TLS interception is enabled. Without it an
+	// L7-constrained rule does not match an uninspected connection, so a
+	// declaration that asked for inspection fails closed instead of being
+	// forwarded.
+	DeferL7 bool
 }

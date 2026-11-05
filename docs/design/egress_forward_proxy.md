@@ -238,6 +238,7 @@ non-DNS UDP is refused, DNS is answered by the sandbox-local policy resolver, an
 a `sendmmsg`-based resolver can still bypass that resolver (TCP egress remains
 mediated).
 
+
 ## Docker outer default-deny (strict network profile)
 
 The engine's forward proxy decides the connections it sees, but on Docker a
@@ -279,6 +280,49 @@ create the network with `docker network create --internal` and attach the daemon
 before setting the variables. The shipped overlay keeps the default placement on
 the non-internal `agent-compose-sandbox` network, so the profile changes nothing
 until an operator selects it.
+
+
+## Delivered: L7 method/path enforcement and opt-in TLS interception
+
+The policy model gained an optional L7 constraint on an allowance: `methods`
+and `paths`, with `enforcement: audit|enforce`. Omitting both keeps the L4
+behavior byte-for-byte, including the policy generation. A rule with an L7
+constraint no longer matches an uninspected CONNECT, so a declaration that asked
+for inspection cannot be satisfied by forwarding it blindly.
+
+- **Plain HTTP** is decided on the request line (`method`, escaped `path`), so an
+  allowance can name methods and path prefixes without interception.
+- **HTTPS** is intercepted only for an endpoint whose deciding allowance carries
+  an L7 constraint. Enabling `EGRESS_L7_TLS_MITM` makes the CONNECT decision defer
+  the L7 check (`egress.Request.DeferL7`) and then terminates TLS with a leaf for
+  the CONNECT host, signed by the configured CA (`EGRESS_L7_CA_CERT_FILE`/`KEY_FILE`
+  or inline PEM) or by an ephemeral CA generated at startup. Each intercepted
+  request is decided against the policy in force now, and the upstream connection
+  is pinned to the address the L4 decision resolved, so TLS termination never
+  re-resolves the name. The upstream is dialled with TLS and the server name is
+  the CONNECT destination. A ClientHello whose SNI differs from the CONNECT host
+  fails the handshake (this also covers the outer SNI of an ECH offer); a client
+  that sends no SNI reaches the CONNECT destination.
+- **Fail closed.** Without interception, an L7-constrained HTTPS allowance is
+  denied under `engine.l7-inspection-unavailable`; it is not downgraded to a
+  destination-only allowance. An allowance without L7 constraints keeps the
+  transparent tunnel.
+- **CA trust is the deployment's job.** The proxy cannot install a file in the
+  guest. `EGRESS_L7_CA_BUNDLE_GUEST_PATH` names an already-installed bundle and
+  makes the creation seam inject `SSL_CERT_FILE`, `CURL_CA_BUNDLE`,
+  `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, and `GIT_SSL_CAINFO`. An ephemeral
+  CA is usable for a test but changes on every daemon restart.
+- **Audit** records `layer` (`l4`/`l7`), `method`, `path`, `status`,
+  `enforcement`, `rule_id`, `action`, and `reason` per decision. An `audit`
+  allowance allows the request and records the reason it would have been denied.
+
+Not implemented in this slice: L7 fields are not yet on the protobuf API surface
+(a client must deliver them through the compose file/CLI path); upstream
+credential injection; HTTP/2 interception (the terminated tunnel offers
+`http/1.1` only); transparent capture for clients that ignore the proxy
+environment; and the admission report still describes endpoints, not L7
+constraints.
+
 
 ## Still open
 

@@ -220,6 +220,17 @@ func normalizeSandboxNetworkDefault(action egress.Action) (egress.Action, error)
 	}
 }
 
+// canonicalEnforcement keeps the default enforcement as the zero value in the
+// boundary policy. The decision model treats the zero value as enforce, and
+// preserving it here means a policy that does not use L7 is identical to the one
+// this boundary produced before the field existed.
+func canonicalEnforcement(value egress.Enforcement) egress.Enforcement {
+	if value == egress.EnforcementAudit {
+		return egress.EnforcementAudit
+	}
+	return ""
+}
+
 func normalizeSandboxNetworkEndpoints(field string, entries []egress.AllowEntry) ([]egress.AllowEntry, error) {
 	if len(entries) == 0 {
 		return nil, nil
@@ -239,13 +250,13 @@ func normalizeSandboxNetworkEndpoints(field string, entries []egress.AllowEntry)
 		if err != nil {
 			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
 		}
-		enforcement := entry.Enforcement
-		if enforcement != "" {
-			parsed, err := egress.ParseEnforcement(string(enforcement))
-			if err != nil {
-				return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
-			}
-			enforcement = parsed
+		l7, err := egress.NormalizeL7Constraint(entry.L7.Methods, entry.L7.Paths)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
+		}
+		parsedEnforcement, err := egress.ParseEnforcement(string(entry.Enforcement))
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
 		}
 		key := endpoint.Name()
 		if _, duplicate := seen[key]; duplicate {
@@ -253,12 +264,16 @@ func normalizeSandboxNetworkEndpoints(field string, entries []egress.AllowEntry)
 		}
 		seen[key] = struct{}{}
 		normalized = append(normalized, egress.AllowEntry{
-			Host:        endpoint.Host,
-			Port:        endpoint.Port,
-			Protocol:    endpoint.Protocol,
-			AllowedIPs:  allowed,
-			Binaries:    binaries,
-			Enforcement: enforcement,
+			Host:       endpoint.Host,
+			Port:       endpoint.Port,
+			Protocol:   endpoint.Protocol,
+			AllowedIPs: allowed,
+			Binaries:   binaries,
+			L7:         l7,
+			// The default stays the zero value so an unchanged declaration
+			// produces the same boundary policy it did before this field
+			// existed; the decision model normalizes it to enforce.
+			Enforcement: canonicalEnforcement(parsedEnforcement),
 		})
 	}
 	return normalized, nil

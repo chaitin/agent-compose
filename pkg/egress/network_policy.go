@@ -20,6 +20,9 @@ type AllowEntry struct {
 	// is empty after validation. An unknown request binary never satisfies a
 	// scoped allowance.
 	Binaries []string
+	// L7 optionally narrows this allowance to HTTP methods and paths. An empty
+	// constraint keeps the destination-only behavior.
+	L7 L7Constraint
 	// Enforcement selects how a matched allowance is applied: enforce decides
 	// normally, audit records the match and allows the request. The zero value
 	// means the global behavior, which is enforce.
@@ -86,6 +89,9 @@ func (d NetworkDeclaration) Validate() error {
 			}
 		}
 		if _, err := NormalizeBinaries(entry.Binaries); err != nil {
+			return fmt.Errorf("allow[%d]: %w", i, err)
+		}
+		if _, err := NormalizeL7Constraint(entry.L7.Methods, entry.L7.Paths); err != nil {
 			return fmt.Errorf("allow[%d]: %w", i, err)
 		}
 		if _, err := ParseEnforcement(string(entry.Enforcement)); err != nil {
@@ -165,6 +171,10 @@ func CompileNetworkPolicy(declaration NetworkDeclaration, engine []EngineEndpoin
 		if err != nil {
 			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
 		}
+		l7, err := NormalizeL7Constraint(entry.L7.Methods, entry.L7.Paths)
+		if err != nil {
+			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
 		enforcement, err := ParseEnforcement(string(entry.Enforcement))
 		if err != nil {
 			return Policy{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
@@ -176,6 +186,7 @@ func CompileNetworkPolicy(declaration NetworkDeclaration, engine []EngineEndpoin
 			Action:      Allow,
 			AllowedIPs:  allowed,
 			Binaries:    binaries,
+			L7:          l7,
 			Enforcement: enforcement,
 		})
 	}

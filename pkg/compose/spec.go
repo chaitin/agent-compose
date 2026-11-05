@@ -163,10 +163,19 @@ type SandboxNetworkAllowSpec struct {
 	// binary-scoped allowance, so the declaration fails closed for traffic the
 	// engine cannot attribute.
 	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
+	// Methods optionally narrows the allowance to the HTTP methods listed. It
+	// requires L7 inspection: a plain HTTP request is inspected by the forward
+	// proxy, and an HTTPS request needs TLS interception (EGRESS_L7_TLS_MITM).
+	// Omitted (with an empty Paths) keeps the destination-only behavior.
+	Methods []string `yaml:"methods,omitempty" json:"methods,omitempty"`
+	// Paths optionally narrows the allowance to these request paths. Each entry
+	// is an exact path or a prefix ending in "*" (for example "/v1/*"). Queries
+	// are not matched. Omitted permits every path.
+	Paths []string `yaml:"paths,omitempty" json:"paths,omitempty"`
 	// Enforcement selects how a matched allowance is applied. "enforce" is the
 	// default and the behavior an omitted field keeps; "audit" records the
-	// match and allows the request without enforcing it. A denial has no
-	// enforcement field: a refusal always refuses.
+	// match and allows the request without enforcing it.
+	// A denial has no enforcement field: a refusal always refuses.
 	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
 }
 
@@ -711,6 +720,8 @@ func validateSandboxNetworkAllowList(node *yaml.Node, path string) error {
 			"ports":       validateIntSequence,
 			"allowed_ips": validateStringList,
 			"binaries":    validateStringList,
+			"methods":     validateStringList,
+			"paths":       validateStringList,
 			"enforcement": validateScalar,
 		}); err != nil {
 			return err

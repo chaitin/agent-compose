@@ -67,15 +67,29 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() (egress.NetworkDeclar
 	}
 	declaration := egress.NetworkDeclaration{Default: defaultAction}
 	for _, entry := range n.Allow {
+		l7, err := egress.NormalizeL7Constraint(entry.Methods, entry.Paths)
+		if err != nil {
+			return egress.NetworkDeclaration{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		enforcement, err := egress.ParseEnforcement(entry.Enforcement)
+		if err != nil {
+			return egress.NetworkDeclaration{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		// The default enforcement is left as the zero value so a declaration
+		// that does not use L7 produces the same AllowEntry it did before the
+		// field existed. CompileNetworkPolicy normalizes it to enforce.
+		declaredEnforcement := egress.Enforcement("")
+		if enforcement == egress.EnforcementAudit {
+			declaredEnforcement = egress.EnforcementAudit
+		}
 		declaration.Allow = append(declaration.Allow, egress.AllowEntry{
-			Host:       entry.Host,
-			Port:       entry.Port,
-			Protocol:   egress.ProtocolAny,
-			AllowedIPs: append([]string(nil), entry.AllowedIPs...),
-			Binaries:   append([]string(nil), entry.Binaries...),
-			// An omitted enforcement stays empty and means enforce, exactly as
-			// the decision model's zero value defines it.
-			Enforcement: egress.Enforcement(entry.Enforcement),
+			Host:        entry.Host,
+			Port:        entry.Port,
+			Protocol:    egress.ProtocolAny,
+			AllowedIPs:  append([]string(nil), entry.AllowedIPs...),
+			Binaries:    append([]string(nil), entry.Binaries...),
+			L7:          l7,
+			Enforcement: declaredEnforcement,
 		})
 	}
 	for _, entry := range n.Deny {
@@ -209,6 +223,22 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 		if err != nil {
 			return nil, &ValidationError{Path: entryPath + ".allowed_ips", Message: err.Error()}
 		}
+		l7, err := egress.NormalizeL7Constraint(value.Methods, value.Paths)
+		if err != nil {
+			// The error names the invalid list, so the path prefix tells an
+			// operator which entry and field to fix.
+			return nil, &ValidationError{Path: entryPath, Message: err.Error()}
+		}
+		enforcement, err := egress.ParseEnforcement(value.Enforcement)
+		if err != nil {
+			return nil, &ValidationError{Path: entryPath + ".enforcement", Message: err.Error()}
+		}
+		normalizedEnforcement := ""
+		if enforcement == egress.EnforcementAudit {
+			// The default is omitted so an existing declaration that does not
+			// use L7 keeps its canonical JSON and spec hash byte-identical.
+			normalizedEnforcement = string(egress.EnforcementAudit)
+		}
 		ports, err := normalizeSandboxNetworkPorts(entryPath, value.Port, value.Ports, maxSandboxNetworkAllowEntries)
 		if err != nil {
 			return nil, err
@@ -216,10 +246,6 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 		binaries, err := egress.NormalizeBinaries(value.Binaries)
 		if err != nil {
 			return nil, &ValidationError{Path: entryPath + ".binaries", Message: err.Error()}
-		}
-		enforcement, err := normalizeSandboxNetworkEntryEnforcement(entryPath, value.Enforcement)
-		if err != nil {
-			return nil, err
 		}
 		for _, port := range ports {
 			dedupeKey := fmt.Sprintf("%s\x00%d", host, port)
@@ -232,7 +258,9 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 				Port:        port,
 				AllowedIPs:  append([]string(nil), allowedIPs...),
 				Binaries:    append([]string(nil), binaries...),
-				Enforcement: enforcement,
+				Methods:     append([]string(nil), l7.Methods...),
+				Paths:       append([]string(nil), l7.Paths...),
+				Enforcement: normalizedEnforcement,
 			})
 		}
 		if len(normalized) > maxSandboxNetworkAllowEntries {
