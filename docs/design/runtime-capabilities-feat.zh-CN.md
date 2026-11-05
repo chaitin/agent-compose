@@ -28,10 +28,13 @@ AC 在准备能力指南时生成 `RUNTIME_ROOT/mpi/capabilities.json`：
 `describe()` 返回方法和顶层消息的 Protobuf 文本，同时返回 Base64 编码的标准
 FileDescriptorSet，包含导入依赖。可由调用方的 Protobuf 库加载；不是 JSON Schema
 或不可变的 schema 审批绑定。`call()` 使用标准 Protobuf JSON，经 grpcurl 编解码。
+well-known 类型可使用字符串、数字、布尔、数组和 null；非 JSON 值在调用前拒绝。
+目录和 Markdown 均在沙箱目录内原子替换，不跟随 guest 构造的越界符号链接。
 
 所有调用继续由 capproxy/OB 鉴权。guest 可修改目录或绕过 SDK，因此 SDK 不是安全边界。
 本功能不从方法名推断读写性质，不替代产品的数据权限或操作审批。依赖删除流程使用
 既有 SandboxAccessRevoker 撤销 CAP 缓存，避免已删除 Sandbox 的凭据继续使用。
+撤销发生在停止阶段日志写入之前，日志持久化失败也不能保留已停止运行时的权限。
 
 调用不自动重试。参数走 stdin，CAP 凭据使用环境展开，不进入 argv。输入上限 256 KiB，
 输出默认 256 KiB、最高 1 MiB，包含返回的二进制 descriptor；超过限制时报错。
@@ -43,6 +46,8 @@ FileDescriptorSet，包含导入依赖。可由调用方的 Protobuf 库加载�
 单元测试覆盖身份/Scope、同方法多实例、限定 server 路由、空授权、坏目录、流式拒绝、
 超时、取消、输出大小、descriptor 清理及不回显凭据。组件集成测试通过现有 CodexRunner
 和官方 Codex SDK 子进程，验证真实 capproxy 路由、未授权拒绝与凭据撤销。
+另以真实 gRPC StringValue 验证标量往返及 v1 反射不支持时回退 v1alpha；代理收到上游
+终止状态后及时结束 RPC，不等待仍打开的客户端发送侧，客户端半关闭仍保留响应排空。
 
 独立 Docker E2E 通过公开 up/RunAgent/Exec/Sandbox API 验证：
 

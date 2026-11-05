@@ -21,6 +21,10 @@ method, instance and capset declaration, so identical methods on different
 instances remain distinct. `describe()` returns reflected Protobuf text and
 `descriptorSetBase64`, a standard FileDescriptorSet with imported types;
 `call()` uses the guest's existing `grpcurl` for standard Protobuf encoding.
+Requests accept standard Protobuf JSON, including scalar, array and null forms
+for well-known types. Catalog and Markdown snapshots are replaced atomically
+within the sandbox directory, preventing partial reads and symlink redirection
+of host writes.
 
 Discovery is a preparation-time snapshot. Missing, incomplete or foreign-sandbox
 catalogs fail SDK discovery. capproxy/OB still enforce every call: the SDK and

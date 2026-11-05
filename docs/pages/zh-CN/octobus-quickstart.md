@@ -19,6 +19,8 @@ const result = await runtime.capabilities.call(selectedToolID, params, {
 因来自不同实例而互相覆盖。`describe()` 提供反射得到的 Protobuf 文本定义及
 `descriptorSetBase64`（含依赖类型的标准 FileDescriptorSet，Base64 编码），
 `call()` 通过 guest 已有的 `grpcurl` 使用标准 Protobuf 编解码。
+参数支持标准 Protobuf JSON，包括 well-known 类型使用的标量、数组和 null。
+目录和 Markdown 指南在沙箱目录内原子替换，避免部分写入和符号链接重定向宿主写入。
 
 目录是准备运行时生成的快照，缺失、不完整或 Sandbox 身份不符时 SDK 返回错误。
 实际调用仍由 capproxy/OB 鉴权；目录和 SDK 不是安全边界，也不替产品判断写审批。
