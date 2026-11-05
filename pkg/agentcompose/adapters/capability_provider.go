@@ -40,3 +40,18 @@ func NewCapabilityProvider(source capabilities.GatewaySource, targets ProjectOct
 	global := capabilities.NewDynamicProvider(source, proxyTarget)
 	return &projectAwareCapabilityProvider{DynamicProvider: global, targets: targets}
 }
+
+func (p *projectAwareCapabilityProvider) CatalogForScope(ctx context.Context, scope capabilities.GuideScope, declaration string) (capability.Catalog, error) {
+	parsed, err := capability.ParseCapsetDeclaration(declaration)
+	if err != nil {
+		return capability.Catalog{}, err
+	}
+	if !parsed.Qualified() {
+		return p.DynamicProvider.CatalogForScope(ctx, scope, parsed.CapsetID)
+	}
+	target, err := p.targets.ResolveOctoBusServer(ctx, scope.ProjectID, scope.AgentID, declaration)
+	if err != nil {
+		return capability.Catalog{}, err
+	}
+	return capability.NewClient(capability.Config{Addr: target.Server.URL, Token: target.Server.Token}).Catalog(ctx, target.CapsetID)
+}

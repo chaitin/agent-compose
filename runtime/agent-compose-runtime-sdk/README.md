@@ -427,6 +427,60 @@ Return value:
 
 The returned config can be turned into shell commands with `runtime.ssh.command(config)` (`ssh …`), `runtime.ssh.scpCommand(config)` (`scp …`), and `runtime.ssh.options(config)` (the shared `-F`, `UserKnownHostsFile`, and `StrictHostKeyChecking` flags).
 
+## OctoBus capabilities in custom scripts
+
+`runtime.capabilities` lets an existing script or Codex-compatible runner use
+the sandbox's declared OctoBus capabilities without an application-side relay.
+It reads the daemon-generated `RUNTIME_ROOT/mpi/capabilities.json` snapshot and
+uses the guest image's `grpcurl` executable through `CAP_GRPC_TARGET`.
+
+```js
+import { runtime } from "@chaitin-ai/agent-compose-runtime-sdk";
+
+const tools = await runtime.capabilities.list();
+// Select an explicitly intended tool; identical methods on different
+// instances/capsets have different IDs.
+const selected = tools.find((tool) => tool.id === requestedToolID);
+if (!selected) throw new Error("Requested tool is unavailable");
+const definition = await runtime.capabilities.describe(selected.id);
+// definition.method/request/response contain reflected Protobuf text.
+const result = await runtime.capabilities.call(selected.id, params, {
+  timeoutMs: 30_000,
+  maxOutputBytes: 256 * 1024,
+  signal: abortController.signal,
+});
+```
+
+`list()` returns `id`, `capset`, `instance`, `method`, `request_type` and
+`response_type`. It rejects missing, malformed, foreign-sandbox or incomplete
+snapshots. The snapshot is refreshed when the daemon prepares the capability
+guide; it is not a live directory or a grant. Re-prepare the run, or create a
+new sandbox, after recovering an unavailable directory.
+
+`describe()` returns the unary RPC, top-level request/response Protobuf text,
+and `descriptorSetBase64`: a standard binary `google.protobuf.FileDescriptorSet`
+encoded as Base64, including imported message/enum definitions. Consumers may
+load it with their own Protobuf library; it is not JSON Schema or a pinned schema
+approval. Temporary descriptor files are removed on success and failure.
+`call()` accepts Protobuf JSON and returns the
+decoded JSON response; `grpcurl` performs reflection and standard wire encoding.
+Streaming methods are rejected before business invocation. Neither discovery
+nor SDK validation replaces capproxy/OctoBus authorization or business approval.
+No read-only classification is inferred from method names.
+
+Options apply per `grpcurl` operation. `describe()` makes three reflection
+operations; `call()` checks the method and invokes it once. Use `signal` for a
+shared end-to-end deadline. Calls are not retried. Request JSON is limited to
+256 KiB; output defaults to 256 KiB and may be set up to 1 MiB. Exceeding a
+limit fails instead of returning truncated JSON. The same output limit applies
+to the binary descriptor set before Base64 encoding. Upstream diagnostics are not
+forwarded or attached to errors. The CAP credential uses header environment
+expansion, and request JSON is sent over stdin, keeping both out of argv.
+
+Existing Codex event output and business routing may be retained. This API
+does not implement a model/tool loop. Scripts still own their business decisions
+and projections.
+
 ## Errors
 
 When `rejectOnFailure` is enabled, a non-zero exit from `runtime.exec()` or `runtime.shell()` throws `CommandError`. The error object contains:

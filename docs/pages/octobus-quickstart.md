@@ -1,5 +1,40 @@
 # OctoBus Integration Quick Start
 
+## Custom programs and Codex-compatible runners
+
+Existing programs can retain their business logic and Codex event output while
+using OB through `runtime.capabilities` in
+`@chaitin-ai/agent-compose-runtime-sdk`:
+
+```js
+const tools = await runtime.capabilities.list();
+const definition = await runtime.capabilities.describe(selectedToolID);
+const result = await runtime.capabilities.call(selectedToolID, params, {
+  signal: abortController.signal,
+});
+```
+
+Configure `capset_ids` and capproxy as described below. AC writes
+`RUNTIME_ROOT/mpi/capabilities.json` next to the Markdown guide. Programs do not
+parse Markdown or receive upstream OB credentials. Each tool ID binds a full
+method, instance and capset declaration, so identical methods on different
+instances remain distinct. `describe()` returns reflected Protobuf text and
+`descriptorSetBase64`, a standard FileDescriptorSet with imported types;
+`call()` uses the guest's existing `grpcurl` for standard Protobuf encoding.
+
+Discovery is a preparation-time snapshot. Missing, incomplete or foreign-sandbox
+catalogs fail SDK discovery. capproxy/OB still enforce every call: the SDK and
+catalog are not security boundaries or business approval mechanisms. The first
+version supports unary methods and does not implement a model/tool loop.
+Request JSON travels over stdin, the CAP credential stays out of argv, and
+errors do not expose upstream diagnostic bodies. See
+`runtime/agent-compose-runtime-sdk/README.md` in the repository for the full API
+and limitations.
+
+Ordinary Node.js scripts use the same API without implementing Codex events or
+calling a model. AC supplies discovery, connectivity and authorization; each
+program owns its business decisions and any model/tool loop.
+
 This guide walks you through connecting agent-compose to [OctoBus](https://github.com/chaitin/OctoBus) — a local gateway that exposes approved enterprise APIs, tools, and services to AI agents — and verifying that an agent can call a capability from inside its sandbox. It takes about 15 minutes.
 
 For configuration field reference, see the [agent-compose.yml Manual](https://github.com/chaitin/agent-compose/blob/main/docs/pages/agent-compose-yaml-manual.md) (`octobus_servers`, `capset_ids`). For internal architecture, see the [OctoBus integration design](https://github.com/chaitin/agent-compose/blob/main/docs/design/octobus_integration.md).

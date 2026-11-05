@@ -44,6 +44,7 @@ type CapabilityGuideDeps struct {
 
 func WriteCapabilityGuide(ctx context.Context, deps CapabilityGuideDeps, sandbox *domain.Sandbox, capsetIDs []string) {
 	ids := capabilities.NormalizeCapsetIDs(capsetIDs)
+	writeCapabilityCatalog(ctx, deps, sandbox, ids)
 	if len(ids) == 0 || deps.Provider == nil || sandbox == nil {
 		return
 	}
