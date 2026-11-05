@@ -370,8 +370,8 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
 - 非 DNS datagram 仍然 fail closed；非 DNS 的 `recvfrom`/`getpeername` 直接 CONTINUE；
 - trampoline 的 listener 交接改用 `sendmmsg`，避免 filter 对 `sendmsg` 的通知在
   supervisor 尚不存在时把 trampoline 自己阻塞（这是本 PR 调试中发现并修复的死锁）；
-- 已知残余：`sendmmsg` 未被 filter 拦截（trampoline 用它交接），使用它的 resolver
-  仍可能绕过策略 DNS；TCP egress 不受影响。
+- 已知残余：`sendmmsg` 未被 filter 拦截（trampoline 用它交接 listener），使用它的
+  workload 仍可能绕过策略 DNS 并直接外发任意 UDP；TCP egress 不受影响。
 
 验收与实测：
 
@@ -418,7 +418,8 @@ init 启动时自己做一次能力探测（在 guest 内）：`SECCOMP_GET_ACTI
   （filter 只能叠加）：对 `unshare`/`setns`/`mount`/`umount2`/`pivot_root`/`bpf`/
   `perf_event_open`/`kexec_*`/`userfaultfd`/`ptrace`/模块加载/`open_by_handle_at`/
   `process_vm_*`/`pidfd_getfd` 返回 EPERM；pong 广告 `egress-hardening`；
-- `sendmmsg`/`recvmmsg` 不硬拒绝（glibc resolver 需要），DNS 残余继续在报告里披露；
+- `sendmmsg`/`recvmmsg` 不硬拒绝（listener 交接和 glibc resolver 需要），任意 UDP
+  外发的残余继续在报告里披露；
 - proxy 增加 `EgressProxySessionPolicySource` 钩子：有 session 身份时向它取策略；
   adapter 当前返回 sandbox 策略，为后续 per-run 策略存储留 seam；
 - workload 非 root、TLS MITM/L7、凭据代理仍作为后续独立工作，不在本 PR 范围；

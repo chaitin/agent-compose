@@ -179,10 +179,13 @@ func installEgressFilter() (int, error) {
 // keyring primitives a sandboxed agent does not need and could use to escape
 // the mediated data plane.
 //
-// sendmmsg/recvmmsg are deliberately not in this list: glibc's getaddrinfo uses
-// them in the test environment, so denying them breaks ordinary name
-// resolution. The sendmmsg DNS-bypass residual is documented instead; closing
-// it needs a second notification listener, not a hard deny.
+// sendmmsg/recvmmsg are deliberately not in this list. The trampoline hands the
+// notification listener to init with sendmmsg, the only SCM_RIGHTS path the
+// filter does not notify; notifying sendmmsg would deadlock that handoff, and a
+// hard deny breaks resolvers (glibc's getaddrinfo uses it in the test
+// environment). The residual is arbitrary UDP egress, not only the policy
+// resolver, and the driver's network policy report discloses it. Closing it
+// needs a different listener handoff, not another deny entry.
 func hardeningSyscalls() []uint32 {
 	return []uint32{
 		uint32(unix.SYS_UNSHARE),

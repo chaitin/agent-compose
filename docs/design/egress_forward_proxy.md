@@ -235,8 +235,10 @@ mechanism next to `forward_proxy`: init redirects every TCP connect through the
 proxy, so the old limitation "only traffic that honors the proxy environment is
 decided" no longer applies. The report discloses the residual gaps instead:
 non-DNS UDP is refused, DNS is answered by the sandbox-local policy resolver, and
-a `sendmmsg`-based resolver can still bypass that resolver (TCP egress remains
-mediated).
+`sendmmsg` stays unfiltered so the init trampoline can hand over its notification
+listener. A workload that uses `sendmmsg` can therefore still send UDP directly,
+including past the policy resolver; the report discloses that residual. TCP egress
+remains mediated.
 
 
 ## Docker outer default-deny (strict network profile)

@@ -527,9 +527,11 @@ TCP DNS：
   `umount2`、`pivot_root`、`bpf`、`perf_event_open`、`kexec_*`、`userfaultfd`、
   `ptrace`、模块加载、`open_by_handle_at`、`process_vm_*`、`pidfd_getfd` 返回
   `EPERM`；workload 无法移除已叠加的 filter；
-- `sendmmsg`/`recvmmsg` 故意不在拒绝列表里：glibc 的 `getaddrinfo` 会使用它们，
-  硬拒绝会破坏正常域名解析；因此“使用 sendmmsg 的 resolver 可绕过策略 DNS”仍是
-  已披露的残余，后续用第二个通知 listener 收敛；
+- `sendmmsg`/`recvmmsg` 故意不在拒绝列表里：trampoline 用 `sendmmsg` 交接
+  notification listener（filter 会通知 `sendmsg`，在 supervisor 还不存在时会死锁），
+  且 glibc 的 `getaddrinfo` 会使用它们，硬拒绝会破坏正常域名解析；因此“使用
+  sendmmsg 的 workload 可绕过策略 DNS 并直接外发任意 UDP”仍是已披露的残余，后续
+  需要替换 listener 交接方式，而不是再加一条 deny；
 - per-run 策略钩子：proxy 新增可选 `EgressProxySessionPolicySource`，按
   session/marker 取策略；当前 adapter 返回 sandbox 级策略，per-run 存储落地时
   只需替换这个实现，proxy 与 init 协议不用改；

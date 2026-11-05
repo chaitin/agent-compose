@@ -234,7 +234,7 @@ func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkD
 	if mediated {
 		if initMediated {
 			report.Limitations = append(report.Limitations,
-				"the sandbox init process redirects every TCP connect through the forward proxy, so a process that ignores the proxy environment is still decided; non-DNS UDP is refused and DNS is answered by a sandbox-local policy resolver (a sendmmsg-based resolver can still bypass it)")
+				"the sandbox init process redirects every TCP connect through the forward proxy, so a process that ignores the proxy environment is still decided; non-DNS UDP is refused and DNS is answered by a sandbox-local policy resolver, but a workload that uses sendmmsg can still send UDP directly, because that syscall stays unfiltered so the init trampoline can hand over its notification listener")
 			if binaries > 0 || binaryDenials > 0 {
 				report.Limitations = append(report.Limitations,
 					"the forward proxy attributes a connection to the executable the sandbox init process reads from /proc/<pid>/exe; a connection that does not cross that process carries no binary attribution, which no binary-scoped allowance can satisfy and every binary-scoped denial still refuses")
