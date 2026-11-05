@@ -310,3 +310,45 @@ func TestReportAgentNetworkPolicyNamesSandboxInitMediation(t *testing.T) {
 		t.Fatalf("limitations = %v, want the init mediation and its policy resolver", report.Limitations)
 	}
 }
+
+// TestReportAgentNetworkPolicyNamesDockerInternalNetwork pins the admission
+// disclosure for the strict Docker profile: it names the network-namespace
+// layer and states exactly which destinations that layer still admits.
+func TestReportAgentNetworkPolicyNamesDockerInternalNetwork(t *testing.T) {
+	declaration := &egress.NetworkDeclaration{Default: egress.Deny}
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, NetworkPolicyReportOptions{
+		Mediated:              true,
+		DockerInternalNetwork: true,
+		Mode:                  config.EgressUnenforceableWarn,
+	})
+	if err != nil {
+		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
+	}
+	if !slices.Contains(report.Mechanisms, mechanismDockerInternalNetwork) {
+		t.Fatalf("mechanisms = %v, want %q", report.Mechanisms, mechanismDockerInternalNetwork)
+	}
+	limitations := strings.Join(report.Limitations, "\n")
+	for _, want := range []string{"host bridge gateway", "outside sandbox init", "embedded DNS"} {
+		if !strings.Contains(limitations, want) {
+			t.Fatalf("limitations = %v, want it to disclose %q", report.Limitations, want)
+		}
+	}
+	if !report.Enforced {
+		t.Fatalf("report = %+v, want the mediated declaration enforced", report)
+	}
+}
+
+func TestReportAgentNetworkPolicyOmitsDockerInternalNetworkWhenNotSelected(t *testing.T) {
+	declaration := &egress.NetworkDeclaration{Default: egress.Deny}
+	report, err := ReportAgentNetworkPolicy("worker", RuntimeDriverDocker, declaration, NetworkPolicyReportOptions{
+		Mediated:              true,
+		DockerInternalNetwork: false,
+		Mode:                  config.EgressUnenforceableWarn,
+	})
+	if err != nil {
+		t.Fatalf("ReportAgentNetworkPolicy() error = %v", err)
+	}
+	if slices.Contains(report.Mechanisms, mechanismDockerInternalNetwork) {
+		t.Fatalf("mechanisms = %v, want no %q when the profile is not selected", report.Mechanisms, mechanismDockerInternalNetwork)
+	}
+}

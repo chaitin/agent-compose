@@ -130,6 +130,17 @@ type Config struct {
 	// silently drops enforcement rather than reporting the declaration
 	// unenforced.
 	DockerSandboxNetwork string
+	// DockerSandboxNetworkStrict makes the configured Docker sandbox network
+	// the outer default-deny boundary for an enforcing sandbox. It is only read
+	// when SANDBOX_INIT_EGRESS=enforce; audit and off keep today's placement.
+	// In strict mode DockerSandboxNetwork must name an existing user-defined
+	// Docker network created with --internal (Internal=true), and the daemon
+	// must be reachable from it at AGENT_COMPOSE_RUNTIME_BASE_URL. The driver
+	// fails the sandbox start with a precise error instead of falling back to
+	// the daemon or default network when any of that does not hold. A sandbox
+	// created before strict mode was enabled keeps its network and is refused
+	// on reuse until it is removed and created again.
+	DockerSandboxNetworkStrict bool
 	// SandboxInitEnabled makes newly created Docker sandboxes run the
 	// agent-compose init process as PID 1 instead of docker-init plus a
 	// keepalive shell. It only affects creation; an existing container keeps
@@ -421,6 +432,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		DockerHome:                 normalized.DockerHome,
 		DockerHostSandboxRoot:      normalized.DockerHostSandboxRoot,
 		DockerSandboxNetwork:       drivers.DockerSandboxNetwork,
+		DockerSandboxNetworkStrict: drivers.DockerSandboxNetworkStrict,
 		SandboxInitEnabled:         sources.SandboxInit.Enabled,
 		SandboxInitBinary:          sources.SandboxInit.Binary,
 		SandboxInitSocketDir:       sources.SandboxInit.SocketDir,
@@ -714,19 +726,20 @@ func loadRuntimeTimeoutsConfig(logger *slog.Logger) runtimeTimeoutsConfig {
 // driverHomesConfig holds the selected runtime driver and each backend's
 // home/lib paths before path normalization.
 type driverHomesConfig struct {
-	RuntimeDriver         string
-	BoxliteHome           string
-	BoxliteRuntimeDir     string
-	DockerHome            string
-	DockerHostSandboxRoot string
-	DockerSandboxNetwork  string
-	MicrosandboxHome      string
-	MicrosandboxMSBPath   string
-	MicrosandboxLibPath   string
-	K8sHome               string
-	K8sKubeconfigPath     string
-	K8sNamespace          string
-	K8sRuntimeBaseURL     string
+	RuntimeDriver              string
+	BoxliteHome                string
+	BoxliteRuntimeDir          string
+	DockerHome                 string
+	DockerHostSandboxRoot      string
+	DockerSandboxNetwork       string
+	DockerSandboxNetworkStrict bool
+	MicrosandboxHome           string
+	MicrosandboxMSBPath        string
+	MicrosandboxLibPath        string
+	K8sHome                    string
+	K8sKubeconfigPath          string
+	K8sNamespace               string
+	K8sRuntimeBaseURL          string
 
 	// MicrosandboxDNSRebindProtection is the daemon-level default for the
 	// in-VM DNS rebind protection.
@@ -765,7 +778,11 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	// joining the daemon's own network. It is trimmed, not normalized: the value
 	// is a Docker network name, not a path. The sandbox-network overlay injects
 	// it, so operators normally leave it unset and only select the overlay.
-	dockerSandboxNetwork := strings.TrimSpace(os.Getenv("DOCKER_SANDBOX_NETWORK"))
+	dockerSandboxNetwork := strings.TrimSpace(os.Getenv(DockerSandboxNetworkEnvName))
+	dockerSandboxNetworkStrict, err := loadDockerSandboxNetworkStrict()
+	if err != nil {
+		return driverHomesConfig{}, err
+	}
 
 	microsandboxHome := getenvFirst("MICROSANDBOX_HOME", "MSB_HOME")
 	if microsandboxHome == "" {
@@ -816,19 +833,20 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	k8sRuntimeBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("K8S_RUNTIME_BASE_URL")), "/")
 
 	return driverHomesConfig{
-		RuntimeDriver:         runtimeDriver,
-		BoxliteHome:           boxliteHome,
-		BoxliteRuntimeDir:     boxliteRuntimeDir,
-		DockerHome:            dockerHome,
-		DockerHostSandboxRoot: dockerHostSandboxRoot,
-		DockerSandboxNetwork:  dockerSandboxNetwork,
-		MicrosandboxHome:      microsandboxHome,
-		K8sRuntimeBaseURL:     k8sRuntimeBaseURL,
-		MicrosandboxMSBPath:   microsandboxMSBPath,
-		MicrosandboxLibPath:   microsandboxLibPath,
-		K8sHome:               k8sHome,
-		K8sKubeconfigPath:     k8sKubeconfigPath,
-		K8sNamespace:          k8sNamespace,
+		RuntimeDriver:              runtimeDriver,
+		BoxliteHome:                boxliteHome,
+		BoxliteRuntimeDir:          boxliteRuntimeDir,
+		DockerHome:                 dockerHome,
+		DockerHostSandboxRoot:      dockerHostSandboxRoot,
+		DockerSandboxNetwork:       dockerSandboxNetwork,
+		DockerSandboxNetworkStrict: dockerSandboxNetworkStrict,
+		MicrosandboxHome:           microsandboxHome,
+		K8sRuntimeBaseURL:          k8sRuntimeBaseURL,
+		MicrosandboxMSBPath:        microsandboxMSBPath,
+		MicrosandboxLibPath:        microsandboxLibPath,
+		K8sHome:                    k8sHome,
+		K8sKubeconfigPath:          k8sKubeconfigPath,
+		K8sNamespace:               k8sNamespace,
 
 		MicrosandboxDNSRebindProtection: microsandboxDNSRebindProtection,
 	}, nil

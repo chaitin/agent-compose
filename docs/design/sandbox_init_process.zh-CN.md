@@ -185,6 +185,30 @@ ac-init 启动的（例如 `kubectl exec`、探针或未来新增的入口），
 NetworkPolicy（k3s 已实测）；admission 的 `kubernetes_network_policy` 机制会披露
 这一依赖，RBAC 不允许创建时 sandbox 启动失败而不是静默降级。
 
+**Docker 的外层默认拒绝（enforce，strict network profile）**
+
+`SANDBOX_INIT_EGRESS=enforce` 配合 `DOCKER_SANDBOX_NETWORK_STRICT=true` 时，Docker
+driver 要求 `DOCKER_SANDBOX_NETWORK` 指向一个已存在的、用户创建的 internal 网络
+（`docker network create --internal ...`，inspect 的 `Internal=true`），并且只把
+sandbox 容器挂到该网络。internal 网络没有离开网桥的路由，因此容器网络命名空间内的
+每个进程（包括 daemon 未启动的 `docker exec` 进程）都默认无法访问外部目标；声明的
+allow/deny 仍由 forward proxy 判定。
+
+- 失败关闭：网络未配置、是内建网络（`host`/`none`/`bridge`/`default`）、不存在、
+  不是 internal、容器化 daemon 未挂载到它，或 `AGENT_COMPOSE_RUNTIME_BASE_URL`
+  不是该网络上的 daemon 别名/地址/网关时，sandbox 启动直接失败，不会回退到 daemon
+  或默认网络。
+- daemon 可达性：容器化 daemon 必须同时挂到该 internal 网络并保留可解析的别名
+  （`docker-compose.sandbox-network.yml` 的 `agent-compose` 别名即可）；
+  `AGENT_COMPOSE_RUNTIME_BASE_URL` 必须指向该别名、daemon 在该网络上的地址，或
+  该网络的网关地址。strict 模式不会为每个 sandbox 生成网关重写。
+- 该网络放行：同网络上的 daemon 端点、宿主机网桥网关、以及同网络的其他容器；
+  其他目标一律拒绝。Docker 内嵌 DNS（127.0.0.11）仍会应答查询，因此这一层拒绝的是
+  可路由目标，而不是 DNS 查询名。
+- 该开关只在 enforce 模式读取；audit/off 保持原网络位置不变。启用 strict 之前创建
+  的 sandbox 保留旧网络，start 时会失败关闭，必须删除并重新创建。
+- admission 的 `docker_internal_network` 机制会披露该层及其放行范围。
+
 **Kubernetes**
 
 ```text

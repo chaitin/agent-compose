@@ -212,6 +212,48 @@ non-DNS UDP is refused, DNS is answered by the sandbox-local policy resolver, an
 a `sendmmsg`-based resolver can still bypass that resolver (TCP egress remains
 mediated).
 
+## Docker outer default-deny (strict network profile)
+
+The engine's forward proxy decides the connections it sees, but on Docker a
+process that ignores the proxy environment — in particular a `docker exec`
+process Docker starts outside `ac-init` — still has the container's real NIC.
+The strict network profile closes that with a network-namespace boundary:
+
+- `DOCKER_SANDBOX_NETWORK_STRICT=true` is read only when
+  `SANDBOX_INIT_EGRESS=enforce`. It requires `DOCKER_SANDBOX_NETWORK` to name an
+  existing user-defined network whose inspect reports `Internal=true`, and the
+  sandbox joins only that network. A network that is missing, is a Docker
+  built-in, is not internal, or is not attached to a containerized daemon fails
+  the start with a precise error; the driver never falls back to the daemon or
+  default network.
+- `AGENT_COMPOSE_RUNTIME_BASE_URL` must name the daemon on that internal network.
+  A containerized daemon has to be attached with a resolvable alias (the shipped
+  overlay's `agent-compose` works) or the URL must use its address or the
+  network gateway; the start is refused otherwise. This validation is what keeps
+  the facade, telemetry, and proxy reachable; the engine does not invent a
+  per-sandbox gateway rewrite. A native daemon's DNS name cannot be verified
+  from the host, so that remains a documented deployment requirement.
+- The layer admits the daemon endpoints on the network, the host bridge gateway,
+  and other containers attached to that network, and denies every off-network
+  destination for every process in the container. Docker's embedded DNS resolver
+  still answers queries, so the deny is on routed destinations, not on names.
+- Admission reports the `docker_internal_network` mechanism next to
+  `forward_proxy`/`seccomp_redirect` when strict mode is selected, with the
+  admitted scope in the report's limitations.
+- The switch is inert in audit and off mode, so it can be configured before the
+  egress mode is switched. A sandbox created before strict mode was enabled
+  keeps its old network; its next start fails closed and it must be removed and
+  created again.
+
+Deployment requirement: the network has to exist before the daemon starts a
+sandbox. `docker-compose.sandbox-network.yml` defines
+`agent-compose-sandbox-strict` with `internal: true` and attaches the daemon to
+it; selecting it is the two `.env` values above. On a hand-built deployment,
+create the network with `docker network create --internal` and attach the daemon
+before setting the variables. The shipped overlay keeps the default placement on
+the non-internal `agent-compose-sandbox` network, so the profile changes nothing
+until an operator selects it.
+
 ## Still open
 
 - **The bypass list exempts a host, not an endpoint.** `NO_PROXY` names the

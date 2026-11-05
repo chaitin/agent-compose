@@ -40,6 +40,12 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 		mode = config.EgressUnenforceablePolicy
 		global = config.GlobalNetworkPolicy
 	}
+	// The strict Docker network is a deployment-wide placement choice, so it is
+	// resolved once. It is only a mechanism for a sandbox that actually joins
+	// it: the switch is live only in enforce mode and it is inert without a
+	// configured network name (the driver then fails the start closed).
+	strictDockerNetwork := config != nil && driverpkg.DockerSandboxNetworkStrictRequested(config) &&
+		strings.TrimSpace(config.DockerSandboxNetwork) != ""
 	reports := make([]driverpkg.AgentNetworkPolicyReport, 0, len(spec.Agents))
 	for _, agent := range spec.Agents {
 		var declaration *egress.NetworkDeclaration
@@ -71,6 +77,7 @@ func agentNetworkPolicyReports(spec *compose.NormalizedProjectSpec, mediation sa
 			Mediated:               mediated,
 			InitMediated:           initMediated,
 			K8sEgressNetworkPolicy: driver == driverpkg.RuntimeDriverK8s && mediated && config != nil && config.SandboxInitEnabled && strings.TrimSpace(config.SandboxInitEgress) == string(sandboxinit.EgressModeEnforce),
+			DockerInternalNetwork:  strictDockerNetwork && driver == driverpkg.RuntimeDriverDocker,
 			Mode:                   mode,
 		})
 		if err != nil {

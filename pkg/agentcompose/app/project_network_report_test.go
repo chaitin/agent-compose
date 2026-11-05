@@ -327,3 +327,68 @@ func TestAgentNetworkPolicyReportsNameTheK8sEgressNetworkPolicy(t *testing.T) {
 		t.Fatalf("mechanisms = %v, want kubernetes_network_policy", reports[0].Mechanisms)
 	}
 }
+
+func TestAgentNetworkPolicyReportsNameTheDockerInternalNetwork(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	config := &appconfig.Config{
+		SandboxInitEgress:          "enforce",
+		DockerSandboxNetwork:       "agent-compose-sandbox-strict",
+		DockerSandboxNetworkStrict: true,
+	}
+	reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, config)
+	if err != nil {
+		t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+	}
+	if len(reports) != 1 {
+		t.Fatalf("reports = %+v, want one", reports)
+	}
+	found := false
+	for _, mechanism := range reports[0].Mechanisms {
+		if mechanism == "docker_internal_network" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("mechanisms = %v, want docker_internal_network", reports[0].Mechanisms)
+	}
+}
+
+func TestAgentNetworkPolicyReportsOmitDockerInternalNetworkWithoutStrictSelection(t *testing.T) {
+	spec := &compose.NormalizedProjectSpec{Agents: []compose.NormalizedAgentSpec{
+		normalizedAgentWithNetwork("plain", "docker", nil),
+	}}
+	tests := []struct {
+		name   string
+		config *appconfig.Config
+	}{
+		{
+			name:   "strict switch off",
+			config: &appconfig.Config{SandboxInitEgress: "enforce", DockerSandboxNetwork: "agent-compose-sandbox-strict"},
+		},
+		{
+			name:   "no configured network name",
+			config: &appconfig.Config{SandboxInitEgress: "enforce", DockerSandboxNetworkStrict: true},
+		},
+		{
+			name:   "audit mode ignores the strict switch",
+			config: &appconfig.Config{SandboxInitEgress: "audit", DockerSandboxNetwork: "agent-compose-sandbox-strict", DockerSandboxNetworkStrict: true},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reports, err := agentNetworkPolicyReports(spec, staticMediation{drivers: map[string]bool{"docker": true}}, test.config)
+			if err != nil {
+				t.Fatalf("agentNetworkPolicyReports() error = %v", err)
+			}
+			for _, report := range reports {
+				for _, mechanism := range report.Mechanisms {
+					if mechanism == "docker_internal_network" {
+						t.Fatalf("mechanisms = %v, want no docker_internal_network for %s", report.Mechanisms, test.name)
+					}
+				}
+			}
+		})
+	}
+}

@@ -218,6 +218,16 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err != nil {
 		return SandboxVMInfo{}, err
 	}
+	// A strict-profile sandbox must be attached only to the internal network.
+	// A newly created container always is; a reused container that predates
+	// strict mode is not, and starting it would keep the wider egress path the
+	// profile exists to remove. Fail closed before the start and leave the
+	// existing container untouched so the operator can remove it deliberately.
+	if topology.strict {
+		if err := validateDockerSandboxStrictNetwork(containerInfo, string(topology.networkMode)); err != nil {
+			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created}, err)
+		}
+	}
 	started := false
 	if containerInfo.State == nil || !containerInfo.State.Running {
 		if err := dockerClient.ContainerStart(ctx, containerInfo.ID, containerapi.StartOptions{}); err != nil {

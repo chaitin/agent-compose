@@ -92,6 +92,11 @@ const mechanismSeccompRedirect = "seccomp_redirect"
 // only for processes started through ac-init.
 const mechanismKubernetesEgressPolicy = "kubernetes_network_policy"
 
+// mechanismDockerInternalNetwork is the strict Docker sandbox user-defined
+// internal network. It is the network-namespace outer boundary for every
+// process in the container, not only for processes started through ac-init.
+const mechanismDockerInternalNetwork = "docker_internal_network"
+
 // ReportAgentNetworkPolicy accounts for one agent's declared policy on one
 // resolved driver. mediated reports whether the engine's forward proxy will be
 // in this sandbox's traffic path; options.InitMediated reports whether the sandbox init
@@ -114,6 +119,11 @@ type NetworkPolicyReportOptions struct {
 	// per-sandbox default-deny egress NetworkPolicy. It is only effective when
 	// the cluster's CNI enforces NetworkPolicy.
 	K8sEgressNetworkPolicy bool
+	// DockerInternalNetwork reports whether the strict Docker sandbox network
+	// profile is selected, so a sandbox joins only a user-defined internal
+	// network and every process in its network namespace is denied off-network
+	// egress.
+	DockerInternalNetwork bool
 	// Mode is the deployment's EGRESS_UNENFORCEABLE_POLICY.
 	Mode config.EgressUnenforceablePolicy
 }
@@ -158,6 +168,11 @@ func ReportAgentNetworkPolicy(agent, driver string, declaration *egress.NetworkD
 		report.Mechanisms = append(report.Mechanisms, mechanismKubernetesEgressPolicy)
 		report.Limitations = append(report.Limitations,
 			"the per-sandbox NetworkPolicy admits only the engine-owned endpoints; a cluster whose CNI does not enforce NetworkPolicy does not provide this layer")
+	}
+	if resolved == RuntimeDriverDocker && options.DockerInternalNetwork {
+		report.Mechanisms = append(report.Mechanisms, mechanismDockerInternalNetwork)
+		report.Limitations = append(report.Limitations,
+			"the strict Docker internal network admits only the daemon endpoints on that network, the host bridge gateway, and other containers attached to it; every off-network destination is denied for every process in the container, including one started outside sandbox init, although Docker's embedded DNS resolver still answers queries")
 	}
 	enforcement := driverEnforcement
 	if mediated {
