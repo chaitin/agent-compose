@@ -25,6 +25,12 @@ type DeclaredAllowance struct {
 	// which the report must state rather than imply a constraint that is not
 	// there.
 	AllowedIPs []string
+	// Binaries lists the absolute executable paths this allowance is scoped to.
+	// It is empty when the allowance is not scoped to a binary.
+	Binaries []string
+	// Enforcement is the declared per-entry enforcement: "enforce" when omitted
+	// or declared, "audit" when the allowance only records a match.
+	Enforcement Enforcement
 	// Sources names the declaration layers that contributed this allowance.
 	// The values are "daemon" and "agent"; both are present when the effective
 	// entry came from both layers. It is empty when the caller did not annotate
@@ -37,6 +43,9 @@ type DeclaredAllowance struct {
 type DeclaredDenial struct {
 	// Endpoint is the canonical host:port/* pattern.
 	Endpoint string
+	// Binaries lists the absolute executable paths this denial is scoped to. It
+	// is empty when the denial is not scoped to a binary.
+	Binaries []string
 	// Sources names the declaration layers that contributed this denial, using
 	// the same values as DeclaredAllowance.Sources.
 	Sources []string
@@ -84,13 +93,16 @@ func ReportNetworkPolicy(declaration *NetworkDeclaration, engine []EngineEndpoin
 	report := NetworkPolicyReport{Declared: true, Restricts: declaration.Restricts(), Default: declaration.Default}
 	for _, entry := range declaration.Allow {
 		report.Allow = append(report.Allow, DeclaredAllowance{
-			Endpoint:   FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol),
-			AllowedIPs: append([]string(nil), entry.AllowedIPs...),
+			Endpoint:    FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol),
+			AllowedIPs:  append([]string(nil), entry.AllowedIPs...),
+			Binaries:    append([]string(nil), entry.Binaries...),
+			Enforcement: normalizeEnforcement(entry.Enforcement),
 		})
 	}
 	for _, entry := range declaration.Deny {
 		report.Deny = append(report.Deny, DeclaredDenial{
 			Endpoint: FormatEndpointPattern(entry.Host, entry.Port, entry.Protocol),
+			Binaries: append([]string(nil), entry.Binaries...),
 		})
 	}
 	if !report.Restricts {

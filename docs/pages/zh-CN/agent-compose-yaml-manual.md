@@ -1128,8 +1128,12 @@ Daemon 还会记录每个 runtime 创建时所依据的出网策略。启动 san
 | `port` | int | 与 `ports` 二选一 | 单个目标端口，取值 1–65535。 |
 | `ports` | int 列表 | 与 `port` 二选一 | 同一主机上多个端口的简写，例如 `[80, 443]`。规范化会把每个端口展开成独立的规范条目；`port` 与 `ports` 不能同时使用。 |
 | `allowed_ips` | list | 空 | 该条目的 `host` 允许解析到的 IP 地址或 CIDR 范围（可选）。名字解析出的每个地址都必须落在其中，否则该放行项不适用。裸地址就是它自身的单地址范围（`10.0.0.5` 即 `10.0.0.5/32`）；条目会被规范化并排序。它约束的是主机名，不是子网目标，也不能用在 `deny` 项上。 |
+| `binaries` | list | 空 | 可选，把放行项限定到指定的可执行文件绝对路径。sandbox-init 进程会读取发起连接进程的 `/proc/<pid>/exe`，只有路径完全匹配的条目才适用。无法确定可执行文件时，binary 放行项一律不匹配；如果策略中任意条目带 binary 约束，而连接没有可执行文件归属，原本会由默认 allow 放行的请求也会被拒绝。路径必须是绝对路径、不能包含 `..`，会被清理、去重、排序，并且每项最多 64 个。 |
+| `enforcement` | string | `enforce` | `enforce` 执行该放行项；`audit` 只记录匹配并放行，不执行限制。该字段只作用于放行项；`deny` 项没有该字段，拒绝始终生效。 |
 
-每个 `deny` 项包含 `host`、`port` 或 `ports`，host 与端口的校验和规范化规则与放行项相同；它没有 `allowed_ips` 字段，因为拒绝的是目标本身。`ports` 中的每个端口都会展开成独立的规范条目，因此 spec hash 与准入报告和逐条写 `port` 完全等价。
+每个 `deny` 项包含 `host`、`port` 或 `ports`，host 与端口的校验和规范化规则与放行项相同；它没有 `allowed_ips` 字段，因为拒绝的是目标本身。它可以带 `binaries`，把拒绝限定到这些可执行路径；没有可执行文件归属的连接仍会被 binary 拒绝项拒绝，因此不能靠省略归属绕过它。`ports` 中的每个端口都会展开成独立的规范条目，因此 spec hash 与准入报告和逐条写 `port` 完全等价。
+
+`binaries` 与 `enforcement` 只由引擎的正向代理执行，binary 身份来自 sandbox-init 的流量中介（`SANDBOX_INIT_EGRESS=enforce`）。如果 sandbox 的 init 没有中介流量，连接就没有 binary 归属：binary 放行项会失败关闭，准入报告会把这部分 binary 约束列为未执行。由 driver 自己执行网络策略时没有逐条 audit 能力，因此该机制会把 `enforcement: audit` 当作正常执行。
 
 `allowed_ips` 的作用是把名字与地址绑定起来。没有它时，对 `api.example.com` 的放行会跟随该名字解析到的任何地方，因此被污染或被攻陷的解析结果可以把 sandbox 引到声明从未指定的地址。有了它，引擎只有在即将使用的地址落在声明范围内时才建立连接；如果一个名字同时解析出允许与不允许的地址，会被拒绝而不是被择优采用。引擎永不转发的地址——loopback、link-local（含元数据地址 `169.254.169.254`）、multicast，以及控制面端口 `2379`、`2380`、`6443`、`10250`、`10255`——无论 `allowed_ips` 怎么写都保持被拒绝。
 
@@ -1152,6 +1156,11 @@ policy:
         port: 443
       - host: 10.0.0.0/8
         port: 5432
+      - host: pypi.org
+        port: 443
+        binaries:
+          - /usr/bin/python3
+        enforcement: audit
 ```
 
 ```yaml
@@ -1162,7 +1171,11 @@ policy:
         ports: [80, 443]
       - host: metadata.example.com
         port: 80
+        binaries:
+          - /usr/bin/curl
 ```
+
+binary 放行项只匹配 sandbox init 报告的确切可执行文件路径。没有该归属的进程无法使用该条目，所以 `binaries` 是在收窄放行项，而不是替代目标匹配。binary 拒绝项的语义刻意相反：没有归属的连接会被拒绝，因为让它继续走默认放行就等于允许进程通过隐藏可执行文件来绕过拒绝。
 
 #### Daemon 全局策略
 

@@ -549,6 +549,12 @@ message DeclaredNetworkAllowance {
   // Declaration layers that contributed the effective entry: "daemon" and/or
   // "agent". Empty when provenance was not annotated.
   repeated string sources = 4;
+  // The absolute executable paths this allowance is scoped to. Empty when the
+  // allowance is not scoped to a binary.
+  repeated string binaries = 5;
+  // The declared per-entry enforcement: "enforce" when omitted or declared,
+  // "audit" when the allowance records a match without enforcing it.
+  string enforcement = 6;
 }
 
 // DeclaredNetworkDenial is one declared refusal as it appears in a report.
@@ -560,6 +566,9 @@ message DeclaredNetworkDenial {
   // Declaration layers that contributed the effective entry: "daemon" and/or
   // "agent". Empty when provenance was not annotated.
   repeated string sources = 3;
+  // The absolute executable paths this denial is scoped to. Empty when the
+  // denial is not scoped to a binary.
+  repeated string binaries = 4;
 }
 
 message PatchProjectRequest {
@@ -1086,6 +1095,13 @@ message SandboxNetworkAllowSpec {
   // part of the normalized spec the client hashes, so it must travel with the
   // declaration rather than being rederived from the host.
   repeated string allowed_ips = 4;
+  // Optional. Absolute executable paths this allowance is scoped to. Empty
+  // leaves the allowance unscoped; an unknown request binary never satisfies a
+  // scoped allowance.
+  repeated string binaries = 5;
+  // Optional. "enforce" (the omitted default) applies the allowance; "audit"
+  // records a match and allows the request without enforcing it.
+  string enforcement = 6;
 }
 
 // SandboxNetworkDenySpec is one declared refusal. It has no allowed_ips: a
@@ -1099,6 +1115,9 @@ message SandboxNetworkDenySpec {
   int32 port = 2;
   reserved 3;
   reserved "protocol";
+  // Optional. Absolute executable paths this denial is scoped to. Empty leaves
+  // the denial unscoped; an unknown request binary is still refused.
+  repeated string binaries = 4;
 }
 
 message MCPServerSpec {

@@ -64,6 +64,7 @@ type EgressAuditEvent struct {
 	SessionID string
 	Marker    string
 	PID       int
+
 	// Binary names the executable that attempted the connection when the
 	// platform can attribute it. It stays empty unless a caller fills it.
 	Binary     string

@@ -150,6 +150,7 @@ func (s *egressSupervisor) handleEnforce(listenerFD int, request *seccompNotif, 
 		SessionID: sessionID,
 		Marker:    marker,
 		PID:       int(request.PID),
+		Binary:    processBinary(int(request.PID)),
 	}
 	if !notificationIDValid(listenerFD, request.ID) {
 		return
@@ -168,6 +169,7 @@ func (s *egressSupervisor) handleEnforce(listenerFD int, request *seccompNotif, 
 	destination.SessionID = event.SessionID
 	destination.Marker = event.Marker
 	destination.PID = event.PID
+	destination.Binary = event.Binary
 	event = destination
 
 	targetFD, err := duplicateTargetFD(int(request.PID), int(request.Data.Args[0]))
@@ -384,6 +386,12 @@ func (p *egressProxyTarget) connectRequest(destination EgressAuditEvent) []byte 
 	writeIdentityHeader(&builder, egress.IdentityHeaderSession, destination.SessionID)
 	writeIdentityHeader(&builder, egress.IdentityHeaderMarker, destination.Marker)
 	writeIdentityHeader(&builder, egress.IdentityHeaderPID, strconv.Itoa(destination.PID))
+	if destination.Binary != "" {
+		// Base64 keeps an arbitrary executable path from breaking the request
+		// line or injecting another header. The proxy validates the decoded
+		// value as an absolute executable path.
+		writeIdentityHeader(&builder, egress.IdentityHeaderBinary, base64.StdEncoding.EncodeToString([]byte(destination.Binary)))
+	}
 	builder.WriteString("\r\n")
 	return []byte(builder.String())
 }
@@ -422,6 +430,27 @@ func duplicateTargetFD(pid, targetFD int) (int, error) {
 	}
 	unix.CloseOnExec(fd)
 	return fd, nil
+}
+
+// processBinary returns the absolute executable path of a process, read from
+// /proc/<pid>/exe. The kernel appends " (deleted)" when the executable was
+// replaced after the process started; the suffix is stripped so the reported
+// path is the one the process is actually running. A path that cannot be read,
+// is not absolute, or contains a line break is reported as empty: a binary
+// policy must fail closed for an attribution init could not establish.
+func processBinary(pid int) string {
+	if pid <= 0 {
+		return ""
+	}
+	target, err := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+	if err != nil {
+		return ""
+	}
+	target = strings.TrimSuffix(target, " (deleted)")
+	if target == "" || !strings.HasPrefix(target, "/") || strings.ContainsAny(target, "\r\n") {
+		return ""
+	}
+	return target
 }
 
 // threadGroupID maps a seccomp notification's thread ID to its thread-group
@@ -639,6 +668,7 @@ func (s *egressSupervisor) handleEnforceDatagram(listenerFD int, request *seccom
 		SessionID: sessionID,
 		Marker:    marker,
 		PID:       int(request.PID),
+		Binary:    processBinary(int(request.PID)),
 	}
 	if !notificationIDValid(listenerFD, request.ID) {
 		return
@@ -718,6 +748,7 @@ func (s *egressSupervisor) handleEnforceDatagram(listenerFD int, request *seccom
 	destination.SessionID = event.SessionID
 	destination.Marker = event.Marker
 	destination.PID = event.PID
+	destination.Binary = event.Binary
 	event = destination
 	if destination.Family == "unix" || s.isLocalDestination(destination) {
 		replyContinue(listenerFD, request.ID)
@@ -924,6 +955,7 @@ func (s *egressSupervisor) handleEnforceRecvfrom(listenerFD int, request *seccom
 		SessionID: sessionID,
 		Marker:    marker,
 		PID:       pid,
+		Binary:    processBinary(pid),
 	}
 	length := int(request.Data.Args[2])
 	if length <= 0 {

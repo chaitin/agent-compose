@@ -38,4 +38,10 @@ type Request struct {
 	SessionID string
 	Marker    string
 	ProcessID int
+	// Binary is the absolute executable path of the process that produced a
+	// mediated connection, as reported by the sandbox init process. It scopes a
+	// rule that declares binaries; a path that cannot be established leaves it
+	// empty, which no binary-scoped allowance can satisfy and every
+	// binary-scoped denial refuses.
+	Binary string
 }

@@ -200,6 +200,7 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	request.SessionID = identity.SessionID
 	request.Marker = identity.Marker
 	request.ProcessID = identity.ProcessID
+	request.Binary = identity.Binary
 
 	policy, err := p.egressPolicy(r.Context(), sandboxID, identity)
 	if err != nil {
@@ -260,6 +261,14 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.record(r.Context(), request, result)
+	if result.Audit {
+		// The decision is an observation, not an enforcement: the request is
+		// still forwarded, and the record and log both state the distinct
+		// reason so an audit allowance cannot be mistaken for an enforced one.
+		p.logger.InfoContext(r.Context(), "egress proxy allowed a request in audit mode",
+			"sandbox_id", sandboxID, "host", destination.host, "port", destination.port,
+			"protocol", string(destination.protocol), "rule", result.RuleID, "reason", result.Reason)
+	}
 	target := addresses[0]
 	if err := p.forward(w, r, destination, target); err != nil {
 		p.logger.WarnContext(r.Context(), "egress proxy forward failed",
@@ -270,12 +279,14 @@ func (p *EgressProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // egressIdentity is the sandbox-init attribution carried on a mediated
 // CONNECT. It is advisory: only the sandbox header is checked, because the
-// credential already authenticated the caller and a policy decision must never
-// depend on data the guest can write.
+// credential already authenticated the caller provides the authorization. The
+// session, marker, pid, and binary are attribution data, but the binary is
+// validated strictly because a policy may scope an allowance or denial to it.
 type egressIdentity struct {
 	SessionID string
 	Marker    string
 	ProcessID int
+	Binary    string
 }
 
 const egressIdentityHeaderLimit = 256
@@ -296,7 +307,35 @@ func egressIdentityFromRequest(r *http.Request, sandboxID string) (egressIdentit
 		}
 		identity.ProcessID = processID
 	}
+	binary, err := egressBinaryFromHeader(r.Header.Get(egress.IdentityHeaderBinary))
+	if err != nil {
+		return egressIdentity{}, err
+	}
+	identity.Binary = binary
 	return identity, nil
+}
+
+// egressBinaryFromHeader decodes the sandbox-init executable attribution. The
+// header is base64 so an arbitrary executable path cannot break the CONNECT
+// request line or inject another header. A value that is not canonical base64, a
+// path that is not an absolute canonical executable path, and a path containing
+// a control character are errors: a malformed attribution must not be silently
+// treated as an absent one, because a policy that scopes a rule to a binary
+// would then evaluate a request the caller did not describe.
+func egressBinaryFromHeader(value string) (string, error) {
+	encoded := strings.TrimSpace(value)
+	if encoded == "" {
+		return "", nil
+	}
+	decoded, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil {
+		return "", errors.New("the binary identity header is not valid base64")
+	}
+	binary, err := egress.NormalizeBinaryPath(string(decoded))
+	if err != nil {
+		return "", fmt.Errorf("the binary identity header is invalid: %w", err)
+	}
+	return binary, nil
 }
 
 func truncateIdentity(value string) string {

@@ -107,13 +107,25 @@ type NormalizedSandboxNetworkAllowSpec struct {
 	// allowance to apply. It is empty when the declaration left the addresses
 	// unconstrained, and it participates in the canonical JSON and spec hash.
 	AllowedIPs []string `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"`
+	// Binaries are the canonical absolute executable paths this allowance is
+	// scoped to. It is empty when the declaration did not scope the entry to a
+	// binary, and it participates in the canonical JSON and spec hash.
+	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
+	// Enforcement is the normalized per-entry enforcement. It is empty when the
+	// declaration omitted it, which keeps an existing spec byte-identical and
+	// means the global behavior (enforce).
+	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
 }
 
 // NormalizedSandboxNetworkDenySpec is one validated refusal. It carries no
-// address constraint: a denial refuses the destination itself.
+// address or enforcement constraint: a denial refuses the destination itself,
+// and an audit-only denial would not refuse.
 type NormalizedSandboxNetworkDenySpec struct {
 	Host string `yaml:"host" json:"host"`
 	Port int    `yaml:"port" json:"port"`
+	// Binaries are the canonical absolute executable paths this denial is
+	// scoped to. It is empty when the denial applies to every executable.
+	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 }
 
 type NormalizedMCPServerSpec struct {

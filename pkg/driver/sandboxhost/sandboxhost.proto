@@ -109,6 +109,8 @@ message AllowEntry {
   int32 port = 2;
   string protocol = 3;
   repeated string allowed_ips = 4;
+  repeated string binaries = 5;
+  string enforcement = 6;
 }
 
 // DenyEntry is one declared refusal. It mirrors egress.DenyEntry and, unlike
@@ -118,6 +120,7 @@ message DenyEntry {
   string host = 1;
   int32 port = 2;
   string protocol = 3;
+  repeated string binaries = 4;
 }
 
 message EngineEndpoint {

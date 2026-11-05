@@ -20,6 +20,10 @@ type AuditRecord struct {
 	SessionID   string    `json:"session_id,omitempty"`
 	Marker      string    `json:"marker,omitempty"`
 	ProcessID   int       `json:"process_id,omitempty"`
+	Binary      string    `json:"binary,omitempty"`
+	// Audit reports that the decision matched an allowance declared in audit
+	// mode. The action stays "allow"; Reason explains the observation.
+	Audit bool `json:"audit,omitempty"`
 }
 
 // AuditRecordFrom flattens one decision for persistence. at is supplied by the
@@ -39,5 +43,7 @@ func AuditRecordFrom(record Record, at time.Time) AuditRecord {
 		SessionID:   record.Request.SessionID,
 		Marker:      record.Request.Marker,
 		ProcessID:   record.Request.ProcessID,
+		Binary:      record.Request.Binary,
+		Audit:       record.Result.Audit,
 	}
 }

@@ -164,6 +164,7 @@ func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNo
 		SessionID: sessionID,
 		Marker:    marker,
 		PID:       int(request.PID),
+		Binary:    processBinary(int(request.PID)),
 	}
 	if notificationIDValid(listenerFD, request.ID) {
 		destination, err := connectDestination(int(request.PID), request.Data.Args[1], uint32(request.Data.Args[2]))
@@ -176,6 +177,7 @@ func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNo
 			destination.SessionID = event.SessionID
 			destination.Marker = event.Marker
 			destination.PID = event.PID
+			destination.Binary = event.Binary
 			event = destination
 		}
 	}
@@ -206,6 +208,7 @@ func (s *egressSupervisor) record(event EgressAuditEvent) {
 		"session_id", event.SessionID,
 		"marker", event.Marker,
 		"pid", event.PID,
+		"binary", event.Binary,
 		"family", event.Family,
 		"host", event.Host,
 		"port", event.Port,

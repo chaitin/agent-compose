@@ -19,8 +19,12 @@ type Result struct {
 	// target, or the requested name when the rule names none; for a deny it is
 	// populated only when the matched rule recorded one.
 	Target string
-	// Reason explains a deny. It is empty for an allow.
+	// Reason explains a deny, or why an allowed match was recorded instead of
+	// enforced. It is empty for an ordinary allow.
 	Reason string
+	// Audit reports that the matched allowance is declared in audit mode: the
+	// request is allowed, and the decision is recorded rather than enforced.
+	Audit bool
 	// Generation is the policy generation this result was evaluated against.
 	Generation Generation
 }
@@ -76,17 +80,37 @@ func Decide(policy Policy, request Request) Result {
 		if rule.Action == Allow && target == "" {
 			target = request.Name
 		}
-		return Result{
+		result := Result{
 			Action:     rule.Action,
 			RuleID:     rule.ID,
 			Target:     target,
 			Reason:     rule.Reason,
 			Generation: policy.generation,
 		}
+		if rule.Action == Allow && normalizeEnforcement(rule.Enforcement) == EnforcementAudit {
+			// Audit is an observation mode for one declared allowance: the
+			// request is allowed exactly as an enforced match would allow it,
+			// but the record says it was recorded rather than enforced.
+			result.Audit = true
+			result.Reason = auditAllowanceReason
+		}
+		return result
 	}
 	if constrained != nil {
 		constrained.Generation = policy.generation
 		return *constrained
+	}
+	if policy.hasBinaryConstraints() && request.Binary == "" {
+		// A policy that scopes any rule to an executable cannot be decided for
+		// a connection whose executable is unknown. Falling through to a
+		// permissive default would allow exactly the anonymous traffic the
+		// binary constraint exists to distinguish, so the decision fails
+		// closed instead.
+		return Result{
+			Action:     Deny,
+			Reason:     binaryUnknownDenialReason,
+			Generation: policy.generation,
+		}
 	}
 	result := Result{
 		Action:     policy.defaultAction,
@@ -97,6 +121,15 @@ func Decide(policy Policy, request Request) Result {
 	}
 	return result
 }
+
+const (
+	// auditAllowanceReason is the stable reason a decision carries when it
+	// matched an allowance declared in audit mode.
+	auditAllowanceReason = "the allowance is declared in audit mode: the connection is recorded, not enforced"
+	// binaryUnknownDenialReason is the stable reason a binary-constrained
+	// policy gives when the request carries no executable identity.
+	binaryUnknownDenialReason = "the policy scopes egress to declared binaries, and the request binary is unknown"
+)
 
 // allowsAddresses reports whether a matched allow rule also permits the
 // addresses the request resolved to. A rule that declares no allowed addresses

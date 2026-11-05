@@ -23,6 +23,7 @@ func TestEgressAuditLogWritesDecisionLines(t *testing.T) {
 	request.SessionID = "session-1"
 	request.Marker = "run-1"
 	request.ProcessID = 42
+	request.Binary = "/usr/bin/python3"
 	request.ResolvedIPs = []string{"93.184.216.34"}
 	allowed := egress.Result{Action: egress.Allow, Target: "93.184.216.34", Generation: 7}
 	denied := egress.Result{Action: egress.Deny, RuleID: "network.deny", Reason: "not declared", Generation: 7}
@@ -47,6 +48,9 @@ func TestEgressAuditLogWritesDecisionLines(t *testing.T) {
 		}
 		if record.SandboxID != "sandbox-1" || record.SessionID != "session-1" || record.Marker != "run-1" || record.ProcessID != 42 {
 			t.Fatalf("record %d identity = %+v", lines, record)
+		}
+		if record.Binary != "/usr/bin/python3" {
+			t.Fatalf("record %d binary = %q, want the request executable", lines, record.Binary)
 		}
 		if record.Destination != "allowed.example:443/https" {
 			t.Fatalf("record %d destination = %q", lines, record.Destination)

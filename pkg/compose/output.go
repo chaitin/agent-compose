@@ -572,19 +572,24 @@ func cloneNormalizedNetworkAllow(values []NormalizedSandboxNetworkAllowSpec) []N
 	cloned := make([]NormalizedSandboxNetworkAllowSpec, len(values))
 	for i, value := range values {
 		value.AllowedIPs = append([]string(nil), value.AllowedIPs...)
+		value.Binaries = append([]string(nil), value.Binaries...)
 		cloned[i] = value
 	}
 	return cloned
 }
 
 // cloneNormalizedNetworkDeny copies the denial list. Deny entries are value
-// types, but copying the slice still matters: appending through one view must
-// not reallocate or overwrite the other's backing array.
+// types, but each carries a binary scope slice that must be copied too.
 func cloneNormalizedNetworkDeny(values []NormalizedSandboxNetworkDenySpec) []NormalizedSandboxNetworkDenySpec {
 	if values == nil {
 		return nil
 	}
-	return append([]NormalizedSandboxNetworkDenySpec(nil), values...)
+	cloned := make([]NormalizedSandboxNetworkDenySpec, len(values))
+	for i, value := range values {
+		value.Binaries = append([]string(nil), value.Binaries...)
+		cloned[i] = value
+	}
+	return cloned
 }
 
 func compareString(a string, b string) int {

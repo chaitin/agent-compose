@@ -2519,7 +2519,13 @@ type DeclaredNetworkAllowance struct {
 	AllowedIps []string `protobuf:"bytes,3,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
 	// Declaration layers that contributed the effective entry: "daemon" and/or
 	// "agent". Empty when provenance was not annotated.
-	Sources       []string `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
+	Sources []string `protobuf:"bytes,4,rep,name=sources,proto3" json:"sources,omitempty"`
+	// The absolute executable paths this allowance is scoped to. Empty when the
+	// allowance is not scoped to a binary.
+	Binaries []string `protobuf:"bytes,5,rep,name=binaries,proto3" json:"binaries,omitempty"`
+	// The declared per-entry enforcement: "enforce" when omitted or declared,
+	// "audit" when the allowance records a match without enforcing it.
+	Enforcement   string `protobuf:"bytes,6,opt,name=enforcement,proto3" json:"enforcement,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2583,6 +2589,20 @@ func (x *DeclaredNetworkAllowance) GetSources() []string {
 	return nil
 }
 
+func (x *DeclaredNetworkAllowance) GetBinaries() []string {
+	if x != nil {
+		return x.Binaries
+	}
+	return nil
+}
+
+func (x *DeclaredNetworkAllowance) GetEnforcement() string {
+	if x != nil {
+		return x.Enforcement
+	}
+	return ""
+}
+
 // DeclaredNetworkDenial is one declared refusal as it appears in a report.
 type DeclaredNetworkDenial struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2590,7 +2610,10 @@ type DeclaredNetworkDenial struct {
 	Endpoint string `protobuf:"bytes,1,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// Declaration layers that contributed the effective entry: "daemon" and/or
 	// "agent". Empty when provenance was not annotated.
-	Sources       []string `protobuf:"bytes,3,rep,name=sources,proto3" json:"sources,omitempty"`
+	Sources []string `protobuf:"bytes,3,rep,name=sources,proto3" json:"sources,omitempty"`
+	// The absolute executable paths this denial is scoped to. Empty when the
+	// denial is not scoped to a binary.
+	Binaries      []string `protobuf:"bytes,4,rep,name=binaries,proto3" json:"binaries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2635,6 +2658,13 @@ func (x *DeclaredNetworkDenial) GetEndpoint() string {
 func (x *DeclaredNetworkDenial) GetSources() []string {
 	if x != nil {
 		return x.Sources
+	}
+	return nil
+}
+
+func (x *DeclaredNetworkDenial) GetBinaries() []string {
+	if x != nil {
+		return x.Binaries
 	}
 	return nil
 }
@@ -6899,7 +6929,14 @@ type SandboxNetworkAllowSpec struct {
 	// canonicalized as CIDRs. Empty leaves the addresses unconstrained. It is
 	// part of the normalized spec the client hashes, so it must travel with the
 	// declaration rather than being rederived from the host.
-	AllowedIps    []string `protobuf:"bytes,4,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
+	AllowedIps []string `protobuf:"bytes,4,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
+	// Optional. Absolute executable paths this allowance is scoped to. Empty
+	// leaves the allowance unscoped; an unknown request binary never satisfies a
+	// scoped allowance.
+	Binaries []string `protobuf:"bytes,5,rep,name=binaries,proto3" json:"binaries,omitempty"`
+	// Optional. "enforce" (the omitted default) applies the allowance; "audit"
+	// records a match and allows the request without enforcing it.
+	Enforcement   string `protobuf:"bytes,6,opt,name=enforcement,proto3" json:"enforcement,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -6963,6 +7000,20 @@ func (x *SandboxNetworkAllowSpec) GetAllowedIps() []string {
 	return nil
 }
 
+func (x *SandboxNetworkAllowSpec) GetBinaries() []string {
+	if x != nil {
+		return x.Binaries
+	}
+	return nil
+}
+
+func (x *SandboxNetworkAllowSpec) GetEnforcement() string {
+	if x != nil {
+		return x.Enforcement
+	}
+	return ""
+}
+
 // SandboxNetworkDenySpec is one declared refusal. It has no allowed_ips: a
 // denial refuses the destination itself.
 type SandboxNetworkDenySpec struct {
@@ -6972,7 +7023,10 @@ type SandboxNetworkDenySpec struct {
 	Host string `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
 	// The concrete destination port. A YAML declaration may use a "ports" list
 	// instead; normalization expands it into one message per port.
-	Port          int32 `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	Port int32 `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
+	// Optional. Absolute executable paths this denial is scoped to. Empty leaves
+	// the denial unscoped; an unknown request binary is still refused.
+	Binaries      []string `protobuf:"bytes,4,rep,name=binaries,proto3" json:"binaries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7019,6 +7073,13 @@ func (x *SandboxNetworkDenySpec) GetPort() int32 {
 		return x.Port
 	}
 	return 0
+}
+
+func (x *SandboxNetworkDenySpec) GetBinaries() []string {
+	if x != nil {
+		return x.Binaries
+	}
+	return nil
 }
 
 type MCPServerSpec struct {
@@ -21970,16 +22031,19 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x14daemon_policy_source\x18\x10 \x01(\tR\x12daemonPolicySource\x120\n" +
 	"\x14daemon_policy_sha256\x18\x11 \x01(\tR\x12daemonPolicySha256\x12\x1c\n" +
 	"\tunapplied\x18\v \x03(\tR\tunapplied\x12\x18\n" +
-	"\awarning\x18\f \x01(\tR\awarning\"\x97\x01\n" +
+	"\awarning\x18\f \x01(\tR\awarning\"\xd5\x01\n" +
 	"\x18DeclaredNetworkAllowance\x12\x1a\n" +
 	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x12$\n" +
 	"\vinspectable\x18\x02 \x01(\bB\x02\x18\x01R\vinspectable\x12\x1f\n" +
 	"\vallowed_ips\x18\x03 \x03(\tR\n" +
 	"allowedIps\x12\x18\n" +
-	"\asources\x18\x04 \x03(\tR\asources\"`\n" +
+	"\asources\x18\x04 \x03(\tR\asources\x12\x1a\n" +
+	"\bbinaries\x18\x05 \x03(\tR\bbinaries\x12 \n" +
+	"\venforcement\x18\x06 \x01(\tR\venforcement\"|\n" +
 	"\x15DeclaredNetworkDenial\x12\x1a\n" +
 	"\bendpoint\x18\x01 \x01(\tR\bendpoint\x12\x18\n" +
-	"\asources\x18\x03 \x03(\tR\asourcesJ\x04\b\x02\x10\x03R\vinspectable\"\xd4\x01\n" +
+	"\asources\x18\x03 \x03(\tR\asources\x12\x1a\n" +
+	"\bbinaries\x18\x04 \x03(\tR\bbinariesJ\x04\b\x02\x10\x03R\vinspectable\"\xd4\x01\n" +
 	"\x13PatchProjectRequest\x125\n" +
 	"\aproject\x18\x01 \x01(\v2\x1b.agentcompose.v2.ProjectRefR\aproject\x12;\n" +
 	"\x1aexpected_current_spec_hash\x18\x02 \x01(\tR\x17expectedCurrentSpecHash\x120\n" +
@@ -22374,16 +22438,19 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x12SandboxNetworkSpec\x12\x18\n" +
 	"\adefault\x18\x01 \x01(\tR\adefault\x12>\n" +
 	"\x05allow\x18\x02 \x03(\v2(.agentcompose.v2.SandboxNetworkAllowSpecR\x05allow\x12;\n" +
-	"\x04deny\x18\x03 \x03(\v2'.agentcompose.v2.SandboxNetworkDenySpecR\x04deny\"\x82\x01\n" +
+	"\x04deny\x18\x03 \x03(\v2'.agentcompose.v2.SandboxNetworkDenySpecR\x04deny\"\xc0\x01\n" +
 	"\x17SandboxNetworkAllowSpec\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1e\n" +
 	"\bprotocol\x18\x03 \x01(\tB\x02\x18\x01R\bprotocol\x12\x1f\n" +
 	"\vallowed_ips\x18\x04 \x03(\tR\n" +
-	"allowedIps\"P\n" +
+	"allowedIps\x12\x1a\n" +
+	"\bbinaries\x18\x05 \x03(\tR\bbinaries\x12 \n" +
+	"\venforcement\x18\x06 \x01(\tR\venforcement\"l\n" +
 	"\x16SandboxNetworkDenySpec\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
-	"\x04port\x18\x02 \x01(\x05R\x04portJ\x04\b\x03\x10\x04R\bprotocol\"\xfb\x01\n" +
+	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1a\n" +
+	"\bbinaries\x18\x04 \x03(\tR\bbinariesJ\x04\b\x03\x10\x04R\bprotocol\"\xfb\x01\n" +
 	"\rMCPServerSpec\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04type\x18\x02 \x01(\tR\x04type\x12\x1c\n" +

@@ -204,7 +204,7 @@ func (p SandboxNetworkPolicy) allowingEndpoints() []egress.Endpoint {
 func (p SandboxNetworkPolicy) denyingEndpoints() []egress.Endpoint {
 	entries := make([]egress.Endpoint, 0, len(p.Deny))
 	for _, entry := range p.Deny {
-		entries = append(entries, egress.Endpoint(entry))
+		entries = append(entries, egress.Endpoint{Host: entry.Host, Port: entry.Port, Protocol: entry.Protocol})
 	}
 	return entries
 }
@@ -235,16 +235,30 @@ func normalizeSandboxNetworkEndpoints(field string, entries []egress.AllowEntry)
 		if err != nil {
 			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
 		}
+		binaries, err := egress.NormalizeBinaries(entry.Binaries)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
+		}
+		enforcement := entry.Enforcement
+		if enforcement != "" {
+			parsed, err := egress.ParseEnforcement(string(enforcement))
+			if err != nil {
+				return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
+			}
+			enforcement = parsed
+		}
 		key := endpoint.Name()
 		if _, duplicate := seen[key]; duplicate {
 			return nil, fmt.Errorf("%s[%d]: duplicate entry %q", field, index, key)
 		}
 		seen[key] = struct{}{}
 		normalized = append(normalized, egress.AllowEntry{
-			Host:       endpoint.Host,
-			Port:       endpoint.Port,
-			Protocol:   endpoint.Protocol,
-			AllowedIPs: allowed,
+			Host:        endpoint.Host,
+			Port:        endpoint.Port,
+			Protocol:    endpoint.Protocol,
+			AllowedIPs:  allowed,
+			Binaries:    binaries,
+			Enforcement: enforcement,
 		})
 	}
 	return normalized, nil
@@ -261,12 +275,21 @@ func normalizeSandboxNetworkDenyEndpoints(field string, entries []egress.DenyEnt
 		if err != nil {
 			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
 		}
+		binaries, err := egress.NormalizeBinaries(entry.Binaries)
+		if err != nil {
+			return nil, fmt.Errorf("%s[%d]: %w", field, index, err)
+		}
 		key := endpoint.Name()
 		if _, duplicate := seen[key]; duplicate {
 			return nil, fmt.Errorf("%s[%d]: duplicate entry %q", field, index, key)
 		}
 		seen[key] = struct{}{}
-		normalized = append(normalized, egress.DenyEntry(endpoint))
+		normalized = append(normalized, egress.DenyEntry{
+			Host:     endpoint.Host,
+			Port:     endpoint.Port,
+			Protocol: endpoint.Protocol,
+			Binaries: binaries,
+		})
 	}
 	return normalized, nil
 }

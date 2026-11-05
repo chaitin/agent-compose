@@ -1065,3 +1065,150 @@ func TestEgressProxyUsesThePerSessionPolicyWhenPresent(t *testing.T) {
 		t.Fatalf("records = %+v, want allow then deny", records)
 	}
 }
+
+func binaryScopedAllowPolicy(endpointPattern string, binaries ...string) egress.Policy {
+	return egress.NewPolicy(egress.Deny, egress.Rule{
+		ID: "network.allow", Match: egress.MatchEndpoint, Names: []string{endpointPattern},
+		Action: egress.Allow, Binaries: binaries,
+	})
+}
+
+func readConnectStatus(t *testing.T, connection net.Conn) int {
+	t.Helper()
+	response, err := http.ReadResponse(bufio.NewReader(connection), &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		t.Fatalf("reading the CONNECT response: %v", err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	return response.StatusCode
+}
+
+// TestEgressProxyScopesAnAllowanceToTheBinaryHeader pins that the executable
+// attribution crosses the init/proxy boundary, reaches the decision model, and
+// is recorded; a binary the entry does not name is refused.
+func TestEgressProxyScopesAnAllowanceToTheBinaryHeader(t *testing.T) {
+	policies := &proxyTestPolicies{policies: []egress.Policy{binaryScopedAllowPolicy("allowed.example:443/https", "/usr/bin/python3")}}
+	upstreamSide, upstream := net.Pipe()
+	defer func() { _ = upstreamSide.Close() }()
+	proxyServer, recorder := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.Dial = func(context.Context, string, string) (net.Conn, error) { return upstream, nil }
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+
+	connection := dialProxy(t, server)
+	defer func() { _ = connection.Close() }()
+	writeConnectWithHeaders(t, connection, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderBinary: base64.StdEncoding.EncodeToString([]byte("/usr/bin/python3")),
+	})
+	if status := readConnectStatus(t, connection); status != http.StatusOK {
+		t.Fatalf("CONNECT status = %d, want 200", status)
+	}
+	records := recorder.collected()
+	if len(records) != 1 || !records[0].Allowed() {
+		t.Fatalf("records = %+v, want one allowed decision", records)
+	}
+	if records[0].Request.Binary != "/usr/bin/python3" {
+		t.Fatalf("record binary = %q, want the decoded header", records[0].Request.Binary)
+	}
+
+	// A different executable cannot use the same entry.
+	deniedPolicies := &proxyTestPolicies{policies: []egress.Policy{binaryScopedAllowPolicy("allowed.example:443/https", "/usr/bin/python3")}}
+	deniedServer, deniedRecorder := newTestEgressProxy(t, deniedPolicies)
+	denied := httptest.NewServer(deniedServer)
+	defer denied.Close()
+	deniedConnection := dialProxy(t, denied)
+	defer func() { _ = deniedConnection.Close() }()
+	writeConnectWithHeaders(t, deniedConnection, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderBinary: base64.StdEncoding.EncodeToString([]byte("/usr/bin/curl")),
+	})
+	if status := readConnectStatus(t, deniedConnection); status != http.StatusForbidden {
+		t.Fatalf("CONNECT status = %d for another binary, want 403", status)
+	}
+	if records := deniedRecorder.collected(); len(records) != 1 || records[0].Allowed() {
+		t.Fatalf("records = %+v, want one denial", records)
+	}
+}
+
+// TestEgressProxyRejectsAMalformedBinaryHeader pins that the header is decoded
+// strictly rather than silently treated as absent: an unreadable attribution
+// must not become an unattributed request the policy then decides differently.
+func TestEgressProxyRejectsAMalformedBinaryHeader(t *testing.T) {
+	policies := &proxyTestPolicies{policies: []egress.Policy{egress.NewPolicy(egress.Allow)}}
+	proxyServer, recorder := newTestEgressProxy(t, policies)
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	connection := dialProxy(t, server)
+	defer func() { _ = connection.Close() }()
+	writeConnectWithHeaders(t, connection, "allowed.example:443", testSandboxID, testCredential, map[string]string{
+		egress.IdentityHeaderBinary: "!!!!not-base64!!!!",
+	})
+	if status := readConnectStatus(t, connection); status != http.StatusForbidden {
+		t.Fatalf("CONNECT status = %d, want 403", status)
+	}
+	if records := recorder.collected(); len(records) != 0 {
+		t.Fatalf("records = %+v, want no decision for a malformed attribution", records)
+	}
+}
+
+// TestEgressProxyDoesNotLetAnEmptyBinaryBypassABinaryScopedDenial pins the
+// fail-closed half of binary scoping: a denial scoped to an executable applies
+// to a connection whose executable is unknown.
+func TestEgressProxyDoesNotLetAnEmptyBinaryBypassABinaryScopedDenial(t *testing.T) {
+	policy := egress.NewPolicy(egress.Allow, egress.Rule{
+		ID: "network.deny", Match: egress.MatchEndpoint,
+		Names:  []string{egress.FormatEndpointPattern("metadata.example.com", 80, egress.ProtocolAny)},
+		Action: egress.Deny, Binaries: []string{"/usr/bin/curl"},
+	})
+	policies := &proxyTestPolicies{policies: []egress.Policy{policy}}
+	proxyServer, recorder := newTestEgressProxy(t, policies)
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	connection := dialProxy(t, server)
+	defer func() { _ = connection.Close() }()
+	writeConnect(t, connection, "metadata.example.com:80", testSandboxID, testCredential)
+	if status := readConnectStatus(t, connection); status != http.StatusForbidden {
+		t.Fatalf("CONNECT status = %d, want 403 for an unknown binary", status)
+	}
+	records := recorder.collected()
+	if len(records) != 1 || records[0].Allowed() {
+		t.Fatalf("records = %+v, want one denial", records)
+	}
+}
+
+// TestEgressProxyAuditAllowanceForwardsAndRecordsItsReason pins per-entry
+// enforcement: an audit allowance permits the connection, and the recorded
+// decision carries a distinct reason so it cannot be mistaken for enforcement.
+func TestEgressProxyAuditAllowanceForwardsAndRecordsItsReason(t *testing.T) {
+	policy := egress.NewPolicy(egress.Deny, egress.Rule{
+		ID: "network.allow", Match: egress.MatchEndpoint,
+		Names:       []string{egress.FormatEndpointPattern("allowed.example", 443, egress.ProtocolHTTPS)},
+		Action:      egress.Allow,
+		Enforcement: egress.EnforcementAudit,
+	})
+	policies := &proxyTestPolicies{policies: []egress.Policy{policy}}
+	upstreamSide, upstream := net.Pipe()
+	defer func() { _ = upstreamSide.Close() }()
+	proxyServer, recorder := newTestEgressProxy(t, policies, func(options *EgressProxyOptions) {
+		options.Dial = func(context.Context, string, string) (net.Conn, error) { return upstream, nil }
+	})
+	server := httptest.NewServer(proxyServer)
+	defer server.Close()
+	connection := dialProxy(t, server)
+	defer func() { _ = connection.Close() }()
+	writeConnect(t, connection, "allowed.example:443", testSandboxID, testCredential)
+	if status := readConnectStatus(t, connection); status != http.StatusOK {
+		t.Fatalf("CONNECT status = %d, want an audit allowance to forward", status)
+	}
+	records := recorder.collected()
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want 1", len(records))
+	}
+	record := records[0]
+	if !record.Allowed() || !record.Result.Audit {
+		t.Fatalf("record = %+v, want an allowed audit decision", record)
+	}
+	if record.Result.Reason != "the allowance is declared in audit mode: the connection is recorded, not enforced" {
+		t.Fatalf("audit reason = %q, want the distinct audit reason", record.Result.Reason)
+	}
+}

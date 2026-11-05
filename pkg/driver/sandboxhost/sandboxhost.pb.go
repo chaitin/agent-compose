@@ -536,6 +536,8 @@ type AllowEntry struct {
 	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
 	Protocol      string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`
 	AllowedIps    []string               `protobuf:"bytes,4,rep,name=allowed_ips,json=allowedIps,proto3" json:"allowed_ips,omitempty"`
+	Binaries      []string               `protobuf:"bytes,5,rep,name=binaries,proto3" json:"binaries,omitempty"`
+	Enforcement   string                 `protobuf:"bytes,6,opt,name=enforcement,proto3" json:"enforcement,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -598,6 +600,20 @@ func (x *AllowEntry) GetAllowedIps() []string {
 	return nil
 }
 
+func (x *AllowEntry) GetBinaries() []string {
+	if x != nil {
+		return x.Binaries
+	}
+	return nil
+}
+
+func (x *AllowEntry) GetEnforcement() string {
+	if x != nil {
+		return x.Enforcement
+	}
+	return ""
+}
+
 // DenyEntry is one declared refusal. It mirrors egress.DenyEntry and, unlike
 // AllowEntry, deliberately carries no allowed_ips: constraining a refusal to
 // selected addresses would make one entry mean two different things.
@@ -606,6 +622,7 @@ type DenyEntry struct {
 	Host          string                 `protobuf:"bytes,1,opt,name=host,proto3" json:"host,omitempty"`
 	Port          int32                  `protobuf:"varint,2,opt,name=port,proto3" json:"port,omitempty"`
 	Protocol      string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Binaries      []string               `protobuf:"bytes,4,rep,name=binaries,proto3" json:"binaries,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -659,6 +676,13 @@ func (x *DenyEntry) GetProtocol() string {
 		return x.Protocol
 	}
 	return ""
+}
+
+func (x *DenyEntry) GetBinaries() []string {
+	if x != nil {
+		return x.Binaries
+	}
+	return nil
 }
 
 type EngineEndpoint struct {
@@ -3374,18 +3398,21 @@ const file_sandboxhost_proto_rawDesc = "" +
 	"\bEndpoint\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1a\n" +
-	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"q\n" +
+	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"\xaf\x01\n" +
 	"\n" +
 	"AllowEntry\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1a\n" +
 	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12\x1f\n" +
 	"\vallowed_ips\x18\x04 \x03(\tR\n" +
-	"allowedIps\"O\n" +
+	"allowedIps\x12\x1a\n" +
+	"\bbinaries\x18\x05 \x03(\tR\bbinaries\x12 \n" +
+	"\venforcement\x18\x06 \x01(\tR\venforcement\"k\n" +
 	"\tDenyEntry\x12\x12\n" +
 	"\x04host\x18\x01 \x01(\tR\x04host\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\x05R\x04port\x12\x1a\n" +
-	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"x\n" +
+	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12\x1a\n" +
+	"\bbinaries\x18\x04 \x03(\tR\bbinaries\"x\n" +
 	"\x0eEngineEndpoint\x12\x18\n" +
 	"\apurpose\x18\x01 \x01(\tR\apurpose\x124\n" +
 	"\bendpoint\x18\x02 \x01(\v2\x18.sandboxhost.v1.EndpointR\bendpoint\x12\x16\n" +

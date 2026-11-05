@@ -158,18 +158,33 @@ type SandboxNetworkAllowSpec struct {
 	// is not covered by this allowance, so a name the declaration trusts cannot
 	// be pointed at an address it does not.
 	AllowedIPs []string `yaml:"allowed_ips,omitempty" json:"allowed_ips,omitempty"`
+	// Binaries optionally scopes the allowance to processes whose executable
+	// is one of these absolute paths. An unknown executable never satisfies a
+	// binary-scoped allowance, so the declaration fails closed for traffic the
+	// engine cannot attribute.
+	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
+	// Enforcement selects how a matched allowance is applied. "enforce" is the
+	// default and the behavior an omitted field keeps; "audit" records the
+	// match and allows the request without enforcing it. A denial has no
+	// enforcement field: a refusal always refuses.
+	Enforcement string `yaml:"enforcement,omitempty" json:"enforcement,omitempty"`
 }
 
 // SandboxNetworkDenySpec is one declared refusal. It has the same destination
-// shape as an allowance but no AllowedIPs field: a denial refuses the
-// destination, and constraining it to selected addresses would turn a deny
-// entry into something the declaration cannot express unambiguously.
+// shape as an allowance but no AllowedIPs or Enforcement field: a denial refuses
+// the destination, and constraining it to selected addresses would turn a deny
+// entry into something the declaration cannot express unambiguously, while an
+// audit-only refusal would not refuse.
 type SandboxNetworkDenySpec struct {
 	Host string `yaml:"host,omitempty" json:"host,omitempty"`
 	// Port and Ports are alternatives, as on an allowance; normalization
 	// expands each listed port into its own canonical denial.
 	Port  int   `yaml:"port,omitempty" json:"port,omitempty"`
 	Ports []int `yaml:"ports,omitempty" json:"ports,omitempty"`
+	// Binaries optionally scopes the denial to processes whose executable is
+	// one of these absolute paths. An unknown executable is still refused by a
+	// binary-scoped denial, so dropping the attribution cannot bypass it.
+	Binaries []string `yaml:"binaries,omitempty" json:"binaries,omitempty"`
 }
 
 type AgentMCPEntriesSpec []AgentMCPEntrySpec
@@ -695,6 +710,8 @@ func validateSandboxNetworkAllowList(node *yaml.Node, path string) error {
 			"port":        validateInt,
 			"ports":       validateIntSequence,
 			"allowed_ips": validateStringList,
+			"binaries":    validateStringList,
+			"enforcement": validateScalar,
 		}); err != nil {
 			return err
 		}
@@ -709,9 +726,10 @@ func validateSandboxNetworkDenyList(node *yaml.Node, path string) error {
 	for index, item := range node.Content {
 		itemPath := fmt.Sprintf("%s[%d]", path, index)
 		if err := validateMapping(item, itemPath, map[string]nodeValidator{
-			"host":  validateScalar,
-			"port":  validateInt,
-			"ports": validateIntSequence,
+			"host":     validateScalar,
+			"port":     validateInt,
+			"ports":    validateIntSequence,
+			"binaries": validateStringList,
 		}); err != nil {
 			return err
 		}

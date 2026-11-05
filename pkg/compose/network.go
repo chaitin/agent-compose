@@ -71,7 +71,11 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() (egress.NetworkDeclar
 			Host:       entry.Host,
 			Port:       entry.Port,
 			Protocol:   egress.ProtocolAny,
-			AllowedIPs: entry.AllowedIPs,
+			AllowedIPs: append([]string(nil), entry.AllowedIPs...),
+			Binaries:   append([]string(nil), entry.Binaries...),
+			// An omitted enforcement stays empty and means enforce, exactly as
+			// the decision model's zero value defines it.
+			Enforcement: egress.Enforcement(entry.Enforcement),
 		})
 	}
 	for _, entry := range n.Deny {
@@ -79,6 +83,7 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() (egress.NetworkDeclar
 			Host:     entry.Host,
 			Port:     entry.Port,
 			Protocol: egress.ProtocolAny,
+			Binaries: append([]string(nil), entry.Binaries...),
 		})
 	}
 	return declaration, nil
@@ -148,6 +153,10 @@ func normalizeSandboxNetworkDeny(path string, values []SandboxNetworkDenySpec) (
 		if err != nil {
 			return nil, err
 		}
+		binaries, err := egress.NormalizeBinaries(value.Binaries)
+		if err != nil {
+			return nil, &ValidationError{Path: entryPath + ".binaries", Message: err.Error()}
+		}
 		for _, port := range ports {
 			dedupeKey := fmt.Sprintf("%s\x00%d", host, port)
 			if _, duplicate := seen[dedupeKey]; duplicate {
@@ -155,8 +164,9 @@ func normalizeSandboxNetworkDeny(path string, values []SandboxNetworkDenySpec) (
 			}
 			seen[dedupeKey] = struct{}{}
 			normalized = append(normalized, NormalizedSandboxNetworkDenySpec{
-				Host: host,
-				Port: port,
+				Host:     host,
+				Port:     port,
+				Binaries: append([]string(nil), binaries...),
 			})
 		}
 		if len(normalized) > maxSandboxNetworkDenyEntries {
@@ -203,6 +213,14 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 		if err != nil {
 			return nil, err
 		}
+		binaries, err := egress.NormalizeBinaries(value.Binaries)
+		if err != nil {
+			return nil, &ValidationError{Path: entryPath + ".binaries", Message: err.Error()}
+		}
+		enforcement, err := normalizeSandboxNetworkEntryEnforcement(entryPath, value.Enforcement)
+		if err != nil {
+			return nil, err
+		}
 		for _, port := range ports {
 			dedupeKey := fmt.Sprintf("%s\x00%d", host, port)
 			if _, duplicate := seen[dedupeKey]; duplicate {
@@ -210,9 +228,11 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 			}
 			seen[dedupeKey] = struct{}{}
 			normalized = append(normalized, NormalizedSandboxNetworkAllowSpec{
-				Host:       host,
-				Port:       port,
-				AllowedIPs: append([]string(nil), allowedIPs...),
+				Host:        host,
+				Port:        port,
+				AllowedIPs:  append([]string(nil), allowedIPs...),
+				Binaries:    append([]string(nil), binaries...),
+				Enforcement: enforcement,
 			})
 		}
 		if len(normalized) > maxSandboxNetworkAllowEntries {
@@ -231,6 +251,21 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 		return 0
 	})
 	return normalized, nil
+}
+
+// normalizeSandboxNetworkEntryEnforcement validates an allowance's optional
+// per-entry enforcement. An omitted value stays empty so a declaration that did
+// not use the field keeps the canonical spec and hash it had before the field
+// existed; the decision model maps empty to enforce.
+func normalizeSandboxNetworkEntryEnforcement(path, value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	enforcement, err := egress.ParseEnforcement(strings.ToLower(strings.TrimSpace(value)))
+	if err != nil {
+		return "", &ValidationError{Path: path + ".enforcement", Message: err.Error()}
+	}
+	return string(enforcement), nil
 }
 
 // normalizeSandboxNetworkPorts resolves the single-port and multi-port forms

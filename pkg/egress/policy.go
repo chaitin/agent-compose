@@ -2,6 +2,7 @@ package egress
 
 import (
 	"encoding/binary"
+	"fmt"
 	"hash"
 	"hash/fnv"
 )
@@ -15,6 +16,41 @@ const (
 	// Deny refuses the request.
 	Deny Action = "deny"
 )
+
+// Enforcement selects how a matched allowance is applied.
+type Enforcement string
+
+const (
+	// EnforcementEnforce applies the allowance to the connection. It is the
+	// zero value so an entry that does not state one keeps the previous
+	// behavior.
+	EnforcementEnforce Enforcement = "enforce"
+	// EnforcementAudit records the match and allows the request. It is an
+	// observation mode for one declared allowance, not a second decision.
+	EnforcementAudit Enforcement = "audit"
+)
+
+// ParseEnforcement validates a declared per-entry enforcement value. An empty
+// value means enforcement: the global behavior, which the declaration may only
+// narrow by asking for audit.
+func ParseEnforcement(value string) (Enforcement, error) {
+	switch normalized := Enforcement(value); normalized {
+	case "", EnforcementEnforce:
+		return EnforcementEnforce, nil
+	case EnforcementAudit:
+		return EnforcementAudit, nil
+	default:
+		return "", fmt.Errorf("enforcement must be %q or %q", EnforcementEnforce, EnforcementAudit)
+	}
+}
+
+func normalizeEnforcement(value Enforcement) Enforcement {
+	normalized, err := ParseEnforcement(string(value))
+	if err != nil {
+		return EnforcementEnforce
+	}
+	return normalized
+}
 
 // Generation identifies one policy snapshot. A decision records the generation
 // it was evaluated against, so a consumer holding a newer policy can tell that
@@ -67,6 +103,15 @@ type Rule struct {
 	// the allowance unconstrained, which is a different declaration from a list
 	// that happens to allow everything.
 	AllowedIPs []string
+	// Binaries scopes the rule to processes whose executable is one of these
+	// canonical absolute paths. An allow rule with names matches only a
+	// declared binary; an empty request binary never satisfies it. A deny rule
+	// with binaries refuses an unknown binary as well, so omitting the
+	// attribution cannot bypass a binary-scoped refusal.
+	Binaries []string
+	// Enforcement selects how a matched allow rule is applied. It is enforced
+	// by default; audit records the match and allows the request.
+	Enforcement Enforcement
 }
 
 // Policy is one immutable snapshot of the rules governing a consumer's egress.
@@ -89,6 +134,8 @@ func NewPolicy(defaultAction Action, rules ...Rule) Policy {
 		copied[i].Match = normalizeMatch(rule.Match)
 		copied[i].Names = append([]string(nil), rule.Names...)
 		copied[i].AllowedIPs = append([]string(nil), rule.AllowedIPs...)
+		copied[i].Binaries = append([]string(nil), rule.Binaries...)
+		copied[i].Enforcement = normalizeEnforcement(rule.Enforcement)
 	}
 	policy := Policy{defaultAction: normalizeAction(defaultAction), rules: copied}
 	policy.generation = policy.contentGeneration()
@@ -121,11 +168,28 @@ func (p Policy) Rules() []Rule {
 		copied[i] = rule
 		copied[i].Names = append([]string(nil), rule.Names...)
 		copied[i].AllowedIPs = append([]string(nil), rule.AllowedIPs...)
+		copied[i].Binaries = append([]string(nil), rule.Binaries...)
 	}
 	return copied
 }
 
+// hasBinaryConstraints reports whether any rule scopes its outcome to an
+// executable. A policy with such a rule cannot decide an anonymous connection
+// by its default alone: an unknown binary is denied instead, so a permissive
+// default cannot silently stand in for an attribution the policy requires.
+func (p Policy) hasBinaryConstraints() bool {
+	for _, rule := range p.rules {
+		if len(rule.Binaries) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (r Rule) matches(request Request) bool {
+	if !r.matchesBinary(request.Binary) {
+		return false
+	}
 	if r.Match == MatchEndpoint {
 		return r.matchesEndpoint(request)
 	}
@@ -139,6 +203,21 @@ func (r Rule) matches(request Request) bool {
 		}
 	}
 	return false
+}
+
+// matchesBinary reports whether the rule's declared executable scope covers the
+// request. A rule that declares no binaries is unrestricted. A binary-scoped
+// allow requires a matching binary, so an unknown binary never satisfies it. A
+// binary-scoped deny treats an unknown binary as in scope, because failing to
+// attribute the connection must not let it bypass the refusal.
+func (r Rule) matchesBinary(binary string) bool {
+	if len(r.Binaries) == 0 {
+		return true
+	}
+	if r.Action == Deny && binary == "" {
+		return true
+	}
+	return BinaryMatches(binary, r.Binaries)
 }
 
 // matchesEndpoint matches a canonical endpoint name against the rule's
@@ -205,6 +284,24 @@ func (p Policy) contentGeneration() Generation {
 			writeField(h, address)
 		}
 		writeField(h, "\x00")
+		// The remaining fields are written only when they carry a non-default
+		// value, so a rule that existed before binary scoping and per-entry
+		// audit keeps the same generation after an upgrade. A generation is
+		// recorded with a running sandbox, and changing it for an unchanged
+		// declaration would make that record look stale.
+		if enforcement := normalizeEnforcement(rule.Enforcement); enforcement != EnforcementEnforce {
+			writeField(h, "enforcement")
+			writeField(h, string(enforcement))
+		}
+		if len(rule.Binaries) > 0 {
+			// Binary scoping changes which requests a rule can decide, so it
+			// must change the generation for the same reason.
+			writeField(h, "binaries")
+			for _, binary := range rule.Binaries {
+				writeField(h, binary)
+			}
+			writeField(h, "\x00")
+		}
 	}
 	return Generation(h.Sum64())
 }

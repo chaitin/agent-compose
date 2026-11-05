@@ -5,6 +5,7 @@ package sandboxinit
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -606,5 +607,32 @@ func TestMarkedProcessesExistTracksDetachedProcesses(t *testing.T) {
 			t.Fatalf("markedProcessesExist(%q) = true after the marked process exited", marker)
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestEgressProxyConnectRequestCarriesTheBinaryHeader(t *testing.T) {
+	target := &egressProxyTarget{authHeader: "Basic test"}
+	request := string(target.connectRequest(EgressAuditEvent{
+		SandboxID: "sandbox-1",
+		Host:      "203.0.113.9",
+		Port:      443,
+		Binary:    "/usr/bin/python3",
+	}))
+	want := "X-Agent-Compose-Binary-B64: " + base64.StdEncoding.EncodeToString([]byte("/usr/bin/python3")) + "\r\n"
+	if !strings.Contains(request, want) {
+		t.Fatalf("CONNECT request does not carry %q:\n%s", want, request)
+	}
+}
+
+func TestProcessBinaryReportsTheRunningExecutable(t *testing.T) {
+	binary := processBinary(os.Getpid())
+	if binary == "" || !strings.HasPrefix(binary, "/") {
+		t.Fatalf("processBinary(self) = %q, want an absolute executable path", binary)
+	}
+	if strings.ContainsAny(binary, "\r\n") {
+		t.Fatalf("processBinary(self) = %q, want no line break", binary)
+	}
+	if got := processBinary(0); got != "" {
+		t.Fatalf("processBinary(0) = %q, want empty", got)
 	}
 }

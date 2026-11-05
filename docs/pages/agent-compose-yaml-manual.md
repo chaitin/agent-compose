@@ -1166,8 +1166,12 @@ Each `allow` entry:
 | `port` | int | One of `port`/`ports` | A single destination port, 1–65535. |
 | `ports` | list of int | One of `port`/`ports` | A shorthand for several destination ports on the same host, for example `[80, 443]`. Normalization expands each port into its own canonical entry; `port` and `ports` are alternatives and must not be combined. |
 | `allowed_ips` | list | Empty | Optional IP addresses or CIDR ranges this entry's `host` may resolve to. Every address the name resolves to must fall inside one of them, or the allowance does not apply. A bare address is its own single-address range (`10.0.0.5` means `10.0.0.5/32`); entries are canonicalized and sorted. This constrains a hostname; it is not a subnet destination and is not accepted on a `deny` entry. |
+| `binaries` | list | Empty | Optional absolute executable paths that scope the allowance. The sandbox-init process reads `/proc/<pid>/exe` for the process that opened the connection, and only a matching path satisfies the entry. Unknown executable = no match: a binary-scoped allowance never applies to traffic the engine cannot attribute, and a policy that contains any binary constraint denies an unattributed connection when the permissive default would otherwise allow it. Paths must be absolute, must not contain `..`, are cleaned, deduplicated, sorted, and bounded (64 per entry). |
+| `enforcement` | string | `enforce` | `enforce` applies the allowance; `audit` records the match and allows the request without enforcing it. This is per-entry: a denial has no `enforcement` field and always refuses. |
 
-Each `deny` entry has `host` and `port` or `ports`, with the same host and port validation as an allowance; it has no `allowed_ips` field, because a denial refuses the destination itself. Each `ports` value is expanded into one canonical entry per port, so the spec hash and the admission report are the same as if each port had been written as its own `port` entry.
+Each `deny` entry has `host` and `port` or `ports`, with the same host and port validation as an allowance; it has no `allowed_ips` field, because a denial refuses the destination itself. It may carry `binaries`, which scopes the refusal to those executable paths; an unknown executable is still refused by a binary-scoped denial, so omitting the attribution cannot bypass it. Each `ports` value is expanded into one canonical entry per port, so the spec hash and the admission report are the same as if each port had been written as its own `port` entry.
+
+`binaries` and `enforcement` are enforced only by the engine's forward proxy, and the binary identity is supplied by the sandbox-init mediation (`SANDBOX_INIT_EGRESS=enforce`). A sandbox whose init does not mediate traffic carries no binary attribution: binary-scoped allowances then fail closed, and the admission report lists that binary scope as unapplied. A driver that applies the network policy itself has no per-entry audit surface, so `enforcement: audit` is reported there as applied-by-enforcement rather than recorded.
 
 `allowed_ips` is what ties a name to an address. Without it an allowance for `api.example.com` follows that name wherever it resolves, so a poisoned or compromised answer could send the sandbox to an address the declaration never named. With it, the engine refuses the connection unless the address it is about to use is inside the declared range, and a name that resolves to both an allowed and a disallowed address is refused rather than picked opportunistically. An address the engine never forwards to at all — loopback, link-local including the metadata address `169.254.169.254`, multicast, and the control-plane ports `2379`, `2380`, `6443`, `10250`, `10255` — stays refused whatever `allowed_ips` says.
 
@@ -1190,6 +1194,11 @@ policy:
         port: 443
       - host: 10.0.0.0/8
         port: 5432
+      - host: pypi.org
+        port: 443
+        binaries:
+          - /usr/bin/python3
+        enforcement: audit
 ```
 
 ```yaml
@@ -1200,7 +1209,11 @@ policy:
         ports: [80, 443]
       - host: metadata.example.com
         port: 80
+        binaries:
+          - /usr/bin/curl
 ```
+
+A binary-scoped allowance is matched only by the exact executable path the sandbox init reports. A process that reaches the proxy without that attribution cannot use the entry, so `binaries` narrows an allowance rather than replacing the destination match. Binary-scoped denials are deliberately the other way around: an unattributed connection is refused, because allowing it to fall through would let a process bypass the denial by hiding its executable.
 
 #### Daemon-wide policy
 
