@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"hash"
+	"sort"
 )
 
 // PolicyHashPrefix marks the hash algorithm in a policy revision so a stored
@@ -12,9 +13,10 @@ import (
 const PolicyHashPrefix = "sha256:"
 
 // PolicyHash returns a stable SHA-256 digest of everything in the policy that
-// can change a decision: the default action and each rule's identity, match
-// mode, action, target, reason, names, and address constraints. Rule order is
-// significant, exactly as it is for evaluation.
+// can change a decision or the request content the engine forwards: the default
+// action and each rule's identity, match mode, action, target, reason, names,
+// address constraints, binary scope, L7 constraint, injected headers, and
+// enforcement. Rule order is significant, exactly as it is for evaluation.
 //
 // The hash is independent of Generation. Generation is a compact content
 // identifier that decisions carry; a caller that stamps a policy with an
@@ -40,9 +42,36 @@ func PolicyHash(policy Policy) string {
 		for _, address := range rule.AllowedIPs {
 			writeHashField(h, address)
 		}
+		writeHashField(h, "\x00binaries")
+		for _, binary := range rule.Binaries {
+			writeHashField(h, binary)
+		}
+		writeHashField(h, "\x00l7_methods")
+		for _, method := range rule.L7.Methods {
+			writeHashField(h, method)
+		}
+		writeHashField(h, "\x00l7_paths")
+		for _, path := range rule.L7.Paths {
+			writeHashField(h, path)
+		}
+		writeHashField(h, "\x00inject_headers")
+		for _, name := range sortedHeaderNames(rule.InjectHeaders) {
+			writeHashField(h, name)
+			writeHashField(h, rule.InjectHeaders[name])
+		}
+		writeHashField(h, string(rule.Enforcement))
 		writeHashField(h, "\x00rule")
 	}
 	return PolicyHashPrefix + hex.EncodeToString(h.Sum(nil))
+}
+
+func sortedHeaderNames(headers map[string]string) []string {
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func writeHashField(h hash.Hash, value string) {

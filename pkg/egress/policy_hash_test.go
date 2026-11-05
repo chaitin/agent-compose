@@ -38,6 +38,11 @@ func TestPolicyHashChangesWhenADecisionChanges(t *testing.T) {
 		{name: "name", policy: NewPolicy(Deny, Rule{ID: "r", Match: MatchExact, Names: []string{"b"}, Action: Allow}, Rule{ID: "s", Action: Deny, Reason: "default"})},
 		{name: "rule order", policy: NewPolicy(Deny, Rule{ID: "s", Action: Deny, Reason: "default"}, Rule{ID: "r", Match: MatchExact, Names: []string{"a"}, Action: Allow})},
 		{name: "allowed addresses", policy: NewPolicy(Deny, Rule{ID: "r", Match: MatchExact, Names: []string{"a"}, Action: Allow, AllowedIPs: []string{"10.0.0.0/8"}}, Rule{ID: "s", Action: Deny, Reason: "default"})},
+		{name: "binaries", policy: NewPolicy(Deny, Rule{ID: "r", Match: MatchExact, Names: []string{"a"}, Action: Allow, Binaries: []string{"/usr/bin/curl"}}, Rule{ID: "s", Action: Deny, Reason: "default"})},
+		{name: "l7 methods", policy: NewPolicy(Deny, Rule{ID: "r", Match: MatchExact, Names: []string{"a"}, Action: Allow, L7: L7Constraint{Methods: []string{"GET"}}}, Rule{ID: "s", Action: Deny, Reason: "default"})},
+		{name: "l7 paths", policy: NewPolicy(Deny, Rule{ID: "r", Match: MatchExact, Names: []string{"a"}, Action: Allow, L7: L7Constraint{Paths: []string{"/v1/*"}}}, Rule{ID: "s", Action: Deny, Reason: "default"})},
+		{name: "injected headers", policy: NewPolicy(Deny, Rule{ID: "r", Match: MatchExact, Names: []string{"a"}, Action: Allow, InjectHeaders: map[string]string{"Authorization": "Bearer ${TOKEN}"}}, Rule{ID: "s", Action: Deny, Reason: "default"})},
+		{name: "enforcement", policy: NewPolicy(Deny, Rule{ID: "r", Match: MatchExact, Names: []string{"a"}, Action: Allow, Enforcement: EnforcementAudit}, Rule{ID: "s", Action: Deny, Reason: "default"})},
 		{name: "reason", policy: NewPolicy(Deny, Rule{ID: "r", Match: MatchExact, Names: []string{"a"}, Action: Allow}, Rule{ID: "s", Action: Deny, Reason: "changed"})},
 	}
 	baseHash := PolicyHash(base)
@@ -55,5 +60,19 @@ func TestPolicyHashIgnoresAnOverriddenGeneration(t *testing.T) {
 	revisioned := base.WithGeneration(base.Generation() + 7)
 	if got, want := PolicyHash(revisioned), PolicyHash(base); got != want {
 		t.Fatalf("an explicit generation changed the policy hash: %q vs %q", got, want)
+	}
+}
+
+func TestPolicyHashIgnoresInjectHeaderInsertionOrder(t *testing.T) {
+	first := NewPolicy(Deny, Rule{ID: "r", Action: Allow, InjectHeaders: map[string]string{
+		"X-Api-Key":      "${API_KEY}",
+		"X-Request-Tags": "${TAGS}",
+	}})
+	second := NewPolicy(Deny, Rule{ID: "r", Action: Allow, InjectHeaders: map[string]string{
+		"X-Request-Tags": "${TAGS}",
+		"X-Api-Key":      "${API_KEY}",
+	}})
+	if got, want := PolicyHash(second), PolicyHash(first); got != want {
+		t.Fatalf("header insertion order changed the policy hash: %q vs %q", got, want)
 	}
 }
