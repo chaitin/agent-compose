@@ -12,7 +12,13 @@ import (
 // The guest can replace either mpi or the destination with a symlink.
 func publishCapabilityFile(filePath string, content []byte) (returnErr error) {
 	runtimeDir := filepath.Dir(filepath.Dir(filePath))
-	root, err := os.OpenRoot(filepath.Dir(runtimeDir))
+	sandboxDir := filepath.Dir(runtimeDir)
+	// The daemon-owned sandbox directory may precede materialization. Only
+	// bootstrap that trusted path; all guest-controlled children stay in Root.
+	if err := os.MkdirAll(sandboxDir, 0o755); err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(sandboxDir)
 	if err != nil {
 		return err
 	}
