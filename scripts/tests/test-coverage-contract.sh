@@ -10,6 +10,8 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+"$root/scripts/tests/test-run-go-test-shape.sh"
+
 profile_counts() {
   awk '
     /^mode:/ { next }

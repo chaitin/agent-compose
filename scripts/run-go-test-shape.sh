@@ -58,9 +58,17 @@ if [[ -z "$tests" ]]; then
   exit 1
 fi
 
-pattern="^($(printf '%s\n' "$tests" | paste -sd '|' -))$"
-go test -run "$pattern" "$@" "${packages[@]}" "${coverage_binary_args[@]}"
+# Enumerating all names in -run exceeds Linux's per-argument limit as the
+# repository grows. Match the same top-level naming contract with fixed-size
+# expressions; Go applies the first regex component to the top-level name,
+# so a unit test's Integration/E2E-named subtests remain included.
+case "$shape" in
+  unit) selection_args=(-run '^Test' -skip '^Test.*(Integration|E2E)') ;;
+  integration) selection_args=(-run '^Test.*Integration') ;;
+  e2e) selection_args=(-run '^Test.*E2E') ;;
+esac
+go test "${selection_args[@]}" "$@" "${packages[@]}" ${coverage_binary_args[@]+"${coverage_binary_args[@]}"}
 
 if [[ ${#extra_packages[@]} -gt 0 ]]; then
-  go test -run '^Test' "$@" "${extra_packages[@]}" "${coverage_binary_args[@]}"
+  go test -run '^Test' "$@" "${extra_packages[@]}" ${coverage_binary_args[@]+"${coverage_binary_args[@]}"}
 fi
