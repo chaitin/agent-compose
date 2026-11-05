@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path"
+	"strconv"
 
 	"strings"
 
@@ -107,6 +108,10 @@ func sandboxInitIsolationEnv(config *appconfig.Config) map[string]string {
 		for key, value := range landlock {
 			env[key] = value
 		}
+	}
+	if config != nil && config.SandboxInitWorkloadUID > 0 {
+		env[sandboxinit.WorkloadUIDEnvVar] = strconv.Itoa(config.SandboxInitWorkloadUID)
+		env[sandboxinit.WorkloadGIDEnvVar] = strconv.Itoa(config.SandboxInitWorkloadGID)
 	}
 	return env
 }

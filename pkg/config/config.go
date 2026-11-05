@@ -165,6 +165,20 @@ type Config struct {
 	// JSONL path under GuestLogRoot. It is opt-in because Docker and Kubernetes
 	// already capture init stderr.
 	SandboxInitEgressAuditLog bool
+	// SandboxSupervisorEnabled selects the independent Docker sandbox
+	// supervisor: the workload container is created with NetworkMode=none and
+	// reaches the daemon proxy only through a per-sandbox supervisor process
+	// and a host-mounted Unix domain socket. It requires init and
+	// SANDBOX_INIT_EGRESS=enforce; the old/default modes are untouched.
+	SandboxSupervisorEnabled bool
+	// SandboxSupervisorBinary is the host path of the ac-supervisor executable.
+	// Empty discovers it next to the daemon binary and then falls back to
+	// /app/ac-supervisor.
+	SandboxSupervisorBinary string
+	// SandboxSupervisorUID/GID optionally run ac-supervisor as a non-root host
+	// identity. Zero (the default) keeps the supervisor as root.
+	SandboxSupervisorUID int
+	SandboxSupervisorGID int
 
 	// SandboxInitLandlock selects the init process's filesystem confinement.
 	// "off" is the default; "enforce" applies a Landlock ruleset to every
@@ -174,47 +188,51 @@ type Config struct {
 	// requested but unavailable: "fail" (the default) refuses to start
 	// workloads unconfined; "warn" starts them and reports the degradation.
 	SandboxInitLandlockFallback string
-	MicrosandboxHome            string
-	MicrosandboxMSBPath         string
-	MicrosandboxLibPath         string
-	MicrosandboxDefaultImage    string
-	MicrosandboxInsecure        []string
-	K8sHome                     string
-	K8sKubeconfigPath           string
-	K8sNamespace                string
-	K8sDefaultImage             string
-	K8sRuntimeBaseURL           string
-	DefaultImage                string
-	BoxRootfsPath               string
-	ImageRegistry               string
-	ImageStoreMode              string
-	ImageCacheRoot              string
-	ImageInsecureRegistries     []string
-	SandboxCPUs                 uint8
-	SandboxMemoryMiB            uint32
-	SandboxDiskSizeGB           int32
-	CacheTTL                    time.Duration
-	CleanupInterval             time.Duration
-	WorkspaceCleanupTTL         time.Duration
-	SandboxRetentionTTL         time.Duration
-	SandboxArchiveRoot          string
-	ImageCacheCleanupTTL        time.Duration
-	ImagePullTimeout            time.Duration
-	GuestWorkspacePath          string
-	GuestHomePath               string
-	GuestStateRoot              string
-	GuestRuntimeRoot            string
-	GuestLogRoot                string
-	GuestAbiManifestPath        string
-	JupyterGuestPort            int
-	SandboxStartTimeout         time.Duration
-	SandboxStopTimeout          time.Duration
-	SandboxGracefulStopTimeout  time.Duration
-	JupyterReadyTimeout         time.Duration
-	JupyterProxyBasePath        string
-	CapGRPCListen               string
-	CapGRPCTarget               string
-	Version                     string
+	// SandboxInitWorkloadUID/GID optionally run workload processes as a
+	// non-root numeric identity. Zero keeps the historical root workload.
+	SandboxInitWorkloadUID     int
+	SandboxInitWorkloadGID     int
+	MicrosandboxHome           string
+	MicrosandboxMSBPath        string
+	MicrosandboxLibPath        string
+	MicrosandboxDefaultImage   string
+	MicrosandboxInsecure       []string
+	K8sHome                    string
+	K8sKubeconfigPath          string
+	K8sNamespace               string
+	K8sDefaultImage            string
+	K8sRuntimeBaseURL          string
+	DefaultImage               string
+	BoxRootfsPath              string
+	ImageRegistry              string
+	ImageStoreMode             string
+	ImageCacheRoot             string
+	ImageInsecureRegistries    []string
+	SandboxCPUs                uint8
+	SandboxMemoryMiB           uint32
+	SandboxDiskSizeGB          int32
+	CacheTTL                   time.Duration
+	CleanupInterval            time.Duration
+	WorkspaceCleanupTTL        time.Duration
+	SandboxRetentionTTL        time.Duration
+	SandboxArchiveRoot         string
+	ImageCacheCleanupTTL       time.Duration
+	ImagePullTimeout           time.Duration
+	GuestWorkspacePath         string
+	GuestHomePath              string
+	GuestStateRoot             string
+	GuestRuntimeRoot           string
+	GuestLogRoot               string
+	GuestAbiManifestPath       string
+	JupyterGuestPort           int
+	SandboxStartTimeout        time.Duration
+	SandboxStopTimeout         time.Duration
+	SandboxGracefulStopTimeout time.Duration
+	JupyterReadyTimeout        time.Duration
+	JupyterProxyBasePath       string
+	CapGRPCListen              string
+	CapGRPCTarget              string
+	Version                    string
 
 	// MicrosandboxDNSRebindProtection keeps the in-VM DNS proxy from returning
 	// answers that point at private addresses. It defaults to true; deployments
@@ -465,8 +483,14 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		SandboxInitSocketDir:        sources.SandboxInit.SocketDir,
 		SandboxInitEgress:           string(sources.SandboxInit.Egress),
 		SandboxInitEgressAuditLog:   sources.SandboxInit.EgressAuditLog,
+		SandboxSupervisorEnabled:    sources.SandboxInit.Supervisor,
+		SandboxSupervisorBinary:     sources.SandboxInit.SupervisorBinary,
+		SandboxSupervisorUID:        sources.SandboxInit.SupervisorUID,
+		SandboxSupervisorGID:        sources.SandboxInit.SupervisorGID,
 		SandboxInitLandlock:         string(sources.SandboxInit.Landlock),
 		SandboxInitLandlockFallback: string(sources.SandboxInit.LandlockFallback),
+		SandboxInitWorkloadUID:      sources.SandboxInit.WorkloadUID,
+		SandboxInitWorkloadGID:      sources.SandboxInit.WorkloadGID,
 		DockerDefaultImage:          images.DockerDefaultImage,
 		MicrosandboxHome:            normalized.MicrosandboxHome,
 		MicrosandboxMSBPath:         normalized.MicrosandboxMSBPath,
@@ -927,6 +951,12 @@ type sandboxInitConfig struct {
 	EgressAuditLog   bool
 	Landlock         sandboxinit.LandlockMode
 	LandlockFallback sandboxinit.LandlockFallback
+	WorkloadUID      int
+	WorkloadGID      int
+	Supervisor       bool
+	SupervisorBinary string
+	SupervisorUID    int
+	SupervisorGID    int
 }
 
 // DefaultSandboxInitBinary is the guest path shipped by the guest image. A
@@ -982,6 +1012,23 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 		return sandboxInitConfig{}, err
 	}
 	config.LandlockFallback = landlockFallback
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_WORKLOAD_UID")); raw != "" {
+		uid, err := strconv.Atoi(raw)
+		if err != nil || uid < 1 || uid > 65535 {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_WORKLOAD_UID must be a uid between 1 and 65535, got %q", raw)
+		}
+		config.WorkloadUID = uid
+	}
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_WORKLOAD_GID")); raw != "" {
+		gid, err := strconv.Atoi(raw)
+		if err != nil || gid < 1 || gid > 65535 {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_WORKLOAD_GID must be a gid between 1 and 65535, got %q", raw)
+		}
+		config.WorkloadGID = gid
+	}
+	if (config.WorkloadUID == 0) != (config.WorkloadGID == 0) {
+		return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_WORKLOAD_UID and SANDBOX_INIT_WORKLOAD_GID must be set together")
+	}
 
 	socketDir := strings.TrimSpace(os.Getenv("SANDBOX_INIT_SOCKET_DIR"))
 	if socketDir == "" {
@@ -1000,7 +1047,61 @@ func loadSandboxInitConfig() (sandboxInitConfig, error) {
 		}
 	}
 	config.SocketDir = socketDir
+	if err := loadSandboxSupervisorConfig(&config); err != nil {
+		return sandboxInitConfig{}, err
+	}
 	return config, nil
+}
+
+// loadSandboxSupervisorConfig parses the independent-supervisor switch. The
+// mode is only meaningful together with init and init-mediated egress: a
+// workload with no external interface and no relay is not a sandbox, it is a
+// broken one, so a partial configuration is rejected at startup instead of
+// discovered when the first connection fails.
+func loadSandboxSupervisorConfig(config *sandboxInitConfig) error {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR")))
+	switch raw {
+	case "", "off", "false", "0":
+		config.Supervisor = false
+	case "enforce", "true", "1":
+		config.Supervisor = true
+	default:
+		return fmt.Errorf("SANDBOX_SUPERVISOR must be off or enforce, got %q", raw)
+	}
+	config.SupervisorBinary = strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR_BINARY"))
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR_UID")); raw != "" {
+		uid, err := strconv.Atoi(raw)
+		if err != nil || uid < 1 || uid > 65535 {
+			return fmt.Errorf("SANDBOX_SUPERVISOR_UID must be a uid between 1 and 65535, got %q", raw)
+		}
+		config.SupervisorUID = uid
+	}
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR_GID")); raw != "" {
+		gid, err := strconv.Atoi(raw)
+		if err != nil || gid < 1 || gid > 65535 {
+			return fmt.Errorf("SANDBOX_SUPERVISOR_GID must be a gid between 1 and 65535, got %q", raw)
+		}
+		config.SupervisorGID = gid
+	}
+	if (config.SupervisorUID == 0) != (config.SupervisorGID == 0) {
+		return fmt.Errorf("SANDBOX_SUPERVISOR_UID and SANDBOX_SUPERVISOR_GID must be set together")
+	}
+	if config.SupervisorBinary != "" && !filepath.IsAbs(config.SupervisorBinary) {
+		return fmt.Errorf("SANDBOX_SUPERVISOR_BINARY must be an absolute host path, got %q", config.SupervisorBinary)
+	}
+	if !config.Supervisor {
+		if config.SupervisorBinary != "" {
+			return fmt.Errorf("SANDBOX_SUPERVISOR_BINARY requires SANDBOX_SUPERVISOR=enforce")
+		}
+		return nil
+	}
+	if !config.Enabled {
+		return fmt.Errorf("SANDBOX_SUPERVISOR=enforce requires SANDBOX_INIT_ENABLED=true")
+	}
+	if config.Egress != sandboxinit.EgressModeEnforce {
+		return fmt.Errorf("SANDBOX_SUPERVISOR=enforce requires %s=enforce, got %q", sandboxinit.EgressModeEnvVar, config.Egress)
+	}
+	return nil
 }
 
 // defaultSandboxInitSocketDir follows the Linux runtime-state convention:

@@ -9,9 +9,9 @@ import (
 //
 // The zero value is off: an init started without an explicit mode behaves as
 // it did before egress interception existed. Audit is observational: connect
-// calls are reported and then allowed to proceed. Enforce is reserved for the
-// mediation step and is rejected until it is implemented, so a deployment that
-// asks for enforcement cannot silently receive observation instead.
+// calls are reported and then allowed to proceed. Enforce mediates every
+// connect, through the daemon proxy directly or, when a relay socket is
+// configured, through the independent sandbox supervisor.
 type EgressMode string
 
 const (
@@ -19,7 +19,7 @@ const (
 	EgressModeOff EgressMode = "off"
 	// EgressModeAudit reports every connect without changing its outcome.
 	EgressModeAudit EgressMode = "audit"
-	// EgressModeEnforce mediates every connect. Reserved; not implemented yet.
+	// EgressModeEnforce mediates every connect.
 	EgressModeEnforce EgressMode = "enforce"
 )
 
@@ -40,8 +40,19 @@ const EgressAuditLogEnvVar = "SANDBOX_INIT_AUDIT_LOG"
 // policy that governed the launch. It is advisory: init never decides policy.
 const EgressGenerationEnvVar = "SANDBOX_INIT_EGRESS_GENERATION"
 
-// ParseEgressMode validates the configured mode. Enforce is recognized so the
-// error names the missing implementation instead of reporting an unknown value.
+// EgressRelaySocketEnvVar names the guest path of the independent sandbox
+// supervisor's Unix domain socket. It is set only for the supervisor isolation
+// mode, where the workload container has no external network interface.
+const EgressRelaySocketEnvVar = "SANDBOX_INIT_EGRESS_RELAY_SOCKET"
+
+// EgressEngineHostsEnvVar carries daemon-resolved engine hostnames as a JSON
+// object of host to address list. The workload has no external interface in
+// supervisor mode, so init cannot resolve those names itself and must answer
+// the DNS stub from this map instead.
+const EgressEngineHostsEnvVar = "SANDBOX_INIT_EGRESS_ENGINE_HOSTS"
+
+// ParseEgressMode validates the configured mode. Unknown values are rejected
+// rather than silently falling back to off.
 func ParseEgressMode(raw string) (EgressMode, error) {
 	switch EgressMode(strings.ToLower(strings.TrimSpace(raw))) {
 	case "", EgressModeOff:

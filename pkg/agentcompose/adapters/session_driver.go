@@ -247,6 +247,8 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 // driver reports whether it built the runtime in this call
 // (SandboxVMInfo.RuntimeCreated), and the start path knows whether there was a
 // runtime to reuse at all.
+//
+//nolint:revive // the policy snapshot is a positional boundary value with named fields
 func (d *SandboxDriver) recordEgressRuntimePolicy(ctx context.Context, session *domain.Sandbox, vmState *domain.VMState, previousRecord, current domain.SandboxEgressPolicy, runtimeHasCurrentPolicy bool) error {
 	// The start path only *ensures* a runtime: a retained one is started again
 	// with the configuration it was created with. Without a fact saying the

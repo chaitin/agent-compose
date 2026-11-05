@@ -210,3 +210,29 @@ func TestSandboxInitEgressAuditLogIsOptInAndRequiresObservation(t *testing.T) {
 		t.Fatal("loadSandboxInitConfig() accepted a non-boolean audit log switch")
 	}
 }
+
+func TestSandboxInitWorkloadIdentityReadsAndValidates(t *testing.T) {
+	t.Setenv("SANDBOX_INIT_WORKLOAD_UID", "1000")
+	t.Setenv("SANDBOX_INIT_WORKLOAD_GID", "1000")
+	config, err := loadSandboxInitConfig()
+	if err != nil {
+		t.Fatalf("loadSandboxInitConfig() error = %v", err)
+	}
+	if config.WorkloadUID != 1000 || config.WorkloadGID != 1000 {
+		t.Fatalf("workload identity = %d/%d, want 1000/1000", config.WorkloadUID, config.WorkloadGID)
+	}
+
+	t.Setenv("SANDBOX_INIT_WORKLOAD_GID", "")
+	if _, err := loadSandboxInitConfig(); err == nil {
+		t.Fatal("loadSandboxInitConfig() accepted uid without gid")
+	}
+	t.Setenv("SANDBOX_INIT_WORKLOAD_GID", "0")
+	if _, err := loadSandboxInitConfig(); err == nil {
+		t.Fatal("loadSandboxInitConfig() accepted gid 0 with a non-zero uid")
+	}
+	t.Setenv("SANDBOX_INIT_WORKLOAD_UID", "70000")
+	t.Setenv("SANDBOX_INIT_WORKLOAD_GID", "1000")
+	if _, err := loadSandboxInitConfig(); err == nil {
+		t.Fatal("loadSandboxInitConfig() accepted an out-of-range uid")
+	}
+}

@@ -229,7 +229,7 @@ func (s *egressSupervisor) handleEnforce(listenerFD int, request *seccompNotif, 
 		s.connectDirect(listenerFD, request.ID, targetFD, rawAddress, event)
 		return
 	}
-	s.mediateConnect(listenerFD, request.ID, targetFD, destination, event)
+	s.mediateConnect(listenerFD, request.ID, targetFD, domain, destination, event)
 }
 
 func (s *egressSupervisor) isBypassed(destination EgressAuditEvent) bool {
@@ -315,8 +315,16 @@ func (s *egressSupervisor) redirectToDNS(redirect dnsRedirect) {
 	replyConnect(listenerFD, id, 0)
 }
 
-// mediateConnect redirects one TCP connection through the daemon egress proxy.
-func (s *egressSupervisor) mediateConnect(listenerFD int, id uint64, targetFD int, destination EgressAuditEvent, event EgressAuditEvent) {
+// mediateConnect redirects one TCP connection either to the independent
+// supervisor (when the workload has no external interface) or through the
+// daemon egress proxy directly (legacy strict-network mode).
+//
+//nolint:revive // the seccomp notification payload is intentionally positional
+func (s *egressSupervisor) mediateConnect(listenerFD int, id uint64, targetFD, domain int, destination EgressAuditEvent, event EgressAuditEvent) {
+	if s.relay != nil {
+		s.relayConnect(listenerFD, id, targetFD, domain, destination, event)
+		return
+	}
 	if s.proxy == nil {
 		s.denyConnect(listenerFD, id, event, "no sandbox egress proxy is configured")
 		return

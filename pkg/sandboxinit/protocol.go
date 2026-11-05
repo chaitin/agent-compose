@@ -74,6 +74,10 @@ const (
 	RequestList     = "list"
 	RequestPing     = "ping"
 	RequestShutdown = "shutdown"
+	// RequestConfigureEgress delivers the supervisor relay token over the
+	// authenticated init control socket. It is used instead of the container
+	// environment so a Docker exec process cannot read the token.
+	RequestConfigureEgress = "configure_egress"
 	// Control frames sent by the client inside an exec session.
 	RequestStdin    = "stdin"
 	RequestStdinEOF = "stdin_eof"
@@ -83,15 +87,16 @@ const (
 
 // Frame types emitted by the init server.
 const (
-	FrameStarted   = "started"
-	FrameStdout    = "stdout"
-	FrameStderr    = "stderr"
-	FrameExit      = "exit"
-	FrameError     = "error"
-	FrameKilled    = "killed"
-	FrameProcesses = "processes"
-	FramePong      = "pong"
-	FrameShutdown  = "shutdown"
+	FrameStarted    = "started"
+	FrameStdout     = "stdout"
+	FrameStderr     = "stderr"
+	FrameExit       = "exit"
+	FrameError      = "error"
+	FrameKilled     = "killed"
+	FrameProcesses  = "processes"
+	FramePong       = "pong"
+	FrameShutdown   = "shutdown"
+	FrameConfigured = "configured"
 )
 
 // Request is one control message. Exactly one operation is selected by Type.
@@ -118,6 +123,10 @@ type Request struct {
 	Signal string `json:"signal,omitempty"`
 	// Data is stdin bytes. JSON encodes []byte as base64.
 	Data []byte `json:"data,omitempty"`
+	// Token is the per-sandbox supervisor relay token. It is sent only over
+	// the authenticated init control socket and never stored in the container
+	// environment.
+	Token string `json:"token,omitempty"`
 }
 
 // Frame is one server message. Data is raw stdout/stderr bytes; JSON encodes

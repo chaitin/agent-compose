@@ -20,6 +20,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// egressRelayConfigureTimeout bounds how long init waits for the daemon to
+// deliver the supervisor token before failing the sandbox closed.
+const egressRelayConfigureTimeout = 30 * time.Second
+
 // Options configures the init server.
 type Options struct {
 	// ControlSocket is the Unix socket the daemon connects to. It must be an
@@ -37,8 +41,9 @@ type Options struct {
 	// tests and for a guest image that predates the handshake.
 	SandboxID string
 	// EgressMode selects how init watches egress. The zero value and off are
-	// indistinguishable; audit installs the seccomp observer, and enforce is
-	// rejected until mediation exists.
+	// indistinguishable; audit installs the seccomp observer, and enforce
+	// mediates every stream connect through the daemon proxy or the
+	// independent supervisor.
 	EgressMode EgressMode
 	// EgressAuditSink receives observed connections. A nil sink logs them, which
 	// is the production behavior and keeps the dependency explicit in tests.
@@ -69,6 +74,8 @@ func (e *ExitError) Error() string {
 // Run starts the init server, launches the main process, and blocks until the
 // main process exits or ctx is canceled. It is the entry point for
 // cmd/ac-init.
+//
+//nolint:funlen // Run is the documented process lifecycle; splitting it obscures the startup ordering
 func Run(ctx context.Context, opts Options) error {
 	socketPath := strings.TrimSpace(opts.ControlSocket)
 	if socketPath == "" {
@@ -157,6 +164,11 @@ func Run(ctx context.Context, opts Options) error {
 	if egress != nil {
 		defer egress.close()
 	}
+	if egress == nil && egressRelayConfigured() {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+		return errors.New("sandbox supervisor mode requires seccomp user-notification egress mediation on this guest")
+	}
 	landlock, landlockWarning, err := prepareLandlockSpawn(opts.Landlock)
 	if err != nil {
 		_ = listener.Close()
@@ -166,6 +178,13 @@ func Run(ctx context.Context, opts Options) error {
 	if landlockWarning != "" {
 		slog.Warn("sandbox init Landlock enforcement is unavailable; running workloads without filesystem confinement",
 			"reason", landlockWarning)
+	}
+	identity, err := workloadIdentityFromEnv()
+	if err != nil {
+		return err
+	}
+	if err := prepareWorkloadOwnership(identity); err != nil {
+		return err
 	}
 	manager := newProcessManager(opts.Hooks)
 	manager.egress = egress
@@ -193,8 +212,18 @@ func Run(ctx context.Context, opts Options) error {
 		stop:         cancel,
 		sandboxID:    strings.TrimSpace(opts.SandboxID),
 		capabilities: capabilities,
+		egress:       egress,
 	}
 	go server.acceptLoop(runCtx)
+	// In supervisor mode the daemon delivers the relay token over this control
+	// socket. The workload must not start before that: the main process is the
+	// first egress consumer, and the token is deliberately absent from the
+	// container environment so Docker exec cannot read it.
+	if err := egress.waitForRelay(runCtx, egressRelayConfigureTimeout); err != nil {
+		_ = listener.Close()
+		_ = os.Remove(socketPath)
+		return err
+	}
 
 	mainDone := make(chan struct{})
 	var mainProcess *process
@@ -247,6 +276,7 @@ type initServer struct {
 	stopOnce     sync.Once
 	sandboxID    string
 	capabilities []string
+	egress       *egressSupervisor
 }
 
 func (s *initServer) acceptLoop(ctx context.Context) {
@@ -303,6 +333,12 @@ func (s *initServer) handleConn(ctx context.Context, conn net.Conn) {
 			SandboxID:    s.sandboxID,
 			Capabilities: append([]string(nil), s.capabilities...),
 		})
+	case RequestConfigureEgress:
+		if err := s.egress.configureRelay(request.Token); err != nil {
+			_ = encoder.Encode(Frame{Type: FrameError, Message: err.Error()})
+			return
+		}
+		_ = encoder.Encode(Frame{Type: FrameConfigured})
 	case RequestShutdown:
 		_ = encoder.Encode(Frame{Type: FrameShutdown})
 		s.stopOnce.Do(s.stop)

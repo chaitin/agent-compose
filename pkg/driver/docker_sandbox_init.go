@@ -96,7 +96,7 @@ func (r *dockerRuntime) sandboxInitClient(sandbox *Sandbox) *sandboxinit.Client 
 
 // waitForSandboxInit blocks until the init control socket answers Ping. It is
 // called after ContainerStart and before any command is sent to the sandbox.
-func (r *dockerRuntime) waitForSandboxInit(ctx context.Context, dockerClient *client.Client, containerID string, sandbox *Sandbox) error {
+func (r *dockerRuntime) waitForSandboxInit(ctx context.Context, dockerClient *client.Client, containerID string, sandbox *Sandbox, supervisorToken string) error {
 	timeout := 30 * time.Second
 	if r != nil && r.config != nil && r.config.SandboxStartTimeout > 0 {
 		timeout = r.config.SandboxStartTimeout
@@ -107,7 +107,15 @@ func (r *dockerRuntime) waitForSandboxInit(ctx context.Context, dockerClient *cl
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	var lastErr error
+	relayConfigured := supervisorToken == ""
 	for {
+		if !relayConfigured {
+			if err := client.ConfigureEgress(waitCtx, supervisorToken); err == nil {
+				relayConfigured = true
+			} else if errors.Is(err, sandboxinit.ErrControlRejected) {
+				return fmt.Errorf("sandbox init rejected the supervisor relay configuration: %w", err)
+			}
+		}
 		if info, err := client.VerifySandbox(waitCtx, sandbox.Summary.ID); err == nil {
 			if err := requireSandboxInitEgressCapabilities(info, r.config, sandbox.NetworkPolicy); err != nil {
 				return err

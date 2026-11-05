@@ -13,6 +13,11 @@ import (
 // DefaultDialTimeout bounds one control-socket connection attempt.
 const DefaultDialTimeout = 5 * time.Second
 
+// ErrControlRejected reports an init process that understood the request shape
+// but refused it, including an older init that does not know the request type.
+// Callers fail closed instead of retrying a refusal as a transient dial error.
+var ErrControlRejected = errors.New("sandbox init rejected the request")
+
 // Dialer opens one control connection. A nil Dialer means the client dials
 // SocketPath over a Unix socket.
 type Dialer func(context.Context) (net.Conn, error)
@@ -282,6 +287,13 @@ func (c *Client) Ping(ctx context.Context) error {
 	return err
 }
 
+// ConfigureEgress delivers the independent-supervisor relay token over the
+// authenticated control socket. It must succeed before the daemon treats init
+// as ready in supervisor mode.
+func (c *Client) ConfigureEgress(ctx context.Context, token string) error {
+	return c.control(ctx, Request{Type: RequestConfigureEgress, Token: token}, FrameConfigured)
+}
+
 // Shutdown asks init to terminate its children and exit.
 func (c *Client) Shutdown(ctx context.Context) error {
 	return c.control(ctx, Request{Type: RequestShutdown}, FrameShutdown)
@@ -294,7 +306,7 @@ func (c *Client) control(ctx context.Context, request Request, want string) erro
 	}
 	if frame.Type != want {
 		if frame.Type == FrameError {
-			return fmt.Errorf("sandbox init: %s", frame.Message)
+			return fmt.Errorf("%w: %s", ErrControlRejected, frame.Message)
 		}
 		return fmt.Errorf("sandbox init returned %q, want %q", frame.Type, want)
 	}

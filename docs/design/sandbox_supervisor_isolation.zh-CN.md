@@ -1,8 +1,9 @@
 # 独立 Sandbox Supervisor 隔离设计（设计稿，未实现）
 
-> 状态：设计稿，代码未实现。
+> 状态：阶段 B 的 Docker MVP 已实现（`feat/ac-supervisor`），仅覆盖 egress 转发；
+> 完整控制面迁移、supervisor 独立升级和 K8s 侧仍未实现。
 >
-> 目标：说明当前“单容器内 ac-init 既是 PID 1 又是控制面”的弱点和独立 supervisor 的目标形态。本文件不承诺 supervisor 已落地；当前分支只交付 opt-in Landlock 和 init 目录/控制目录加固。
+> 目标：说明当前“单容器内 ac-init 既是 PID 1 又是控制面”的弱点和独立 supervisor 的目标形态。
 
 ---
 
@@ -77,3 +78,81 @@ supervisor（独立进程或独立容器/VM）
 - K8s 下 supervisor Pod 如何通过 `pods/exec` 之外的正式通道访问 workload 控制面，以及 RBAC/NetworkPolicy 的默认拒绝。
 - supervisor 崩溃后的 sandbox 所有权判定：以 supervisor 记录为准还是 driver inspect 为准，需要与现有 `VMState.SandboxInitState` 持久化兼容。
 - per-run 策略、DNS、credential 的分层仍沿用现有 egress 设计，supervisor 不复制这些职责。
+
+
+---
+
+## 7. Docker MVP 实现边界（`feat/ac-supervisor`）
+
+本节记录实际交付的内容，避免把设计目标误读成已实现能力。
+
+### 7.1 进程与网络
+
+- 新增 `cmd/ac-supervisor`，由 Docker driver 为每个启用 supervisor 的 sandbox
+  以独立进程启动（`SANDBOX_SUPERVISOR=enforce`）。它不进入 workload 的
+  pid/mount/user namespace，运行在 daemon 所在网络命名空间，通过 host UDS
+  提供服务。
+- workload 容器固定使用 `NetworkMode=none`，没有外部网卡；loopback 保留给
+  init 的 DNS stub 和 per-connection relay。
+- UDS 位于 `<SANDBOX_INIT_SOCKET_DIR>/<sandbox-id>/supervisor.sock`，随既有
+  `/run/agent-compose` bind mount 进入容器；socket 0600、目录 0700。
+- token 由 daemon 生成并存放在 **不挂载** 的 sibling 目录
+  `<SANDBOX_INIT_SOCKET_DIR>/.<sandbox-id>.supervisor/token`（0600），同时通过
+  **init 控制 socket** 的 `configure_egress` 请求交给 init。它不进入容器环境，
+  因此 `docker exec` 也读不到；init 在配置前会先带 token ping 一次 supervisor，
+  只有 supervisor 认可的 token 才会被接受，防止可访问控制 socket 的本地进程抢占
+  配置。
+- 停止 sandbox 时停止 supervisor 但保留 token，恢复时可以复用同一 token 重启
+  supervisor；删除 sandbox 时删除 token/socket/log。daemon 崩溃后 supervisor
+  可能继续运行，下一次 ensure 通过 socket ping 接管；若 supervisor 已死，则用
+  持久 token 重启并用新签发的 proxy credential 继续工作。
+
+### 7.2 转发与策略层
+
+```text
+workload connect
+  → ac-init seccomp USER_NOTIF
+  → pidfd_getfd 复制 socket
+  → 绑定 loopback 源端口并 connect 到 per-connection 127.0.0.1 relay
+  → relay 校验 accepted peer 的源端口（只有被复制的 socket 持有该端口）
+  → UDS + token + destination/identity 握手
+  → supervisor
+      ├─ 普通目的地：CONNECT → daemon forward proxy（唯一策略判定点）
+      └─ engine-owned endpoint：直接连接 daemon（facade/telemetry）
+```
+
+- **普通 egress 的策略权威仍是 daemon forward proxy**（`pkg/egress`）。supervisor
+  只做传输中介，不复制策略引擎；proxy 的 allow/deny、L7、credential 校验和审计
+  行为不变。
+- **engine-owned endpoint 由 daemon 在创建时固定**：runtime base URL 和 telemetry
+  的 host/port（含解析后的 IP）作为 supervisor 的 direct allowlist。workload 无法
+  扩这个列表，因此不能借 direct 路径绕开声明的策略。
+- init 的 DNS stub 继续返回 198.18.0.0/15 合成地址；engine hostname 的真实地址由
+  daemon 解析后通过 `SANDBOX_INIT_EGRESS_ENGINE_HOSTS` 注入，因为无网卡时 init
+  自己无法解析。合成地址到 hostname 的反查仍在 init 内完成，CONNECT 使用域名，
+  域名 allow/deny 继续生效。
+- 数据面（facade/telemetry）经由 supervisor 的 direct 连接到达 daemon；普通声明
+  egress 仍由 forward proxy 决定。
+
+### 7.3 已实现 / 未实现
+
+已实现：
+
+- 独立 `ac-supervisor` 进程、token 认证、handshake、CONNECT 转发、engine endpoint
+  直连、socket 生命周期和 fail-closed；
+- Docker driver 的创建/停止/删除/复用生命周期，`NetworkMode=none`，init supervisor
+  env 注入，旧模式（默认 off）保持不变；
+- init 侧 loopback relay、peer 源端口校验、token/engine-host env 清理，以及
+  relay/handshake/token 的单元测试。
+
+未实现 / 已知风险：
+
+- supervisor 仍然运行在 daemon 进程的 host/container 网络命名空间，没有独立的
+  supervisor 容器或独立升级；`docker exec` 等非 init 进程无网卡，因此结构性
+  default-deny，但它们仍可与 init 同 namespace 交互（phase C/D 未做）。
+- Jupyter 端口无法在 `NetworkMode=none` 下发布，supervisor 模式拒绝带 Jupyter 的
+  sandbox。
+- 不提供 L7 终止、TLS MITM 或 credential 注入；这些仍由 forward proxy 的既有
+  能力/限制决定。
+- supervisor 崩溃后已建立的 relay 会断开；新的连接需要 daemon 的下一次 ensure
+  重启 supervisor。

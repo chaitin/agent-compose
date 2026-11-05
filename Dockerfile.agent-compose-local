@@ -46,19 +46,23 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       --profile linux-full \
       --goarch "${target_arch}" \
       --output /out/agent-compose \
-      --version "${VERSION}"
+      --version "${VERSION}" && \
+    CGO_ENABLED=0 GOOS=linux GOARCH="${target_arch}" go build -trimpath -ldflags='-s -w' -o /out/ac-supervisor ./cmd/ac-supervisor
 
 FROM scratch AS agent-compose-artifact
 COPY --from=go-build /out/agent-compose /out/agent-compose
+COPY --from=go-build /out/ac-supervisor /out/ac-supervisor
 
 FROM ${REGISTRY_MIRROR}/library/debian:trixie-slim
 RUN apt-get update &&     apt-get install -y --no-install-recommends ca-certificates git python3 tini tzdata e2fsprogs qemu-utils &&     rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=go-build /out/agent-compose /app/agent-compose
+COPY --from=go-build /out/ac-supervisor /app/ac-supervisor
 RUN ln -sf /app/agent-compose /usr/local/bin/agent-compose
 COPY --from=boxlite-local /runtime /app/boxlite/runtime
 COPY --from=microsandbox-local / /app/microsandbox
 RUN test -x /app/agent-compose && \
+    test -x /app/ac-supervisor && \
     command -v qemu-img >/dev/null && \
     mkfs.ext4 2>&1 | grep -Fq -- '[-d root-directory' && \
     test -x /app/boxlite/runtime/boxlite-guest && \

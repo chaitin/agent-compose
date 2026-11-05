@@ -3,13 +3,17 @@
 package sandboxinit
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/sandboxsupervisor"
 	"golang.org/x/sys/unix"
 )
 
@@ -24,6 +28,7 @@ type egressSupervisor struct {
 	sink           EgressAuditSink
 	logger         *slog.Logger
 	proxy          *egressProxyTarget
+	relay          *egressRelayTarget
 	dns            *egressDNS
 	bypassIPs      map[string]struct{}
 	localIPs       map[string]struct{}
@@ -32,6 +37,13 @@ type egressSupervisor struct {
 	dnsMu          sync.Mutex
 	dnsSockets     map[uint64]dnsSocketDestination
 	connectTimeout time.Duration
+
+	// relayMu guards the token the daemon delivers over the init control
+	// socket. relayReady is closed once the token is installed, which is what
+	// lets Run block the workload until supervisor mode is usable.
+	relayMu       sync.Mutex
+	relayReady    chan struct{}
+	relayReadyOne sync.Once
 }
 
 // newEgressSupervisor resolves the init binary the trampoline re-executes. A
@@ -51,8 +63,19 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 		logger:         slog.Default(),
 		connectTimeout: egressConnectTimeout,
 		dnsSockets:     make(map[uint64]dnsSocketDestination),
+		relayReady:     make(chan struct{}),
 	}
 	if mode == EgressModeEnforce {
+		if egressRelayConfigured() {
+			relay, passthrough, err := loadEgressRelayTarget(sandboxID)
+			if err != nil {
+				return nil, err
+			}
+			supervisor.relay = relay
+			supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(nil)
+			supervisor.startPolicyDNS(sandboxID, passthrough)
+			return supervisor, nil
+		}
 		proxy, err := loadEgressProxyTarget()
 		if err != nil {
 			return nil, err
@@ -63,21 +86,112 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 			supervisor.proxyHost = address.IP.String()
 			supervisor.proxyPort = address.Port
 		}
-		dns, dnsErr := startEgressDNS(sandboxID, egressDNSPassthrough(proxy))
-		if dnsErr != nil {
-			// Mediation still works without the DNS stub; port 53 then keeps
-			// its non-mediated path and hostname policy is weaker. Report it
-			// rather than failing egress entirely.
-			slog.Warn("sandbox init policy DNS is unavailable; DNS stays on its previous path", "error", dnsErr)
-		} else {
-			supervisor.dns = dns
-		}
+		supervisor.startPolicyDNS(sandboxID, egressDNSPassthrough(proxy))
 	}
 	return supervisor, nil
 }
 
+// startPolicyDNS starts the policy resolver and records a warning when the
+// kernel or the guest image cannot provide it. Mediation still works without
+// the stub, but hostname policy is weaker, so the degradation is reported
+// instead of failing all egress.
+func (s *egressSupervisor) startPolicyDNS(sandboxID string, passthrough map[string][]net.IP) {
+	dns, err := startEgressDNS(sandboxID, passthrough)
+	if err != nil {
+		slog.Warn("sandbox init policy DNS is unavailable; DNS stays on its previous path", "error", err)
+		return
+	}
+	s.dns = dns
+}
+
+// egressRelayConfigured reports whether the daemon selected the independent
+// supervisor mode for this sandbox. The token is not part of this test: it
+// arrives later over the authenticated init control socket.
+func egressRelayConfigured() bool {
+	return strings.TrimSpace(os.Getenv(EgressRelaySocketEnvVar)) != ""
+}
+
 func (s *egressSupervisor) enabled() bool {
 	return s != nil && (s.mode == EgressModeAudit || s.mode == EgressModeEnforce)
+}
+
+// configureRelay installs the per-sandbox supervisor token delivered over the
+// authenticated init control socket. Repeating the same token is harmless; a
+// second, different token is rejected so a local process that can reach the
+// control socket cannot replace the supervisor path after setup.
+func (s *egressSupervisor) configureRelay(token string) error {
+	if s == nil || s.relay == nil {
+		return errors.New("sandbox supervisor relay is not enabled for this init")
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return errors.New("sandbox supervisor relay token is required")
+	}
+	// Prove the token belongs to the supervisor the daemon started before
+	// trusting it. The init control socket is reachable by workload processes,
+	// so accepting the first token blindly would let a local process replace
+	// the relay path. Only the daemon knows a token this ping accepts.
+	if err := s.verifyRelayToken(token); err != nil {
+		return err
+	}
+	s.relayMu.Lock()
+	current := s.relay.token
+	if current != "" && current != token {
+		s.relayMu.Unlock()
+		return errors.New("sandbox supervisor relay is already configured")
+	}
+	s.relay.token = token
+	s.relayMu.Unlock()
+	s.relayReadyOne.Do(func() { close(s.relayReady) })
+	return nil
+}
+
+// verifyRelayToken checks the delivered token against the supervisor before it
+// becomes the token this init process presents.
+func (s *egressSupervisor) verifyRelayToken(token string) error {
+	if s.relay == nil || strings.TrimSpace(s.relay.socketPath) == "" {
+		return errors.New("sandbox supervisor relay socket is not configured")
+	}
+	client := &sandboxsupervisor.Client{
+		SocketPath: s.relay.socketPath,
+		Token:      token,
+		SandboxID:  s.relay.sandboxID,
+		Timeout:    s.connectTimeout,
+	}
+	if err := client.Ping(context.Background()); err != nil {
+		return fmt.Errorf("sandbox supervisor rejected the relay token: %w", err)
+	}
+	return nil
+}
+
+// relayToken returns the configured relay token, or an empty string before the
+// daemon has delivered it.
+func (s *egressSupervisor) relayToken() string {
+	if s == nil {
+		return ""
+	}
+	s.relayMu.Lock()
+	defer s.relayMu.Unlock()
+	return s.relay.token
+}
+
+// waitForRelay blocks until the daemon delivers the supervisor token. The
+// workload must not start before it: the main process is the first egress
+// consumer and would otherwise have no usable mediation path.
+func (s *egressSupervisor) waitForRelay(ctx context.Context, timeout time.Duration) error {
+	if s == nil || s.relay == nil {
+		return nil
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-s.relayReady:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("sandbox supervisor relay was not configured within %s", timeout)
+	}
 }
 
 // close releases the DNS listeners. Mediation itself has no long-lived

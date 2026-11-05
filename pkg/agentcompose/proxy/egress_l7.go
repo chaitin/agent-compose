@@ -21,6 +21,8 @@ import (
 // interception path, while a plain HTTP request is decided on its request line
 // without requiring a CA. An L7-constrained HTTPS destination with no configured
 // interception fails closed rather than being forwarded uninspected.
+//
+//nolint:revive // the L7 relay threads the request identity and destination through the call boundary
 func (p *EgressProxy) forwardL7(w http.ResponseWriter, r *http.Request, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP) error {
 	if r.ProtoMajor != 1 {
 		http.Error(w, "agent-compose egress proxy: CONNECT requires HTTP/1.1", http.StatusHTTPVersionNotSupported)
@@ -61,53 +63,6 @@ func (p *EgressProxy) forwardL7(w http.ResponseWriter, r *http.Request, sandboxI
 		return p.serveL7Tunnel(r.Context(), terminated, sandboxID, identity, destination, target, "https")
 	}
 	return p.serveL7Tunnel(r.Context(), conn, sandboxID, identity, destination, target, "http")
-}
-
-// forwardL7TLS terminates TLS for one CONNECT tunnel whose destination allowance
-// declares L7 methods or paths, then decides every HTTP request the guest sends
-// over the terminated connection. The CONNECT itself was already decided at L4
-// with the L7 check deferred; this is where that deferral is honoured.
-//
-// The upstream connection is pinned to the address the policy resolved and
-// decided, so terminating TLS does not make the proxy re-resolve the name and
-// gives an attacker no second, differently-answered lookup.
-func (p *EgressProxy) forwardL7TLS(w http.ResponseWriter, r *http.Request, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP) error {
-	if p.mitm == nil {
-		return errors.New("L7 TLS interception is not configured")
-	}
-	if r.ProtoMajor != 1 {
-		http.Error(w, "agent-compose egress proxy: CONNECT requires HTTP/1.1", http.StatusHTTPVersionNotSupported)
-		return nil
-	}
-	hijacker, ok := w.(http.Hijacker)
-	if !ok {
-		http.Error(w, "agent-compose egress proxy: this listener cannot intercept TLS", http.StatusInternalServerError)
-		return errors.New("response writer does not support hijacking")
-	}
-	client, buffer, err := hijacker.Hijack()
-	if err != nil {
-		return fmt.Errorf("hijack client connection for TLS interception: %w", err)
-	}
-	defer func() { _ = client.Close() }()
-	if _, err := buffer.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n"); err != nil {
-		return fmt.Errorf("write tunnel response: %w", err)
-	}
-	if err := buffer.Flush(); err != nil {
-		return fmt.Errorf("flush tunnel response: %w", err)
-	}
-	// The hijacked buffer can already hold the start of the ClientHello; reading
-	// through it is what keeps those bytes from being skipped.
-	terminated := tls.Server(&egressBufferedConn{Conn: client, reader: buffer.Reader}, p.mitmServerConfig(destination))
-	handshakeContext, cancel := context.WithTimeout(r.Context(), p.dialTimeout)
-	defer cancel()
-	if err := terminated.HandshakeContext(handshakeContext); err != nil {
-		// This is the fail-closed path for an unknown or mismatched SNI (and for
-		// the outer SNI of an ECH offer): the guest gets a TLS alert and no
-		// request leaves the proxy.
-		return fmt.Errorf("terminate client TLS for %s: %w", destination.host, err)
-	}
-	_ = terminated.SetDeadline(time.Time{})
-	return p.serveL7Tunnel(r.Context(), terminated, sandboxID, identity, destination, target, "https")
 }
 
 // egressBufferedConn reads buffered bytes before the connection so a ClientHello
@@ -160,6 +115,8 @@ func (p *EgressProxy) mitmServerConfig(destination egressDestination) *tls.Confi
 // decides each one against the policy in force now. Denying one request closes
 // the tunnel: the request body has not necessarily been drained, so continuing
 // would risk parsing body bytes as the next request line.
+//
+//nolint:revive // the L7 relay threads the request identity and destination through the call boundary
 func (p *EgressProxy) serveL7Tunnel(ctx context.Context, conn net.Conn, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP, scheme string) error {
 	reader := bufio.NewReader(conn)
 	for {
@@ -180,6 +137,7 @@ func (p *EgressProxy) serveL7Tunnel(ctx context.Context, conn net.Conn, sandboxI
 	}
 }
 
+//nolint:revive // the L7 relay threads the request identity and destination through the call boundary
 func (p *EgressProxy) decideAndForwardL7(ctx context.Context, conn net.Conn, request *http.Request, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP, scheme string) (bool, error) {
 	networkRequest, err := interceptedNetworkRequest(sandboxID, identity, destination, target, request)
 	if err != nil {
@@ -233,6 +191,8 @@ func interceptedNetworkRequest(sandboxID string, identity egressIdentity, destin
 
 // relayL7Request forwards one allowed intercepted request to the upstream and
 // writes the answer back over the terminated connection.
+//
+//nolint:revive // the L7 relay threads the request identity and destination through the call boundary
 func (p *EgressProxy) relayL7Request(ctx context.Context, conn net.Conn, request *http.Request, destination egressDestination, target net.IP, scheme string) (bool, error) {
 	outbound := request.Clone(ctx)
 	outbound.RequestURI = ""

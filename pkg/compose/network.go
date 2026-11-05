@@ -281,21 +281,6 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 	return normalized, nil
 }
 
-// normalizeSandboxNetworkEntryEnforcement validates an allowance's optional
-// per-entry enforcement. An omitted value stays empty so a declaration that did
-// not use the field keeps the canonical spec and hash it had before the field
-// existed; the decision model maps empty to enforce.
-func normalizeSandboxNetworkEntryEnforcement(path, value string) (string, error) {
-	if strings.TrimSpace(value) == "" {
-		return "", nil
-	}
-	enforcement, err := egress.ParseEnforcement(strings.ToLower(strings.TrimSpace(value)))
-	if err != nil {
-		return "", &ValidationError{Path: path + ".enforcement", Message: err.Error()}
-	}
-	return string(enforcement), nil
-}
-
 // normalizeSandboxNetworkPorts resolves the single-port and multi-port forms
 // into the list normalization expands. Exactly one form may be used; a port
 // list is deduplicated and bounded before any entry is emitted.

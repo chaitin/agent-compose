@@ -80,6 +80,16 @@ func RunExecChild(args []string) error {
 			return err
 		}
 	}
+	identity, err := workloadIdentityFromEnv()
+	if err != nil {
+		return err
+	}
+	if err := prepareWorkloadOwnership(identity); err != nil {
+		return err
+	}
+	if err := applyWorkloadIdentity(identity); err != nil {
+		return err
+	}
 	argv := append([]string(nil), args...)
 	if err := syscall.Exec(path, argv, os.Environ()); err != nil {
 		return fmt.Errorf("exec sandbox init child %q: %w", path, err)

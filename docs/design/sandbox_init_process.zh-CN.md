@@ -454,6 +454,27 @@ enforce 模式在 audit 的拦截基础上把连接改道到 daemon egress proxy
   会返回 proxy 地址；proxy-aware 客户端如果保留 proxy env 会直连 proxy（init 的 bypass
   路径），enforce 下我们已 unset，因此不会发生。
 
+### 7.8.0 独立 supervisor（Docker，opt-in）
+
+`SANDBOX_SUPERVISOR=enforce` 让 Docker workload 使用 `NetworkMode=none`，只保留 lo；每个
+sandbox 由 daemon 启动一个独立的 host 进程 `ac-supervisor`，通过 host UDS 接收 init 的
+中继连接。init 用 per-sandbox token 认证，token 经认证的 init 控制通道下发，不进入
+container 环境。supervisor 把普通 egress 转发给 daemon forward proxy（策略判定仍在
+daemon），engine endpoints 直连。`SANDBOX_SUPERVISOR_UID/GID` 可让 supervisor 以非 root
+运行（需把 binary 放到非 root 可执行路径，daemon 在启动时临时给 socket 目录授权，握手
+完成后恢复 root-only）。实测 workload 仅 lo、允许 200、外部 blocked、LLM prompt OK，
+supervisor 进程以 uid 1000 运行。限制：仅 Docker；Jupyter 与该模式不兼容；K8s/Micro 仍用
+CNI/SDK 网络策略。
+
+### 7.8.1 非 root workload（opt-in）
+
+`SANDBOX_INIT_WORKLOAD_UID/GID`（必须同时设置，非 0）让 init 在每次 exec 的
+trampoline 中 `setgroups/setgid/setuid` 到该数字身份；PID1/控制 socket/代理握手仍以
+root 运行，因此 `pidfd_getfd` 和 seccomp listener 不受影响。init 会在启动和每次 exec 前
+把 `/workspace`、`/root`、`/data/{state,runtime,logs}` chown 给该身份；控制目录
+`/.agent-compose` 保持 root-only。默认 0/0 保持历史 root workload。Docker 实测
+`uid=1000 gid=1000`、workspace 可写、`/.agent-compose` Permission denied、代理放行 200。
+
 ### 7.9 Policy DNS（PR4）
 
 enforce 模式下 init 在 `127.0.0.1:53`（以及 `::1:53`，若 guest 支持）同时监听 UDP 与

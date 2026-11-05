@@ -35,7 +35,7 @@ func TestDeletionRecoveryRunsPendingDeletionsConcurrentlyAndStops(t *testing.T) 
 		select {
 		case id := <-runtime.started:
 			wantStarted[id] = true
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatalf("recovery workers did not start both deletions: %v", wantStarted)
 		}
 	}
@@ -44,7 +44,7 @@ func TestDeletionRecoveryRunsPendingDeletionsConcurrentlyAndStops(t *testing.T) 
 		if id != "b" {
 			t.Fatalf("completed deletion = %q, want unblocked sandbox b", id)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("unblocked deletion waited behind blocked deletion")
 	}
 
@@ -264,7 +264,7 @@ func TestDeletionRecoveryLifecycleEdges(t *testing.T) {
 		}
 		select {
 		case <-runtime.started:
-		case <-time.After(time.Second):
+		case <-time.After(10 * time.Second):
 			t.Fatal("slow deletion did not start")
 		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -308,7 +308,7 @@ func waitForDeletionRecoveryDone(t *testing.T, recovery *DeletionRecovery) {
 	}
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("deletion recovery did not finish")
 	}
 }

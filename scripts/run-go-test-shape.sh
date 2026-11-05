@@ -58,8 +58,21 @@ if [[ -z "$tests" ]]; then
   exit 1
 fi
 
-pattern="^($(printf '%s\n' "$tests" | paste -sd '|' -))$"
-go test -run "$pattern" "$@" "${packages[@]}" "${coverage_binary_args[@]}"
+# A generated exact-name regexp exceeded the kernel argument limit once the
+# suite grew. Test names encode their shape (Integration/E2E), so select with
+# the standard -run/-skip regexps instead of passing every name back.
+case "$shape" in
+  unit)
+    shape_args=(-run '^Test' -skip 'Integration|E2E')
+    ;;
+  integration)
+    shape_args=(-run 'Integration' -skip 'E2E')
+    ;;
+  e2e)
+    shape_args=(-run 'E2E')
+    ;;
+esac
+go test "${shape_args[@]}" "$@" "${packages[@]}" "${coverage_binary_args[@]}"
 
 if [[ ${#extra_packages[@]} -gt 0 ]]; then
   go test -run '^Test' "$@" "${extra_packages[@]}" "${coverage_binary_args[@]}"
