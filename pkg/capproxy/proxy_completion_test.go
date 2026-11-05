@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func TestProxyReturnsEarlyUpstreamStatusWithoutClientEOF(t *testing.T) {
+func TestIntegrationProxyReturnsEarlyUpstreamStatusWithoutClientEOF(t *testing.T) {
 	stream, _ := openCompletionTestStream(t, func(_ any, _ grpc.ServerStream) error {
 		return status.Error(codes.PermissionDenied, "upstream rejected")
 	})
@@ -24,7 +24,7 @@ func TestProxyReturnsEarlyUpstreamStatusWithoutClientEOF(t *testing.T) {
 	}
 }
 
-func TestProxyDrainsResponseAfterClientHalfClose(t *testing.T) {
+func TestIntegrationProxyDrainsResponseAfterClientHalfClose(t *testing.T) {
 	stream, _ := openCompletionTestStream(t, func(_ any, upstream grpc.ServerStream) error {
 		var request rawFrame
 		if err := upstream.RecvMsg(&request); err != nil {
@@ -50,7 +50,7 @@ func TestProxyDrainsResponseAfterClientHalfClose(t *testing.T) {
 	}
 }
 
-func TestProxyCancelsActiveUpstreamOnClientCancellation(t *testing.T) {
+func TestIntegrationProxyCancelsActiveUpstreamOnClientCancellation(t *testing.T) {
 	started, cancelled := make(chan struct{}), make(chan struct{})
 	stream, cancel := openCompletionTestStream(t, func(_ any, upstream grpc.ServerStream) error {
 		close(started)
