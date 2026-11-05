@@ -65,6 +65,15 @@ describe("runtime.capabilities", () => {
     });
   });
 
+  it.each([["http://127.0.0.1:80", "127.0.0.1:80"], ["https://127.0.0.1:443", "127.0.0.1:443"]])("preserves default port in %s", async (target, expected) => {
+    await withTempDir(async (root) => {
+      await setup(root);
+      vi.stubEnv("CAP_GRPC_TARGET", target);
+      await capabilityGRPC([tool.method], '{"message":"ok"}', {});
+      const capture = JSON.parse(await fs.readFile(path.join(root, "capture.json"), "utf8"));
+      expect(capture.args.slice(-2)).toEqual([expected, tool.method]);
+    });
+  });
   it("calls an exact binding through grpcurl without putting credentials or params in argv", async () => {
     await withTempDir(async (root) => {
       await setup(root);

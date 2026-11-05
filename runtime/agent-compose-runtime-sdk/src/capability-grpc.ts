@@ -28,7 +28,7 @@ export async function capabilityGRPC(args: string[], input: string | undefined, 
     ...(url.protocol === "http:" ? ["-plaintext"] : []),
     "-expand-headers", "-H", "x-capability-sandbox-token: ${CAP_TOKEN}",
     "-max-time", String(timeout / 1000), "-max-msg-sz", String(limit),
-    ...args.slice(0, -positionals), url.host, ...args.slice(-positionals),
+    ...args.slice(0, -positionals), `${url.hostname}:${url.port || (url.protocol === "http:" ? "80" : "443")}`, ...args.slice(-positionals),
   ], { shell: false, stdio: ["pipe", "pipe", "pipe"] });
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
