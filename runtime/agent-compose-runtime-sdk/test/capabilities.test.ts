@@ -37,6 +37,7 @@ if (process.env.AC_TEST_MODE === 'wait') setInterval(() => {}, 1000);
 else if (process.env.AC_TEST_MODE === 'fail') { console.error(process.env.CAP_TOKEN); process.exitCode = 7; }
 else if (process.env.AC_TEST_MODE === 'large') console.log('x'.repeat(2048));
 else if (args.includes('describe')) console.log(process.env.AC_TEST_MODE === 'stream' ? 'rpc Echo (stream Request) returns (Response);' : 'rpc Echo (Request) returns (Response);');
+else if (process.env.AC_TEST_MODE === 'echo-json') console.log(input);
 else console.log(JSON.stringify({message: JSON.parse(input).message}));
 `, { mode: 0o755 });
 }
@@ -48,6 +49,22 @@ async function catalog(root: string, overrides: Record<string, unknown>) {
 }
 
 describe("runtime.capabilities", () => {
+  it.each(["text", 42, true, null, ["first", 2]])("accepts well-known Protobuf JSON input %j", async (params) => {
+    await withTempDir(async (root) => {
+      await setup(root);
+      vi.stubEnv("AC_TEST_MODE", "echo-json");
+      expect(await capabilities.call(tool.id, params)).toEqual(params);
+    });
+  });
+
+  it.each([undefined, NaN, Infinity, { value: undefined }, [undefined], { value: 1n }])("rejects non-JSON input before starting grpcurl", async (params) => {
+    await withTempDir(async (root) => {
+      await setup(root);
+      await expect(capabilities.call(tool.id, params)).rejects.toThrow("JSON-compatible");
+      await expect(fs.stat(path.join(root, "capture.json"))).rejects.toThrow();
+    });
+  });
+
   it("calls an exact binding through grpcurl without putting credentials or params in argv", async () => {
     await withTempDir(async (root) => {
       await setup(root);

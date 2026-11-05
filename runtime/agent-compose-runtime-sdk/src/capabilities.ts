@@ -81,9 +81,15 @@ async function describe(id: string, options: CapabilityCallOptions = {}) {
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }
 
-async function call<T = unknown>(id: string, params: Record<string, unknown>, options: CapabilityCallOptions = {}): Promise<T> {
-  if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("capability params must be a JSON object");
-  const input = JSON.stringify(params);
+async function call<T = unknown>(id: string, params: unknown, options: CapabilityCallOptions = {}): Promise<T> {
+  // Well-known Protobuf messages also use scalar, list and null JSON forms.
+  const input = JSON.stringify(params, (_key, value: unknown) => {
+    if (["undefined", "function", "symbol", "bigint"].includes(typeof value) || (typeof value === "number" && !Number.isFinite(value))) {
+      throw new Error("capability params must be JSON-compatible");
+    }
+    return value;
+  });
+  if (input === undefined) throw new Error("capability params must be JSON-compatible");
   if (Buffer.byteLength(input, "utf8") > 256 * 1024) throw new Error("capability input exceeds limit");
   const tool = await resolveTool(id);
   await describeMethod(tool, options);

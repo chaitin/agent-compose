@@ -464,6 +464,8 @@ load it with their own Protobuf library; it is not JSON Schema or a pinned schem
 approval. Temporary descriptor files are removed on success and failure.
 `call()` accepts Protobuf JSON and returns the
 decoded JSON response; `grpcurl` performs reflection and standard wire encoding.
+Well-known messages may use scalar, array or null JSON forms; inputs containing
+undefined, non-finite numbers or other non-JSON values fail before invocation.
 Streaming methods are rejected before business invocation. Neither discovery
 nor SDK validation replaces capproxy/OctoBus authorization or business approval.
 No read-only classification is inferred from method names.
@@ -480,6 +482,11 @@ expansion, and request JSON is sent over stdin, keeping both out of argv.
 Existing Codex event output and business routing may be retained. This API
 does not implement a model/tool loop. Scripts still own their business decisions
 and projections.
+
+The daemon publishes complete catalog and Markdown snapshots with an atomic
+rename confined to the sandbox directory. Guest-created symlinks cannot redirect
+these host writes outside that directory. Origin URLs retain their default port
+when converted to the grpcurl address.
 
 ## Errors
 
