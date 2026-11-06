@@ -101,24 +101,26 @@ func (d *Database) Shutdown() error {
 	return d.Close()
 }
 
+// sqliteURI resolves a database path to the SQLite file URI the driver expects.
+// Relative paths must omit the host separator, otherwise the first segment is
+// interpreted as a URI authority.
+func sqliteURI(path string) *url.URL {
+	if len(path) >= len("file:") && path[:len("file:")] == "file:" {
+		if parsed, err := url.Parse(path); err == nil {
+			return parsed
+		}
+	}
+	if path == ":memory:" {
+		return &url.URL{Scheme: "file", Opaque: ":memory:"}
+	}
+	return &url.URL{Scheme: "file", Path: path, OmitHost: !filepath.IsAbs(path)}
+}
+
 func sqliteDSN(path string, busyTimeout time.Duration) string {
 	if busyTimeout <= 0 {
 		busyTimeout = defaultBusyTimeout
 	}
-	var uri *url.URL
-	if len(path) >= len("file:") && path[:len("file:")] == "file:" {
-		if parsed, err := url.Parse(path); err == nil {
-			uri = parsed
-		}
-	}
-	if uri == nil {
-		if path == ":memory:" {
-			uri = &url.URL{Scheme: "file", Opaque: ":memory:"}
-		} else {
-			// 相对路径必须省略 host 分隔符，否则首段会被 SQLite 解释为 URI authority。
-			uri = &url.URL{Scheme: "file", Path: path, OmitHost: !filepath.IsAbs(path)}
-		}
-	}
+	uri := sqliteURI(path)
 	query := uri.Query()
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()))

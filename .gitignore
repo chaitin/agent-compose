@@ -17,6 +17,7 @@ docker-compose.override.yml
 /dist/
 /dist-ui/
 /agent-compose
+/agent-compose-ops
 /runtime/agent-compose-runtime-sdk/dist/
 /runtime/javascript/dist/
 

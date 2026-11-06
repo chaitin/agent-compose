@@ -1342,6 +1342,16 @@ func validateImageStoreMode(value string) error {
 	}
 }
 
+// DefaultDataRoot returns DATA_ROOT when it is set, otherwise the user data
+// directory ($XDG_DATA_HOME/agent-compose, or ~/.local/share/agent-compose).
+// It is the same resolution the daemon uses when DATA_ROOT is unset.
+func DefaultDataRoot() string {
+	if root := strings.TrimSpace(os.Getenv("DATA_ROOT")); root != "" {
+		return root
+	}
+	return defaultDataRoot()
+}
+
 func defaultDataRoot() string {
 	userDataHome := os.Getenv("XDG_DATA_HOME")
 	if userDataHome == "" {
