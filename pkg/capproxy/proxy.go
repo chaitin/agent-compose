@@ -220,27 +220,37 @@ func (s *Server) proxyStream(client grpc.ServerStream, method string, outgoing m
 		return status.Error(codes.Unavailable, err.Error())
 	}
 	defer func() { _ = conn.Close() }()
-	ctx := metadata.NewOutgoingContext(client.Context(), outgoing)
+	ctx, cancel := context.WithCancel(metadata.NewOutgoingContext(client.Context(), outgoing))
+	defer cancel()
 	desc := &grpc.StreamDesc{StreamName: strings.TrimPrefix(method, "/"), ServerStreams: true, ClientStreams: true}
 	backend, err := conn.NewStream(ctx, desc, method)
 	if err != nil {
 		return err
 	}
-	errCh := make(chan error, 2)
+	type streamResult struct {
+		backend bool
+		err     error
+	}
+	errCh := make(chan streamResult, 2)
 	go func() {
 		for {
 			frame := rawFrame(nil)
 			err := client.RecvMsg(&frame)
 			if errors.Is(err, io.EOF) {
-				errCh <- backend.CloseSend()
+				errCh <- streamResult{err: backend.CloseSend()}
 				return
 			}
 			if err != nil {
-				errCh <- err
+				errCh <- streamResult{err: err}
 				return
 			}
 			if err := backend.SendMsg(&frame); err != nil {
-				errCh <- err
+				if errors.Is(err, io.EOF) {
+					// RecvMsg carries the upstream status after an early close.
+					errCh <- streamResult{}
+					return
+				}
+				errCh <- streamResult{err: err}
 				return
 			}
 		}
@@ -250,26 +260,28 @@ func (s *Server) proxyStream(client grpc.ServerStream, method string, outgoing m
 			frame := rawFrame(nil)
 			err := backend.RecvMsg(&frame)
 			if errors.Is(err, io.EOF) {
-				errCh <- nil
+				errCh <- streamResult{backend: true}
 				return
 			}
 			if err != nil {
-				errCh <- err
+				errCh <- streamResult{backend: true, err: err}
 				return
 			}
 			if err := client.SendMsg(&frame); err != nil {
-				errCh <- err
+				errCh <- streamResult{backend: true, err: err}
 				return
 			}
 		}
 	}()
-	var first error
-	for i := 0; i < 2; i++ {
-		if err := <-errCh; err != nil && first == nil {
-			first = err
-		}
+	// An upstream status ends the RPC even if the client still has its send
+	// side open (notably reflection version negotiation). Returning cancels
+	// client.RecvMsg; buffered results let both forwarding goroutines finish.
+	first := <-errCh
+	if first.backend || first.err != nil {
+		return first.err
 	}
-	return first
+	// Client EOF only half-closes the request; the response must still drain.
+	return (<-errCh).err
 }
 
 func isReflectionMethod(method string) bool {

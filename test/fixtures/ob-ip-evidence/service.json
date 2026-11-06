@@ -1,0 +1,9 @@
+{
+  "schema": "chaitin.octobus.service.v1",
+  "name": "ac-ip-evidence",
+  "displayName": "AC IP Evidence Test",
+  "description": "Synthetic read-only IP evidence for AC runner integration tests.",
+  "proto": { "roots": ["proto"], "files": ["proto/evidence.proto"] },
+  "configSchema": "config.schema.json",
+  "secretSchema": "secret.schema.json"
+}

@@ -1,4 +1,6 @@
 export { agent } from "./agent.js";
+export { capabilities } from "./capabilities.js";
+export type { RuntimeCapability, CapabilityCallOptions } from "./capabilities.js";
 export type { RuntimeAgentOptions, RuntimeAgentOutputSchema, RuntimeAgentResult } from "./agent.js";
 export { env, paths } from "./env.js";
 export type { RuntimePaths } from "./env.js";
@@ -32,6 +34,7 @@ export type {
 } from "./workflow.js";
 
 import { agent } from "./agent.js";
+import { capabilities } from "./capabilities.js";
 import { env, paths } from "./env.js";
 import { exec, shell } from "./exec.js";
 import { llm } from "./llm.js";
@@ -41,6 +44,7 @@ import { ssh } from "./ssh.js";
 import { workflow, workflowFile } from "./workflow.js";
 
 export const runtime = {
+  capabilities,
   exec,
   shell,
   agent,

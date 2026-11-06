@@ -217,9 +217,10 @@ func NewSandboxRemovalCoordinator(di do.Injector) (*sandboxes.RemovalCoordinator
 		Targets: sandboxRemovalTargetResolver{
 			resolver: do.MustInvoke[*runs.SandboxRunTargetResolver](di),
 		},
-		Accessories: workspaces.SnapshotAccessoryReleaser{Config: config, Store: do.MustInvoke[*sandboxstore.Store](di)},
-		Residues:    adapters.NewRuntimeResidueManager(config, do.MustInvoke[*adapters.SandboxDriver](di)),
-		Locks:       do.MustInvoke[*sandboxes.LifecycleLocks](di),
+		Accessories:   workspaces.SnapshotAccessoryReleaser{Config: config, Store: do.MustInvoke[*sandboxstore.Store](di)},
+		AccessRevoker: do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
+		Residues:      adapters.NewRuntimeResidueManager(config, do.MustInvoke[*adapters.SandboxDriver](di)),
+		Locks:         do.MustInvoke[*sandboxes.LifecycleLocks](di),
 	}, nil
 }
 

@@ -10,6 +10,8 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+"$root/scripts/tests/test-run-go-test-shape.sh"
+
 profile_counts() {
   awk '
     /^mode:/ { next }
@@ -146,6 +148,7 @@ TestE2EDockerFileWorkspaceResumePreservesState
 TestE2EDockerJupyterHostDaemonStopResume
 TestE2EDockerNetworkPolicyExecutionMatrix
 TestE2EDockerRunCompletionRecoversAfterDaemonHardKill
+TestE2EDockerRuntimeCapabilities
 TestE2EDockerSkillsReuse
 TestE2EDockerStoppedSandboxRetentionArchivesAuditData
 TestE2EDockerWorkspaceMount

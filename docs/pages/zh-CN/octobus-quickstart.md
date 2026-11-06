@@ -1,5 +1,36 @@
 # OctoBus 集成快速开始
 
+## 自定义程序与兼容 Codex 的 runner
+
+现有程序可以继续使用自己的业务逻辑和 Codex 事件输出格式，通过
+`@chaitin-ai/agent-compose-runtime-sdk` 的 `runtime.capabilities` 使用 OB：
+
+```js
+const tools = await runtime.capabilities.list();
+const definition = await runtime.capabilities.describe(selectedToolID);
+const result = await runtime.capabilities.call(selectedToolID, params, {
+  signal: abortController.signal,
+});
+```
+
+先按本文配置 `capset_ids` 与 capproxy。AC 在原有 Markdown 目录旁生成
+`RUNTIME_ROOT/mpi/capabilities.json`，程序无需解析 Markdown，也无需取得 OB
+地址或上游 Token。每个工具 ID 绑定完整方法、实例与能力集声明；同名方法不会
+因来自不同实例而互相覆盖。`describe()` 提供反射得到的 Protobuf 文本定义及
+`descriptorSetBase64`（含依赖类型的标准 FileDescriptorSet，Base64 编码），
+`call()` 通过 guest 已有的 `grpcurl` 使用标准 Protobuf 编解码。
+参数支持标准 Protobuf JSON，包括 well-known 类型使用的标量、数组和 null。
+目录和 Markdown 指南在沙箱目录内原子替换，避免部分写入和符号链接重定向宿主写入。
+
+目录是准备运行时生成的快照，缺失、不完整或 Sandbox 身份不符时 SDK 返回错误。
+实际调用仍由 capproxy/OB 鉴权；目录和 SDK 不是安全边界，也不替产品判断写审批。
+首版只支持 unary 方法，不包含自动模型工具循环。参数通过 stdin 传递，CAP 凭据
+不进入命令参数，错误不回显上游诊断正文。完整接口与限制见仓库内的
+`runtime/agent-compose-runtime-sdk/README.md`。
+
+这些接口同样适用于普通 Node.js 脚本；使用工具不要求程序使用 Codex 协议，也不要求
+调用模型。AC 负责工具发现、连接与鉴权，程序负责自己的业务决策和模型工具循环。
+
 本指南带你完成 agent-compose 与 [OctoBus](https://github.com/chaitin/OctoBus)（一个把企业内部 API、工具和服务安全暴露给 AI Agent 的本地网关）的对接，并验证 Agent 能在自己的沙箱内成功调用一个能力。全程约 15 分钟。
 
 配置字段参考见 [agent-compose.yml 配置手册](https://github.com/chaitin/agent-compose/blob/main/docs/pages/zh-CN/agent-compose-yaml-manual.md)（`octobus_servers`、`capset_ids`）；内部实现原理见 [OctoBus 集成设计文档](https://github.com/chaitin/agent-compose/blob/main/docs/design/octobus_integration.md)。

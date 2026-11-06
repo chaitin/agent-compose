@@ -1,0 +1,5 @@
+syntax = "proto3";
+package ac.evidence.v1;
+
+// A separate file exercises transitive descriptor discovery by generic clients.
+message EventSummary { string id = 1; string ip = 2; string title = 3; }
