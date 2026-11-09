@@ -1,0 +1,10 @@
+# Build from a minimal context; never send a developer's entire checkout/secrets.
+ARG BASE_IMAGE=chaitin/agent-compose-guest:latest
+FROM ${BASE_IMAGE}
+COPY package.json package-lock.json /usr/local/lib/node_modules/@chaitin-ai/agent-compose-runtime/
+RUN cd /usr/local/lib/node_modules/@chaitin-ai/agent-compose-runtime && npm ci --omit=dev --omit=optional --ignore-scripts
+COPY runtime-dist/ /usr/local/lib/node_modules/@chaitin-ai/agent-compose-runtime/dist/
+COPY grpcurl /usr/local/bin/grpcurl
+COPY sdk.tgz /tmp/runtime-sdk.tgz
+RUN mkdir -p /opt/capability-program && npm install --offline --ignore-scripts --prefix /opt/capability-program /tmp/runtime-sdk.tgz && rm /tmp/runtime-sdk.tgz
+COPY --chmod=755 program.mjs /opt/capability-program/program.mjs

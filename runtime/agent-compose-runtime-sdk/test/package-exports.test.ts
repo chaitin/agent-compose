@@ -12,6 +12,7 @@ describe("package exports", () => {
         "const sdk = require('@chaitin-ai/agent-compose-runtime-sdk');",
         "console.log(typeof sdk.runtime.shell);",
         "console.log(typeof sdk.default.shell);",
+        "console.log(typeof sdk.runtime.capabilities.call);",
         "console.log(Object.prototype.hasOwnProperty.call(sdk, 'a' + 'dp'));",
       ].join("\n"), "utf8");
 
@@ -20,7 +21,7 @@ describe("package exports", () => {
       const execFileAsync = promisify(execFile);
       const result = await execFileAsync("node", [script], { cwd: process.cwd() });
 
-      expect(result.stdout).toBe("function\nfunction\nfalse\n");
+      expect(result.stdout).toBe("function\nfunction\nfunction\nfalse\n");
     });
   });
 
@@ -33,6 +34,7 @@ describe("package exports", () => {
         "import * as sdk from '@chaitin-ai/agent-compose-runtime-sdk';",
         "console.log(typeof runtime.exec);",
         "console.log(typeof runtimeDefault.exec);",
+        "console.log(typeof runtime.capabilities.list);",
         "console.log(Object.prototype.hasOwnProperty.call(sdk, 'a' + 'dp'));",
       ].join("\n"), "utf8");
 
@@ -41,7 +43,7 @@ describe("package exports", () => {
       const execFileAsync = promisify(execFile);
       const result = await execFileAsync("node", [script], { cwd: process.cwd() });
 
-      expect(result.stdout).toBe("function\nfunction\nfalse\n");
+      expect(result.stdout).toBe("function\nfunction\nfunction\nfalse\n");
     });
   });
 });

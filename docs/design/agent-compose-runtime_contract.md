@@ -816,6 +816,25 @@ Scheduler command error semantics:
 
 ## 12. Guest Runtime SDK
 
+Structured capability discovery is available as `runtime.capabilities`.
+The daemon writes version 1 `RUNTIME_ROOT/mpi/capabilities.json` with the
+Sandbox ID, exact tool bindings and unavailable capset declarations. Directory
+reads carry the same trusted project/user scope as the Markdown guide and
+preserve project-qualified capset declarations. The guest receives no upstream
+addresses, credentials or arbitrary endpoint metadata in this file.
+
+SDK list/describe/call use the snapshot and the guest's existing grpcurl client;
+reflection and unary business calls go through capproxy with CAP_TOKEN.
+`describe()` also returns a Base64-encoded FileDescriptorSet containing the
+referenced files and their imports, so callers can resolve dependent types
+without parsing human-readable Protobuf output. This is not a JSON Schema or
+an immutable schema approval. Descriptor output uses the SDK's output limit.
+The directory is discovery data, not an authorization boundary. SDK checks
+cannot constrain arbitrary guest code; authorization remains in capproxy/OB.
+See the Runtime SDK README for input/output limits, descriptor format,
+cancellation and incomplete snapshot behavior. Codex-compatible custom
+programs can consume this API without changing their event protocol.
+
 `@chaitin-ai/agent-compose-runtime-sdk` is the SDK for ordinary Node.js scripts
 inside the guest. It lives in `runtime/agent-compose-runtime-sdk` and is packed
 into a tarball during guest image build:

@@ -58,22 +58,19 @@ if [[ -z "$tests" ]]; then
   exit 1
 fi
 
-# A generated exact-name regexp exceeded the kernel argument limit once the
-# suite grew. Test names encode their shape (Integration/E2E), so select with
-# the standard -run/-skip regexps instead of passing every name back.
+# Enumerating all names in -run exceeds Linux's per-argument limit as the
+# repository grows. Match the same top-level naming contract with fixed-size
+# expressions; Go applies the first regex component to the top-level name,
+# so a unit test's Integration/E2E-named subtests remain included.
+# Keep -parallel 1: sandbox init/egress tests share host resources and must
+# not run concurrently.
 case "$shape" in
-  unit)
-    shape_args=(-run '^Test' -skip 'Integration|E2E' -parallel 1)
-    ;;
-  integration)
-    shape_args=(-run 'Integration' -skip 'E2E' -parallel 1)
-    ;;
-  e2e)
-    shape_args=(-run 'E2E' -parallel 1)
-    ;;
+  unit) selection_args=(-run '^Test' -skip '^Test.*(Integration|E2E)' -parallel 1) ;;
+  integration) selection_args=(-run '^Test.*Integration' -parallel 1) ;;
+  e2e) selection_args=(-run '^Test.*E2E' -parallel 1) ;;
 esac
-go test "${shape_args[@]}" "$@" "${packages[@]}" "${coverage_binary_args[@]}"
+go test "${selection_args[@]}" "$@" "${packages[@]}" ${coverage_binary_args[@]+"${coverage_binary_args[@]}"}
 
 if [[ ${#extra_packages[@]} -gt 0 ]]; then
-  go test -run '^Test' "$@" "${extra_packages[@]}" "${coverage_binary_args[@]}"
+  go test -run '^Test' "$@" "${extra_packages[@]}" ${coverage_binary_args[@]+"${coverage_binary_args[@]}"}
 fi

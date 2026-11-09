@@ -85,6 +85,8 @@ RUN test -x /app/agent-compose && \
     mkfs.ext4 2>&1 | grep -Fq -- '[-d root-directory' && \
     test -x /app/boxlite/runtime/boxlite-guest && \
     test -x /app/boxlite/runtime/boxlite-shim && \
+    test -x /app/boxlite/runtime/guest-mke2fs && \
+    test -x /app/boxlite/runtime/guest-resize2fs && \
     test -x /app/microsandbox/bin/msb && \
     test -x /app/microsandbox/bin/agentd && \
     test -s /app/microsandbox/lib/libmicrosandbox_go_ffi.so && \

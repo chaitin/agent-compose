@@ -1,0 +1,20 @@
+syntax = "proto3";
+package ac.evidence.v1;
+import "summary.proto";
+
+// Synthetic, read-only evidence. IDs are discoverable only through SearchEvents.
+service EvidenceService {
+  rpc SearchEvents(SearchRequest) returns (SearchResponse);
+  rpc GetEvent(GetRequest) returns (EventDetail);
+}
+message SearchRequest { string ip = 1; }
+message SearchResponse { repeated EventSummary records = 1; uint32 total = 2; }
+message GetRequest { string id = 1; }
+message EventDetail {
+  string id = 1;
+  string ip = 2;
+  string title = 3;
+  string action = 4;
+  string evidence_code = 5;
+  string conclusion = 6;
+}
