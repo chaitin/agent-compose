@@ -151,6 +151,10 @@ func (s *pr551Store) SetProjectSchedulerEnabled(_ context.Context, _ string, _ s
 	return domain.ProjectSchedulerRecord{}, nil
 }
 
+func (s *pr551Store) SetSchedulerEnabled(context.Context, string, bool) error {
+	return nil
+}
+
 func (s *pr551Store) GetScheduler(_ context.Context, _ string) (domain.Scheduler, error) {
 	return domain.Scheduler{}, sql.ErrNoRows
 }

@@ -1280,6 +1280,8 @@ A declaration the engine will not enforce is printed as `enforced  no:` with the
 
 A scheduler uses either declarative `triggers` or JavaScript `script`; the two forms are mutually exclusive.
 
+Setting `scheduler.enabled: false` pauses scheduled triggers. Changing it back to `true` and running `up` recalculates their next fire times from the time of re-enabling, just like enabling through the API or CLI. Cron and interval triggers do not catch up on ticks missed while disabled. Reapplying an already enabled scheduler preserves its existing schedule.
+
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | Enables this agent's scheduler. Disabling the Agent also prevents its scheduler from being enabled. |

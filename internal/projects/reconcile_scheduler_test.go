@@ -234,6 +234,37 @@ func TestReconcileSchedulersFailureReportsCleanupAndPartialChanges(t *testing.T)
 	}
 }
 
+func TestReconcileSchedulersResumeFailureLeavesSchedulerDisabled(t *testing.T) {
+	project, record, definition := schedulerReconcileTestState()
+	existing := record
+	existing.Enabled = false
+	resumeErr := errors.New("reschedule failed")
+	store := &schedulerReconcileStateStore{
+		existingRecord:     &existing,
+		existingDefinition: definition,
+		enableErr:          resumeErr,
+	}
+	cleaned := ""
+	refreshed := false
+	_, _, err := ReconcileSchedulers(context.Background(), store, ReconcileSchedulersRequest{
+		Project: project, Schedulers: []domain.ProjectSchedulerRecord{record}, Definitions: []domain.Scheduler{definition},
+	}, ReconcileSchedulerOptions{
+		CleanupFailedScheduler: func(_ context.Context, _ domain.ProjectSchedulerRecord, schedulerID string) {
+			cleaned = schedulerID
+		},
+		RefreshSchedulers: func(context.Context) error {
+			refreshed = true
+			return nil
+		},
+	})
+	if !errors.Is(err, resumeErr) || !schedulerReconcileNeedsFailClosed(err) {
+		t.Fatalf("error = %v, want reschedule failure requiring fail-closed recovery", err)
+	}
+	if store.savedRecord.Enabled || cleaned != record.ID || refreshed {
+		t.Fatalf("enabled/cleanup/refresh = %t/%q/%t, want false/%q/false", store.savedRecord.Enabled, cleaned, refreshed, record.ID)
+	}
+}
+
 func schedulerReconcileTestState() (domain.ProjectRecord, domain.ProjectSchedulerRecord, domain.Scheduler) {
 	project := domain.ProjectRecord{ID: "project-1"}
 	record := domain.ProjectSchedulerRecord{
@@ -320,6 +351,11 @@ func (s *schedulerReconcileStateStore) SetProjectSchedulerEnabled(_ context.Cont
 	item.Enabled = enabled
 	s.savedRecord = item
 	return item, nil
+}
+
+func (s *schedulerReconcileStateStore) SetSchedulerEnabled(ctx context.Context, schedulerID string, enabled bool) error {
+	_, err := s.SetProjectSchedulerEnabled(ctx, "", schedulerID, enabled)
+	return err
 }
 
 func (s *schedulerReconcileStateStore) ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error) {
@@ -411,6 +447,11 @@ func (s *unchangedSchedulerReconcileStore) UpsertProjectScheduler(_ context.Cont
 func (s *unchangedSchedulerReconcileStore) SetProjectSchedulerEnabled(_ context.Context, _, _ string, _ bool) (domain.ProjectSchedulerRecord, error) {
 	s.writes = append(s.writes, "set scheduler enabled")
 	return s.scheduler, nil
+}
+
+func (s *unchangedSchedulerReconcileStore) SetSchedulerEnabled(context.Context, string, bool) error {
+	s.writes = append(s.writes, "resume scheduler")
+	return nil
 }
 
 func (s *unchangedSchedulerReconcileStore) ListProjectSchedulers(context.Context, string) ([]domain.ProjectSchedulerRecord, error) {

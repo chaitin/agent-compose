@@ -1242,6 +1242,8 @@ Network policy
 
 Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`；两者互斥。
 
+设置 `scheduler.enabled: false` 会暂停定时触发。改回 `true` 并执行 `up` 后，会从重新启用的时刻重算下一次触发时间，与通过 API 或 CLI 启用的语义一致。Cron 和 interval 触发器不会补跑停用期间错过的触发。对已启用的 scheduler 再次执行 `up` 会保留已有调度时间。
+
 | 字段 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | 是否启用该 Agent 的 Scheduler。禁用 Agent 也会使其 Scheduler 无效。 |
