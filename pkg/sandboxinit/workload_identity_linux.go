@@ -13,14 +13,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const (
-	// WorkloadUIDEnvVar selects the numeric uid the exec trampoline switches to
-	// immediately before exec. Zero (the default) leaves the workload as root.
-	WorkloadUIDEnvVar = "SANDBOX_INIT_WORKLOAD_UID"
-	// WorkloadGIDEnvVar selects the numeric gid used with WorkloadUIDEnvVar.
-	WorkloadGIDEnvVar = "SANDBOX_INIT_WORKLOAD_GID"
-)
-
 // workloadIdentity is the optional non-root identity applied to every workload
 // process. Init itself stays root so it can keep the control socket and mediate
 // sockets with pidfd_getfd; only the exec target and its descendants drop.
