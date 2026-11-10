@@ -22,6 +22,12 @@ func startTestInit(t *testing.T, mainShell string) (context.CancelFunc, string) 
 
 func startTestInitWithOptions(t *testing.T, options Options) (context.CancelFunc, string) {
 	t.Helper()
+	// Enforce mode drops bounding-set capabilities before exec, which a
+	// non-root test process cannot do. The Docker integration test covers that
+	// path with the necessary privileges.
+	if options.EgressMode == EgressModeEnforce && os.Geteuid() != 0 {
+		t.Skip("mediated egress requires root to drop workload capabilities")
+	}
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "init.sock")
 	options.ControlSocket = socket

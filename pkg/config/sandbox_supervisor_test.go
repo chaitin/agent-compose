@@ -28,6 +28,7 @@ func TestLoadSandboxSupervisorConfig(t *testing.T) {
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("SANDBOX_INIT_ENABLED", boolString(test.initEnabled))
+			t.Setenv("SANDBOX_INIT_SOCKET_DIR", "/run/ac")
 			t.Setenv("SANDBOX_INIT_EGRESS", test.egress)
 			t.Setenv("SANDBOX_SUPERVISOR", test.supervisor)
 			t.Setenv("SANDBOX_SUPERVISOR_BINARY", test.binary)
@@ -60,6 +61,7 @@ func boolString(value bool) string {
 
 func TestSandboxSupervisorIdentityReadsAndValidates(t *testing.T) {
 	t.Setenv("SANDBOX_INIT_ENABLED", "true")
+	t.Setenv("SANDBOX_INIT_SOCKET_DIR", "/run/ac")
 	t.Setenv("SANDBOX_INIT_EGRESS", "enforce")
 	t.Setenv("SANDBOX_SUPERVISOR", "enforce")
 	t.Setenv("SANDBOX_SUPERVISOR_UID", "1000")

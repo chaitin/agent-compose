@@ -239,6 +239,7 @@ func TestSandboxInitWorkloadIdentityReadsAndValidates(t *testing.T) {
 
 func TestSandboxEgressStrictProfileUnifiesInitEgressAndSupervisor(t *testing.T) {
 	t.Setenv("SANDBOX_EGRESS_PROFILE", "strict")
+	t.Setenv("SANDBOX_INIT_SOCKET_DIR", "/run/ac")
 	t.Setenv("SANDBOX_INIT_ENABLED", "")
 	t.Setenv("SANDBOX_INIT_EGRESS", "")
 	t.Setenv("SANDBOX_SUPERVISOR", "")
