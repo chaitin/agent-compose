@@ -43,6 +43,7 @@ COPY proto/go.mod ./proto/go.mod
 RUN GOPROXY="${GOPROXY}" go mod download
 COPY pkg/egress ./pkg/egress
 COPY pkg/sandboxinit ./pkg/sandboxinit
+COPY pkg/sandboxsupervisor ./pkg/sandboxsupervisor
 COPY cmd/ac-init ./cmd/ac-init
 RUN CGO_ENABLED=0 GOOS=linux GOARCH="${TARGETARCH:-amd64}" \
     go build -trimpath -ldflags='-s -w' -o /out/ac-init ./cmd/ac-init
