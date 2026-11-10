@@ -21,7 +21,7 @@ import (
 
 const stalePendingSandboxLastError = "sandbox startup interrupted before runtime reached running state"
 const staleProjectRunError = "daemon interrupted project run before reaching terminal state"
-const schedulerSandboxRecoveryTimeout = 30 * time.Second
+const startupRecoveryTimeout = 30 * time.Second
 
 type runtimeReconciler interface {
 	ReconcileRuntimeState(context.Context, *domain.Sandbox) (*domain.Sandbox, error)
@@ -56,28 +56,34 @@ type detachedRunReattacher interface {
 
 func startBackgroundManagers(ctx context.Context, deps backgroundManagersDeps) error {
 	startedAt := time.Now().UTC()
-	reconcileCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := reconcilePersistedSandboxes(reconcileCtx, deps.Sandboxes, deps.Bridge, startedAt); err != nil {
+	if err := withStartupRecoveryBudget(ctx, func(recoveryCtx context.Context) error {
+		return reconcilePersistedSandboxes(recoveryCtx, deps.Sandboxes, deps.Bridge, startedAt)
+	}); err != nil {
 		slog.Warn("failed to reconcile persisted sandbox state on startup", "error", err)
 	}
 	if deps.CapTokens != nil {
-		if err := deps.CapTokens.Rebuild(reconcileCtx); err != nil {
+		if err := withStartupRecoveryBudget(ctx, deps.CapTokens.Rebuild); err != nil {
 			slog.Warn("failed to rebuild capability sandbox token index on startup", "error", err)
 		}
 	}
-	if err := deps.Schedulers.RecoverInterruptedRuns(reconcileCtx, startedAt); err != nil {
-		slog.Warn("failed to recover interrupted scheduler runs", "error", err)
+	if err := withStartupRecoveryBudget(ctx, func(recoveryCtx context.Context) error {
+		return deps.Schedulers.RecoverInterruptedRuns(recoveryCtx, startedAt)
+	}); err != nil {
+		// Starting dispatch with persisted running rows but no process owner
+		// strands those runs: the stop API cannot cancel an unowned execution.
+		return fmt.Errorf("recover interrupted scheduler runs: %w", err)
 	}
 	if err := deps.Completions.Start(ctx); err != nil {
 		return err
 	}
-	if err := reconcilePersistedProjectRuns(reconcileCtx, projectRunReconcileContext{
-		ConfigDB:    deps.ConfigDB,
-		Completions: deps.Completions,
-		Reattacher:  deps.Reattacher,
-		RootCtx:     ctx,
-		StartedAt:   startedAt,
+	if err := withStartupRecoveryBudget(ctx, func(recoveryCtx context.Context) error {
+		return reconcilePersistedProjectRuns(recoveryCtx, projectRunReconcileContext{
+			ConfigDB:    deps.ConfigDB,
+			Completions: deps.Completions,
+			Reattacher:  deps.Reattacher,
+			RootCtx:     ctx,
+			StartedAt:   startedAt,
+		})
 	}); err != nil {
 		slog.Warn("failed to reconcile persisted project runs", "error", err)
 	}
@@ -85,7 +91,7 @@ func startBackgroundManagers(ctx context.Context, deps backgroundManagersDeps) e
 		// Keep the scheduler sweep on its own budget: stopping a runtime can
 		// take seconds, and it must not starve the project-run re-attachment
 		// above of its startup window.
-		recoveryCtx, cancelRecovery := context.WithTimeout(context.Background(), schedulerSandboxRecoveryTimeout)
+		recoveryCtx, cancelRecovery := context.WithTimeout(ctx, startupRecoveryTimeout)
 		for _, warning := range reconcileOrphanedSchedulerSandboxes(recoveryCtx, deps.Sandboxes, deps.ConfigDB, deps.Bridge, startedAt) {
 			slog.Warn("scheduler sandbox recovery", "warning", warning)
 		}
@@ -94,6 +100,14 @@ func startBackgroundManagers(ctx context.Context, deps backgroundManagersDeps) e
 	deps.Schedulers.Start()
 	deps.Events.Start()
 	return startCapabilityProxy(ctx, deps.CapProxy)
+}
+
+// Each phase owns its deadline; a slow runtime must not consume the budget
+// needed to recover run ownership or capability bindings in later phases.
+func withStartupRecoveryBudget(ctx context.Context, recoverState func(context.Context) error) error {
+	recoveryCtx, cancel := context.WithTimeout(ctx, startupRecoveryTimeout)
+	defer cancel()
+	return recoverState(recoveryCtx)
 }
 
 func reconcilePersistedSandboxes(ctx context.Context, store *sandboxstore.Store, bridge runtimeReconciler, startedAt time.Time) error {
