@@ -549,6 +549,18 @@ message DeclaredNetworkAllowance {
   // Declaration layers that contributed the effective entry: "daemon" and/or
   // "agent". Empty when provenance was not annotated.
   repeated string sources = 4;
+  // The absolute executable paths this allowance is scoped to. Empty when the
+  // allowance is not scoped to a binary.
+  repeated string binaries = 5;
+  // The declared per-entry enforcement: "enforce" when omitted or declared,
+  // "audit" when the allowance records a match without enforcing it.
+  string enforcement = 6;
+  // Optional L7 constraint echoed in the admission report.
+  repeated string methods = 7;
+  repeated string paths = 8;
+  // Header names the proxy injects into allowed requests; values are never
+  // exposed in the report.
+  repeated string injected_headers = 9;
 }
 
 // DeclaredNetworkDenial is one declared refusal as it appears in a report.
@@ -560,6 +572,9 @@ message DeclaredNetworkDenial {
   // Declaration layers that contributed the effective entry: "daemon" and/or
   // "agent". Empty when provenance was not annotated.
   repeated string sources = 3;
+  // The absolute executable paths this denial is scoped to. Empty when the
+  // denial is not scoped to a binary.
+  repeated string binaries = 4;
 }
 
 message PatchProjectRequest {
@@ -1086,6 +1101,22 @@ message SandboxNetworkAllowSpec {
   // part of the normalized spec the client hashes, so it must travel with the
   // declaration rather than being rederived from the host.
   repeated string allowed_ips = 4;
+  // Optional. Absolute executable paths this allowance is scoped to. Empty
+  // leaves the allowance unscoped; an unknown request binary never satisfies a
+  // scoped allowance.
+  repeated string binaries = 5;
+  // Optional. "enforce" (the omitted default) applies the allowance; "audit"
+  // records a match and allows the request without enforcing it.
+  string enforcement = 6;
+  // Optional. HTTP methods this allowance permits. Empty keeps the
+  // destination-only behavior. Requires L7 inspection.
+  repeated string methods = 7;
+  // Optional. Request paths this allowance permits, exact or prefix ending in
+  // "*". Empty keeps the destination-only behavior.
+  repeated string paths = 8;
+  // Optional. Header templates the proxy injects. Values reference daemon
+  // environment variables with ${NAME}; the guest never sees the value.
+  map<string, string> inject_headers = 9;
 }
 
 // SandboxNetworkDenySpec is one declared refusal. It has no allowed_ips: a
@@ -1099,6 +1130,9 @@ message SandboxNetworkDenySpec {
   int32 port = 2;
   reserved 3;
   reserved "protocol";
+  // Optional. Absolute executable paths this denial is scoped to. Empty leaves
+  // the denial unscoped; an unknown request binary is still refused.
+  repeated string binaries = 4;
 }
 
 message MCPServerSpec {
@@ -1571,6 +1605,36 @@ message Sandbox {
   google.protobuf.Timestamp stopped_runtime_released_at = 24;
   // Safe delivery metadata from this sandbox snapshot, when available.
   SandboxWorkspaceDelivery workspace_delivery = 25;
+  // The egress policy revision currently observed for this sandbox. Empty when
+  // the engine has no policy revision record for it (the driver does not
+  // support egress policy, or the sandbox predates this record).
+  SandboxEgressPolicy egress_policy = 26;
+}
+
+// SandboxEgressPolicy reports the persisted egress policy revision for one
+// sandbox and whether the enforcement point that decides its traffic has read
+// it. A revision advances only when the effective policy content changes; the
+// hash and revision are therefore stable across an idempotent apply.
+message SandboxEgressPolicy {
+  // Monotonic revision within this sandbox, starting at 1. Zero means no
+  // revision has been observed.
+  uint64 revision = 1;
+  // Stable content hash of the effective policy (egress.PolicyHash), prefixed
+  // with "sha256:".
+  string hash = 2;
+  // When this revision was first persisted by the daemon.
+  google.protobuf.Timestamp applied_at = 3;
+  // When the enforcement point for the running sandbox first read exactly this
+  // revision. Unset while the running sandbox has not acknowledged it.
+  google.protobuf.Timestamp acknowledged_at = 4;
+  // Whether acknowledged_at is set. Convenience for clients that only need the
+  // boolean; it is always consistent with acknowledged_at.
+  bool acknowledged = 5;
+  // The egress content generation the running runtime was created under, and
+  // the mechanism that applied it ("open", "driver-applied",
+  // "declared-unenforced", or "mediated"). Empty when no runtime record exists.
+  uint64 runtime_generation = 6;
+  string runtime_application = 7;
 }
 
 message SandboxWorkspaceDelivery {

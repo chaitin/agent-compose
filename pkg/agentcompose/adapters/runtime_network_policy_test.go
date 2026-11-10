@@ -404,3 +404,111 @@ func TestEnsureSandboxAppliesTheDaemonGlobalPolicyWithoutAnAgentDeclaration(t *t
 		t.Fatalf("global deny-all allowed an undeclared destination: %+v", result)
 	}
 }
+
+func TestEnsureSandboxEnforceDefaultsToDenyWithoutADeclaration(t *testing.T) {
+	config := networkPolicyTestConfig()
+	config.SandboxInitEgress = "enforce"
+	runtime := &capturingNetworkRuntime{}
+	adapter := driverRuntimeAdapter{
+		runtime:    runtime,
+		executions: newSandboxExecutions(),
+		networkPolicies: driverSandboxNetworkPolicy{
+			config:       config,
+			declarations: stubNetworkDeclarationResolver{declaration: nil},
+		},
+		sandboxInitEgress: "enforce",
+	}
+	if _, err := adapter.EnsureSandbox(context.Background(), networkPolicyTestSession(), domain.VMState{}, domain.ProxyState{}); err != nil {
+		t.Fatalf("EnsureSandbox returned error: %v", err)
+	}
+	policy := runtime.sandbox.NetworkPolicy
+	if policy == nil {
+		t.Fatal("NetworkPolicy is nil, want a default deny policy for enforce without a declaration")
+	}
+	if policy.Default != egress.Deny {
+		t.Fatalf("policy default = %q, want deny", policy.Default)
+	}
+	if len(policy.EngineEndpoints) == 0 {
+		t.Fatal("policy has no engine endpoints; the facade must stay reachable")
+	}
+}
+
+// TestStrictProfileKeepsUndeclaredPolicyAllowAll pins the rollout contract: the
+// unified strict profile must be safe to enable on an existing deployment, so an
+// agent that declared nothing keeps an allow-all policy (mediated by the proxy)
+// instead of inheriting enforce mode's synthetic default-deny.
+func TestStrictProfileKeepsUndeclaredPolicyAllowAll(t *testing.T) {
+	config := networkPolicyTestConfig()
+	config.SandboxInitEnabled = true
+	config.SandboxInitEgress = "enforce"
+	config.SandboxEgressProfile = "strict"
+	policies := driverSandboxNetworkPolicy{
+		config:       config,
+		declarations: stubNetworkDeclarationResolver{},
+	}
+	driverPolicy, effective, err := policies.resolve(context.Background(), networkPolicyTestSession())
+	if err != nil {
+		t.Fatalf("resolve() error = %v", err)
+	}
+	if driverPolicy != nil {
+		t.Fatalf("driver policy = %+v, want nil so no driver claims a restriction the agent did not declare", driverPolicy)
+	}
+	result := egress.Decide(effective, egress.NetworkRequest("sandbox-1", egress.Endpoint{Host: "api.github.com", Port: 443, Protocol: egress.ProtocolHTTPS}))
+	if !result.Allowed() {
+		t.Fatalf("strict profile denied an undeclared destination: %+v", result)
+	}
+}
+
+// TestStrictProfileMediatesUndeclaredAgent pins that the strict profile still
+// puts every sandbox on the proxy path: the Docker workload has no interface, so
+// an undeclared agent needs the proxy environment even though its policy is
+// allow-all. Without it, enabling strict would silently remove egress.
+func TestStrictProfileMediatesUndeclaredAgent(t *testing.T) {
+	config := networkPolicyTestConfig()
+	config.SandboxInitEnabled = true
+	config.SandboxInitEgress = "enforce"
+	config.SandboxEgressProfile = "strict"
+	session := networkPolicyTestSession()
+	adapter := driverRuntimeAdapter{
+		runtime:    &capturingNetworkRuntime{},
+		executions: newSandboxExecutions(),
+		networkPolicies: driverSandboxNetworkPolicy{
+			config:       config,
+			declarations: stubNetworkDeclarationResolver{},
+		},
+		egressProxy:       egressProxyTestMediation(newEgressProxyTestStore(), egressProxyTestSandboxes{session: session}, nil),
+		sandboxInitEgress: "enforce",
+	}
+	driverSandbox, record, err := adapter.driverSandbox(context.Background(), session)
+	if err != nil {
+		t.Fatalf("driverSandbox() error = %v", err)
+	}
+	if driverSandbox.NetworkPolicy != nil {
+		t.Fatalf("NetworkPolicy = %+v, want nil for an undeclared agent", driverSandbox.NetworkPolicy)
+	}
+	if driverSandbox.ProxyEnv == nil {
+		t.Fatal("strict profile did not attach the proxy environment to an undeclared agent")
+	}
+	if record.Applied != string(egress.ApplicationMediated) {
+		t.Fatalf("record = %+v, want the runtime recorded as mediated", record)
+	}
+}
+
+func TestStrictProfileFailsClosedWithoutTheProxy(t *testing.T) {
+	config := networkPolicyTestConfig()
+	config.SandboxInitEnabled = true
+	config.SandboxInitEgress = "enforce"
+	config.SandboxEgressProfile = "strict"
+	adapter := driverRuntimeAdapter{
+		runtime:    &capturingNetworkRuntime{},
+		executions: newSandboxExecutions(),
+		networkPolicies: driverSandboxNetworkPolicy{
+			config:       config,
+			declarations: stubNetworkDeclarationResolver{},
+		},
+		sandboxInitEgress: "enforce",
+	}
+	if _, _, err := adapter.driverSandbox(context.Background(), networkPolicyTestSession()); err == nil {
+		t.Fatal("strict profile started a sandbox without a reachable forward proxy")
+	}
+}

@@ -61,6 +61,10 @@ type dockerRuntime struct {
 	config *appconfig.Config
 	// workspaceProcess is fixed at construction when supplied; nil probes this process.
 	workspaceProcess func() (dockerWorkspaceProcess, error)
+	// supervisors owns the independent supervisor processes this daemon
+	// process started. Untracked supervisors are discovered by pinging the
+	// per-sandbox socket.
+	supervisors *dockerSupervisorManager
 }
 
 type dockerContainerRemover interface {
@@ -134,7 +138,7 @@ type dockerInteractionWriter struct {
 }
 
 func newDockerRuntime(config *appconfig.Config) (SandboxRuntime, error) {
-	return &dockerRuntime{config: config}, nil
+	return &dockerRuntime{config: config, supervisors: newDockerSupervisorManager()}, nil
 }
 
 func (c *dockerExecCollector) writeChunk(chunk ExecChunk) {
@@ -189,12 +193,25 @@ func (w *dockerExecWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
+func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmState VMState, proxyState ProxyState) (info SandboxVMInfo, err error) {
+	supervisorMode := SandboxSupervisorEnabled(r.config)
+	supervisorOwned := false
+	defer func() {
+		// A newly created container that never became functional must not leave
+		// its supervisor and token behind. A reused container keeps both: the
+		// next ensure can restart the supervisor with the persisted token.
+		if err != nil && supervisorOwned {
+			r.removeSandboxSupervisorRuntime(sandbox)
+		}
+	}()
 	if err := RequireSandboxNetworkEnforcement(RuntimeDriverDocker, sandbox.Summary.ID, sandbox.NetworkPolicy, r.config.EgressUnenforceablePolicy); err != nil {
 		return SandboxVMInfo{}, err
 	}
 	if _, err := workspaceRuntimeMountSpec(r.config, sandbox, RuntimeDriverDocker); err != nil {
 		return SandboxVMInfo{}, err
+	}
+	if supervisorMode && proxyState.Enabled {
+		return SandboxVMInfo{}, fmt.Errorf("sandbox supervisor mode cannot expose the Jupyter port: the workload has no external interface and Docker cannot publish a port on network mode %q; disable Jupyter for this sandbox", "none")
 	}
 	dockerClient, err := r.newClient()
 	if err != nil {
@@ -202,20 +219,50 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	}
 	defer func() { _ = dockerClient.Close() }()
 
-	topology, err := r.dockerDaemonTopology(ctx, dockerClient)
-	if err != nil {
-		return SandboxVMInfo{}, err
+	var topology dockerDaemonTopology
+	if supervisorMode {
+		if !SandboxInitEnabledFor(r.config, vmState) {
+			return SandboxVMInfo{}, fmt.Errorf("SANDBOX_SUPERVISOR=enforce requires sandbox init for sandbox %s", sandbox.Summary.ID)
+		}
+		// no-network workload: loopback remains for the init DNS stub and the
+		// loopback relay; the supervisor socket is the only egress path.
+		topology = dockerDaemonTopology{networkMode: containerapi.NetworkMode("none")}
+	} else {
+		topology, err = r.dockerDaemonTopology(ctx, dockerClient)
+		if err != nil {
+			return SandboxVMInfo{}, err
+		}
 	}
 	// The topology's own network mode is used verbatim: an unmediated
 	// restricting policy never reaches this point, because
 	// RequireSandboxNetworkEnforcement above refuses it before any container
 	// exists. A policy the forward proxy mediates does reach here with the
 	// proxy environment on the sandbox.
-	containerInfo, created, err := r.getOrCreateContainer(ctx, dockerClient, dockerContainerCreateRequest{
+	containerInfo, created, supervisorLaunch, err := r.getOrCreateContainer(ctx, dockerClient, dockerContainerCreateRequest{
 		Sandbox: sandbox, VMState: vmState, ProxyState: proxyState, NetworkMode: topology.networkMode,
 	})
 	if err != nil {
 		return SandboxVMInfo{}, err
+	}
+	// A container created with the supervisor keeps using it even after the
+	// deployment switch is turned off. Otherwise a daemon restart would leave a
+	// running no-network sandbox with no way to reach the proxy.
+	supervisorActive := supervisorMode || dockerSandboxUsesSupervisor(containerInfo)
+	if supervisorActive {
+		supervisorOwned = created
+		if ensureErr := r.ensureSandboxSupervisor(ctx, sandbox, supervisorLaunch); ensureErr != nil {
+			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created}, ensureErr)
+		}
+	}
+	// A strict-profile sandbox must be attached only to the internal network.
+	// A newly created container always is; a reused container that predates
+	// strict mode is not, and starting it would keep the wider egress path the
+	// profile exists to remove. Fail closed before the start and leave the
+	// existing container untouched so the operator can remove it deliberately.
+	if topology.strict && !dockerSandboxUsesSupervisor(containerInfo) {
+		if err := validateDockerSandboxStrictNetwork(containerInfo, string(topology.networkMode)); err != nil {
+			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created}, err)
+		}
 	}
 	started := false
 	if containerInfo.State == nil || !containerInfo.State.Running {
@@ -230,7 +277,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	// is already on that network, and an existing container is reused unchanged,
 	// so enabling DOCKER_SANDBOX_NETWORK never migrates already-created
 	// sandboxes.
-	if dockerSandboxNetworkAttachEnabled(topology.containerized, r.config.DockerSandboxNetwork) {
+	if !dockerSandboxUsesSupervisor(containerInfo) && dockerSandboxNetworkAttachEnabled(topology.containerized, r.config.DockerSandboxNetwork) {
 		if err := ensureDockerContainerNetwork(ctx, dockerClient, containerInfo, string(topology.networkMode)); err != nil {
 			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
 		}
@@ -238,6 +285,21 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	containerInfo, err = dockerClient.ContainerInspect(ctx, containerInfo.ID)
 	if err != nil {
 		return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, fmt.Errorf("inspect started docker container %s: %w", containerInfo.ID, err))
+	}
+	initState := SandboxInitStateDisabled
+	if dockerSandboxUsesInit(containerInfo) {
+		initState = SandboxInitStateEnabled
+		supervisorToken := ""
+		if supervisorActive {
+			value, tokenErr := r.sandboxSupervisorToken(sandbox)
+			if tokenErr != nil {
+				return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, tokenErr)
+			}
+			supervisorToken = value
+		}
+		if err := r.waitForSandboxInit(ctx, dockerClient, containerInfo.ID, sandbox, supervisorToken); err != nil {
+			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
+		}
 	}
 	containerInfo, proxyState, err = r.waitForDockerJupyterProxyState(
 		ctx,
@@ -256,7 +318,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, err)
 	}
 	if !jupyterEnabled(proxyState) {
-		return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, ProxyState: &proxyState}, nil
+		return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, ProxyState: &proxyState, SandboxInitState: initState}, nil
 	}
 
 	readyCtx, cancel := context.WithTimeout(ctx, r.config.JupyterReadyTimeout)
@@ -264,7 +326,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	cancel()
 	if readyErr != nil {
 		if logText := readSandboxJupyterLog(sandbox); jupyterLogIndicatesReady(logText) {
-			return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState}, nil
+			return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState, SandboxInitState: initState}, nil
 		}
 		if logText := readSandboxJupyterLog(sandbox); logText != "" {
 			return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, fmt.Errorf("%w\nGuest log:\n%s", readyErr, logText))
@@ -275,7 +337,7 @@ func (r *dockerRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return SandboxVMInfo{}, r.cleanupDockerContainerAfterEnsureFailure(ctx, dockerClient, dockerEnsureAttemptState{ContainerID: containerInfo.ID, Created: created, Started: started}, readyErr)
 	}
 
-	return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState}, nil
+	return SandboxVMInfo{BoxID: containerInfo.ID, RuntimeCreated: created, JupyterURL: jupyterDirectURL(proxyState), ProxyState: &proxyState, SandboxInitState: initState}, nil
 }
 
 func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
@@ -293,11 +355,20 @@ func (r *dockerRuntime) IsSandboxAlive(ctx context.Context, sandbox *Sandbox, vm
 	if err != nil {
 		return false, err
 	}
+	if dockerSandboxUsesInit(containerInfo) {
+		initMount, mountErr := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+		if mountErr != nil {
+			return false, mountErr
+		}
+		expectedMounts = append(expectedMounts, initMount)
+	}
 	if !r.dockerSandboxMountsMatch(containerInfo, expectedMounts, sandbox) {
 		slog.Warn("docker sandbox mounts no longer match the active data root; retiring stale runtime for safe recreation", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
 		if err := removeDockerContainerWithStaleMounts(ctx, dockerClient, containerInfo.ID); err != nil {
 			return false, err
 		}
+		r.cleanupSandboxInitRuntime(sandbox)
+		r.removeSandboxSupervisorRuntime(sandbox)
 		return false, nil
 	}
 	return containerInfo.State != nil && containerInfo.State.Running, nil
@@ -353,6 +424,7 @@ func (r *dockerRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, vmSta
 		return false, err
 	}
 	if !ok {
+		r.stopSandboxSupervisor(sandbox)
 		return true, nil
 	}
 	if containerInfo.State != nil && containerInfo.State.Running {
@@ -371,6 +443,7 @@ func (r *dockerRuntime) StopSandbox(ctx context.Context, sandbox *Sandbox, vmSta
 			}
 		}
 	}
+	r.stopSandboxSupervisor(sandbox)
 	return false, nil
 }
 
@@ -386,6 +459,8 @@ func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmS
 		return err
 	}
 	if !ok {
+		r.cleanupSandboxInitRuntime(sandbox)
+		r.removeSandboxSupervisorRuntime(sandbox)
 		return nil
 	}
 	removeCtx, cancel := dockerFallbackContextIfDone(ctx)
@@ -393,6 +468,8 @@ func (r *dockerRuntime) RemoveSandbox(ctx context.Context, sandbox *Sandbox, vmS
 	if err := dockerClient.ContainerRemove(removeCtx, containerInfo.ID, containerapi.RemoveOptions{Force: true}); err != nil && !isDockerNotFound(err) {
 		return fmt.Errorf("remove docker container %s: %w", containerInfo.ID, err)
 	}
+	r.cleanupSandboxInitRuntime(sandbox)
+	r.removeSandboxSupervisorRuntime(sandbox)
 	return nil
 }
 
@@ -455,6 +532,10 @@ func (r *dockerRuntime) OpenInteraction(ctx context.Context, sandbox *Sandbox, v
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		cancel()
 		return nil, fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
+	}
+	if dockerSandboxUsesInit(containerInfo) {
+		cancel()
+		return r.initOpenInteraction(ctx, sandbox, spec)
 	}
 
 	execOptions, err := dockerCommandExecOptions(spec, r.config.GuestWorkspacePath)
@@ -556,6 +637,9 @@ func (r *dockerRuntime) execWithStream(ctx context.Context, request dockerExecRe
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		return ExecResult{}, fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
 	}
+	if dockerSandboxUsesInit(containerInfo) {
+		return r.initExecWithStream(ctx, sandbox, spec, stream)
+	}
 
 	execMarker := spec.Marker
 	if execMarker == "" {
@@ -640,6 +724,11 @@ func (r *dockerRuntime) TerminateProcessTree(ctx context.Context, sandbox *Sandb
 	}
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		return fmt.Errorf("docker container for sandbox %s is not running", sandbox.Summary.ID)
+	}
+	if dockerSandboxUsesInit(containerInfo) {
+		killCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return r.sandboxInitClient(sandbox).KillTree(killCtx, marker)
 	}
 	return r.terminateDockerProcessTree(ctx, dockerClient, containerInfo.ID, marker)
 }
@@ -883,24 +972,54 @@ type dockerContainerCreateRequest struct {
 	NetworkMode containerapi.NetworkMode
 }
 
-func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *client.Client, request dockerContainerCreateRequest) (containerapi.InspectResponse, bool, error) {
+func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *client.Client, request dockerContainerCreateRequest) (containerapi.InspectResponse, bool, *dockerSupervisorLaunch, error) {
 	sandbox, vmState, proxyState, networkMode := request.Sandbox, request.VMState, request.ProxyState, request.NetworkMode
+	supervisorMode := SandboxSupervisorEnabled(r.config)
+	if supervisorMode && string(networkMode) != "none" {
+		return containerapi.InspectResponse{}, false, nil, fmt.Errorf("sandbox supervisor requires Docker network mode %q, got %q", "none", networkMode)
+	}
+	initEnabled := SandboxInitEnabledFor(r.config, vmState)
+	if supervisorMode && !initEnabled {
+		return containerapi.InspectResponse{}, false, nil, fmt.Errorf("SANDBOX_SUPERVISOR=enforce requires sandbox init for sandbox %s", sandbox.Summary.ID)
+	}
 	appconfig.ApplyDefaultGuestPaths(r.config)
 	mounts, err := r.dockerRuntimeMounts(ctx, dockerClient, sandbox)
 	if err != nil {
-		return containerapi.InspectResponse{}, false, err
+		return containerapi.InspectResponse{}, false, nil, err
 	}
 	replacingStaleMounts := false
 	if containerInfo, ok, err := r.findContainer(ctx, dockerClient, sandbox, vmState); err != nil {
-		return containerapi.InspectResponse{}, false, err
+		return containerapi.InspectResponse{}, false, nil, err
 	} else if ok {
-		if r.dockerSandboxMountsMatch(containerInfo, mounts, sandbox) {
-			return containerInfo, false, nil
+		mountsForMatch := mounts
+		if dockerSandboxUsesInit(containerInfo) {
+			initMount, mountErr := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+			if mountErr != nil {
+				return containerapi.InspectResponse{}, false, nil, mountErr
+			}
+			// Compare against the init mount without adding it to the slice used
+			// for creation: a stale container is deleted below and the creation
+			// path appends the init mount based on the current desired model. If
+			// the slice were reused, a rebuilt init container would carry two
+			// mounts for the same target.
+			mountsForMatch = append(append([]mountapi.Mount{}, mounts...), initMount)
+		}
+		if r.dockerSandboxMountsMatch(containerInfo, mountsForMatch, sandbox) {
+			if supervisorMode {
+				if !dockerSandboxUsesSupervisor(containerInfo) {
+					return containerapi.InspectResponse{}, false, nil, fmt.Errorf("docker sandbox container %s predates SANDBOX_SUPERVISOR=enforce and has an external network; remove the sandbox and create it again", containerInfo.ID)
+				}
+				if err := validateDockerSandboxSupervisorNetwork(containerInfo); err != nil {
+					return containerapi.InspectResponse{}, false, nil, err
+				}
+			}
+			return containerInfo, false, nil, nil
 		}
 		slog.Warn("recreating docker sandbox whose bind mounts reference an earlier data root", "sandbox_id", sandbox.Summary.ID, "container_id", containerInfo.ID)
 		if err := removeDockerContainerWithStaleMounts(ctx, dockerClient, containerInfo.ID); err != nil {
-			return containerapi.InspectResponse{}, false, err
+			return containerapi.InspectResponse{}, false, nil, err
 		}
+		r.removeSandboxSupervisorRuntime(sandbox)
 		replacingStaleMounts = true
 	}
 	// Missing stopped runtimes retain the existing conservative UUID-only
@@ -908,48 +1027,118 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	// just resolved from this sandbox and only its stale bind sources changed.
 	if !vmState.StoppedAt.IsZero() && !replacingStaleMounts {
 		if err := r.validateLegacyDockerRecreate(sandbox, vmState); err != nil {
-			return containerapi.InspectResponse{}, false, fmt.Errorf("docker runtime state for stopped sandbox %s is missing; refusing to recreate it during resume: %w", sandbox.Summary.ID, err)
+			return containerapi.InspectResponse{}, false, nil, fmt.Errorf("docker runtime state for stopped sandbox %s is missing; refusing to recreate it during resume: %w", sandbox.Summary.ID, err)
 		}
 		slog.Warn("recreating missing legacy docker runtime from persisted mounts; container writable layer is not recoverable", "sandbox_id", sandbox.Summary.ID, "image", firstNonEmpty(vmState.Image, sandbox.Summary.GuestImage))
 	}
 
+	if initEnabled {
+		initMount, err := r.prepareSandboxInitMount(ctx, dockerClient, sandbox)
+		if err != nil {
+			return containerapi.InspectResponse{}, false, nil, err
+		}
+		mounts = append(mounts, initMount)
+	}
 	name := r.containerName(sandbox, vmState)
 	var exposedPorts nat.PortSet
 	var portBindings nat.PortMap
-	cmdText := "tail -f /dev/null"
+	cmdText := ""
 	if jupyterEnabled(proxyState) {
 		exposedPorts, portBindings = dockerJupyterPortConfig(proxyState.GuestPort)
 		cmdText = jupyterLaunchCommand(r.config, proxyState, false)
+	} else if !initEnabled {
+		// The legacy path still needs a keepalive process. With init enabled,
+		// PID 1 itself is the keepalive and commands are real children.
+		cmdText = "tail -f /dev/null"
 	}
-	env, err := r.containerEnv(ctx, sandbox, proxyState)
+	// The supervisor needs the daemon proxy credential and the engine-owned
+	// endpoints. Resolve them once here; the workload environment deliberately
+	// does not receive the proxy variables, because with no external interface
+	// they cannot work and their credential would be exposed for no benefit.
+	var supervisorLaunch *dockerSupervisorLaunch
+	envSource := sandbox
+	if supervisorMode {
+		token, tokenErr := r.sandboxSupervisorToken(sandbox)
+		if tokenErr != nil {
+			return containerapi.InspectResponse{}, false, nil, tokenErr
+		}
+		proxyItems, proxyErr := sandboxProxyEnvItems(ctx, sandbox)
+		if proxyErr != nil {
+			return containerapi.InspectResponse{}, false, nil, proxyErr
+		}
+		proxyURL := sandboxSupervisorProxyURL(proxyItems)
+		if proxyURL == "" {
+			return containerapi.InspectResponse{}, false, nil, fmt.Errorf("sandbox supervisor for sandbox %s has no daemon proxy credential; the workload has no external network and cannot reach any destination", sandbox.Summary.ID)
+		}
+		direct, engineHostsJSON, endpointErr := buildSandboxSupervisorEndpoints(proxyURL, r.config.AgentTelemetry.Endpoint, nil)
+		if endpointErr != nil {
+			return containerapi.InspectResponse{}, false, nil, endpointErr
+		}
+		supervisorLaunch = &dockerSupervisorLaunch{
+			Token:           token,
+			ProxyURL:        proxyURL,
+			DirectEndpoints: direct,
+			EngineHostsJSON: engineHostsJSON,
+		}
+		clone := *sandbox
+		clone.ProxyEnv = nil
+		envSource = &clone
+	}
+	env, err := r.containerEnv(ctx, envSource, proxyState)
 	if err != nil {
-		return containerapi.InspectResponse{}, false, err
+		return containerapi.InspectResponse{}, false, nil, err
+	}
+	labels := map[string]string{
+		dockerSandboxLabelID:     sandbox.Summary.ID,
+		dockerSandboxLabelDriver: RuntimeDriverDocker,
+	}
+	if supervisorMode {
+		env = append(env, sandboxSupervisorInitEnv(supervisorLaunch.EngineHostsJSON)...)
+		labels[dockerSandboxSupervisorLabel] = "true"
+	}
+	entrypoint := []string{"sh", "-lc"}
+	command := []string{cmdText}
+	if initEnabled {
+		entrypoint = []string{r.sandboxInitBinary()}
+		command = []string{"--control-socket", sandboxInitGuestSocket}
+		if cmdText != "" {
+			command = append(command, "--main-shell", cmdText)
+		}
+		labels[dockerSandboxInitLabel] = "true"
 	}
 	containerConfig := &containerapi.Config{
 		Image:        resolveSandboxGuestImage(vmState.Image, sandbox.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverDocker)),
 		WorkingDir:   r.config.GuestWorkspacePath,
 		Env:          env,
-		Entrypoint:   []string{"sh", "-lc"},
-		Cmd:          []string{cmdText},
+		Entrypoint:   entrypoint,
+		Cmd:          command,
 		ExposedPorts: exposedPorts,
-		Labels: map[string]string{
-			dockerSandboxLabelID:     sandbox.Summary.ID,
-			dockerSandboxLabelDriver: RuntimeDriverDocker,
-		},
+		Labels:       labels,
 	}
 	hostConfig := dockerSandboxHostConfig(mounts, portBindings, networkMode)
+	if initEnabled {
+		useInit := false
+		hostConfig.Init = &useInit
+		if sandboxInitEgressRequiresPtrace(r.config) {
+			// init duplicates the workload's socket with pidfd_getfd; Docker's
+			// default seccomp profile allows that syscall only with
+			// CAP_SYS_PTRACE. The trampoline drops it from the workload's
+			// bounding set before exec.
+			hostConfig.CapAdd = append(hostConfig.CapAdd, "SYS_PTRACE")
+		}
+	}
 	createResp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, name)
 	if err != nil {
-		return containerapi.InspectResponse{}, false, fmt.Errorf("create docker container for sandbox %s: %w", sandbox.Summary.ID, err)
+		return containerapi.InspectResponse{}, false, nil, fmt.Errorf("create docker container for sandbox %s: %w", sandbox.Summary.ID, err)
 	}
 	containerInfo, err := dockerClient.ContainerInspect(ctx, createResp.ID)
 	if err != nil {
-		return containerapi.InspectResponse{}, false, fmt.Errorf("inspect docker container %s: %w", createResp.ID, err)
+		return containerapi.InspectResponse{}, false, nil, fmt.Errorf("inspect docker container %s: %w", createResp.ID, err)
 	}
 	if err := r.validateCreatedDockerWorkspaceMounts(ctx, dockerClient, sandbox, containerInfo, mounts); err != nil {
-		return containerapi.InspectResponse{}, false, err
+		return containerapi.InspectResponse{}, false, nil, err
 	}
-	return containerInfo, true, nil
+	return containerInfo, true, supervisorLaunch, nil
 }
 
 func (r *dockerRuntime) validateLegacyDockerRecreate(sandbox *Sandbox, vmState VMState) error {
@@ -1222,7 +1411,11 @@ func (r *dockerRuntime) containerEnv(ctx context.Context, sandbox *Sandbox, prox
 	env["WORKSPACE"] = r.config.GuestWorkspacePath
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
+	env["LOG_ROOT"] = r.config.GuestLogRoot
 	env["JUPYTER_TOKEN"] = proxyState.Token
+	for key, value := range sandboxInitIsolationEnv(r.config) {
+		env[key] = value
+	}
 	return dockerEnvList(env), nil
 }
 

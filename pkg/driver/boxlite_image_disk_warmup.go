@@ -3,17 +3,13 @@
 package driver
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -187,141 +183,6 @@ func ociImageDigest(layers []string) string {
 		hasher.Write([]byte("sha256:" + layer))
 	}
 	return "sha256:" + hex.EncodeToString(hasher.Sum(nil))
-}
-
-func extractOCILayer(root, blob string) error {
-	file, err := os.Open(blob)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	var reader io.Reader = file
-	header := make([]byte, 2)
-	if n, _ := io.ReadFull(file, header); n == 2 && header[0] == 0x1f && header[1] == 0x8b {
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-		gz, err := gzip.NewReader(file)
-		if err != nil {
-			return err
-		}
-		defer gz.Close()
-		reader = gz
-	} else if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-
-	tarReader := tar.NewReader(reader)
-	for {
-		entry, err := tarReader.Next()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		name := path.Clean(strings.TrimPrefix(entry.Name, "./"))
-		if name == "." || name == "" {
-			continue
-		}
-		base := path.Base(name)
-		if base == ".wh..wh..opq" {
-			dir := filepath.Join(root, filepath.FromSlash(path.Dir(name)))
-			if err := clearWarmupDirectory(dir); err != nil {
-				return err
-			}
-			continue
-		}
-		if strings.HasPrefix(base, ".wh.") {
-			target := filepath.Join(root, filepath.FromSlash(path.Join(path.Dir(name), strings.TrimPrefix(base, ".wh."))))
-			if err := os.RemoveAll(target); err != nil {
-				return err
-			}
-			continue
-		}
-		target, err := safeJoin(root, name)
-		if err != nil {
-			return err
-		}
-		switch entry.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(entry.Mode)); err != nil {
-				return err
-			}
-		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(entry.Mode))
-			if err != nil {
-				return err
-			}
-			_, copyErr := io.Copy(out, tarReader)
-			closeErr := out.Close()
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-		case tar.TypeSymlink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			_ = os.RemoveAll(target)
-			if err := os.Symlink(entry.Linkname, target); err != nil {
-				return err
-			}
-		case tar.TypeLink:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			source, err := safeJoin(root, strings.TrimPrefix(entry.Linkname, "./"))
-			if err != nil {
-				return err
-			}
-			_ = os.RemoveAll(target)
-			if err := os.Link(source, target); err != nil {
-				return err
-			}
-		case tar.TypeChar, tar.TypeBlock, tar.TypeFifo:
-			// Device nodes and FIFOs are not part of the image rootfs
-			// contract; the guest runtime creates them as needed.
-			continue
-		default:
-			continue
-		}
-		_ = os.Lchown(target, entry.Uid, entry.Gid)
-		if entry.Typeflag != tar.TypeSymlink {
-			_ = os.Chmod(target, os.FileMode(entry.Mode))
-		}
-	}
-}
-
-func safeJoin(root, name string) (string, error) {
-	cleanRoot := filepath.Clean(root)
-	target := filepath.Join(cleanRoot, filepath.FromSlash(strings.TrimPrefix(name, "/")))
-	if target != cleanRoot && !strings.HasPrefix(target, cleanRoot+string(os.PathSeparator)) {
-		return "", fmt.Errorf("layer entry escapes rootfs: %s", name)
-	}
-	return target, nil
-}
-
-func clearWarmupDirectory(dir string) error {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	for _, entry := range entries {
-		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func mergeTreeSize(root string) (int64, error) {

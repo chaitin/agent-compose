@@ -16,6 +16,7 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/egress"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 )
 
 const DefaultWorkspaceUploadLimitBytes int64 = 1 << 30
@@ -98,11 +99,17 @@ type Config struct {
 	// GlobalNetworkPolicyInfo identifies the file and digest the effective
 	// daemon-wide policy was compiled from. It is zero when no policy is set.
 	GlobalNetworkPolicyInfo GlobalNetworkPolicyInfo
-	BoxliteHome             string
-	BoxliteRuntimeDir       string
-	DockerHome              string
-	DockerHostSandboxRoot   string
-	DockerDefaultImage      string
+	// EgressAuditLog is the append-only JSONL file the forward proxy writes
+	// one decision record per line to. Empty disables persistent audit.
+	EgressAuditLog string
+	// EgressL7TLS is the opt-in TLS interception configuration. Its zero value
+	// keeps the proxy on its L4 behavior.
+	EgressL7TLS           EgressL7TLSConfig
+	BoxliteHome           string
+	BoxliteRuntimeDir     string
+	DockerHome            string
+	DockerHostSandboxRoot string
+	DockerDefaultImage    string
 	// DockerSandboxNetwork is the Docker network each newly-created Docker
 	// sandbox container is attached to. Empty keeps the current behavior when
 	// the daemon is on a single non-default network: the sandbox joins the
@@ -125,7 +132,73 @@ type Config struct {
 	// address and does not verify it is reachable, so a network misconfiguration
 	// silently drops enforcement rather than reporting the declaration
 	// unenforced.
-	DockerSandboxNetwork       string
+	DockerSandboxNetwork string
+	// DockerSandboxNetworkStrict makes the configured Docker sandbox network
+	// the outer default-deny boundary for an enforcing sandbox. It is only read
+	// when SANDBOX_INIT_EGRESS=enforce; audit and off keep today's placement.
+	// In strict mode DockerSandboxNetwork must name an existing user-defined
+	// Docker network created with --internal (Internal=true), and the daemon
+	// must be reachable from it at AGENT_COMPOSE_RUNTIME_BASE_URL. The driver
+	// fails the sandbox start with a precise error instead of falling back to
+	// the daemon or default network when any of that does not hold. A sandbox
+	// created before strict mode was enabled keeps its network and is refused
+	// on reuse until it is removed and created again.
+	DockerSandboxNetworkStrict bool
+	// SandboxInitEnabled makes newly created Docker sandboxes run the
+	// agent-compose init process as PID 1 instead of docker-init plus a
+	// keepalive shell. It only affects creation; an existing container keeps
+	// the process model it was created with.
+	SandboxInitEnabled bool
+	// SandboxInitBinary is the guest path of the init binary. It is only used
+	// when SandboxInitEnabled is true.
+	SandboxInitBinary string
+	// SandboxInitSocketDir is the host runtime directory containing one
+	// <sandbox-id>/init.sock per init-enabled sandbox. It defaults to
+	// $XDG_RUNTIME_DIR/agent-compose or /run/agent-compose.
+	SandboxInitSocketDir string
+	// SandboxInitEgress selects the init process's egress observer. "off" is
+	// the default; "audit" reports workload connect calls without changing
+	// them; "enforce" is reserved for mediated egress and is rejected until it
+	// exists.
+	SandboxInitEgress string
+	// SandboxEgressProfile selects the unified experimental egress profile.
+	// "strict" turns on init, enforce, and the Docker supervisor so K8s CNI,
+	// Micro SDK, and Docker no-NIC share one policy boundary. Unlike explicit
+	// enforce mode, strict keeps an undeclared agent on an allow-all policy
+	// that is still mediated through the proxy, so enabling the profile on an
+	// existing deployment does not remove its egress.
+	SandboxEgressProfile string
+	// SandboxInitEgressAuditLog makes the daemon inject an init-side audit
+	// JSONL path under GuestLogRoot. It is opt-in because Docker and Kubernetes
+	// already capture init stderr.
+	SandboxInitEgressAuditLog bool
+	// SandboxSupervisorEnabled selects the independent Docker sandbox
+	// supervisor: the workload container is created with NetworkMode=none and
+	// reaches the daemon proxy only through a per-sandbox supervisor process
+	// and a host-mounted Unix domain socket. It requires init and
+	// SANDBOX_INIT_EGRESS=enforce; the old/default modes are untouched.
+	SandboxSupervisorEnabled bool
+	// SandboxSupervisorBinary is the host path of the ac-supervisor executable.
+	// Empty discovers it next to the daemon binary and then falls back to
+	// /app/ac-supervisor.
+	SandboxSupervisorBinary string
+	// SandboxSupervisorUID/GID optionally run ac-supervisor as a non-root host
+	// identity. Zero (the default) keeps the supervisor as root.
+	SandboxSupervisorUID int
+	SandboxSupervisorGID int
+
+	// SandboxInitLandlock selects the init process's filesystem confinement.
+	// "off" is the default; "enforce" applies a Landlock ruleset to every
+	// workload and requires a supporting guest kernel.
+	SandboxInitLandlock string
+	// SandboxInitLandlockFallback decides what init does when Landlock is
+	// requested but unavailable: "fail" (the default) refuses to start
+	// workloads unconfined; "warn" starts them and reports the degradation.
+	SandboxInitLandlockFallback string
+	// SandboxInitWorkloadUID/GID optionally run workload processes as a
+	// non-root numeric identity. Zero keeps the historical root workload.
+	SandboxInitWorkloadUID     int
+	SandboxInitWorkloadGID     int
 	MicrosandboxHome           string
 	MicrosandboxMSBPath        string
 	MicrosandboxLibPath        string
@@ -223,6 +296,7 @@ type configSources struct {
 	LLM              llmEnvConfig
 	Timeouts         runtimeTimeoutsConfig
 	Drivers          driverHomesConfig
+	SandboxInit      sandboxInitConfig
 	Images           imageEnvConfig
 	Resources        sandboxResourceConfig
 	Cleanup          cleanupConfigValues
@@ -234,6 +308,8 @@ type configSources struct {
 	EgressEnforce    EgressUnenforceablePolicy
 	GlobalPolicy     *egress.NetworkDeclaration
 	GlobalPolicyInfo GlobalNetworkPolicyInfo
+	EgressAuditLog   string
+	EgressL7TLS      EgressL7TLSConfig
 }
 
 func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, error) {
@@ -254,6 +330,10 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		return configSources{}, err
 	}
 	drivers, err := loadDriverHomesConfig(logger, dataRoot)
+	if err != nil {
+		return configSources{}, err
+	}
+	sandboxInit, err := loadSandboxInitConfig()
 	if err != nil {
 		return configSources{}, err
 	}
@@ -292,6 +372,17 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 	if err != nil {
 		return configSources{}, err
 	}
+	egressAuditLog, err := loadEgressAuditLogPath()
+	if err != nil {
+		return configSources{}, err
+	}
+	egressL7TLS, err := loadEgressL7TLSConfig()
+	if err != nil {
+		return configSources{}, err
+	}
+	if egressL7TLS.MITM && !egressL7TLS.ConfiguredCA() {
+		logger.Warn("egress L7 TLS interception is enabled without a configured CA; an ephemeral CA will be generated, so a sandbox cannot trust it across a daemon restart")
+	}
 	if globalPolicyInfo.Path != "" {
 		// Name the exact bytes in the startup log as well as the admission
 		// report, so a daemon restart is auditable even before a project is
@@ -307,6 +398,7 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		LLM:              loadLLMEnvConfig(logger),
 		Timeouts:         loadRuntimeTimeoutsConfig(logger),
 		Drivers:          drivers,
+		SandboxInit:      sandboxInit,
 		Images:           images,
 		Resources:        resources,
 		Cleanup:          cleanup,
@@ -318,6 +410,8 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		EgressEnforce:    egressEnforce,
 		GlobalPolicy:     globalPolicy,
 		GlobalPolicyInfo: globalPolicyInfo,
+		EgressAuditLog:   egressAuditLog,
+		EgressL7TLS:      egressL7TLS,
 	}, nil
 }
 
@@ -345,90 +439,108 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 	images, resources, cleanup := sources.Images, sources.Resources, sources.Cleanup
 	guestPaths, sandboxTimeouts, httpLimits := sources.GuestPaths, sources.SandboxTimeouts, sources.HTTPLimits
 	return &Config{
-		AgentTelemetry:             sources.AgentTelemetry,
-		DbAddr:                     database.DbAddr,
-		DbName:                     database.DbName,
-		DbTimeout:                  database.DbTimeout,
-		SQLiteMaxOpenConns:         database.SQLiteMaxOpenConns,
-		DataRoot:                   normalized.DataRoot,
-		SandboxRoot:                normalized.SandboxRoot,
-		SandboxRootExplicit:        sandbox.Explicit,
-		HttpListen:                 daemonHTTP.HttpListen,
-		DaemonAuthToken:            daemonHTTP.DaemonAuthToken,
-		AgentComposeSocket:         daemonHTTP.AgentComposeSocket,
-		AgentComposeHost:           daemonHTTP.AgentComposeHost,
-		SandboxHostSocket:          daemonHTTP.SandboxHostSocket,
-		SandboxHostMode:            daemonHTTP.SandboxHostMode,
-		WebhookBodyLimitBytes:      httpLimits.WebhookBodyLimitBytes,
-		WebhookQueueRulesJSON:      httpLimits.WebhookQueueRulesJSON,
-		WebhookQueueDefaultWorkers: httpLimits.WebhookQueueDefaultWorkers,
-		WorkspaceUploadLimitBytes:  httpLimits.WorkspaceUploadLimitBytes,
-		LLMAPIEndpoint:             llm.LLMAPIEndpoint,
-		LLMAPIProtocol:             llm.LLMAPIProtocol,
-		LLMAPIKey:                  llm.LLMAPIKey,
-		LLMModel:                   llm.LLMModel,
-		LLMTimeout:                 llm.LLMTimeout,
-		LLMMaxOutputTokens:         llm.LLMMaxOutputTokens,
-		LLMUpstreamProbe:           llm.LLMUpstreamProbe,
-		LLMProbeTimeout:            llm.LLMProbeTimeout,
-		CodexRequestMaxRetries:     llm.CodexRequestMaxRetries,
-		CodexStreamMaxRetries:      llm.CodexStreamMaxRetries,
-		CodexStreamIdleTimeout:     llm.CodexStreamIdleTimeout,
-		RuntimeBaseURL:             llm.RuntimeBaseURL,
-		AgentTimeout:               timeouts.AgentTimeout,
-		SchedulerRunTimeout:        timeouts.SchedulerRunTimeout,
-		EventDeliveryScope:         sources.EventDelivery,
-		RuntimeDriver:              drivers.RuntimeDriver,
-		EgressUnenforceablePolicy:  sources.EgressEnforce,
-		GlobalNetworkPolicy:        sources.GlobalPolicy,
-		GlobalNetworkPolicyInfo:    sources.GlobalPolicyInfo,
-		BoxliteHome:                normalized.BoxliteHome,
-		BoxliteRuntimeDir:          normalized.BoxliteRuntimeDir,
-		DockerHome:                 normalized.DockerHome,
-		DockerHostSandboxRoot:      normalized.DockerHostSandboxRoot,
-		DockerSandboxNetwork:       drivers.DockerSandboxNetwork,
-		DockerDefaultImage:         images.DockerDefaultImage,
-		MicrosandboxHome:           normalized.MicrosandboxHome,
-		MicrosandboxMSBPath:        normalized.MicrosandboxMSBPath,
-		MicrosandboxLibPath:        normalized.MicrosandboxLibPath,
-		MicrosandboxDefaultImage:   images.MicrosandboxDefaultImage,
-		MicrosandboxInsecure:       images.MicrosandboxInsecure,
-		K8sHome:                    normalized.K8sHome,
-		K8sKubeconfigPath:          drivers.K8sKubeconfigPath,
-		K8sNamespace:               drivers.K8sNamespace,
-		K8sDefaultImage:            images.K8sDefaultImage,
-		K8sRuntimeBaseURL:          drivers.K8sRuntimeBaseURL,
-		DefaultImage:               images.DefaultImage,
-		BoxRootfsPath:              normalized.BoxRootfsPath,
-		ImageRegistry:              images.ImageRegistry,
-		ImageStoreMode:             images.ImageStoreMode,
-		ImageCacheRoot:             normalized.ImageCacheRoot,
-		ImageInsecureRegistries:    images.ImageInsecureRegistries,
-		SandboxCPUs:                resources.SandboxCPUs,
-		SandboxMemoryMiB:           resources.SandboxMemoryMiB,
-		SandboxDiskSizeGB:          resources.SandboxDiskSizeGB,
-		CacheTTL:                   resources.CacheTTL,
-		CleanupInterval:            cleanup.CleanupInterval,
-		WorkspaceCleanupTTL:        cleanup.WorkspaceCleanupTTL,
-		SandboxRetentionTTL:        cleanup.SandboxRetentionTTL,
-		SandboxArchiveRoot:         normalized.SandboxArchiveRoot,
-		ImageCacheCleanupTTL:       cleanup.ImageCacheCleanupTTL,
-		ImagePullTimeout:           timeouts.ImagePullTimeout,
-		GuestWorkspacePath:         guestPaths.GuestWorkspacePath,
-		GuestHomePath:              guestPaths.GuestHomePath,
-		GuestStateRoot:             guestPaths.GuestStateRoot,
-		GuestRuntimeRoot:           guestPaths.GuestRuntimeRoot,
-		GuestLogRoot:               guestPaths.GuestLogRoot,
-		GuestAbiManifestPath:       sources.GuestABI,
-		JupyterGuestPort:           sandboxTimeouts.JupyterGuestPort,
-		SandboxStartTimeout:        sandboxTimeouts.StartTimeout,
-		SandboxStopTimeout:         sandboxTimeouts.StopTimeout,
-		SandboxGracefulStopTimeout: sandboxTimeouts.GracefulStopTimeout,
-		JupyterReadyTimeout:        sandboxTimeouts.JupyterReadyTimeout,
-		JupyterProxyBasePath:       sandboxTimeouts.JupyterProxyBase,
-		CapGRPCListen:              strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
-		CapGRPCTarget:              strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
-		Version:                    BuildVersion,
+
+		AgentTelemetry:              sources.AgentTelemetry,
+		DbAddr:                      database.DbAddr,
+		DbName:                      database.DbName,
+		DbTimeout:                   database.DbTimeout,
+		SQLiteMaxOpenConns:          database.SQLiteMaxOpenConns,
+		DataRoot:                    normalized.DataRoot,
+		SandboxRoot:                 normalized.SandboxRoot,
+		SandboxRootExplicit:         sandbox.Explicit,
+		HttpListen:                  daemonHTTP.HttpListen,
+		DaemonAuthToken:             daemonHTTP.DaemonAuthToken,
+		AgentComposeSocket:          daemonHTTP.AgentComposeSocket,
+		AgentComposeHost:            daemonHTTP.AgentComposeHost,
+		SandboxHostSocket:           daemonHTTP.SandboxHostSocket,
+		SandboxHostMode:             daemonHTTP.SandboxHostMode,
+		WebhookBodyLimitBytes:       httpLimits.WebhookBodyLimitBytes,
+		WebhookQueueRulesJSON:       httpLimits.WebhookQueueRulesJSON,
+		WebhookQueueDefaultWorkers:  httpLimits.WebhookQueueDefaultWorkers,
+		WorkspaceUploadLimitBytes:   httpLimits.WorkspaceUploadLimitBytes,
+		LLMAPIEndpoint:              llm.LLMAPIEndpoint,
+		LLMAPIProtocol:              llm.LLMAPIProtocol,
+		LLMAPIKey:                   llm.LLMAPIKey,
+		LLMModel:                    llm.LLMModel,
+		LLMTimeout:                  llm.LLMTimeout,
+		LLMMaxOutputTokens:          llm.LLMMaxOutputTokens,
+		LLMUpstreamProbe:            llm.LLMUpstreamProbe,
+		LLMProbeTimeout:             llm.LLMProbeTimeout,
+		CodexRequestMaxRetries:      llm.CodexRequestMaxRetries,
+		CodexStreamMaxRetries:       llm.CodexStreamMaxRetries,
+		CodexStreamIdleTimeout:      llm.CodexStreamIdleTimeout,
+		RuntimeBaseURL:              llm.RuntimeBaseURL,
+		AgentTimeout:                timeouts.AgentTimeout,
+		SchedulerRunTimeout:         timeouts.SchedulerRunTimeout,
+		EventDeliveryScope:          sources.EventDelivery,
+		RuntimeDriver:               drivers.RuntimeDriver,
+		EgressUnenforceablePolicy:   sources.EgressEnforce,
+		GlobalNetworkPolicy:         sources.GlobalPolicy,
+		GlobalNetworkPolicyInfo:     sources.GlobalPolicyInfo,
+		EgressAuditLog:              sources.EgressAuditLog,
+		EgressL7TLS:                 sources.EgressL7TLS,
+		BoxliteHome:                 normalized.BoxliteHome,
+		BoxliteRuntimeDir:           normalized.BoxliteRuntimeDir,
+		DockerHome:                  normalized.DockerHome,
+		DockerHostSandboxRoot:       normalized.DockerHostSandboxRoot,
+		DockerSandboxNetwork:        drivers.DockerSandboxNetwork,
+		DockerSandboxNetworkStrict:  drivers.DockerSandboxNetworkStrict,
+		SandboxInitEnabled:          sources.SandboxInit.Enabled,
+		SandboxInitBinary:           sources.SandboxInit.Binary,
+		SandboxInitSocketDir:        sources.SandboxInit.SocketDir,
+		SandboxInitEgress:           string(sources.SandboxInit.Egress),
+		SandboxEgressProfile:        string(sources.SandboxInit.EgressProfile),
+		SandboxInitEgressAuditLog:   sources.SandboxInit.EgressAuditLog,
+		SandboxSupervisorEnabled:    sources.SandboxInit.Supervisor,
+		SandboxSupervisorBinary:     sources.SandboxInit.SupervisorBinary,
+		SandboxSupervisorUID:        sources.SandboxInit.SupervisorUID,
+		SandboxSupervisorGID:        sources.SandboxInit.SupervisorGID,
+		SandboxInitLandlock:         string(sources.SandboxInit.Landlock),
+		SandboxInitLandlockFallback: string(sources.SandboxInit.LandlockFallback),
+		SandboxInitWorkloadUID:      sources.SandboxInit.WorkloadUID,
+		SandboxInitWorkloadGID:      sources.SandboxInit.WorkloadGID,
+		DockerDefaultImage:          images.DockerDefaultImage,
+		MicrosandboxHome:            normalized.MicrosandboxHome,
+		MicrosandboxMSBPath:         normalized.MicrosandboxMSBPath,
+		MicrosandboxLibPath:         normalized.MicrosandboxLibPath,
+		MicrosandboxDefaultImage:    images.MicrosandboxDefaultImage,
+		MicrosandboxInsecure:        images.MicrosandboxInsecure,
+		K8sHome:                     normalized.K8sHome,
+		K8sKubeconfigPath:           drivers.K8sKubeconfigPath,
+		K8sNamespace:                drivers.K8sNamespace,
+		K8sDefaultImage:             images.K8sDefaultImage,
+		K8sRuntimeBaseURL:           drivers.K8sRuntimeBaseURL,
+		DefaultImage:                images.DefaultImage,
+		BoxRootfsPath:               normalized.BoxRootfsPath,
+		ImageRegistry:               images.ImageRegistry,
+		ImageStoreMode:              images.ImageStoreMode,
+		ImageCacheRoot:              normalized.ImageCacheRoot,
+		ImageInsecureRegistries:     images.ImageInsecureRegistries,
+		SandboxCPUs:                 resources.SandboxCPUs,
+		SandboxMemoryMiB:            resources.SandboxMemoryMiB,
+		SandboxDiskSizeGB:           resources.SandboxDiskSizeGB,
+		CacheTTL:                    resources.CacheTTL,
+		CleanupInterval:             cleanup.CleanupInterval,
+		WorkspaceCleanupTTL:         cleanup.WorkspaceCleanupTTL,
+		SandboxRetentionTTL:         cleanup.SandboxRetentionTTL,
+		SandboxArchiveRoot:          normalized.SandboxArchiveRoot,
+		ImageCacheCleanupTTL:        cleanup.ImageCacheCleanupTTL,
+		ImagePullTimeout:            timeouts.ImagePullTimeout,
+		GuestWorkspacePath:          guestPaths.GuestWorkspacePath,
+		GuestHomePath:               guestPaths.GuestHomePath,
+		GuestStateRoot:              guestPaths.GuestStateRoot,
+		GuestRuntimeRoot:            guestPaths.GuestRuntimeRoot,
+		GuestLogRoot:                guestPaths.GuestLogRoot,
+		GuestAbiManifestPath:        sources.GuestABI,
+		JupyterGuestPort:            sandboxTimeouts.JupyterGuestPort,
+		SandboxStartTimeout:         sandboxTimeouts.StartTimeout,
+		SandboxStopTimeout:          sandboxTimeouts.StopTimeout,
+		SandboxGracefulStopTimeout:  sandboxTimeouts.GracefulStopTimeout,
+		JupyterReadyTimeout:         sandboxTimeouts.JupyterReadyTimeout,
+		JupyterProxyBasePath:        sandboxTimeouts.JupyterProxyBase,
+		CapGRPCListen:               strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
+		CapGRPCTarget:               strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
+		Version:                     BuildVersion,
 
 		MicrosandboxDNSRebindProtection: drivers.MicrosandboxDNSRebindProtection,
 	}
@@ -676,19 +788,20 @@ func loadRuntimeTimeoutsConfig(logger *slog.Logger) runtimeTimeoutsConfig {
 // driverHomesConfig holds the selected runtime driver and each backend's
 // home/lib paths before path normalization.
 type driverHomesConfig struct {
-	RuntimeDriver         string
-	BoxliteHome           string
-	BoxliteRuntimeDir     string
-	DockerHome            string
-	DockerHostSandboxRoot string
-	DockerSandboxNetwork  string
-	MicrosandboxHome      string
-	MicrosandboxMSBPath   string
-	MicrosandboxLibPath   string
-	K8sHome               string
-	K8sKubeconfigPath     string
-	K8sNamespace          string
-	K8sRuntimeBaseURL     string
+	RuntimeDriver              string
+	BoxliteHome                string
+	BoxliteRuntimeDir          string
+	DockerHome                 string
+	DockerHostSandboxRoot      string
+	DockerSandboxNetwork       string
+	DockerSandboxNetworkStrict bool
+	MicrosandboxHome           string
+	MicrosandboxMSBPath        string
+	MicrosandboxLibPath        string
+	K8sHome                    string
+	K8sKubeconfigPath          string
+	K8sNamespace               string
+	K8sRuntimeBaseURL          string
 
 	// MicrosandboxDNSRebindProtection is the daemon-level default for the
 	// in-VM DNS rebind protection.
@@ -727,7 +840,11 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	// joining the daemon's own network. It is trimmed, not normalized: the value
 	// is a Docker network name, not a path. The sandbox-network overlay injects
 	// it, so operators normally leave it unset and only select the overlay.
-	dockerSandboxNetwork := strings.TrimSpace(os.Getenv("DOCKER_SANDBOX_NETWORK"))
+	dockerSandboxNetwork := strings.TrimSpace(os.Getenv(DockerSandboxNetworkEnvName))
+	dockerSandboxNetworkStrict, err := loadDockerSandboxNetworkStrict()
+	if err != nil {
+		return driverHomesConfig{}, err
+	}
 
 	microsandboxHome := getenvFirst("MICROSANDBOX_HOME", "MSB_HOME")
 	if microsandboxHome == "" {
@@ -778,19 +895,20 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	k8sRuntimeBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("K8S_RUNTIME_BASE_URL")), "/")
 
 	return driverHomesConfig{
-		RuntimeDriver:         runtimeDriver,
-		BoxliteHome:           boxliteHome,
-		BoxliteRuntimeDir:     boxliteRuntimeDir,
-		DockerHome:            dockerHome,
-		DockerHostSandboxRoot: dockerHostSandboxRoot,
-		DockerSandboxNetwork:  dockerSandboxNetwork,
-		MicrosandboxHome:      microsandboxHome,
-		K8sRuntimeBaseURL:     k8sRuntimeBaseURL,
-		MicrosandboxMSBPath:   microsandboxMSBPath,
-		MicrosandboxLibPath:   microsandboxLibPath,
-		K8sHome:               k8sHome,
-		K8sKubeconfigPath:     k8sKubeconfigPath,
-		K8sNamespace:          k8sNamespace,
+		RuntimeDriver:              runtimeDriver,
+		BoxliteHome:                boxliteHome,
+		BoxliteRuntimeDir:          boxliteRuntimeDir,
+		DockerHome:                 dockerHome,
+		DockerHostSandboxRoot:      dockerHostSandboxRoot,
+		DockerSandboxNetwork:       dockerSandboxNetwork,
+		DockerSandboxNetworkStrict: dockerSandboxNetworkStrict,
+		MicrosandboxHome:           microsandboxHome,
+		K8sRuntimeBaseURL:          k8sRuntimeBaseURL,
+		MicrosandboxMSBPath:        microsandboxMSBPath,
+		MicrosandboxLibPath:        microsandboxLibPath,
+		K8sHome:                    k8sHome,
+		K8sKubeconfigPath:          k8sKubeconfigPath,
+		K8sNamespace:               k8sNamespace,
 
 		MicrosandboxDNSRebindProtection: microsandboxDNSRebindProtection,
 	}, nil
@@ -827,6 +945,210 @@ type imageEnvConfig struct {
 	ImageStoreMode           string
 	ImageCacheRoot           string
 	ImageInsecureRegistries  []string
+}
+
+// sandboxInitConfig holds the experimental sandbox init switch.
+type sandboxInitConfig struct {
+	Enabled       bool
+	Binary        string
+	SocketDir     string
+	Egress        sandboxinit.EgressMode
+	EgressProfile string
+	// EgressAuditLog makes the daemon inject the guest path of an init-side
+	// JSONL audit sink. It is opt-in because Docker and Kubernetes already
+	// capture init stderr; the file is an additional, queryable copy.
+	EgressAuditLog   bool
+	Landlock         sandboxinit.LandlockMode
+	LandlockFallback sandboxinit.LandlockFallback
+	WorkloadUID      int
+	WorkloadGID      int
+	Supervisor       bool
+	SupervisorBinary string
+	SupervisorUID    int
+	SupervisorGID    int
+}
+
+// DefaultSandboxInitBinary is the guest path shipped by the guest image. A
+// deployment that mounts the binary elsewhere sets SANDBOX_INIT_BINARY.
+const DefaultSandboxInitBinary = "/.agent-compose/ac-init"
+
+// MaxSandboxInitSocketPathLength is the longest Linux sun_path this project
+// accepts for a control socket (sun_path itself is 108 bytes including the
+// trailing NUL; 100 leaves room for a future hash/alias suffix).
+const MaxSandboxInitSocketPathLength = 100
+
+// sandboxIDHexLength is the length of the SHA-256 hex sandbox IDs the daemon
+// generates. Startup validation uses it to reject a runtime root that cannot
+// hold the longest possible socket before any sandbox is created.
+const sandboxIDHexLength = 64
+
+func loadSandboxInitConfig() (sandboxInitConfig, error) {
+	config := sandboxInitConfig{Binary: DefaultSandboxInitBinary}
+	raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_ENABLED"))
+	if raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_ENABLED must be true or false: %w", err)
+		}
+		config.Enabled = enabled
+	}
+	if binary := strings.TrimSpace(os.Getenv("SANDBOX_INIT_BINARY")); binary != "" {
+		config.Binary = binary
+	}
+	profile := strings.ToLower(strings.TrimSpace(os.Getenv("SANDBOX_EGRESS_PROFILE")))
+	switch profile {
+	case "", "off":
+		config.EgressProfile = ""
+	case "strict":
+		if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_ENABLED")); raw != "" {
+			if enabled, err := strconv.ParseBool(raw); err == nil && !enabled {
+				return sandboxInitConfig{}, fmt.Errorf("SANDBOX_EGRESS_PROFILE=strict requires SANDBOX_INIT_ENABLED=true")
+			}
+		}
+		config.Enabled = true
+		config.EgressProfile = "strict"
+	default:
+		return sandboxInitConfig{}, fmt.Errorf("SANDBOX_EGRESS_PROFILE must be off or strict, got %q", profile)
+	}
+	egressMode, err := sandboxinit.ParseEgressMode(os.Getenv(sandboxinit.EgressModeEnvVar))
+	if err != nil {
+		return sandboxInitConfig{}, err
+	}
+	config.Egress = egressMode
+	if config.EgressProfile == "strict" {
+		if rawEgress := strings.TrimSpace(os.Getenv(sandboxinit.EgressModeEnvVar)); rawEgress != "" && egressMode != sandboxinit.EgressModeEnforce {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_EGRESS_PROFILE=strict requires %s=enforce, got %q", sandboxinit.EgressModeEnvVar, rawEgress)
+		}
+		config.Egress = sandboxinit.EgressModeEnforce
+	}
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_EGRESS_AUDIT_LOG")); raw != "" {
+		enabled, err := strconv.ParseBool(raw)
+		if err != nil {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_EGRESS_AUDIT_LOG must be true or false: %w", err)
+		}
+		config.EgressAuditLog = enabled
+	}
+	if config.EgressAuditLog && config.Egress == sandboxinit.EgressModeOff {
+		return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_EGRESS_AUDIT_LOG requires %s=audit or enforce, got off", sandboxinit.EgressModeEnvVar)
+	}
+
+	landlockMode, err := sandboxinit.ParseLandlockMode(os.Getenv(sandboxinit.LandlockModeEnvVar))
+	if err != nil {
+		return sandboxInitConfig{}, err
+	}
+	config.Landlock = landlockMode
+	landlockFallback, err := sandboxinit.ParseLandlockFallback(os.Getenv(sandboxinit.LandlockFallbackEnvVar))
+	if err != nil {
+		return sandboxInitConfig{}, err
+	}
+	config.LandlockFallback = landlockFallback
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_WORKLOAD_UID")); raw != "" {
+		uid, err := strconv.Atoi(raw)
+		if err != nil || uid < 1 || uid > 65535 {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_WORKLOAD_UID must be a uid between 1 and 65535, got %q", raw)
+		}
+		config.WorkloadUID = uid
+	}
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_INIT_WORKLOAD_GID")); raw != "" {
+		gid, err := strconv.Atoi(raw)
+		if err != nil || gid < 1 || gid > 65535 {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_WORKLOAD_GID must be a gid between 1 and 65535, got %q", raw)
+		}
+		config.WorkloadGID = gid
+	}
+	if (config.WorkloadUID == 0) != (config.WorkloadGID == 0) {
+		return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_WORKLOAD_UID and SANDBOX_INIT_WORKLOAD_GID must be set together")
+	}
+
+	socketDir := strings.TrimSpace(os.Getenv("SANDBOX_INIT_SOCKET_DIR"))
+	if socketDir == "" {
+		socketDir = defaultSandboxInitSocketDir()
+	}
+	if config.Enabled {
+		if !filepath.IsAbs(config.Binary) {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_BINARY must be an absolute guest path, got %q", config.Binary)
+		}
+		if !filepath.IsAbs(socketDir) {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_SOCKET_DIR must be an absolute host path, got %q", socketDir)
+		}
+		worstCaseSocket := filepath.Join(socketDir, strings.Repeat("0", sandboxIDHexLength), "init.sock")
+		if len(worstCaseSocket) > MaxSandboxInitSocketPathLength {
+			return sandboxInitConfig{}, fmt.Errorf("SANDBOX_INIT_SOCKET_DIR is too long: the longest sandbox socket %q is %d bytes (limit %d); set a shorter runtime directory", worstCaseSocket, len(worstCaseSocket), MaxSandboxInitSocketPathLength)
+		}
+	}
+	config.SocketDir = socketDir
+	if err := loadSandboxSupervisorConfig(&config, config.EgressProfile == "strict"); err != nil {
+		return sandboxInitConfig{}, err
+	}
+	return config, nil
+}
+
+// loadSandboxSupervisorConfig parses the independent-supervisor switch. The
+// mode is only meaningful together with init and init-mediated egress: a
+// workload with no external interface and no relay is not a sandbox, it is a
+// broken one, so a partial configuration is rejected at startup instead of
+// discovered when the first connection fails.
+func loadSandboxSupervisorConfig(config *sandboxInitConfig, strictProfile bool) error {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR")))
+	switch raw {
+	case "", "off", "false", "0":
+		config.Supervisor = false
+	case "enforce", "true", "1":
+		config.Supervisor = true
+	default:
+		return fmt.Errorf("SANDBOX_SUPERVISOR must be off or enforce, got %q", raw)
+	}
+	if strictProfile {
+		if raw == "off" || raw == "false" || raw == "0" {
+			return fmt.Errorf("SANDBOX_EGRESS_PROFILE=strict conflicts with SANDBOX_SUPERVISOR=%s", raw)
+		}
+		config.Supervisor = true
+	}
+	config.SupervisorBinary = strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR_BINARY"))
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR_UID")); raw != "" {
+		uid, err := strconv.Atoi(raw)
+		if err != nil || uid < 1 || uid > 65535 {
+			return fmt.Errorf("SANDBOX_SUPERVISOR_UID must be a uid between 1 and 65535, got %q", raw)
+		}
+		config.SupervisorUID = uid
+	}
+	if raw := strings.TrimSpace(os.Getenv("SANDBOX_SUPERVISOR_GID")); raw != "" {
+		gid, err := strconv.Atoi(raw)
+		if err != nil || gid < 1 || gid > 65535 {
+			return fmt.Errorf("SANDBOX_SUPERVISOR_GID must be a gid between 1 and 65535, got %q", raw)
+		}
+		config.SupervisorGID = gid
+	}
+	if (config.SupervisorUID == 0) != (config.SupervisorGID == 0) {
+		return fmt.Errorf("SANDBOX_SUPERVISOR_UID and SANDBOX_SUPERVISOR_GID must be set together")
+	}
+	if config.SupervisorBinary != "" && !filepath.IsAbs(config.SupervisorBinary) {
+		return fmt.Errorf("SANDBOX_SUPERVISOR_BINARY must be an absolute host path, got %q", config.SupervisorBinary)
+	}
+	if !config.Supervisor {
+		if config.SupervisorBinary != "" {
+			return fmt.Errorf("SANDBOX_SUPERVISOR_BINARY requires SANDBOX_SUPERVISOR=enforce")
+		}
+		return nil
+	}
+	if !config.Enabled {
+		return fmt.Errorf("SANDBOX_SUPERVISOR=enforce requires SANDBOX_INIT_ENABLED=true")
+	}
+	if config.Egress != sandboxinit.EgressModeEnforce {
+		return fmt.Errorf("SANDBOX_SUPERVISOR=enforce requires %s=enforce, got %q", sandboxinit.EgressModeEnvVar, config.Egress)
+	}
+	return nil
+}
+
+// defaultSandboxInitSocketDir follows the Linux runtime-state convention:
+// $XDG_RUNTIME_DIR when the daemon has a user session, /run otherwise. A
+// containerized daemon overrides it with a path under DATA_ROOT because its own
+// /run is not the Docker Engine host's /run.
+func defaultSandboxInitSocketDir() string {
+	if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {
+		return filepath.Join(runtimeDir, "agent-compose")
+	}
+	return "/run/agent-compose"
 }
 
 func loadImageEnvConfig(dataRoot string) (imageEnvConfig, error) {

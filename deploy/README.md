@@ -155,6 +155,27 @@ An explicit network must be user-defined (the `host`/`none`/`bridge`/`default`
 built-ins are rejected) and, when the daemon is containerized, must be attached
 to the daemon, or sandbox creation fails closed.
 
+The overlay also defines `agent-compose-sandbox-strict`, a user-defined internal
+network, and attaches the daemon to it. For the strict outer default-deny
+profile, set in `.env` while `SANDBOX_INIT_EGRESS=enforce`:
+
+```text
+DOCKER_SANDBOX_NETWORK=agent-compose-sandbox-strict
+DOCKER_SANDBOX_NETWORK_STRICT=true
+```
+
+Each new sandbox then joins only that internal network, so every process in the
+container (including one started outside sandbox init, such as `docker exec`)
+is denied off-network egress. Strict start requires the network to exist with
+`Internal=true`, requires a containerized daemon attached to it, and requires
+`AGENT_COMPOSE_RUNTIME_BASE_URL` to name the daemon there (the overlay's
+`agent-compose` alias works); otherwise the start fails closed rather than
+falling back. The switch is inert in audit/off mode. Sandboxes created before
+strict mode was enabled keep their old network and must be removed and created
+again. The profile admits the daemon endpoints on the network, the host bridge
+gateway, and other containers on the network; Docker's embedded DNS still
+answers queries, so the deny is on routed destinations, not names.
+
 ## Uninstall
 
 Ordinary uninstall stops the Compose project and removes installer-managed

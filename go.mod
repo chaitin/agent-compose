@@ -8,6 +8,7 @@ require (
 	github.com/chaitin/ai-api-protocol-bridge v1.2.1-0.20261014111939-58ae8a3baf41
 	github.com/chzyer/readline v1.5.1
 	github.com/containerd/errdefs v1.0.0
+	github.com/creack/pty v1.1.18
 	github.com/distribution/reference v0.6.0
 	github.com/docker/docker v28.5.1+incompatible
 	github.com/docker/go-connections v0.7.0

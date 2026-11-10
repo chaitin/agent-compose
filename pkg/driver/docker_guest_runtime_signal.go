@@ -26,6 +26,17 @@ func (r *dockerRuntime) SignalGuestRuntime(ctx context.Context, sandbox *Sandbox
 	if !ok || containerInfo.State == nil || !containerInfo.State.Running {
 		return ErrGuestRuntimeGone
 	}
+	if dockerSandboxUsesInit(containerInfo) {
+		result, err := r.initExecWithStream(ctx, sandbox, ExecSpec{
+			Command: command[0],
+			Args:    append([]string(nil), command[1:]...),
+			Cwd:     "/",
+		}, nil)
+		if err != nil {
+			return err
+		}
+		return guestRuntimeSignalExitError(result.ExitCode)
+	}
 	control, err := dockerClient.ContainerExecCreate(ctx, containerInfo.ID, containerapi.ExecOptions{
 		AttachStdout: true,
 		AttachStderr: true,

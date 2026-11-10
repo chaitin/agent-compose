@@ -3,6 +3,7 @@ package egress
 import (
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 )
 
@@ -89,6 +90,21 @@ func restrictAllowances(inner, outer []AllowEntry) ([]AllowEntry, error) {
 			return nil, fmt.Errorf("agent allow entry %q port %d: %w", entry.Host, entry.Port, err)
 		}
 		effective.AllowedIPs = allowedIPs
+		binaries, err := intersectBinaries(entry.Binaries, covered.Binaries)
+		if err != nil {
+			return nil, fmt.Errorf("agent allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		effective.Binaries = binaries
+		// Audit is an observation mode, so a layer that enforces the same
+		// allowance keeps the effective entry enforced: the stricter layer wins
+		// exactly as it does for the destination itself. Both layers omitting
+		// the field stay omitted, which is the default-enforce zero value.
+		switch {
+		case normalizeEnforcement(entry.Enforcement) == EnforcementAudit && normalizeEnforcement(covered.Enforcement) == EnforcementAudit:
+			effective.Enforcement = EnforcementAudit
+		case entry.Enforcement != "" || covered.Enforcement != "":
+			effective.Enforcement = EnforcementEnforce
+		}
 		result = append(result, effective)
 	}
 	return result, nil
@@ -106,6 +122,9 @@ func coveringAllowance(inner AllowEntry, outer []AllowEntry) (AllowEntry, bool) 
 			continue
 		}
 		if !allowedIPsNarrower(inner.AllowedIPs, candidate.AllowedIPs) {
+			continue
+		}
+		if !binariesNarrower(inner.Binaries, candidate.Binaries) {
 			continue
 		}
 		return candidate, true
@@ -207,6 +226,41 @@ func cidrsSubset(inner, outer []string) bool {
 	return true
 }
 
+// binariesNarrower reports whether the inner executable scope can be layered
+// under the outer one. An empty outer scope constrains nothing, while an empty
+// inner scope means every executable and is therefore not narrower than a
+// non-empty outer scope.
+func binariesNarrower(inner, outer []string) bool {
+	if len(outer) == 0 {
+		return true
+	}
+	if len(inner) == 0 {
+		return false
+	}
+	for _, binary := range inner {
+		if !slices.Contains(outer, binary) {
+			return false
+		}
+	}
+	return true
+}
+
+// intersectBinaries returns the tighter executable scope. When the outer layer
+// has no scope the inner one is kept; when it does, an unscoped inner entry
+// inherits it so the effective entry cannot widen the daemon bound.
+func intersectBinaries(inner, outer []string) ([]string, error) {
+	if len(outer) == 0 {
+		return append([]string(nil), inner...), nil
+	}
+	if len(inner) == 0 {
+		return append([]string(nil), outer...), nil
+	}
+	if !binariesNarrower(inner, outer) {
+		return nil, fmt.Errorf("binaries is outside the daemon network policy")
+	}
+	return append([]string(nil), inner...), nil
+}
+
 func cloneNetworkDeclaration(declaration *NetworkDeclaration) *NetworkDeclaration {
 	if declaration == nil {
 		return nil
@@ -232,6 +286,7 @@ func cloneAllowEntries(entries []AllowEntry) []AllowEntry {
 
 func cloneAllowEntry(entry AllowEntry) AllowEntry {
 	entry.AllowedIPs = append([]string(nil), entry.AllowedIPs...)
+	entry.Binaries = append([]string(nil), entry.Binaries...)
 	return entry
 }
 
@@ -239,23 +294,54 @@ func cloneAllowEntry(entry AllowEntry) AllowEntry {
 // same endpoint. A duplicate would otherwise reach the driver boundary, which
 // rejects duplicate denials as an ambiguous declaration and prevents the
 // sandbox from starting even though the effective policy is unambiguous.
+//
+// A denial may also be scoped to declared executables. Two layers that deny the
+// same endpoint under different scopes are both effective, so their scopes are
+// unioned rather than one entry being dropped; an unscoped denial on either
+// layer refuses every binary and therefore makes the merged entry unscoped.
 func mergeDenyEntries(outer, inner []DenyEntry) []DenyEntry {
 	if len(outer) == 0 && len(inner) == 0 {
 		return nil
 	}
 	merged := make([]DenyEntry, 0, len(outer)+len(inner))
-	seen := make(map[string]struct{}, len(outer)+len(inner))
+	index := make(map[string]int, len(outer)+len(inner))
 	for _, entries := range [][]DenyEntry{outer, inner} {
 		for _, entry := range entries {
 			key := denyEntryKey(entry)
-			if _, duplicate := seen[key]; duplicate {
+			position, duplicate := index[key]
+			if !duplicate {
+				index[key] = len(merged)
+				merged = append(merged, cloneDenyEntry(entry))
 				continue
 			}
-			seen[key] = struct{}{}
-			merged = append(merged, entry)
+			merged[position] = mergeDenyEntry(merged[position], entry)
 		}
 	}
 	return merged
+}
+
+func mergeDenyEntry(existing, candidate DenyEntry) DenyEntry {
+	if len(existing.Binaries) == 0 || len(candidate.Binaries) == 0 {
+		existing.Binaries = nil
+		return existing
+	}
+	seen := make(map[string]struct{}, len(existing.Binaries)+len(candidate.Binaries))
+	merged := make([]string, 0, len(existing.Binaries)+len(candidate.Binaries))
+	for _, binary := range append(append([]string(nil), existing.Binaries...), candidate.Binaries...) {
+		if _, duplicate := seen[binary]; duplicate {
+			continue
+		}
+		seen[binary] = struct{}{}
+		merged = append(merged, binary)
+	}
+	slices.Sort(merged)
+	existing.Binaries = merged
+	return existing
+}
+
+func cloneDenyEntry(entry DenyEntry) DenyEntry {
+	entry.Binaries = append([]string(nil), entry.Binaries...)
+	return entry
 }
 
 func denyEntryKey(entry DenyEntry) string {
@@ -270,5 +356,9 @@ func cloneDenyEntries(entries []DenyEntry) []DenyEntry {
 	if len(entries) == 0 {
 		return nil
 	}
-	return append([]DenyEntry(nil), entries...)
+	cloned := make([]DenyEntry, len(entries))
+	for i, entry := range entries {
+		cloned[i] = cloneDenyEntry(entry)
+	}
+	return cloned
 }

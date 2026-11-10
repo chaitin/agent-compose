@@ -1291,3 +1291,66 @@ func TestK8sPodExecOptionsAttachStdinOnlyForInternalTransfers(t *testing.T) {
 		t.Fatalf("transfer exec command = %q", got)
 	}
 }
+
+func TestK8sCreatePodLaunchesInitWithoutKeepalive(t *testing.T) {
+	r, clientset := newTestK8sRuntime()
+	r.config.SandboxInitEnabled = true
+	r.config.SandboxInitBinary = "/.agent-compose/ac-init"
+	sandbox := testSandbox(t, "sandbox-init")
+	pod, err := r.createPod(context.Background(), clientset, sandbox, VMState{}, ProxyState{})
+	if err != nil {
+		t.Fatalf("createPod() error = %v", err)
+	}
+	container := pod.Spec.Containers[0]
+	if len(container.Command) != 1 || container.Command[0] != "/.agent-compose/ac-init" {
+		t.Fatalf("container command = %+v, want ac-init as PID 1", container.Command)
+	}
+	if strings.Join(container.Args, " ") != "--control-socket /run/agent-compose/init.sock" {
+		t.Fatalf("container args = %+v, want only the control socket (no tail)", container.Args)
+	}
+	if pod.Labels[k8sSandboxLabelInit] != "true" {
+		t.Fatalf("init label = %q, want true", pod.Labels[k8sSandboxLabelInit])
+	}
+}
+
+func TestK8sCreatePodSetsNdotsOnlyForPolicyDNS(t *testing.T) {
+	tests := []struct {
+		name    string
+		egress  string
+		wantDNS bool
+	}{
+		{name: "off", egress: "off"},
+		{name: "audit", egress: "audit"},
+		{name: "enforce", egress: "enforce", wantDNS: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			r, clientset := newTestK8sRuntime()
+			r.config.SandboxInitEnabled = true
+			r.config.SandboxInitEgress = test.egress
+			sandbox := testSandbox(t, "sandbox-ndots-"+test.name)
+			pod, err := r.createPod(context.Background(), clientset, sandbox, VMState{}, ProxyState{})
+			if err != nil {
+				t.Fatalf("createPod() error = %v", err)
+			}
+			if !test.wantDNS {
+				if pod.Spec.DNSConfig != nil {
+					t.Fatalf("DNSConfig = %+v, want nil", pod.Spec.DNSConfig)
+				}
+				return
+			}
+			if pod.Spec.DNSConfig == nil {
+				t.Fatal("DNSConfig is nil, want ndots=1 for policy DNS")
+			}
+			found := false
+			for _, option := range pod.Spec.DNSConfig.Options {
+				if option.Name == "ndots" && option.Value != nil && *option.Value == "1" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("DNSConfig options = %+v, want ndots=1", pod.Spec.DNSConfig.Options)
+			}
+		})
+	}
+}

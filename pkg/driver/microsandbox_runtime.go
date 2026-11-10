@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	"github.com/chaitin/agent-compose/pkg/sandboxinit"
 	"log/slog"
 	"net"
 	"os"
@@ -398,6 +399,81 @@ func (c *microsandboxExecCollector) appendChunk(chunk ExecChunk) {
 	c.stdout.WriteString(chunk.Text)
 }
 
+const (
+	microsandboxInitGuestDir    = "/.agent-compose/run"
+	microsandboxInitGuestSocket = microsandboxInitGuestDir + "/init.sock"
+)
+
+func (r *microsandboxRuntime) sandboxInitClient(session *Sandbox, vmState VMState) *sandboxinit.Client {
+	return sandboxinit.NewClientWithDialer(microsandboxInitGuestSocket, func(ctx context.Context) (net.Conn, error) {
+		name := r.sandboxName(session, vmState)
+		sandbox, err := r.connectSandbox(ctx, session, vmState, false)
+		if err != nil {
+			return nil, fmt.Errorf("connect microsandbox init sandbox: %w", err)
+		}
+		conn, err := newMicrosandboxInitConn(ctx, sandbox, sandboxInitBinaryPath(r.config), microsandboxInitGuestSocket)
+		if err != nil {
+			r.releaseSandboxHandle(name, sandbox)
+			return nil, err
+		}
+		conn.onClose = func() { r.releaseSandboxHandle(name, sandbox) }
+		return conn, nil
+	})
+}
+
+func (r *microsandboxRuntime) sandboxInitConfigured(session *Sandbox, vmState VMState) bool {
+	if session == nil {
+		return false
+	}
+	// A recorded state is authoritative. The old host directory identifies an
+	// init VM created before that state existed. Without either, an existing VM
+	// is legacy even when the flag is now on; treating it as init would wait
+	// for a guest socket that was never created.
+	if state := strings.TrimSpace(vmState.SandboxInitState); state != "" {
+		return state == SandboxInitStateEnabled
+	}
+	if _, err := os.Stat(sandboxInitHostDir(r.config, session.Summary.ID)); err == nil {
+		return true
+	}
+	return vmState.StartedAt.IsZero() && SandboxInitEnabledFor(r.config, vmState)
+}
+
+func (r *microsandboxRuntime) waitForSandboxInit(ctx context.Context, session *Sandbox, vmState VMState) error {
+	timeout := 2 * time.Minute
+	if r.config != nil && r.config.SandboxStartTimeout > 0 {
+		timeout = r.config.SandboxStartTimeout
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client := r.sandboxInitClient(session, vmState)
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	var lastErr error
+	for {
+		if info, err := client.VerifySandbox(waitCtx, session.Summary.ID); err == nil {
+			if err := requireSandboxInitEgressCapabilities(info, r.config, session.NetworkPolicy); err != nil {
+				return err
+			}
+			if err := requireSandboxInitLandlockCapability(info, r.config); err != nil {
+				return err
+			}
+			return nil
+		} else if errors.Is(err, sandboxinit.ErrSandboxMismatch) {
+			return err
+		} else {
+			lastErr = err
+		}
+		select {
+		case <-waitCtx.Done():
+			if lastErr == nil {
+				lastErr = waitCtx.Err()
+			}
+			return fmt.Errorf("microsandbox init did not become ready within %s: %w", timeout, lastErr)
+		case <-ticker.C:
+		}
+	}
+}
+
 func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbox, vmState VMState, proxyState ProxyState) (SandboxVMInfo, error) {
 	if err := RequireSandboxNetworkEnforcement(RuntimeDriverMicrosandbox, session.Summary.ID, session.NetworkPolicy, r.config.EgressUnenforceablePolicy); err != nil {
 		return SandboxVMInfo{}, err
@@ -416,12 +492,34 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
 
-	if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
+	usesInit := r.sandboxInitConfigured(session, vmState)
+	if created {
+		// This call just created the VM (including a stale-runtime rebuild), so
+		// the creation decision is the authority. An empty state on an older
+		// stored sandbox must not make us drive the fresh init VM as legacy.
+		usesInit = SandboxInitEnabledFor(r.config, vmState)
+	}
+	if usesInit {
+		if err := r.waitForSandboxInit(ctx, session, vmState); err != nil {
+			return SandboxVMInfo{}, err
+		}
+		bootstrap := directoryOnlyGuestSandboxBootstrapExecSpecForSandbox(r.config, session)
+		result, err := runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, "/", bootstrap, nil)
+		if err != nil {
+			return SandboxVMInfo{}, err
+		}
+		if err := requireSandboxInitExecSuccess(result, "microsandbox init bootstrap"); err != nil {
+			return SandboxVMInfo{}, err
+		}
+	} else if err := r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name); err != nil {
 		return SandboxVMInfo{}, err
 	}
 
-	needLaunch := created || restarted
-	if jupyterEnabled(proxyState) && !needLaunch {
+	// With init, Jupyter is the init main process launched via --main-shell.
+	// Probing it with the short legacy launch window and then starting another
+	// Jupyter would race two processes for the same port.
+	needLaunch := (created || restarted) && !usesInit
+	if jupyterEnabled(proxyState) && !usesInit && !needLaunch {
 		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		probeErr := waitForJupyterProxy(probeCtx, proxyState)
 		cancel()
@@ -446,9 +544,14 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 			}
 		}
 	}
+	initState := SandboxInitStateDisabled
+	if usesInit {
+		initState = SandboxInitStateEnabled
+	}
 	return SandboxVMInfo{
-		BoxID:      name,
-		JupyterURL: jupyterDirectURL(proxyState),
+		BoxID:            name,
+		JupyterURL:       jupyterDirectURL(proxyState),
+		SandboxInitState: initState,
 	}, nil
 }
 
@@ -475,10 +578,7 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 				r.closeSandboxHandle(sandbox)
 			}
 		}()
-		if err := sandbox.Stop(ctx); err != nil {
-			if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
-				return true, nil
-			}
+		if err := stopMicrosandbox(ctx, sandbox); err != nil {
 			r.trackLifecycleHandle(name, sandbox)
 			sandbox = nil
 			return false, err
@@ -495,13 +595,36 @@ func (r *microsandboxRuntime) StopSandbox(ctx context.Context, session *Sandbox,
 		return true, nil
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
-	if err := sandbox.Stop(ctx); err != nil {
-		if microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
-			return true, nil
-		}
+	if err := stopMicrosandbox(ctx, sandbox); err != nil {
 		return false, err
 	}
 	return false, nil
+}
+
+// microsandboxGracefulStopTimeout bounds the graceful wait. The SDK's Stop
+// waits for the exact sandbox run to finish and its context does not force a
+// kill, so an init that does not exit leaves the daemon blocked indefinitely.
+// After this budget the VM is force-killed: a stop request has already decided
+// the runtime must not keep running.
+const microsandboxGracefulStopTimeout = 10 * time.Second
+
+func stopMicrosandbox(ctx context.Context, sandbox *microsandbox.Sandbox) error {
+	if sandbox == nil {
+		return nil
+	}
+	stopCtx, cancel := context.WithTimeout(ctx, microsandboxGracefulStopTimeout)
+	defer cancel()
+	err := sandbox.Stop(stopCtx, microsandbox.WithStopTimeout(microsandboxGracefulStopTimeout))
+	if err == nil || microsandbox.IsKind(err, microsandbox.ErrSandboxNotFound) {
+		return nil
+	}
+	slog.Warn("agent-compose microsandbox graceful stop did not finish; forcing termination", "error", err)
+	killCtx, killCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer killCancel()
+	if killErr := sandbox.Kill(killCtx); killErr != nil && !microsandbox.IsKind(killErr, microsandbox.ErrSandboxNotFound) {
+		return fmt.Errorf("microsandbox graceful stop failed (%v) and forced kill failed: %w", err, killErr)
+	}
+	return nil
 }
 
 func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbox, vmState VMState) error {
@@ -522,6 +645,7 @@ func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbo
 	if err := r.removeRootfsDiskFiles(session.Summary.ID); err != nil {
 		return err
 	}
+	_ = os.RemoveAll(sandboxInitHostDir(r.config, session.Summary.ID))
 	return nil
 }
 
@@ -536,6 +660,9 @@ func (r *microsandboxRuntime) Exec(ctx context.Context, session *Sandbox, vmStat
 		return ExecResult{}, err
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
+	if r.sandboxInitConfigured(session, vmState) {
+		return runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, r.config.GuestWorkspacePath, spec, nil)
+	}
 	return executeUserCommandAfterBootstrap(
 		func() error {
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
@@ -579,6 +706,9 @@ func (r *microsandboxRuntime) ExecStream(ctx context.Context, session *Sandbox, 
 		return ExecResult{}, err
 	}
 	defer r.releaseSandboxHandle(name, sandbox)
+	if r.sandboxInitConfigured(session, vmState) {
+		return runSandboxInitExec(ctx, r.sandboxInitClient(session, vmState), session.Summary.ID, r.config.GuestWorkspacePath, spec, stream)
+	}
 	return executeUserCommandAfterBootstrap(
 		func() error {
 			return r.ensureDirectoryOnlyGuestSandboxBootstrap(ctx, sandbox, session, name)
@@ -1050,6 +1180,9 @@ func (r *microsandboxRuntime) TerminateProcessTree(ctx context.Context, session 
 	if !alive {
 		return nil
 	}
+	if r.sandboxInitConfigured(session, vmState) {
+		return r.sandboxInitClient(session, vmState).KillTree(ctx, marker)
+	}
 	name := r.sandboxName(session, vmState)
 	sandbox, err := r.connectSandbox(ctx, session, vmState, false)
 	if err != nil {
@@ -1139,6 +1272,7 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 		return nil, err
 	}
 	mounts := r.microsandboxCreateMounts(manifest, name)
+	initEnabled := SandboxInitEnabledFor(r.config, vmState)
 	imageRef := resolveSandboxGuestImage(vmState.Image, session.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverMicrosandbox))
 	imagePullTimeout := r.config.ImagePullTimeout
 	if imagePullTimeout <= 0 {
@@ -1184,7 +1318,17 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	env["WORKSPACE"] = r.config.GuestWorkspacePath
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
+	env["LOG_ROOT"] = r.config.GuestLogRoot
 	env["JUPYTER_TOKEN"] = proxyState.Token
+	for key, value := range sandboxInitIsolationEnv(r.config) {
+		// The daemon carries its mode in the create-time environment. Fall
+		// back to this process's configuration only for an older daemon that
+		// did not send one, so a sandbox-host started with a different mode
+		// cannot silently override the daemon's admission report.
+		if _, explicit := env[key]; !explicit {
+			env[key] = value
+		}
+	}
 	// The declared network policy decides egress. DNS rebind protection is a
 	// daemon-level setting that defaults to on; a deployment that turns it off
 	// is allowed to resolve names pointing at private addresses, so say so once
@@ -1215,6 +1359,16 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	}
 	if jupyterEnabled(proxyState) && proxyState.HostPort > 0 {
 		options = append(options, microsandbox.WithPorts(map[uint16]uint16{uint16(proxyState.HostPort): uint16(proxyState.GuestPort)}))
+	}
+	if initEnabled {
+		args := []string{"--control-socket", microsandboxInitGuestSocket}
+		if jupyterEnabled(proxyState) {
+			args = append(args, "--main-shell", jupyterLaunchCommand(r.config, proxyState, false))
+		}
+		options = append(options, microsandbox.WithInit(microsandbox.Init.Cmd(
+			sandboxInitBinaryPath(r.config),
+			microsandbox.InitOptions{Args: args},
+		)))
 	}
 	sandbox, err := microsandbox.CreateSandbox(ctx, name, options...)
 	if err != nil {

@@ -1,15 +1,29 @@
 # Docker-mode sandbox network isolation overlay.
 #
 # It creates a dedicated `agent-compose-sandbox` network, dual-homes the daemon
-# onto it, and injects DOCKER_SANDBOX_NETWORK so the Docker driver places new
-# sandboxes on that network. Selecting this overlay is the whole switch: the
-# operator does not set any sandbox-network variable by hand.
+# onto it, and lets the Docker driver place new sandboxes on it. The daemon is
+# also attached to `agent-compose-sandbox-strict`, an internal network: a
+# sandbox placed on that network alone has no route off it, so a process Docker
+# starts outside sandbox init (for example `docker exec`) cannot bypass the
+# declared egress policy. That strict profile is opt-in; see below.
+#
 # `container_name: agent-compose` resolves on every network the container joins,
 # so the default AGENT_COMPOSE_RUNTIME_BASE_URL (http://agent-compose:7410)
-# keeps reaching the daemon from the sandbox network.
+# keeps reaching the daemon from either sandbox network.
 #
-# Enable it by setting, in .env:
+# Enable the overlay by setting, in .env:
 #   COMPOSE_FILE=docker-compose.yml:docker-compose.sandbox-network.yml
+#
+# The default placement is the non-internal `agent-compose-sandbox` network. To
+# select the strict outer default-deny profile, also set in .env while
+# SANDBOX_INIT_EGRESS=enforce:
+#   DOCKER_SANDBOX_NETWORK=agent-compose-sandbox-strict
+#   DOCKER_SANDBOX_NETWORK_STRICT=true
+# The strict switch is only read in enforce mode. Existing sandboxes keep the
+# network they were created with; they must be removed and created again to gain
+# the strict layer. A sandbox on the internal network can reach the daemon
+# endpoints on that network, the host bridge gateway, and other containers on
+# the network, and nothing else.
 #
 # Docker-driver deployments only: BoxLite and Microsandbox sandboxes are
 # microVMs that share the sandbox-host network namespace, so this overlay does
@@ -19,8 +33,10 @@ services:
     networks:
       - default
       - sandbox
+      - sandbox_strict
     environment:
-      DOCKER_SANDBOX_NETWORK: agent-compose-sandbox
+      DOCKER_SANDBOX_NETWORK: ${DOCKER_SANDBOX_NETWORK:-agent-compose-sandbox}
+      DOCKER_SANDBOX_NETWORK_STRICT: ${DOCKER_SANDBOX_NETWORK_STRICT:-false}
 
 networks:
   sandbox:
@@ -28,3 +44,10 @@ networks:
     # which changes with the directory or -p flag, while DOCKER_SANDBOX_NETWORK
     # must be a stable Docker network name.
     name: agent-compose-sandbox
+  sandbox_strict:
+    name: agent-compose-sandbox-strict
+    # Internal networks have no route off the bridge. Docker still gives the
+    # containers a gateway address for the host and Docker's embedded DNS, which
+    # is what keeps the daemon endpoints reachable while denying every external
+    # destination.
+    internal: true

@@ -67,11 +67,30 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() (egress.NetworkDeclar
 	}
 	declaration := egress.NetworkDeclaration{Default: defaultAction}
 	for _, entry := range n.Allow {
+		l7, err := egress.NormalizeL7Constraint(entry.Methods, entry.Paths)
+		if err != nil {
+			return egress.NetworkDeclaration{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		enforcement, err := egress.ParseEnforcement(entry.Enforcement)
+		if err != nil {
+			return egress.NetworkDeclaration{}, fmt.Errorf("allow entry %q port %d: %w", entry.Host, entry.Port, err)
+		}
+		// The default enforcement is left as the zero value so a declaration
+		// that does not use L7 produces the same AllowEntry it did before the
+		// field existed. CompileNetworkPolicy normalizes it to enforce.
+		declaredEnforcement := egress.Enforcement("")
+		if enforcement == egress.EnforcementAudit {
+			declaredEnforcement = egress.EnforcementAudit
+		}
 		declaration.Allow = append(declaration.Allow, egress.AllowEntry{
-			Host:       entry.Host,
-			Port:       entry.Port,
-			Protocol:   egress.ProtocolAny,
-			AllowedIPs: entry.AllowedIPs,
+			Host:          entry.Host,
+			Port:          entry.Port,
+			Protocol:      egress.ProtocolAny,
+			AllowedIPs:    append([]string(nil), entry.AllowedIPs...),
+			Binaries:      append([]string(nil), entry.Binaries...),
+			L7:            l7,
+			InjectHeaders: cloneInjectHeaders(entry.InjectHeaders),
+			Enforcement:   declaredEnforcement,
 		})
 	}
 	for _, entry := range n.Deny {
@@ -79,6 +98,7 @@ func (n *NormalizedSandboxNetworkSpec) EgressDeclaration() (egress.NetworkDeclar
 			Host:     entry.Host,
 			Port:     entry.Port,
 			Protocol: egress.ProtocolAny,
+			Binaries: append([]string(nil), entry.Binaries...),
 		})
 	}
 	return declaration, nil
@@ -148,6 +168,10 @@ func normalizeSandboxNetworkDeny(path string, values []SandboxNetworkDenySpec) (
 		if err != nil {
 			return nil, err
 		}
+		binaries, err := egress.NormalizeBinaries(value.Binaries)
+		if err != nil {
+			return nil, &ValidationError{Path: entryPath + ".binaries", Message: err.Error()}
+		}
 		for _, port := range ports {
 			dedupeKey := fmt.Sprintf("%s\x00%d", host, port)
 			if _, duplicate := seen[dedupeKey]; duplicate {
@@ -155,8 +179,9 @@ func normalizeSandboxNetworkDeny(path string, values []SandboxNetworkDenySpec) (
 			}
 			seen[dedupeKey] = struct{}{}
 			normalized = append(normalized, NormalizedSandboxNetworkDenySpec{
-				Host: host,
-				Port: port,
+				Host:     host,
+				Port:     port,
+				Binaries: append([]string(nil), binaries...),
 			})
 		}
 		if len(normalized) > maxSandboxNetworkDenyEntries {
@@ -199,9 +224,36 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 		if err != nil {
 			return nil, &ValidationError{Path: entryPath + ".allowed_ips", Message: err.Error()}
 		}
+		l7, err := egress.NormalizeL7Constraint(value.Methods, value.Paths)
+		if err != nil {
+			// The error names the invalid list, so the path prefix tells an
+			// operator which entry and field to fix.
+			return nil, &ValidationError{Path: entryPath, Message: err.Error()}
+		}
+		injectHeaders, err := egress.NormalizeInjectHeaders(value.InjectHeaders)
+		if err != nil {
+			return nil, &ValidationError{Path: entryPath + ".inject_headers", Message: err.Error()}
+		}
+		if len(injectHeaders) > 0 && l7.Empty() {
+			return nil, &ValidationError{Path: entryPath + ".inject_headers", Message: "injected headers require methods or paths"}
+		}
+		enforcement, err := egress.ParseEnforcement(value.Enforcement)
+		if err != nil {
+			return nil, &ValidationError{Path: entryPath + ".enforcement", Message: err.Error()}
+		}
+		normalizedEnforcement := ""
+		if enforcement == egress.EnforcementAudit {
+			// The default is omitted so an existing declaration that does not
+			// use L7 keeps its canonical JSON and spec hash byte-identical.
+			normalizedEnforcement = string(egress.EnforcementAudit)
+		}
 		ports, err := normalizeSandboxNetworkPorts(entryPath, value.Port, value.Ports, maxSandboxNetworkAllowEntries)
 		if err != nil {
 			return nil, err
+		}
+		binaries, err := egress.NormalizeBinaries(value.Binaries)
+		if err != nil {
+			return nil, &ValidationError{Path: entryPath + ".binaries", Message: err.Error()}
 		}
 		for _, port := range ports {
 			dedupeKey := fmt.Sprintf("%s\x00%d", host, port)
@@ -210,9 +262,14 @@ func normalizeSandboxNetworkAllow(path string, values []SandboxNetworkAllowSpec)
 			}
 			seen[dedupeKey] = struct{}{}
 			normalized = append(normalized, NormalizedSandboxNetworkAllowSpec{
-				Host:       host,
-				Port:       port,
-				AllowedIPs: append([]string(nil), allowedIPs...),
+				Host:          host,
+				Port:          port,
+				AllowedIPs:    append([]string(nil), allowedIPs...),
+				Binaries:      append([]string(nil), binaries...),
+				Methods:       append([]string(nil), l7.Methods...),
+				Paths:         append([]string(nil), l7.Paths...),
+				InjectHeaders: cloneInjectHeaders(injectHeaders),
+				Enforcement:   normalizedEnforcement,
 			})
 		}
 		if len(normalized) > maxSandboxNetworkAllowEntries {
@@ -265,4 +322,15 @@ func normalizeSandboxNetworkPorts(path string, port int, ports []int, max int) (
 		normalized = append(normalized, candidate)
 	}
 	return normalized, nil
+}
+
+func cloneInjectHeaders(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for name, value := range values {
+		cloned[name] = value
+	}
+	return cloned
 }

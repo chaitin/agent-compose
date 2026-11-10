@@ -11,7 +11,7 @@ coverage_root="${COVERAGE_DIR:-${AGENT_COMPOSE_COVERAGE_DIR:-"$root/.cache/cover
 go_cache="${GOCACHE:-"$root/.cache/go-build"}"
 go_cgo_enabled="${CGO_ENABLED:-0}"
 go_coverpkg="${GO_COVERPKG:-${AGENT_COMPOSE_GO_COVERPKG:-./cmd/...,./pkg/...,./internal/...}}"
-go_exclude_regex="${GO_COVER_EXCLUDE_REGEX:-${AGENT_COMPOSE_GO_COVER_EXCLUDE_REGEX:-/(boxlite|boxlite_cgo|boxlite_guest_cgo|boxlite_runtime|boxlite_stub|docker_runtime|microsandbox_runtime|microsandbox_runtime_install|microsandbox_runtime_stub|k8s_runtime_stub|local_docker_oci|env_path)\\.go:|\\.(pb|connect)\\.go:}}"
+go_exclude_regex="${GO_COVER_EXCLUDE_REGEX:-${AGENT_COMPOSE_GO_COVER_EXCLUDE_REGEX:-/(boxlite|boxlite_cgo|boxlite_guest_cgo|boxlite_runtime|boxlite_stub|docker_runtime|microsandbox_runtime|microsandbox_runtime_install|microsandbox_runtime_stub|microsandbox_sandbox_init|k8s_runtime_stub|local_docker_oci|env_path)\\.go:|\\.(pb|connect)\\.go:}}"
 
 mkdir -p "$coverage_root" "$go_cache"
 rm -rf "$coverage_root"/*

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/chaitin/agent-compose/pkg/apierror"
+	"github.com/chaitin/agent-compose/pkg/egress"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
@@ -90,16 +92,37 @@ type SandboxRunTargetResolver interface {
 	ResolveBatch(context.Context, []*domain.Sandbox) (map[string]runs.SandboxRunTarget, error)
 }
 
+// SandboxEgressPolicyObserver reports the egress policy revision in force for a
+// sandbox. It is optional: a composition without one still reports the last
+// persisted revision, but cannot refresh it from the declaration.
+type SandboxEgressPolicyObserver interface {
+	ObserveSandboxEgressPolicy(context.Context, *domain.Sandbox) (egress.PolicyRevision, error)
+}
+
+// SandboxEgressPolicyRevisionReader reads the persisted revision without
+// observing a new one. It is what makes an inspect report the last known
+// revision even when the declaration cannot be resolved.
+type SandboxEgressPolicyRevisionReader interface {
+	GetEgressPolicyRevision(context.Context, string) (egress.PolicyRevision, error)
+}
+
+// SandboxVMStateReader reads the persisted runtime fact that says which policy
+// generation and mechanism the running runtime was created with.
+type SandboxVMStateReader interface {
+	GetVMState(string) (domain.VMState, error)
+}
+
 type SandboxHandler struct {
 	agentcomposev2connect.UnimplementedSandboxServiceHandler
-	delegate   SandboxLifecycleDelegate
-	store      SandboxStore
-	remover    SandboxRuntimeRemover
-	reconciler SandboxRuntimeReconciler
-	dashboard  SandboxDashboardNotifier
-	stats      SandboxStatsRuntimeResolver
-	runTargets SandboxRunTargetResolver
-	removal    SandboxRemovalCoordinator
+	delegate     SandboxLifecycleDelegate
+	store        SandboxStore
+	remover      SandboxRuntimeRemover
+	reconciler   SandboxRuntimeReconciler
+	dashboard    SandboxDashboardNotifier
+	stats        SandboxStatsRuntimeResolver
+	runTargets   SandboxRunTargetResolver
+	removal      SandboxRemovalCoordinator
+	egressPolicy SandboxEgressPolicyObserver
 	// workspaceFiles reads the sandbox-owned workspace. It is optional so
 	// hosts that only expose lifecycle operations can keep constructing the
 	// handler; the workspace RPCs report a concrete internal error when it is
@@ -120,6 +143,11 @@ func (h *SandboxHandler) WithRemovalCoordinator(coordinator SandboxRemovalCoordi
 
 func (h *SandboxHandler) WithRunTargetResolver(resolver SandboxRunTargetResolver) *SandboxHandler {
 	h.runTargets = resolver
+	return h
+}
+
+func (h *SandboxHandler) WithEgressPolicyObserver(observer SandboxEgressPolicyObserver) *SandboxHandler {
+	h.egressPolicy = observer
 	return h
 }
 
@@ -493,15 +521,73 @@ func sandboxToV2WithTarget(sandbox *domain.Sandbox, target runs.SandboxRunTarget
 }
 
 func (h *SandboxHandler) sandboxToV2(ctx context.Context, sandbox *domain.Sandbox) *agentcomposev2.Sandbox {
-	if h.runTargets == nil || sandbox == nil {
-		return sandboxToV2(sandbox)
+	result := sandboxToV2(sandbox)
+	if sandbox == nil {
+		return result
 	}
-	target, err := h.runTargets.Resolve(ctx, sandbox)
-	if err != nil {
-		slog.Warn("failed to resolve sandbox run target", "sandbox_id", sandbox.Summary.ID, "error", err)
-		return sandboxToV2(sandbox)
+	if h.runTargets != nil {
+		target, err := h.runTargets.Resolve(ctx, sandbox)
+		if err != nil {
+			slog.Warn("failed to resolve sandbox run target", "sandbox_id", sandbox.Summary.ID, "error", err)
+		} else {
+			result = sandboxToV2WithTarget(sandbox, target)
+		}
 	}
-	return sandboxToV2WithTarget(sandbox, target)
+	h.populateSandboxEgressPolicy(ctx, sandbox, result)
+	return result
+}
+
+// populateSandboxEgressPolicy adds the persisted egress policy revision and the
+// runtime's recorded generation to an inspect response. The active revision is
+// refreshed from the declaration when a reporter is configured; a failure to do
+// so is reported and falls back to the persisted record, because an inspect
+// failure must not hide the state the daemon already knows.
+func (h *SandboxHandler) populateSandboxEgressPolicy(ctx context.Context, sandbox *domain.Sandbox, result *agentcomposev2.Sandbox) {
+	if sandbox == nil || result == nil {
+		return
+	}
+	var revision egress.PolicyRevision
+	if h.egressPolicy != nil {
+		observed, err := h.egressPolicy.ObserveSandboxEgressPolicy(ctx, sandbox)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to refresh the sandbox egress policy revision",
+				"sandbox_id", sandbox.Summary.ID, "error", err)
+		} else {
+			revision = observed
+		}
+	}
+	if !revision.Recorded() {
+		if reader, ok := h.store.(SandboxEgressPolicyRevisionReader); ok {
+			persisted, err := reader.GetEgressPolicyRevision(ctx, sandbox.Summary.ID)
+			if err != nil {
+				slog.WarnContext(ctx, "failed to read the sandbox egress policy revision",
+					"sandbox_id", sandbox.Summary.ID, "error", err)
+			} else {
+				revision = persisted
+			}
+		}
+	}
+	status := &agentcomposev2.SandboxEgressPolicy{}
+	if revision.Recorded() {
+		status.Revision = revision.Revision
+		status.Hash = revision.Hash
+		status.AppliedAt = sandboxHistoryTimestamp(revision.AppliedAt)
+		status.Acknowledged = revision.Acknowledged()
+		status.AcknowledgedAt = sandboxHistoryTimestamp(revision.AckAt)
+	}
+	if reader, ok := h.store.(SandboxVMStateReader); ok {
+		state, err := reader.GetVMState(sandbox.Summary.ID)
+		if err == nil {
+			status.RuntimeGeneration = state.EgressPolicy.Generation
+			status.RuntimeApplication = state.EgressPolicy.Applied
+		} else if !errors.Is(err, os.ErrNotExist) {
+			slog.WarnContext(ctx, "failed to read the sandbox egress runtime record",
+				"sandbox_id", sandbox.Summary.ID, "error", err)
+		}
+	}
+	if status.Revision > 0 || status.RuntimeApplication != "" {
+		result.EgressPolicy = status
+	}
 }
 
 func (h *SandboxHandler) resolveSandboxTargets(ctx context.Context, sandboxes []*domain.Sandbox) map[string]runs.SandboxRunTarget {

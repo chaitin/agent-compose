@@ -82,6 +82,12 @@ func (r *microsandboxRuntime) OpenInteraction(ctx context.Context, session *Sand
 	if err != nil {
 		return nil, err
 	}
+	if r.sandboxInitConfigured(session, vmState) {
+		if err := r.ensureReady(ctx); err != nil {
+			return nil, err
+		}
+		return openSandboxInitInteraction(ctx, r.sandboxInitClient(session, vmState), session, r.config.GuestWorkspacePath, spec)
+	}
 
 	childCtx, cancel := context.WithCancel(ctx)
 	if spec.TimeoutMs > 0 {

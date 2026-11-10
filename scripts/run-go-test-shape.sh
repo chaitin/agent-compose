@@ -62,10 +62,12 @@ fi
 # repository grows. Match the same top-level naming contract with fixed-size
 # expressions; Go applies the first regex component to the top-level name,
 # so a unit test's Integration/E2E-named subtests remain included.
+# Keep -parallel 1: sandbox init/egress tests share host resources and must
+# not run concurrently.
 case "$shape" in
-  unit) selection_args=(-run '^Test' -skip '^Test.*(Integration|E2E)') ;;
-  integration) selection_args=(-run '^Test.*Integration') ;;
-  e2e) selection_args=(-run '^Test.*E2E') ;;
+  unit) selection_args=(-run '^Test' -skip '^Test.*(Integration|E2E)' -parallel 1) ;;
+  integration) selection_args=(-run '^Test.*Integration' -parallel 1) ;;
+  e2e) selection_args=(-run '^Test.*E2E' -parallel 1) ;;
 esac
 go test "${selection_args[@]}" "$@" "${packages[@]}" ${coverage_binary_args[@]+"${coverage_binary_args[@]}"}
 

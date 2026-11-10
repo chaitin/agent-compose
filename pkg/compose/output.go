@@ -562,9 +562,9 @@ func cloneNormalizedSandboxSpec(value *NormalizedSandboxSpec) *NormalizedSandbox
 }
 
 // cloneNormalizedNetworkAllow copies the allowances deeply, including each
-// entry's address list. A shallow copy would share that backing array with the
-// source declaration, so an in-place edit through one view would change the
-// canonical JSON and hash the clone exists to protect.
+// entry's address list and L7 constraint. A shallow copy would share those
+// backing arrays with the source declaration, so an in-place edit through one
+// view would change the canonical JSON and hash the clone exists to protect.
 func cloneNormalizedNetworkAllow(values []NormalizedSandboxNetworkAllowSpec) []NormalizedSandboxNetworkAllowSpec {
 	if values == nil {
 		return nil
@@ -572,19 +572,27 @@ func cloneNormalizedNetworkAllow(values []NormalizedSandboxNetworkAllowSpec) []N
 	cloned := make([]NormalizedSandboxNetworkAllowSpec, len(values))
 	for i, value := range values {
 		value.AllowedIPs = append([]string(nil), value.AllowedIPs...)
+		value.Binaries = append([]string(nil), value.Binaries...)
+		value.Methods = append([]string(nil), value.Methods...)
+		value.Paths = append([]string(nil), value.Paths...)
+		value.InjectHeaders = cloneInjectHeaders(value.InjectHeaders)
 		cloned[i] = value
 	}
 	return cloned
 }
 
 // cloneNormalizedNetworkDeny copies the denial list. Deny entries are value
-// types, but copying the slice still matters: appending through one view must
-// not reallocate or overwrite the other's backing array.
+// types, but each carries a binary scope slice that must be copied too.
 func cloneNormalizedNetworkDeny(values []NormalizedSandboxNetworkDenySpec) []NormalizedSandboxNetworkDenySpec {
 	if values == nil {
 		return nil
 	}
-	return append([]NormalizedSandboxNetworkDenySpec(nil), values...)
+	cloned := make([]NormalizedSandboxNetworkDenySpec, len(values))
+	for i, value := range values {
+		value.Binaries = append([]string(nil), value.Binaries...)
+		cloned[i] = value
+	}
+	return cloned
 }
 
 func compareString(a string, b string) int {

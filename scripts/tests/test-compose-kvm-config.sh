@@ -3,6 +3,11 @@ set -euo pipefail
 
 ROOT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 
+# The strict sandbox profile is selected through these variables. Clear any
+# inherited values so the default placement assertions are deterministic; the
+# strict case below sets them for its own compose invocation.
+unset DOCKER_SANDBOX_NETWORK DOCKER_SANDBOX_NETWORK_STRICT
+
 if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
   printf 'Docker Compose is required to validate deployment configuration\n' >&2
   exit 1
@@ -130,8 +135,24 @@ jq -e '
 jq -e '
   (.services["agent-compose"].networks | has("default")) and
   (.services["agent-compose"].networks | has("sandbox")) and
+  (.services["agent-compose"].networks | has("sandbox_strict")) and
   (.networks.sandbox.name == "agent-compose-sandbox") and
-  (.services["agent-compose"].environment.DOCKER_SANDBOX_NETWORK == "agent-compose-sandbox")
+  (.networks.sandbox_strict.name == "agent-compose-sandbox-strict") and
+  (.networks.sandbox_strict.internal == true) and
+  (.services["agent-compose"].environment.DOCKER_SANDBOX_NETWORK == "agent-compose-sandbox") and
+  (.services["agent-compose"].environment.DOCKER_SANDBOX_NETWORK_STRICT == "false")
 ' >/dev/null <<<"$sandbox_json"
+
+# The strict profile is opt-in through .env, so shell/.env interpolation selects
+# the internal network without editing the installer-managed overlay.
+strict_sandbox_json=$(
+  DOCKER_SANDBOX_NETWORK=agent-compose-sandbox-strict \
+    DOCKER_SANDBOX_NETWORK_STRICT=true \
+    compose_config -f "$ROOT_DIR/docker-compose.yml" -f "$ROOT_DIR/docker-compose.sandbox-network.yml"
+)
+jq -e '
+  (.services["agent-compose"].environment.DOCKER_SANDBOX_NETWORK == "agent-compose-sandbox-strict") and
+  (.services["agent-compose"].environment.DOCKER_SANDBOX_NETWORK_STRICT == "true")
+' >/dev/null <<<"$strict_sandbox_json"
 
 printf 'Compose base, KVM overlay, sandbox-network overlay, and local build override contracts passed\n'

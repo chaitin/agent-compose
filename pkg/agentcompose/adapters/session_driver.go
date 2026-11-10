@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/chaitin/agent-compose/pkg/capmatrix"
@@ -138,6 +139,17 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	}
 	vmState.Driver = driver
 	vmState.Mode = driver
+	// Record the process model for a new runtime before the start-attempt fence.
+	// A runtime that already exists keeps its recorded model even when the
+	// daemon flag changed; an empty record is resolved by the driver from the
+	// existing runtime or, when there is no runtime, from the current flag.
+	if vmState.SandboxInitState == "" && freshRuntime {
+		if driverpkg.SandboxInitCapabilityFor(driver).Supported && d.Config.SandboxInitEnabled {
+			vmState.SandboxInitState = driverpkg.SandboxInitStateEnabled
+		} else {
+			vmState.SandboxInitState = driverpkg.SandboxInitStateDisabled
+		}
+	}
 	vmState.BoxName = firstNonEmpty(vmState.BoxName, session.Summary.RuntimeRef)
 	vmState.RuntimeHome = firstNonEmpty(vmState.RuntimeHome, driverpkg.RuntimeHomeForDriver(d.Config, driver))
 	if err := d.prepareSandboxStart(ctx, driver, session, &vmState); err != nil {
@@ -197,7 +209,7 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 	// covered for their first runtime, and every later start of a runtime with
 	// no record is reported instead of assumed.
 	runtimeHasCurrentPolicy := freshRuntime || info.RuntimeCreated
-	if err := d.recordEgressRuntimePolicy(session, &vmState, previousEgressPolicy, info.EgressPolicy, runtimeHasCurrentPolicy); err != nil {
+	if err := d.recordEgressRuntimePolicy(ctx, session, &vmState, previousEgressPolicy, info.EgressPolicy, runtimeHasCurrentPolicy); err != nil {
 		return err
 	}
 
@@ -235,7 +247,9 @@ func (d *SandboxDriver) StartSandboxVM(ctx context.Context, session *domain.Sand
 // driver reports whether it built the runtime in this call
 // (SandboxVMInfo.RuntimeCreated), and the start path knows whether there was a
 // runtime to reuse at all.
-func (d *SandboxDriver) recordEgressRuntimePolicy(session *domain.Sandbox, vmState *domain.VMState, previousRecord, current domain.SandboxEgressPolicy, runtimeHasCurrentPolicy bool) error {
+//
+//nolint:revive // the policy snapshot is a positional boundary value with named fields
+func (d *SandboxDriver) recordEgressRuntimePolicy(ctx context.Context, session *domain.Sandbox, vmState *domain.VMState, previousRecord, current domain.SandboxEgressPolicy, runtimeHasCurrentPolicy bool) error {
 	// The start path only *ensures* a runtime: a retained one is started again
 	// with the configuration it was created with. Without a fact saying the
 	// runtime was built now, the record keeps the policy the runtime has rather
@@ -247,6 +261,7 @@ func (d *SandboxDriver) recordEgressRuntimePolicy(session *domain.Sandbox, vmSta
 	}
 	if runtimeHasCurrentPolicy {
 		vmState.EgressPolicy = current
+		d.recordAppliedEgressPolicyRevision(ctx, session.Summary.ID, current.Hash)
 		return nil
 	}
 	previous := egressRuntimePolicyFromRecord(previousRecord)
@@ -280,6 +295,21 @@ func (d *SandboxDriver) recordEgressRuntimePolicy(session *domain.Sandbox, vmSta
 	}
 	slog.Warn("sandbox egress is not decided by the policy now in force", append(attributes, "reason", drift.Summary)...)
 	return nil
+}
+
+// recordAppliedEgressPolicyRevision persists the revision of the policy the
+// runtime that was just created now runs under, and marks it acknowledged: the
+// runtime creation installed exactly that policy, so the enforcement point for
+// this sandbox has read it. A store failure is reported but never fails the
+// start, because the revision is the account of the policy, not the policy.
+func (d *SandboxDriver) recordAppliedEgressPolicyRevision(ctx context.Context, sandboxID, hash string) {
+	if d.Store == nil || strings.TrimSpace(hash) == "" {
+		return
+	}
+	if _, err := d.Store.ObserveEgressPolicyRevision(context.WithoutCancel(ctx), sandboxID, hash, true); err != nil {
+		slog.Warn("sandbox egress policy revision was not recorded",
+			"sandbox_id", sandboxID, "error", err)
+	}
 }
 
 func (d *SandboxDriver) rollbackStartedSandboxRuntime(ctx context.Context, driver string, runtime SandboxRuntime, session *domain.Sandbox) (bool, error) {

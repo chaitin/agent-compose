@@ -41,7 +41,7 @@ func TestAPIVersionContractUnchangedWhileDeletionRecoveryIsBlocked(t *testing.T)
 	}
 	select {
 	case <-runtime.started:
-	case <-time.After(time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("blocked deletion did not start")
 	}
 

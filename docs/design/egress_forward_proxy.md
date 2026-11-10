@@ -194,6 +194,155 @@ Two findings from running it:
   above). The proxy is what carries an HTTPS allowance today, which is the
   mechanism the engine installs whenever the sandbox can reach it.
 
+## Delivered: identity, persistent audit, and init mediation
+
+The proxy now consumes the identity the sandbox init process adds to a mediated
+`CONNECT` (`X-Agent-Compose-Sandbox/Session/Marker/Pid`). The sandbox header
+must agree with the proxy credential; the rest is attribution data that never
+changes a decision. `EGRESS_AUDIT_LOG` points the daemon at an append-only JSONL
+file, and every allow/deny is written with the sandbox, destination, resolved
+addresses, action, rule, generation, identity, and time. A write failure is
+logged and does not change enforcement.
+
+Each sandbox also carries a persisted, monotonic **egress policy revision**.
+`egress.PolicyHash` is a stable SHA-256 of the effective policy content and is
+deliberately separate from `egress.Generation`, which decisions carry. A revision
+advances only when that hash changes, and its applied time is when the daemon
+first persisted it. The revision is acknowledged when the enforcement point that
+decides the running sandbox has read exactly that revision: the forward proxy for
+a mediated sandbox (per request, so an edit is acknowledged hot), or the runtime
+creation that installed a driver-applied policy. `agent-compose inspect sandbox`
+reports the active revision, hash, applied/acknowledged timestamps, and the
+generation and mechanism the running runtime was created under. An inspect
+refreshes the active revision from the declaration but never acknowledges it, so
+a driver-applied sandbox whose declaration changed after it started stays
+unacknowledged until its runtime is recreated.
+
+`SANDBOX_INIT_EGRESS_AUDIT_LOG=true` opts into a guest-side JSONL sink for
+connections the init process observes. The daemon injects
+`SANDBOX_INIT_AUDIT_LOG=<GUEST_LOG_ROOT>/egress-audit.jsonl` (and the launch
+policy generation) only when this is set and the egress mode is `audit` or
+`enforce`. It is off by default because Docker and Kubernetes already capture
+init stderr; the file is an additional, queryable copy for drivers such as
+Microsandbox whose guest stderr is not collected. The sink appends one complete
+line per event with `sandbox_id`, `session_id`, `marker`, `process_id`,
+`destination`, `host`, `port`, `action`, `decision`, `reason`, and `generation`.
+Writes use `O_APPEND` under a mutex; an external log shipper may rotate the file,
+but init keeps writing to the descriptor it opened until the process exits.
+
+When `SANDBOX_INIT_EGRESS=enforce`, admission reports the `seccomp_redirect`
+mechanism next to `forward_proxy`: init redirects every TCP connect through the
+proxy, so the old limitation "only traffic that honors the proxy environment is
+decided" no longer applies. The report discloses the residual gaps instead:
+non-DNS UDP is refused, DNS is answered by the sandbox-local policy resolver, and
+`sendmmsg` stays unfiltered so the init trampoline can hand over its notification
+listener. A workload that uses `sendmmsg` can therefore still send UDP directly,
+including past the policy resolver; the report discloses that residual. TCP egress
+remains mediated.
+
+
+## Docker outer default-deny (strict network profile)
+
+The engine's forward proxy decides the connections it sees, but on Docker a
+process that ignores the proxy environment — in particular a `docker exec`
+process Docker starts outside `ac-init` — still has the container's real NIC.
+The strict network profile closes that with a network-namespace boundary:
+
+- `DOCKER_SANDBOX_NETWORK_STRICT=true` is read only when
+  `SANDBOX_INIT_EGRESS=enforce`. It requires `DOCKER_SANDBOX_NETWORK` to name an
+  existing user-defined network whose inspect reports `Internal=true`, and the
+  sandbox joins only that network. A network that is missing, is a Docker
+  built-in, is not internal, or is not attached to a containerized daemon fails
+  the start with a precise error; the driver never falls back to the daemon or
+  default network.
+- `AGENT_COMPOSE_RUNTIME_BASE_URL` must name the daemon on that internal network.
+  A containerized daemon has to be attached with a resolvable alias (the shipped
+  overlay's `agent-compose` works) or the URL must use its address or the
+  network gateway; the start is refused otherwise. This validation is what keeps
+  the facade, telemetry, and proxy reachable; the engine does not invent a
+  per-sandbox gateway rewrite. A native daemon's DNS name cannot be verified
+  from the host, so that remains a documented deployment requirement.
+- The layer admits the daemon endpoints on the network, the host bridge gateway,
+  and other containers attached to that network, and denies every off-network
+  destination for every process in the container. Docker's embedded DNS resolver
+  still answers queries, so the deny is on routed destinations, not on names.
+- Admission reports the `docker_internal_network` mechanism next to
+  `forward_proxy`/`seccomp_redirect` when strict mode is selected, with the
+  admitted scope in the report's limitations.
+- The switch is inert in audit and off mode, so it can be configured before the
+  egress mode is switched. A sandbox created before strict mode was enabled
+  keeps its old network; its next start fails closed and it must be removed and
+  created again.
+
+`SANDBOX_EGRESS_PROFILE=strict` is a separate, unified experimental switch:
+it selects init, enforce, and the Docker supervisor together. Because it is
+meant to be enabled on an existing deployment, it deliberately does **not**
+apply enforce mode's synthetic default-deny to an agent that declared no
+policy. An undeclared agent keeps the allow-all policy, but the daemon still
+issues its proxy credential and records the runtime as mediated, so its
+connections continue to flow through the engine proxy. A declared restricting
+policy keeps its existing semantics. Explicit `SANDBOX_INIT_EGRESS=enforce`
+without the profile retains the earlier default-deny behavior.
+
+Deployment requirement: the network has to exist before the daemon starts a
+sandbox. `docker-compose.sandbox-network.yml` defines
+`agent-compose-sandbox-strict` with `internal: true` and attaches the daemon to
+it; selecting it is the two `.env` values above. On a hand-built deployment,
+create the network with `docker network create --internal` and attach the daemon
+before setting the variables. The shipped overlay keeps the default placement on
+the non-internal `agent-compose-sandbox` network, so the profile changes nothing
+until an operator selects it.
+
+
+## Delivered: L7 method/path enforcement and opt-in TLS interception
+
+The policy model gained an optional L7 constraint on an allowance: `methods`
+and `paths`, with `enforcement: audit|enforce`. Omitting both keeps the L4
+behavior byte-for-byte, including the policy generation. A rule with an L7
+constraint no longer matches an uninspected CONNECT, so a declaration that asked
+for inspection cannot be satisfied by forwarding it blindly.
+
+- **Plain HTTP** is decided on the request line (`method`, escaped `path`), so an
+  allowance can name methods and path prefixes without interception.
+- **HTTPS** is intercepted only for an endpoint whose deciding allowance carries
+  an L7 constraint. Enabling `EGRESS_L7_TLS_MITM` makes the CONNECT decision defer
+  the L7 check (`egress.Request.DeferL7`) and then terminates TLS with a leaf for
+  the CONNECT host, signed by the configured CA (`EGRESS_L7_CA_CERT_FILE`/`KEY_FILE`
+  or inline PEM) or by an ephemeral CA generated at startup. Each intercepted
+  request is decided against the policy in force now, and the upstream connection
+  is pinned to the address the L4 decision resolved, so TLS termination never
+  re-resolves the name. The upstream is dialled with TLS and the server name is
+  the CONNECT destination. A ClientHello whose SNI differs from the CONNECT host
+  fails the handshake (this also covers the outer SNI of an ECH offer); a client
+  that sends no SNI reaches the CONNECT destination.
+- **Fail closed.** Without interception, an L7-constrained HTTPS allowance is
+  denied under `engine.l7-inspection-unavailable`; it is not downgraded to a
+  destination-only allowance. An allowance without L7 constraints keeps the
+  transparent tunnel.
+- **CA trust is the deployment's job.** The proxy cannot install a file in the
+  guest. `EGRESS_L7_CA_BUNDLE_GUEST_PATH` names an already-installed bundle and
+  makes the creation seam inject `SSL_CERT_FILE`, `CURL_CA_BUNDLE`,
+  `REQUESTS_CA_BUNDLE`, `NODE_EXTRA_CA_CERTS`, and `GIT_SSL_CAINFO`. An ephemeral
+  CA is usable for a test but changes on every daemon restart.
+- **Audit** records `layer` (`l4`/`l7`), `method`, `path`, `status`,
+  `enforcement`, `rule_id`, `action`, and `reason` per decision. An `audit`
+  allowance allows the request and records the reason it would have been denied.
+- **HTTP/2** is negotiated by ALPN for intercepted TLS. Intercepted h2 streams
+  are handled by an `http2.Server`; the upstream transport enables h2 as well.
+- **Credential injection** is declared as `inject_headers` with `${ENV}`
+  templates. The proxy resolves them from its own environment at request time,
+  overwrites any guest-supplied value, and fails closed under
+  `engine.credential-unavailable` when a variable is missing. Reports and audit
+  lines carry header names only, never values.
+
+Not implemented in this slice: L7 fields are not yet on the protobuf API surface
+(a client must deliver them through the compose file/CLI path); upstream
+credential injection; HTTP/2 interception (the terminated tunnel offers
+`http/1.1` only); transparent capture for clients that ignore the proxy
+environment; and the admission report still describes endpoints, not L7
+constraints.
+
+
 ## Still open
 
 - **The bypass list exempts a host, not an endpoint.** `NO_PROXY` names the

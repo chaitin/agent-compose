@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strings"
@@ -53,6 +54,11 @@ type SandboxEgressProxy struct {
 	credentials     EgressProxyCredentialStore
 	sandboxes       SandboxByIDLoader
 	networkPolicies driverSandboxNetworkPolicy
+	// revisions is the process-local read-through cache of the persisted policy
+	// revision. It is a pointer because the mediation is copied by value into
+	// the runtime provider and the proxy; the copies must agree about what they
+	// have already observed.
+	revisions *egressPolicyRevisionCache
 }
 
 // NewSandboxEgressProxy builds the mediation from the daemon's own dependencies.
@@ -69,6 +75,7 @@ func NewSandboxEgressProxy(
 		credentials:     credentials,
 		sandboxes:       sandboxes,
 		networkPolicies: driverSandboxNetworkPolicy{config: config, declarations: declarations},
+		revisions:       newEgressPolicyRevisionCache(),
 	}
 }
 
@@ -136,7 +143,9 @@ func (p SandboxEgressProxy) enable(ctx context.Context, session *domain.Sandbox)
 		Host:   egressProxyAddress(p.config, session),
 		User:   url.UserPassword(session.Summary.ID, rawCredential),
 	}).String()
-	return egressProxyEnvItems(proxyURL, egressProxyBypass(p.config, session)), nil
+	items := egressProxyEnvItems(proxyURL, egressProxyBypass(p.config, session))
+	items = append(items, egressL7CAEnvItems(p.config)...)
+	return items, nil
 }
 
 // proxyEnvProvider returns the driver-boundary hook that issues one sandbox's
@@ -195,7 +204,19 @@ func (p SandboxEgressProxy) EgressProxyPolicy(ctx context.Context, sandboxID str
 	if err != nil {
 		return egress.Policy{}, fmt.Errorf("load sandbox %s for the egress decision: %w", sandboxID, err)
 	}
-	return p.policyForSession(ctx, session)
+	policy, err := p.policyForSession(ctx, session)
+	if err != nil {
+		return egress.Policy{}, err
+	}
+	// The proxy is the enforcement point for a mediated sandbox, so reading the
+	// policy here is what acknowledges the revision. A failure to persist the
+	// acknowledgement is reported and does not change the decision: the policy
+	// is still the one this request is evaluated against.
+	if _, err := p.observePolicyRevision(ctx, session, policy, true); err != nil {
+		slog.WarnContext(ctx, "egress policy revision was not acknowledged by the proxy",
+			"sandbox_id", sandboxID, "error", err)
+	}
+	return policy, nil
 }
 
 // policyForSession compiles the policy the proxy would decide this sandbox's
@@ -279,4 +300,38 @@ func egressProxyEnvItems(proxyURL string, bypass []string) []driverpkg.SandboxEn
 		{Name: "no_proxy", Value: noProxy, Secret: true},
 	}
 	return items
+}
+
+// egressL7CAEnvItems names the guest CA bundle the sandbox must trust for the
+// intercepted TLS handshake. The engine cannot install the certificate file in
+// the guest from here, so the deployment must place it at the configured guest
+// path (an image layer or a mounted volume); the variables point every common
+// HTTP client at that file. Without the path configured no variables are added,
+// which keeps interception deployments that only rely on the proxy environment
+// unchanged.
+func egressL7CAEnvItems(config *appconfig.Config) []driverpkg.SandboxEnvVar {
+	if config == nil || !config.EgressL7TLS.MITM {
+		return nil
+	}
+	path := strings.TrimSpace(config.EgressL7TLS.CABundleGuestPath)
+	if path == "" {
+		return nil
+	}
+	// The certificate is public material, so these values are not marked
+	// secret; the path itself is not sensitive either.
+	return []driverpkg.SandboxEnvVar{
+		{Name: "SSL_CERT_FILE", Value: path},
+		{Name: "CURL_CA_BUNDLE", Value: path},
+		{Name: "REQUESTS_CA_BUNDLE", Value: path},
+		{Name: "NODE_EXTRA_CA_CERTS", Value: path},
+		{Name: "GIT_SSL_CAINFO", Value: path},
+	}
+}
+
+// EgressProxyPolicyForSession is the per-run policy hook. No per-run policy
+// store exists yet, so it returns the sandbox-wide policy; the proxy calls this
+// only when a session identity is present, which makes the future per-run
+// storage a change here instead of a change in the proxy.
+func (p *SandboxEgressProxy) EgressProxyPolicyForSession(ctx context.Context, sandboxID, sessionID, marker string) (egress.Policy, error) {
+	return p.EgressProxyPolicy(ctx, sandboxID)
 }

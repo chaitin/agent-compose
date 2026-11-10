@@ -46,6 +46,9 @@ const (
 	// flags a mismatch - and triggers a recreate - the first time such a
 	// Pod is seen with jupyter now enabled for its sandbox.
 	k8sSandboxLabelJupyter = k8sSandboxLabelPrefix + ".jupyter"
+	// k8sSandboxLabelInit records that the Pod's container runs ac-init as PID
+	// 1. It is the control-path handshake; a missing label means legacy sh/tail.
+	k8sSandboxLabelInit = k8sSandboxLabelPrefix + ".sandbox_init"
 
 	// k8sContainerName is the single container agent-compose runs per sandbox
 	// Pod. v1 does not support multi-container sandboxes.
@@ -289,6 +292,12 @@ func (r *k8sRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmStat
 		}
 		created = true
 	}
+	if err := r.ensureK8sEgressNetworkPolicy(ctx, clientset, pod, sandbox, vmState); err != nil {
+		if created {
+			_ = clientset.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{GracePeriodSeconds: new(int64)})
+		}
+		return SandboxVMInfo{}, err
+	}
 	if pod.Status.Phase != corev1.PodRunning {
 		attempt := k8sEnsureAttemptState{Namespace: r.namespaceFor(vmState), PodName: pod.Name, Created: created}
 		pod, err = r.waitForPodRunning(ctx, clientset, attempt.Namespace, attempt.PodName)
@@ -296,7 +305,7 @@ func (r *k8sRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmStat
 			return SandboxVMInfo{}, r.cleanupK8sPodAfterEnsureFailure(ctx, clientset, attempt, err)
 		}
 	}
-	return r.ensureSandboxResult(ctx, clientset, r.namespaceFor(vmState), pod, effective)
+	return r.ensureSandboxResult(ctx, clientset, r.namespaceFor(vmState), pod, vmState, effective)
 }
 
 // k8sPodNeedsRecreate reports whether pod cannot serve as-is and must be
@@ -336,9 +345,31 @@ func k8sPodNeedsRecreate(pod *corev1.Pod, effective ProxyState) (reason string, 
 // genuine JupyterReadyTimeout expiry - but that failure says nothing about
 // whether this Pod's jupyter would have come up given more time, so it
 // must not be punished for a timeout that was never its own.
-func (r *k8sRuntime) ensureSandboxResult(ctx context.Context, clientset kubernetes.Interface, namespace string, pod *corev1.Pod, effective ProxyState) (SandboxVMInfo, error) {
+func (r *k8sRuntime) k8sSandboxUsesInit(ctx context.Context, sandbox *Sandbox, vmState VMState) (bool, error) {
+	clientset, _, err := r.client(vmState.K8sContext)
+	if err != nil {
+		return false, err
+	}
+	pod, ok, err := r.findPod(ctx, clientset, sandbox, vmState)
+	if err != nil || !ok {
+		return false, err
+	}
+	return k8sPodUsesInit(pod), nil
+}
+
+func (r *k8sRuntime) ensureSandboxResult(ctx context.Context, clientset kubernetes.Interface, namespace string, pod *corev1.Pod, vmState VMState, effective ProxyState) (SandboxVMInfo, error) {
+	if k8sPodUsesInit(pod) {
+		initSandbox := &Sandbox{Summary: SandboxSummary{ID: pod.Annotations[k8sSandboxLabelID]}}
+		if err := r.waitForK8sSandboxInit(ctx, clientset, namespace, pod, initSandbox, vmState); err != nil {
+			return SandboxVMInfo{}, err
+		}
+	}
+	initState := SandboxInitStateDisabled
+	if k8sPodUsesInit(pod) {
+		initState = SandboxInitStateEnabled
+	}
 	if !jupyterEnabled(effective) {
-		return SandboxVMInfo{BoxID: pod.Name}, nil
+		return SandboxVMInfo{BoxID: pod.Name, SandboxInitState: initState}, nil
 	}
 	effective = k8sJupyterProxyStateForPod(effective, pod)
 	readyCtx, cancel := context.WithTimeout(ctx, r.config.JupyterReadyTimeout)
@@ -373,7 +404,7 @@ func (r *k8sRuntime) ensureSandboxResult(ctx context.Context, clientset kubernet
 		}
 		return SandboxVMInfo{}, cause
 	}
-	return SandboxVMInfo{BoxID: pod.Name, ProxyState: &effective}, nil
+	return SandboxVMInfo{BoxID: pod.Name, ProxyState: &effective, SandboxInitState: initState}, nil
 }
 
 // k8sJupyterProxyStateForPod finalizes proxyState's connect target once pod
@@ -440,11 +471,14 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 	// decision on the Pod itself so a later EnsureSandbox call can detect
 	// whether it's stale (see k8sPodNeedsRecreate) without having to infer
 	// it from the live Command string.
-	cmdText := "tail -f /dev/null"
+	initEnabled := SandboxInitEnabledFor(r.config, vmState)
+	cmdText := ""
 	var containerPorts []corev1.ContainerPort
 	if jupyterEnabled(effective) {
 		cmdText = jupyterLaunchCommand(r.config, effective, false)
 		containerPorts = []corev1.ContainerPort{{ContainerPort: int32(effective.GuestPort)}}
+	} else if !initEnabled {
+		cmdText = "tail -f /dev/null"
 	}
 	env, err := r.containerEnv(ctx, sandbox)
 	if err != nil {
@@ -489,6 +523,32 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 			},
 			Volumes: volumes,
 		},
+	}
+	if initEnabled {
+		pod.Labels[k8sSandboxLabelInit] = "true"
+		container := &pod.Spec.Containers[0]
+		container.Command = []string{r.sandboxInitBinary()}
+		container.Args = []string{"--control-socket", sandboxInitGuestSocket}
+		if cmdText != "" {
+			container.Args = append(container.Args, "--main-shell", cmdText)
+		}
+		if sandboxInitEgressRequiresPtrace(r.config) {
+			// Mediation duplicates the workload socket with pidfd_getfd. A
+			// namespace that forbids SYS_PTRACE must be able to reject the pod;
+			// the capability report reflects whatever the cluster admits.
+			container.SecurityContext.Capabilities.Add = []corev1.Capability{"SYS_PTRACE"}
+			// The policy DNS stub answers the queried name and maps the
+			// synthetic IP back to it. A Pod's default ndots:5 search list
+			// makes glibc query <name>.<namespace>.svc.cluster.local first for
+			// ordinary external names, so the proxy would receive the search
+			// FQDN and the declared hostname policy would not match. ndots:1
+			// tries a name with a dot as written first while keeping cluster
+			// search for single-label service names.
+			ndots := "1"
+			pod.Spec.DNSConfig = &corev1.PodDNSConfig{
+				Options: []corev1.PodDNSConfigOption{{Name: "ndots", Value: &ndots}},
+			}
+		}
 	}
 	created, err := clientset.CoreV1().Pods(r.namespaceFor(vmState)).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
@@ -596,6 +656,10 @@ func (r *k8sRuntime) containerEnv(ctx context.Context, sandbox *Sandbox) (map[st
 	env["WORKSPACE"] = r.config.GuestWorkspacePath
 	env["STATE_ROOT"] = r.config.GuestStateRoot
 	env["RUNTIME_ROOT"] = r.config.GuestRuntimeRoot
+	env["LOG_ROOT"] = r.config.GuestLogRoot
+	for key, value := range sandboxInitIsolationEnv(r.config) {
+		env[key] = value
+	}
 	// K8S_RUNTIME_BASE_URL overrides the daemon-wide AGENT_COMPOSE_RUNTIME_BASE_URL
 	// for k8s sandboxes only - see docs/design/k8s_pod_runtime_driver_design.md §2.2.
 	if base := strings.TrimRight(strings.TrimSpace(r.config.K8sRuntimeBaseURL), "/"); base != "" {
@@ -840,6 +904,15 @@ func (r *k8sRuntime) ExecStream(ctx context.Context, sandbox *Sandbox, vmState V
 // Exec calls leave stdin nil; guest file pushes stream bytes through the
 // Kubernetes exec subresource without putting payloads in argv.
 func (r *k8sRuntime) execWithInput(ctx context.Context, request k8sExecRequest, stdin io.Reader, stream ExecStreamWriter) (ExecResult, error) {
+	if stdin == nil {
+		usesInit, err := r.k8sSandboxUsesInit(ctx, request.Sandbox, request.VMState)
+		if err != nil {
+			return ExecResult{}, err
+		}
+		if usesInit {
+			return r.initExecWithStream(ctx, request.Sandbox, request.VMState, request.Spec, stream)
+		}
+	}
 	executor, err := r.newExecutorFor(ctx, request, stdin != nil)
 	if err != nil {
 		return ExecResult{}, err
@@ -1025,4 +1098,15 @@ func k8sExecScript(spec ExecSpec, defaultCwd string) string {
 		b.WriteString(" " + shellQuote(arg))
 	}
 	return b.String()
+}
+
+func (r *k8sRuntime) sandboxInitBinary() string {
+	if r != nil && r.config != nil && strings.TrimSpace(r.config.SandboxInitBinary) != "" {
+		return strings.TrimSpace(r.config.SandboxInitBinary)
+	}
+	return appconfig.DefaultSandboxInitBinary
+}
+
+func k8sPodUsesInit(pod *corev1.Pod) bool {
+	return pod != nil && pod.Labels != nil && pod.Labels[k8sSandboxLabelInit] == "true"
 }

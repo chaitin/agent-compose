@@ -119,10 +119,12 @@ func marshalNetworkPolicy(p *SandboxNetworkPolicy) *sandboxhost.NetworkPolicy {
 	}
 	for _, entry := range p.Allow {
 		policy.Allow = append(policy.Allow, &sandboxhost.AllowEntry{
-			Host:       entry.Host,
-			Port:       int32(entry.Port),
-			Protocol:   string(entry.Protocol),
-			AllowedIps: append([]string(nil), entry.AllowedIPs...),
+			Host:        entry.Host,
+			Port:        int32(entry.Port),
+			Protocol:    string(entry.Protocol),
+			AllowedIps:  append([]string(nil), entry.AllowedIPs...),
+			Binaries:    append([]string(nil), entry.Binaries...),
+			Enforcement: string(entry.Enforcement),
 		})
 	}
 	for _, entry := range p.Deny {
@@ -130,6 +132,7 @@ func marshalNetworkPolicy(p *SandboxNetworkPolicy) *sandboxhost.NetworkPolicy {
 			Host:     entry.Host,
 			Port:     int32(entry.Port),
 			Protocol: string(entry.Protocol),
+			Binaries: append([]string(nil), entry.Binaries...),
 		})
 	}
 	for _, endpoint := range p.EngineEndpoints {
@@ -157,10 +160,12 @@ func unmarshalNetworkPolicy(p *sandboxhost.NetworkPolicy) *SandboxNetworkPolicy 
 	}
 	for _, entry := range p.GetAllow() {
 		policy.Allow = append(policy.Allow, egress.AllowEntry{
-			Host:       entry.GetHost(),
-			Port:       int(entry.GetPort()),
-			Protocol:   egress.Protocol(entry.GetProtocol()),
-			AllowedIPs: append([]string(nil), entry.GetAllowedIps()...),
+			Host:        entry.GetHost(),
+			Port:        int(entry.GetPort()),
+			Protocol:    egress.Protocol(entry.GetProtocol()),
+			AllowedIPs:  append([]string(nil), entry.GetAllowedIps()...),
+			Binaries:    append([]string(nil), entry.GetBinaries()...),
+			Enforcement: egress.Enforcement(entry.GetEnforcement()),
 		})
 	}
 	for _, entry := range p.GetDeny() {
@@ -168,6 +173,7 @@ func unmarshalNetworkPolicy(p *sandboxhost.NetworkPolicy) *SandboxNetworkPolicy 
 			Host:     entry.GetHost(),
 			Port:     int(entry.GetPort()),
 			Protocol: egress.Protocol(entry.GetProtocol()),
+			Binaries: append([]string(nil), entry.GetBinaries()...),
 		})
 	}
 	for _, endpoint := range p.GetEngineEndpoints() {
@@ -242,6 +248,7 @@ func marshalVMState(s VMState) *sandboxhost.VMState {
 		BootstrapRef:     s.BootstrapRef,
 		K8SContext:       s.K8sContext,
 		K8SNamespace:     s.K8sNamespace,
+		SandboxInitState: s.SandboxInitState,
 	}
 }
 
@@ -264,6 +271,7 @@ func unmarshalVMState(s *sandboxhost.VMState) VMState {
 		BootstrapRef:     s.GetBootstrapRef(),
 		K8sContext:       s.GetK8SContext(),
 		K8sNamespace:     s.GetK8SNamespace(),
+		SandboxInitState: s.GetSandboxInitState(),
 	}
 }
 
@@ -376,9 +384,10 @@ func unmarshalExecResult(r *sandboxhost.ExecResult) ExecResult {
 
 func marshalSandboxVMInfo(i SandboxVMInfo) *sandboxhost.SandboxVMInfo {
 	out := &sandboxhost.SandboxVMInfo{
-		BoxId:          i.BoxID,
-		JupyterUrl:     i.JupyterURL,
-		RuntimeCreated: i.RuntimeCreated,
+		BoxId:            i.BoxID,
+		JupyterUrl:       i.JupyterURL,
+		RuntimeCreated:   i.RuntimeCreated,
+		SandboxInitState: i.SandboxInitState,
 	}
 	if i.ProxyState != nil {
 		state := marshalProxyState(*i.ProxyState)
@@ -392,9 +401,10 @@ func unmarshalSandboxVMInfo(i *sandboxhost.SandboxVMInfo) SandboxVMInfo {
 		return SandboxVMInfo{}
 	}
 	out := SandboxVMInfo{
-		BoxID:          i.GetBoxId(),
-		JupyterURL:     i.GetJupyterUrl(),
-		RuntimeCreated: i.GetRuntimeCreated(),
+		BoxID:            i.GetBoxId(),
+		JupyterURL:       i.GetJupyterUrl(),
+		RuntimeCreated:   i.GetRuntimeCreated(),
+		SandboxInitState: i.GetSandboxInitState(),
 	}
 	if i.GetProxyState() != nil {
 		state := unmarshalProxyState(i.GetProxyState())
