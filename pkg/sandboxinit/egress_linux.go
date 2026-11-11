@@ -239,6 +239,11 @@ func (s *egressSupervisor) adopt(sock *os.File, sessionID, marker string, done <
 
 // serve reads notifications until the listener is closed by session exit.
 func (s *egressSupervisor) serve(listenerFD int, sessionID, marker string) {
+	var receives *dnsRecvmsgQueue
+	if s.mode == EgressModeEnforce {
+		receives = newDNSRecvmsgQueue(listenerFD)
+		defer receives.close()
+	}
 	if _, err := notificationSizes(); err != nil {
 		s.logger.Warn("sandbox init egress audit disabled after a notification size check failed",
 			"sandbox_id", s.sandboxID, "session_id", sessionID, "error", err)
@@ -252,11 +257,11 @@ func (s *egressSupervisor) serve(listenerFD int, sessionID, marker string) {
 			}
 			return
 		}
-		s.handleNotification(listenerFD, &request, sessionID, marker)
+		s.handleNotification(listenerFD, &request, sessionID, marker, receives)
 	}
 }
 
-func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNotif, sessionID, marker string) {
+func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNotif, sessionID, marker string, receives *dnsRecvmsgQueue) {
 	if s.mode == EgressModeEnforce {
 		switch int32(request.Data.NR) {
 		case int32(unix.SYS_CONNECT):
@@ -265,6 +270,10 @@ func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNo
 			s.handleEnforceDatagram(listenerFD, request, sessionID, marker)
 		case int32(unix.SYS_RECVFROM):
 			s.handleEnforceRecvfrom(listenerFD, request, sessionID, marker)
+		case int32(unix.SYS_RECVMSG):
+			if receive := s.prepareDNSRecvmsg(listenerFD, request); receive != nil {
+				receives.add <- receive
+			}
 		case int32(unix.SYS_GETPEERNAME):
 			s.handleEnforceGetpeername(listenerFD, request)
 		default:
