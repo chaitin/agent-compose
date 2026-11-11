@@ -5,6 +5,7 @@ package sandboxinit
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -79,7 +80,9 @@ func TestDNSRecvmsgQueueIntakeBound(t *testing.T) {
 // The next recvmsg uses a different listener and buffer/flags, so replay must
 // retain the complete packet rather than the canceled caller's truncated copy.
 func TestDNSRecvmsgCanceledPacketReplay(t *testing.T) {
-	requireEnforceSupport(t)
+	if err := egressInterceptionSupported(); err != nil {
+		t.Skip(err)
+	}
 	for _, mode := range []string{"normal", "truncate", "peek", "control-trunc", "control-partial"} {
 		t.Run(mode, func(t *testing.T) {
 			pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
@@ -259,6 +262,13 @@ func TestDNSRecvmsgReviewHelperProcess(t *testing.T) {
 		controlSize = 20
 	}
 	n, oobn, returned, _, err := unix.Recvmsg(4, buffer, make([]byte, controlSize), flags)
+	if mode == "timeout" {
+		if !errors.Is(err, unix.EAGAIN) {
+			t.Fatalf("timeout receive: %v", err)
+		}
+		fmt.Println("replay-ok")
+		return
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
