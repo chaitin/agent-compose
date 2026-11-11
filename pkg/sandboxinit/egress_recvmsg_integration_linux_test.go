@@ -95,7 +95,16 @@ func TestDNSRecvmsgFullRecoveryCacheIntegration(t *testing.T) {
 	}
 	helper := startDNSRecvmsgReviewHelper(t, pair[0], "normal")
 	request := receiveDNSRecvmsgReview(t, helper.listener)
-	r := &dnsRecvmsg{request: request, listenerFD: helper.listener, fd: pair[0], inode: dnsRecvmsgPendingLimit + 1}
+	fd, err := unix.Dup(pair[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &dnsRecvmsg{request: request, listenerFD: helper.listener, fd: fd, inode: dnsRecvmsgPendingLimit + 1}
+	defer func() {
+		if r.fd >= 0 {
+			_ = unix.Close(r.fd)
+		}
+	}()
 	if errno := r.readLayout(); errno != 0 {
 		t.Fatal(errno)
 	}
