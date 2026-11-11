@@ -3,8 +3,10 @@
 package sandboxinit
 
 import (
+	"bytes"
 	"encoding/binary"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -19,16 +21,37 @@ type dnsRecvmsgPacket struct {
 }
 
 func readDNSRecvmsgPacket(fd, flags int) (*dnsRecvmsgPacket, error) {
-	payload, control := make([]byte, egressDatagramLimit), make([]byte, egressDatagramLimit)
+	// Probe with MSG_TRUNC to learn the full datagram length even if the
+	// caller's buffer is short. Grow ancillary space only when the kernel says
+	// it is needed; ordinary DNS sockets usually have none.
+	control := make([]byte, unix.CmsgSpace(int(unsafe.Sizeof(unix.Timeval{}))))
+	var size int
+	for {
+		n, _, returned, _, err := unix.Recvmsg(fd, nil, control, flags|unix.MSG_PEEK|unix.MSG_TRUNC|unix.MSG_DONTWAIT)
+		if err != nil {
+			return nil, err
+		}
+		size = n
+		if returned&unix.MSG_CTRUNC == 0 || len(control) >= egressDatagramLimit {
+			break
+		}
+		control = make([]byte, min(len(control)*2, egressDatagramLimit))
+	}
+	payload := make([]byte, min(size, egressDatagramLimit))
 	n, oobn, returned, _, err := unix.Recvmsg(fd, payload, control, flags|unix.MSG_DONTWAIT)
 	if err != nil {
 		return nil, err
 	}
-	return &dnsRecvmsgPacket{payload: payload[:min(n, len(payload))], control: control[:oobn], flags: returned, expires: time.Now().Add(dnsSocketLifetime)}, nil
+	if oobn == 0 {
+		control = nil
+	} else {
+		control = bytes.Clone(control[:oobn])
+	}
+	return &dnsRecvmsgPacket{payload: payload[:min(n, len(payload))], control: control, flags: returned, expires: time.Now().Add(dnsSocketLifetime)}, nil
 }
 
 func (p *dnsRecvmsgPacket) message(r *dnsRecvmsg) ([]byte, []byte, int, int) {
-	flags := p.flags &^ (unix.MSG_TRUNC | unix.MSG_CTRUNC | unix.MSG_CMSG_CLOEXEC)
+	flags := p.flags &^ (unix.MSG_TRUNC | unix.MSG_CMSG_CLOEXEC)
 	flags |= int(r.request.Data.Args[2]) & unix.MSG_CMSG_CLOEXEC
 	n := min(r.size, len(p.payload))
 	payload := p.payload[:n]
@@ -62,4 +85,34 @@ func (p *dnsRecvmsgPacket) message(r *dnsRecvmsg) ([]byte, []byte, int, int) {
 		offset += unix.CmsgSpace(length - unix.CmsgLen(0))
 	}
 	return payload, control, n, flags
+}
+
+// Only canceled replies remain in this cache after receive commits. Under
+// pressure evict the oldest abandoned reply at insertion, never refuse a live
+// receive merely because other sockets have filled the recovery cache.
+type dnsRecvmsgPackets map[uint64]*dnsRecvmsgPacket
+
+func (saved dnsRecvmsgPackets) receive(r *dnsRecvmsg) bool {
+	done, packet := r.try(saved[r.inode])
+	if packet == nil {
+		delete(saved, r.inode)
+		return done
+	}
+	saved.retain(r.inode, packet)
+	return done
+}
+
+func (saved dnsRecvmsgPackets) retain(inode uint64, packet *dnsRecvmsgPacket) {
+	if saved[inode] == nil && len(saved) >= dnsRecvmsgPendingLimit {
+		var oldest uint64
+		var expiry time.Time
+		for inode, p := range saved {
+			if expiry.IsZero() || p.expires.Before(expiry) {
+				oldest, expiry = inode, p.expires
+			}
+		}
+		_ = unix.Close(saved[oldest].fd)
+		delete(saved, oldest)
+	}
+	saved[inode] = packet
 }

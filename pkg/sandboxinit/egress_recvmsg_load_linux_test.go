@@ -16,6 +16,9 @@ import (
 )
 
 func TestInitDNSRecvmsgManyWaiters(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("DNS load integration requires root to launch enforce init")
+	}
 	requireEnforceSupport(t)
 	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
 	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))

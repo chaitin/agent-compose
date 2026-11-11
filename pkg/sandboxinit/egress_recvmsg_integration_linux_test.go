@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -73,5 +74,42 @@ func TestDNSRecvmsgQueueRoundTripIntegration(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestDNSRecvmsgFullRecoveryCacheIntegration(t *testing.T) {
+	if err := egressInterceptionSupported(); err != nil {
+		t.Skip(err)
+	}
+	pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unix.Close(pair[0]); _ = unix.Close(pair[1]) }()
+	if err := unix.SetsockoptInt(pair[0], unix.SOL_SOCKET, unix.SO_TIMESTAMP, 1); err != nil {
+		t.Fatal(err)
+	}
+	saved := make(dnsRecvmsgPackets)
+	for inode := uint64(1); inode <= dnsRecvmsgPendingLimit; inode++ {
+		saved[inode] = &dnsRecvmsgPacket{fd: -1, expires: time.Now().Add(dnsSocketLifetime)}
+	}
+	helper := startDNSRecvmsgReviewHelper(t, pair[0], "normal")
+	request := receiveDNSRecvmsgReview(t, helper.listener)
+	r := &dnsRecvmsg{request: request, listenerFD: helper.listener, fd: pair[0], inode: dnsRecvmsgPendingLimit + 1}
+	if errno := r.readLayout(); errno != 0 {
+		t.Fatal(errno)
+	}
+	if err := unix.Sendto(pair[1], bytes.Repeat([]byte("dns-response"), 8), 0, nil); err != nil {
+		t.Fatal(err)
+	}
+	if !saved.receive(r) {
+		t.Fatal("live receive remained blocked by full recovery cache")
+	}
+	output, err := helper.outputAndWait()
+	if err != nil || !strings.Contains(output, "replay-ok") {
+		t.Fatalf("full-cache receive: %v %s", err, output)
+	}
+	if len(saved) != dnsRecvmsgPendingLimit {
+		t.Fatal("successful receive unnecessarily evicted a canceled reply")
 	}
 }

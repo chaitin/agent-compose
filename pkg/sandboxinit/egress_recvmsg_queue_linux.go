@@ -82,7 +82,7 @@ func (q *dnsRecvmsgQueue) run() {
 	defer close(q.done)
 	defer func() { _ = unix.Close(q.wake) }()
 	var pending []*dnsRecvmsg
-	saved := make(map[uint64]*dnsRecvmsgPacket)
+	saved := make(dnsRecvmsgPackets)
 	defer func() {
 		q.mu.Lock()
 		q.closed = true
@@ -163,17 +163,7 @@ func (q *dnsRecvmsgQueue) run() {
 				kept = append(kept, r)
 				continue
 			}
-			if packet == nil && len(saved) >= dnsRecvmsgPendingLimit {
-				replyConnect(r.listenerFD, r.request.ID, unix.ENOMEM)
-				q.release(r)
-				continue
-			}
-			done, packet := r.try(packet)
-			if packet == nil {
-				delete(saved, r.inode)
-			} else {
-				saved[r.inode] = packet
-			}
+			done := saved.receive(r)
 			if done {
 				q.release(r)
 			} else {
