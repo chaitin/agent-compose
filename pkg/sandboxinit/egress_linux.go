@@ -36,6 +36,7 @@ type egressSupervisor struct {
 	proxyPort      int
 	dnsMu          sync.Mutex
 	dnsSockets     map[uint64]dnsSocketDestination
+	receives       *dnsRecvmsgQueue
 	connectTimeout time.Duration
 
 	// relayMu guards the token the daemon delivers over the init control
@@ -74,19 +75,24 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 			supervisor.relay = relay
 			supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(nil)
 			supervisor.startPolicyDNS(sandboxID, passthrough)
-			return supervisor, nil
+		} else {
+			proxy, err := loadEgressProxyTarget()
+			if err != nil {
+				return nil, err
+			}
+			supervisor.proxy = proxy
+			supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(proxy)
+			if address, ok := tcpAddrFromSockaddr(proxy.rawAddr); ok {
+				supervisor.proxyHost = address.IP.String()
+				supervisor.proxyPort = address.Port
+			}
+			supervisor.startPolicyDNS(sandboxID, egressDNSPassthrough(proxy))
 		}
-		proxy, err := loadEgressProxyTarget()
+		supervisor.receives, err = newDNSRecvmsgQueue()
 		if err != nil {
+			supervisor.dns.close()
 			return nil, err
 		}
-		supervisor.proxy = proxy
-		supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(proxy)
-		if address, ok := tcpAddrFromSockaddr(proxy.rawAddr); ok {
-			supervisor.proxyHost = address.IP.String()
-			supervisor.proxyPort = address.Port
-		}
-		supervisor.startPolicyDNS(sandboxID, egressDNSPassthrough(proxy))
 	}
 	return supervisor, nil
 }
@@ -194,11 +200,13 @@ func (s *egressSupervisor) waitForRelay(ctx context.Context, timeout time.Durati
 	}
 }
 
-// close releases the DNS listeners. Mediation itself has no long-lived
-// resources beyond the per-session listeners.
+// close releases the DNS listeners and joins the receive worker.
 func (s *egressSupervisor) close() {
 	if s == nil {
 		return
+	}
+	if s.receives != nil {
+		s.receives.close()
 	}
 	s.dns.close()
 }
@@ -239,11 +247,6 @@ func (s *egressSupervisor) adopt(sock *os.File, sessionID, marker string, done <
 
 // serve reads notifications until the listener is closed by session exit.
 func (s *egressSupervisor) serve(listenerFD int, sessionID, marker string) {
-	var receives *dnsRecvmsgQueue
-	if s.mode == EgressModeEnforce {
-		receives = newDNSRecvmsgQueue(listenerFD)
-		defer receives.close()
-	}
 	if _, err := notificationSizes(); err != nil {
 		s.logger.Warn("sandbox init egress audit disabled after a notification size check failed",
 			"sandbox_id", s.sandboxID, "session_id", sessionID, "error", err)
@@ -255,13 +258,21 @@ func (s *egressSupervisor) serve(listenerFD int, sessionID, marker string) {
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
+			if errors.Is(err, unix.ENOENT) {
+				// A signaled thread can cancel a queued notification before RECV
+				// acquires it. Only HUP means there are no filtered tasks left.
+				polls := []unix.PollFd{{Fd: int32(listenerFD), Events: unix.POLLIN}}
+				if _, pollErr := unix.Poll(polls, 0); errors.Is(pollErr, unix.EINTR) || pollErr == nil && polls[0].Revents&(unix.POLLHUP|unix.POLLNVAL) == 0 {
+					continue
+				}
+			}
 			return
 		}
-		s.handleNotification(listenerFD, &request, sessionID, marker, receives)
+		s.handleNotification(listenerFD, &request, sessionID, marker)
 	}
 }
 
-func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNotif, sessionID, marker string, receives *dnsRecvmsgQueue) {
+func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNotif, sessionID, marker string) {
 	if s.mode == EgressModeEnforce {
 		switch int32(request.Data.NR) {
 		case int32(unix.SYS_CONNECT):
@@ -272,7 +283,7 @@ func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNo
 			s.handleEnforceRecvfrom(listenerFD, request, sessionID, marker)
 		case int32(unix.SYS_RECVMSG):
 			if receive := s.prepareDNSRecvmsg(listenerFD, request); receive != nil {
-				receives.add <- receive
+				s.receives.submit(receive)
 			}
 		case int32(unix.SYS_GETPEERNAME):
 			s.handleEnforceGetpeername(listenerFD, request)

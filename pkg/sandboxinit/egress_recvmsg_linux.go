@@ -5,6 +5,10 @@ package sandboxinit
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -13,6 +17,8 @@ import (
 
 type dnsRecvmsg struct {
 	request     seccompNotif
+	listenerFD  int
+	inode       uint64
 	fd          int
 	original    []byte
 	message     targetMsghdr
@@ -26,6 +32,10 @@ type dnsRecvmsg struct {
 // prepareDNSRecvmsg snapshots the receive layout, without consuming a packet.
 // Non-DNS sockets retain the kernel path, including Unix descriptor passing.
 func (s *egressSupervisor) prepareDNSRecvmsg(listenerFD int, request *seccompNotif) *dnsRecvmsg {
+	if int(request.Data.Args[2])&unix.MSG_ERRQUEUE != 0 || !s.isDNSTargetSocket(int(request.PID), int(request.Data.Args[0])) {
+		replyContinue(listenerFD, request.ID)
+		return nil
+	}
 	fd, err := duplicateTargetFD(int(request.PID), int(request.Data.Args[0]))
 	if err != nil {
 		replyContinue(listenerFD, request.ID)
@@ -41,9 +51,22 @@ func (s *egressSupervisor) prepareDNSRecvmsg(listenerFD int, request *seccompNot
 		replyContinue(listenerFD, request.ID)
 		return nil
 	}
-	receive := &dnsRecvmsg{request: *request, fd: fd, original: original}
-	if errno := receive.readLayout(); errno != 0 {
+	ownedListener, err := unix.FcntlInt(uintptr(listenerFD), unix.F_DUPFD_CLOEXEC, 0)
+	if err != nil {
 		_ = unix.Close(fd)
+		replyConnect(listenerFD, request.ID, errnoFromError(err))
+		return nil
+	}
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		_ = unix.Close(fd)
+		_ = unix.Close(ownedListener)
+		replyConnect(listenerFD, request.ID, errnoFromError(err))
+		return nil
+	}
+	receive := &dnsRecvmsg{request: *request, listenerFD: ownedListener, fd: fd, inode: stat.Ino, original: original}
+	if errno := receive.readLayout(); errno != 0 {
+		receive.close()
 		replyConnect(listenerFD, request.ID, errno)
 		return nil
 	}
@@ -97,55 +120,98 @@ func (r *dnsRecvmsg) expired() bool {
 	return seconds > r.timeout.Sec || seconds == r.timeout.Sec && int64(elapsed%time.Second/time.Microsecond) >= r.timeout.Usec
 }
 
-// try receives only while the notification is live. It never blocks the
-// notification reader, so another thread can send the packet being awaited.
-func (r *dnsRecvmsg) try(listenerFD int) bool {
-	if !notificationIDValid(listenerFD, r.request.ID) {
-		return true
-	}
-	flagsIn := int(r.request.Data.Args[2])
-	nonblocking := r.nonblocking
-	// Avoid allocating payload buffers while a blocking receive is still idle.
-	polls := []unix.PollFd{{Fd: int32(r.fd), Events: unix.POLLIN}}
-	if flagsIn&unix.MSG_ERRQUEUE != 0 {
-		polls[0].Events = unix.POLLERR
-	}
-	ready, err := unix.Poll(polls, 0)
+// isDNSTargetSocket uses the existing inode cache before the expensive pidfd
+// duplication. Re-reading the fd symlink handles dup, fork and fd-number reuse;
+// the duplicated descriptor is checked again before any emulation takes place.
+func (s *egressSupervisor) isDNSTargetSocket(pid, fd int) bool {
+	link, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%d", pid, fd))
 	if err != nil {
-		replyConnect(listenerFD, r.request.ID, errnoFromError(err))
-		return true
+		return false
 	}
-	if ready == 0 && !nonblocking {
-		if !r.expired() {
-			return false
-		}
-		replyConnect(listenerFD, r.request.ID, unix.EAGAIN)
-		return true
+	inode, err := strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(link, "socket:["), "]"), 10, 64)
+	if err != nil {
+		return false
+	}
+	s.dnsMu.Lock()
+	entry, ok := s.dnsSockets[inode]
+	s.dnsMu.Unlock()
+	return ok && time.Now().Before(entry.expires)
+}
+
+func (r *dnsRecvmsg) close() {
+	if r.fd >= 0 {
+		_ = unix.Close(r.fd)
+	}
+	_ = unix.Close(r.listenerFD)
+}
+
+// try first peeks through the original layout to retain kernel validation.
+// A complete consumed packet remains owned by the worker until NOTIF_SEND
+// commits the result. If the notification disappears it is replayed on the
+// next receive of the same socket, including across different exec listeners.
+func (r *dnsRecvmsg) try(packet *dnsRecvmsgPacket) (bool, *dnsRecvmsgPacket) {
+	if !notificationIDValid(r.listenerFD, r.request.ID) {
+		return true, packet
 	}
 	buffer := make([]byte, r.size)
 	var control []byte
 	if r.message.Control != 0 {
 		control = make([]byte, int(min(r.message.Controllen, uint64(egressDatagramLimit))))
 	}
-	n, controlSize, flags, err := r.receive(buffer, control)
-	if errors.Is(err, unix.EAGAIN) && !nonblocking {
-		if !r.expired() {
-			return false
-		}
+	n, controlSize, flags, err := r.receive(buffer, control, unix.MSG_PEEK)
+	if packet != nil && errors.Is(err, unix.EAGAIN) && int(r.request.Data.Args[2])&unix.MSG_OOB == 0 {
+		err = nil
+	}
+	if errors.Is(err, unix.EAGAIN) && !r.nonblocking && !r.expired() {
+		return false, packet
 	}
 	if err != nil {
-		replyConnect(listenerFD, r.request.ID, errnoFromError(err))
-		return true
+		replyConnect(r.listenerFD, r.request.ID, errnoFromError(err))
+		return true, packet
 	}
-	if !notificationIDValid(listenerFD, r.request.ID) {
-		return true
+	if !notificationIDValid(r.listenerFD, r.request.ID) {
+		return true, packet
 	}
-	if err := r.writeMessage(buffer[:min(n, len(buffer))], control[:controlSize], flags); err != nil {
-		replyConnect(listenerFD, r.request.ID, unix.EFAULT)
-		return true
+	peek := int(r.request.Data.Args[2])&unix.MSG_PEEK != 0
+	if packet == nil && !peek {
+		packet, err = readDNSRecvmsgPacket(r.fd, int(r.request.Data.Args[2]))
+		if err != nil {
+			if errors.Is(err, unix.EAGAIN) && !r.nonblocking && !r.expired() {
+				return false, nil
+			}
+			replyConnect(r.listenerFD, r.request.ID, errnoFromError(err))
+			return true, nil
+		}
+		// Transfer the duplicate to the packet so a failed response cannot allow
+		// inode reuse or lose the data when this request is released.
+		packet.fd = r.fd
+		r.fd = -1
 	}
-	_ = ioctlNotifSend(listenerFD, &seccompNotifResp{ID: r.request.ID, Val: int64(n)})
-	return true
+	if packet != nil {
+		buffer, control, n, flags = packet.message(r)
+	} else {
+		buffer, control = buffer[:min(n, len(buffer))], control[:controlSize]
+	}
+	return true, r.complete(packet, buffer, control, n, flags)
+}
+
+func (r *dnsRecvmsg) complete(packet *dnsRecvmsgPacket, payload, control []byte, n, flags int) *dnsRecvmsgPacket {
+	if !notificationIDValid(r.listenerFD, r.request.ID) {
+		return packet
+	}
+	response := seccompNotifResp{ID: r.request.ID, Val: int64(n)}
+	if err := r.writeMessage(payload, control, flags); err != nil {
+		response.Val = 0
+		response.Error = -int32(unix.EFAULT)
+	}
+	if err := ioctlNotifSend(r.listenerFD, &response); err != nil {
+		return packet
+	}
+	if int(r.request.Data.Args[2])&unix.MSG_PEEK == 0 && packet != nil {
+		_ = unix.Close(packet.fd)
+		return nil
+	}
+	return packet
 }
 
 func (r *dnsRecvmsg) writeMessage(payload, control []byte, flags int) error {
@@ -185,7 +251,7 @@ func (r *dnsRecvmsg) writeMessage(payload, control []byte, flags int) error {
 // Keep the original iovec lengths when asking the kernel to receive. Besides
 // scatter placement, Linux validates the complete vector's address ranges even
 // when the packet would fit into its first bytes. UDP bounds the copied payload.
-func (r *dnsRecvmsg) receive(buffer, control []byte) (int, int, int, error) {
+func (r *dnsRecvmsg) receive(buffer, control []byte, extraFlags int) (int, int, int, error) {
 	vectors := make([]unix.Iovec, len(r.descriptors)/16)
 	offset := 0
 	for index := range vectors {
@@ -205,7 +271,7 @@ func (r *dnsRecvmsg) receive(buffer, control []byte) (int, int, int, error) {
 		message.Control = &control[0]
 		message.Controllen = uint64(len(control))
 	}
-	n, _, errno := unix.Syscall(unix.SYS_RECVMSG, uintptr(r.fd), uintptr(unsafe.Pointer(&message)), uintptr(int(r.request.Data.Args[2])|unix.MSG_DONTWAIT))
+	n, _, errno := unix.Syscall(unix.SYS_RECVMSG, uintptr(r.fd), uintptr(unsafe.Pointer(&message)), uintptr(int(r.request.Data.Args[2])|unix.MSG_DONTWAIT|extraFlags))
 	if errno != 0 {
 		return 0, 0, 0, errno
 	}

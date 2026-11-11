@@ -20,6 +20,9 @@ import (
 )
 
 func TestInitDNSRecvmsgABI(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("DNS ABI integration requires root to bind port 53 and launch enforce init")
+	}
 	requireEnforceSupport(t)
 	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
 	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
