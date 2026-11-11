@@ -91,7 +91,7 @@ func TestDNSRecvmsgFullRecoveryCacheIntegration(t *testing.T) {
 	}
 	saved := make(dnsRecvmsgPackets)
 	for inode := uint64(1); inode <= dnsRecvmsgPendingLimit; inode++ {
-		saved[inode] = &dnsRecvmsgPacket{fd: -1, expires: time.Now().Add(dnsSocketLifetime)}
+		saved[inode] = &dnsRecvmsgPacket{fd: -1, expires: time.Now().Add(dnsRecvmsgPacketLifetime)}
 	}
 	helper := startDNSRecvmsgReviewHelper(t, pair[0], "normal")
 	request := receiveDNSRecvmsgReview(t, helper.listener)

@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
@@ -27,7 +28,9 @@ func TestDNSRecvmsgTargetFilter(t *testing.T) {
 	if s.isDNSTargetSocket(os.Getpid(), fd) {
 		t.Fatal("ordinary socket classified as DNS")
 	}
-	s.rememberDNSSocket(fd, []byte{1, 2})
+	if err := s.rememberDNSSocket(fd, []byte{1, 2}); err != nil {
+		t.Fatal(err)
+	}
 	if !s.isDNSTargetSocket(os.Getpid(), fd) {
 		t.Fatal("redirected socket not recognized")
 	}
@@ -252,7 +255,7 @@ func TestDNSRecvmsgReviewHelperProcess(t *testing.T) {
 		buffer = buffer[:4]
 		flags = unix.MSG_TRUNC
 	}
-	if mode == "peek" {
+	if mode == "peek" || mode == "source-peek" {
 		flags = unix.MSG_PEEK
 	}
 	if mode == "control-trunc" {
@@ -261,7 +264,7 @@ func TestDNSRecvmsgReviewHelperProcess(t *testing.T) {
 	if mode == "control-partial" {
 		controlSize = 20
 	}
-	n, oobn, returned, _, err := unix.Recvmsg(4, buffer, make([]byte, controlSize), flags)
+	n, oobn, returned, from, err := unix.Recvmsg(4, buffer, make([]byte, controlSize), flags)
 	if mode == "timeout" {
 		if !errors.Is(err, unix.EAGAIN) {
 			t.Fatalf("timeout receive: %v", err)
@@ -271,6 +274,12 @@ func TestDNSRecvmsgReviewHelperProcess(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatal(err)
+	}
+	if expected := os.Getenv("DNS_RECVMSG_REVIEW_SOURCE"); expected != "" {
+		actual, ok := from.(*unix.SockaddrInet4)
+		if !ok || fmt.Sprintf("%s:%d", net.IP(actual.Addr[:]), actual.Port) != expected {
+			t.Fatalf("unexpected datagram source: %v, want %s", from, expected)
+		}
 	}
 	if n != 96 {
 		t.Fatalf("full response length %d", n)

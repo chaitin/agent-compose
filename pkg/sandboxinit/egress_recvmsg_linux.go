@@ -21,6 +21,7 @@ type dnsRecvmsg struct {
 	inode       uint64
 	fd          int
 	original    []byte
+	source      []byte
 	message     targetMsghdr
 	descriptors []byte
 	size        int
@@ -38,10 +39,16 @@ func (s *egressSupervisor) prepareDNSRecvmsg(listenerFD int, request *seccompNot
 	}
 	fd, err := duplicateTargetFD(int(request.PID), int(request.Data.Args[0]))
 	if err != nil {
-		replyContinue(listenerFD, request.ID)
+		replyConnect(listenerFD, request.ID, errnoFromError(err))
 		return nil
 	}
-	original, ok := s.dnsSocketSource(fd)
+	original, err := s.dnsSocketSource(fd)
+	if err != nil {
+		_ = unix.Close(fd)
+		replyConnect(listenerFD, request.ID, errnoFromError(err))
+		return nil
+	}
+	ok := original != nil
 	if ok {
 		socketType, socketErr := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_TYPE)
 		ok = socketErr == nil && socketType == unix.SOCK_DGRAM
@@ -133,9 +140,9 @@ func (s *egressSupervisor) isDNSTargetSocket(pid, fd int) bool {
 		return false
 	}
 	s.dnsMu.Lock()
-	entry, ok := s.dnsSockets[inode]
+	_, ok := s.dnsSockets[inode]
 	s.dnsMu.Unlock()
-	return ok && time.Now().Before(entry.expires)
+	return ok
 }
 
 func (r *dnsRecvmsg) close() {
@@ -189,6 +196,7 @@ func (r *dnsRecvmsg) try(packet *dnsRecvmsgPacket) (bool, *dnsRecvmsgPacket) {
 	}
 	if packet != nil {
 		buffer, control, n, flags = packet.message(r)
+		r.source = packet.source
 	} else {
 		buffer, control = buffer[:min(n, len(buffer))], control[:controlSize]
 	}
@@ -216,7 +224,8 @@ func (r *dnsRecvmsg) complete(packet *dnsRecvmsgPacket, payload, control []byte,
 
 func (r *dnsRecvmsg) writeMessage(payload, control []byte, flags int) error {
 	pid, address := int(r.request.PID), r.request.Data.Args[1]
-	message, descriptors, original := r.message, r.descriptors, r.original
+	message, descriptors := r.message, r.descriptors
+	original := restoreDNSReplySource(r.original, r.source)
 	for offset := 0; offset < len(descriptors) && len(payload) > 0; offset += 16 {
 		base := binary.NativeEndian.Uint64(descriptors[offset : offset+8])
 		length := int(min(binary.NativeEndian.Uint64(descriptors[offset+8:offset+16]), uint64(len(payload))))
@@ -262,7 +271,8 @@ func (r *dnsRecvmsg) receive(buffer, control []byte, extraFlags int) (int, int, 
 		vectors[index].Len = length
 		offset += int(min(length, uint64(len(buffer)-offset)))
 	}
-	var message unix.Msghdr
+	var name unix.RawSockaddrAny
+	message := unix.Msghdr{Name: (*byte)(unsafe.Pointer(&name)), Namelen: uint32(unsafe.Sizeof(name))}
 	if len(vectors) > 0 {
 		message.Iov = &vectors[0]
 		message.Iovlen = uint64(len(vectors))
@@ -275,5 +285,6 @@ func (r *dnsRecvmsg) receive(buffer, control []byte, extraFlags int) (int, int, 
 	if errno != 0 {
 		return 0, 0, 0, errno
 	}
+	r.source = append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(&name)), min(int(message.Namelen), int(unsafe.Sizeof(name))))...)
 	return int(n), int(message.Controllen), int(message.Flags), nil
 }

@@ -11,11 +11,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const dnsRecvmsgPacketLifetime = 5 * time.Minute
+
 // The held fd prevents inode reuse while a canceled receive's packet is saved.
 // Only the single supervisor receive worker accesses these packets.
 type dnsRecvmsgPacket struct {
 	fd               int
 	payload, control []byte
+	source           []byte
 	flags            int
 	expires          time.Time
 }
@@ -38,7 +41,7 @@ func readDNSRecvmsgPacket(fd, flags int) (*dnsRecvmsgPacket, error) {
 		control = make([]byte, min(len(control)*2, egressDatagramLimit))
 	}
 	payload := make([]byte, min(size, egressDatagramLimit))
-	n, oobn, returned, _, err := unix.Recvmsg(fd, payload, control, flags|unix.MSG_DONTWAIT)
+	n, oobn, returned, from, err := unix.Recvmsg(fd, payload, control, flags|unix.MSG_DONTWAIT)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +50,7 @@ func readDNSRecvmsgPacket(fd, flags int) (*dnsRecvmsgPacket, error) {
 	} else {
 		control = bytes.Clone(control[:oobn])
 	}
-	return &dnsRecvmsgPacket{payload: payload[:min(n, len(payload))], control: control, flags: returned, expires: time.Now().Add(dnsSocketLifetime)}, nil
+	return &dnsRecvmsgPacket{payload: payload[:min(n, len(payload))], control: control, source: rawDNSReplySource(from), flags: returned, expires: time.Now().Add(dnsRecvmsgPacketLifetime)}, nil
 }
 
 func (p *dnsRecvmsgPacket) message(r *dnsRecvmsg) ([]byte, []byte, int, int) {
