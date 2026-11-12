@@ -51,3 +51,12 @@ func (f *Failure) Unwrap() error {
 	}
 	return f.Err
 }
+
+// effect returns the failure's explicit effect, or EffectUnspecified when the
+// failure makes no claim and the not-applied walk should defer to its cause.
+func (f *Failure) effect() Effect {
+	if f == nil {
+		return EffectUnspecified
+	}
+	return f.Effect
+}

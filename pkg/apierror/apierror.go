@@ -16,6 +16,8 @@
 // something may have been.
 package apierror
 
+import "errors"
+
 // Reason is the transport-neutral copy of OperationErrorReason.
 type Reason int32
 
@@ -81,6 +83,11 @@ func (e notAppliedError) Unwrap() error {
 	return e.err
 }
 
+// effect returns the marker's claim: it always asserts NOT_APPLIED.
+func (notAppliedError) effect() Effect {
+	return EffectNotApplied
+}
+
 // NotApplied marks err as a failure that provably changed none of the state
 // the RPC's contract covers. Only code that knows it failed before its first
 // mutation may call it.
@@ -91,6 +98,18 @@ func NotApplied(err error) error {
 	return notAppliedError{err: err}
 }
 
+// effectClaim is implemented by error values that can carry an explicit
+// effect claim: a typed Failure, or the not-applied marker. IsNotApplied reads
+// the outermost claim through this interface so errors.As preserves the
+// outside-in precedence between a Failure and a marker without type-switching
+// on the error value.
+type effectClaim interface {
+	error
+	// effect returns the claimed effect, or EffectUnspecified when the value
+	// makes no claim and the walk should defer to its wrapped cause.
+	effect() Effect
+}
+
 // IsNotApplied reports whether err carries a NOT_APPLIED claim at any depth.
 // The chain is read from the outside in so that the first explicit effect
 // wins: an UNKNOWN Failure overrides an inner marker, a NOT_APPLIED Failure
@@ -99,28 +118,18 @@ func NotApplied(err error) error {
 // inner unspecified Failure.
 func IsNotApplied(err error) bool {
 	for err != nil {
-		switch current := err.(type) {
-		case *Failure:
-			if current == nil {
-				return false
-			}
-			if current.Effect != EffectUnspecified {
-				return current.Effect == EffectNotApplied
-			}
-			err = current.Err
-		case notAppliedError:
+		var claim effectClaim
+		if !errors.As(err, &claim) {
+			return false
+		}
+		switch claim.effect() {
+		case EffectNotApplied:
 			return true
-		case interface{ Unwrap() []error }:
-			for _, inner := range current.Unwrap() {
-				if IsNotApplied(inner) {
-					return true
-				}
-			}
+		case EffectUnknown:
 			return false
-		case interface{ Unwrap() error }:
-			err = current.Unwrap()
 		default:
-			return false
+			// An unspecified Failure makes no claim; defer to its cause.
+			err = errors.Unwrap(claim)
 		}
 	}
 	return false

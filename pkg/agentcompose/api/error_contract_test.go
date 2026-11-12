@@ -151,7 +151,12 @@ func TestTranslateError(t *testing.T) {
 func TestTranslateErrorKeepsCompleteDetail(t *testing.T) {
 	cause := errors.New("boom")
 	complete := NewOperationError(connect.CodeNotFound, apierror.ReasonProjectNotFound, apierror.EffectUnspecified, cause)
-	if got := translateError("/agentcompose.v2.ProjectService/GetProject", complete); got != complete {
+	got := translateError("/agentcompose.v2.ProjectService/GetProject", complete)
+	var gotConnect *connect.Error
+	if !errors.As(got, &gotConnect) {
+		t.Fatalf("translateError() = %v, want a connect error", got)
+	}
+	if gotConnect != complete {
 		t.Errorf("translateError() = %v, want the already complete error unchanged", got)
 	}
 }
