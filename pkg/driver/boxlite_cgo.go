@@ -5,9 +5,12 @@ package driver
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../build/boxlite/include
 // BoxLite v0.13.0 builds libboxlite.a with LLVM LTO (".llvmbc" sections), which
-// Go's cgo linker rejects, so link the shared library instead and keep
-// libboxlite.so on LD_LIBRARY_PATH at runtime.
-#cgo LDFLAGS: -L${SRCDIR}/../../build/boxlite/lib -lboxlite -ldl -lpthread -lm
+// Go's cgo linker rejects, so link the shared library instead. The rpath makes
+// the binary resolve libboxlite.so relative to its own location (a local
+// build/agent-compose finds build/boxlite/lib, the image's /app/agent-compose
+// finds /app/boxlite/lib) without LD_LIBRARY_PATH, which the image still sets
+// as a fallback for other dlopen paths.
+#cgo LDFLAGS: -L${SRCDIR}/../../build/boxlite/lib -lboxlite -ldl -lpthread -lm -Wl,-rpath,$ORIGIN/boxlite/lib
 #include <stdint.h>
 #include <stdlib.h>
 #include "boxlite.h"

@@ -54,7 +54,7 @@ case "${1:-}:${2:-}" in
         "MICROSANDBOX_HOME=/data/microsandbox",
         "MICROSANDBOX_MSB_PATH=/app/microsandbox/bin/msb",
         "MICROSANDBOX_LIB_PATH=/app/microsandbox/lib/libmicrosandbox_go_ffi.so",
-        "LD_LIBRARY_PATH=/app/boxlite/runtime:/app/microsandbox/lib"
+        "LD_LIBRARY_PATH=/app/boxlite/lib:/app/boxlite/runtime:/app/microsandbox/lib"
       ]}}'
     ;;
   create:*)
