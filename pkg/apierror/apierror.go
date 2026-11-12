@@ -94,10 +94,17 @@ func NotApplied(err error) error {
 }
 
 // IsNotApplied reports whether err carries the marker, including through any
-// wrapping.
+// wrapping. A Failure that states a non-unspecified effect is authoritative:
+// an explicit UNKNOWN overrides an inner marker, and an explicit NOT_APPLIED
+// needs no marker. A Failure that makes no effect claim falls through to the
+// marker so wrapping cannot silently downgrade an existing claim.
 func IsNotApplied(err error) bool {
 	if err == nil {
 		return false
+	}
+	var failure *Failure
+	if errors.As(err, &failure) && failure.Effect != EffectUnspecified {
+		return failure.Effect == EffectNotApplied
 	}
 	var marked notAppliedError
 	return errors.As(err, &marked)
