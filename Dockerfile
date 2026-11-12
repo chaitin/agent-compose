@@ -7,11 +7,11 @@ ARG GO_VERSION=1.26.7
 FROM ${REGISTRY_MIRROR}/library/golang:${GO_VERSION}-alpine AS golang-toolchain
 
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS boxlite-build
-ARG BOXLITE_VERSION=v0.10.4
+ARG BOXLITE_VERSION=v0.13.0
 ARG GITHUB_MIRROR
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl python3 tar &&     rm -rf /var/lib/apt/lists/*
-RUN set -e;     target_arch="${TARGETARCH:-$(dpkg --print-architecture)}";     case "${target_arch}" in       amd64) BOXLITE_ARCH=x64 ;;       arm64) BOXLITE_ARCH=arm64 ;;       *) echo "unsupported BoxLite target arch: ${target_arch}" >&2; exit 1 ;;     esac;     mkdir -p /tmp/boxlite/runtime /tmp/boxlite/sdk /out/include /out/lib /out/runtime &&     BOXLITE_RUNTIME_NAME=boxlite-runtime-${BOXLITE_VERSION}-linux-${BOXLITE_ARCH}-gnu.tar.gz &&     BOXLITE_C_NAME=boxlite-c-${BOXLITE_VERSION}-linux-${BOXLITE_ARCH}-gnu.tar.gz &&     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -o /tmp/boxlite/${BOXLITE_RUNTIME_NAME} ${GITHUB_MIRROR}/boxlite-ai/boxlite/releases/download/${BOXLITE_VERSION}/${BOXLITE_RUNTIME_NAME} &&     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -o /tmp/boxlite/${BOXLITE_C_NAME} ${GITHUB_MIRROR}/boxlite-ai/boxlite/releases/download/${BOXLITE_VERSION}/${BOXLITE_C_NAME} &&     tar -xzf /tmp/boxlite/${BOXLITE_RUNTIME_NAME} -C /tmp/boxlite/runtime &&     tar -xzf /tmp/boxlite/${BOXLITE_C_NAME} -C /tmp/boxlite/sdk &&     cp -a /tmp/boxlite/runtime/boxlite-runtime/. /out/runtime/ &&     cp /tmp/boxlite/sdk/*/include/boxlite.h /out/include/boxlite.h &&     cp -a /tmp/boxlite/sdk/*/lib/libboxlite.* /out/lib/
+RUN set -e;     target_arch="${TARGETARCH:-$(dpkg --print-architecture)}";     case "${target_arch}" in       amd64) BOXLITE_ARCH=x64 ;;       arm64) BOXLITE_ARCH=arm64 ;;       *) echo "unsupported BoxLite target arch: ${target_arch}" >&2; exit 1 ;;     esac;     mkdir -p /tmp/boxlite/runtime /tmp/boxlite/sdk /out/include /out/lib /out/runtime &&     BOXLITE_RUNTIME_NAME=boxlite-runtime-${BOXLITE_VERSION}-linux-${BOXLITE_ARCH}-gnu.tar.gz &&     BOXLITE_C_NAME=boxlite-c-${BOXLITE_VERSION}-linux-${BOXLITE_ARCH}-gnu.tar.gz &&     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -o /tmp/boxlite/${BOXLITE_RUNTIME_NAME} ${GITHUB_MIRROR}/boxlite-ai/boxlite/releases/download/${BOXLITE_VERSION}/${BOXLITE_RUNTIME_NAME} &&     curl --http1.1 --retry 5 --retry-all-errors --retry-delay 2 -fsSL -o /tmp/boxlite/${BOXLITE_C_NAME} ${GITHUB_MIRROR}/boxlite-ai/boxlite/releases/download/${BOXLITE_VERSION}/${BOXLITE_C_NAME} &&     tar -xzf /tmp/boxlite/${BOXLITE_RUNTIME_NAME} -C /tmp/boxlite/runtime &&     tar -xzf /tmp/boxlite/${BOXLITE_C_NAME} -C /tmp/boxlite/sdk &&     cp -a /tmp/boxlite/runtime/boxlite-runtime/. /out/runtime/ &&     cp /tmp/boxlite/sdk/*/include/boxlite.h /out/include/boxlite.h &&     cp /tmp/boxlite/sdk/*/lib/libboxlite.so /out/lib/libboxlite.so
 
 # Fetch the prebuilt microsandbox artifacts for the target architecture. The Go
 # FFI library (libmicrosandbox_go_ffi) ships as a release asset, so there is no
@@ -20,7 +20,7 @@ RUN set -e;     target_arch="${TARGETARCH:-$(dpkg --print-architecture)}";     c
 # published checksums. This keeps the FFI lib in lockstep with the
 # microsandbox/sdk/go module pinned in go.mod.
 FROM ${REGISTRY_MIRROR}/library/debian:bookworm AS microsandbox-fetch
-ARG MICROSANDBOX_VERSION=v0.7.3
+ARG MICROSANDBOX_VERSION=v0.7.14
 ARG GITHUB_MIRROR
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl binutils tar &&     rm -rf /var/lib/apt/lists/*
@@ -78,6 +78,7 @@ COPY --from=go-build /out/agent-compose /app/agent-compose
 COPY --from=go-build /out/ac-supervisor /app/ac-supervisor
 RUN ln -sf /app/agent-compose /usr/local/bin/agent-compose
 COPY --from=boxlite-build /out/runtime /app/boxlite/runtime
+COPY --from=boxlite-build /out/lib/libboxlite.so /app/boxlite/lib/libboxlite.so
 COPY --from=microsandbox-fetch /out /app/microsandbox
 RUN test -x /app/agent-compose && \
     test -x /app/ac-supervisor && \
@@ -87,6 +88,7 @@ RUN test -x /app/agent-compose && \
     test -x /app/boxlite/runtime/boxlite-shim && \
     test -x /app/boxlite/runtime/guest-mke2fs && \
     test -x /app/boxlite/runtime/guest-resize2fs && \
+    test -s /app/boxlite/lib/libboxlite.so && \
     test -x /app/microsandbox/bin/msb && \
     test -x /app/microsandbox/bin/agentd && \
     test -s /app/microsandbox/lib/libmicrosandbox_go_ffi.so && \
@@ -108,6 +110,6 @@ ENV BOXLITE_RUNTIME_DIR=/app/boxlite/runtime
 ENV MICROSANDBOX_HOME=/data/microsandbox
 ENV MICROSANDBOX_MSB_PATH=/app/microsandbox/bin/msb
 ENV MICROSANDBOX_LIB_PATH=/app/microsandbox/lib/libmicrosandbox_go_ffi.so
-ENV LD_LIBRARY_PATH=/app/boxlite/runtime:/app/microsandbox/lib
+ENV LD_LIBRARY_PATH=/app/boxlite/lib:/app/boxlite/runtime:/app/microsandbox/lib
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/agent-compose"]
 CMD ["daemon"]
