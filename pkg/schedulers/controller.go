@@ -92,6 +92,7 @@ type Controller struct {
 	mu              sync.RWMutex
 	schedulers      map[string]domain.Scheduler
 	running         map[string]int
+	historyRemoving map[string]bool
 	runExecutor     *RunExecutor
 	invocations     *InvocationExecutor
 	schedulerRuns   *SchedulerRunSupervisor
@@ -453,7 +454,7 @@ func (c *Controller) EnterRun(scheduler domain.Scheduler) bool {
 	policy := NormalizeConcurrencyPolicy(scheduler.Summary.ConcurrencyPolicy)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if policy != domain.SchedulerConcurrencyPolicyParallel && c.running[schedulerID] > 0 {
+	if c.historyRemoving[schedulerID] || (policy != domain.SchedulerConcurrencyPolicyParallel && c.running[schedulerID] > 0) {
 		return false
 	}
 	c.running[schedulerID]++

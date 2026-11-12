@@ -79,6 +79,7 @@ type ProjectHandler struct {
 	invocations      ProjectSchedulerInvocationRuntime
 	schedulerPrune   ProjectSchedulerPruneRuntime
 	sandboxDirs      schedulers.SandboxDirResolver
+	runHistory       ProjectRunHistoryRemover
 }
 
 func NewProjectHandler(delegate ProjectDelegate, store ProjectStore, schedulerRuntimes ...ProjectSchedulerRuntime) *ProjectHandler {
@@ -118,6 +119,7 @@ type ProjectHandlerDeps struct {
 	SchedulerRuns    ProjectSchedulerRunRuntime
 	AgentModels      ProjectAgentModelResolver
 	SandboxDirs      schedulers.SandboxDirResolver
+	RunHistory       ProjectRunHistoryRemover
 }
 
 // NewProjectHandlerWithAgentModels constructs a project handler that enriches project responses with resolved agent models
@@ -158,7 +160,7 @@ func newProjectHandler(deps ProjectHandlerDeps) *ProjectHandler {
 	}
 	invocations, _ := deps.SchedulerRuntime.(ProjectSchedulerInvocationRuntime)
 	schedulerPrune, _ := deps.SchedulerRuntime.(ProjectSchedulerPruneRuntime)
-	return &ProjectHandler{delegate: deps.Delegate, store: deps.Store, agentModels: deps.AgentModels, schedulerRuntime: deps.SchedulerRuntime, schedulerRuns: schedulerRuns, invocations: invocations, schedulerPrune: schedulerPrune, sandboxDirs: deps.SandboxDirs}
+	return &ProjectHandler{delegate: deps.Delegate, store: deps.Store, agentModels: deps.AgentModels, schedulerRuntime: deps.SchedulerRuntime, schedulerRuns: schedulerRuns, invocations: invocations, schedulerPrune: schedulerPrune, sandboxDirs: deps.SandboxDirs, runHistory: deps.RunHistory}
 }
 
 func (h *ProjectHandler) ValidateProject(ctx context.Context, req *connect.Request[agentcomposev2.ValidateProjectRequest]) (*connect.Response[agentcomposev2.ValidateProjectResponse], error) {

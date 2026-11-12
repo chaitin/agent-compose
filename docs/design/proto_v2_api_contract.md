@@ -24,6 +24,36 @@ malformed wire input follows normal protobuf last-one-wins decoding. A lookup
 with no match is `NotFound`, while a selector that matches multiple resources
 is `InvalidArgument`.
 
+## 精确执行历史删除
+
+`ProjectService.RemoveRunHistory` 是精确删除命令，不接受列表筛选或
+`ProjectRef` 名称解析。必须传入规范的完整 `project_id`、明确的
+`RunHistoryKind` 和完整 `run_id`；Scheduler Run 还必须有完整
+`scheduler_id`。空白、短 ID、历史前缀、未知类型或归属不符不会被静默忽略。
+
+- `RUN` 删除独立 Project Run 的结果、事件和标签；Scheduler 创建的子 Run
+  必须通过所属 Scheduler Run 一并删除，不能单独隐藏执行证据。
+- `SCHEDULER_RUN` 删除指定父 Run、精确关联的子 Run、Scheduler 事件、
+  event delivery/link 记录和规范专属目录。保留 Topic Event、Project、
+  Agent、Scheduler、配置和 sticky binding。
+- 只允许终态执行，且所有子 Run 与 completion 收尾必须结束。相关 Scheduler
+  仍有运行或历史删除时拒绝；不会自动 Stop，也不会在持有全局调度锁时清理磁盘。
+- 先完成 `RemoveSandbox`；仍有相关沙箱材料、审计归档、外部沙箱引用、绑定
+  或其他 Run 的重叠材料路径时拒绝。此接口不删除沙箱或审计归档，也不代替其
+  生命周期。保留或共享沙箱的历史不能使用该接口清除。
+- 数据库写事务固定检查范围，专属材料先清理、历史行后删除；清理期间其他
+  SQLite 写入可能等待。失败或中断保留身份及路径，重试必须传入同一完整身份。
+  数据库检查阶段拒绝为 `NOT_APPLIED`，清理开始后的错误为 `UNKNOWN`。
+- 返回成功表示范围内历史及专属材料均已不存在，重复请求同样成功。父记录被
+  旧 prune 提前删除时，仍可用 Scheduler/Run 完整身份清理规范目录及直接链接。
+  Project 或 Scheduler 本身不存在、归属不符时仍报 `NotFound`，不能把任意
+  `NotFound` 当作已完成清理。执行历史与启动幂等记录一起移除，因此客户端
+  不应在删除后重放旧的启动请求；此接口不保留永久执行去重墓碑。
+
+该 RPC 不增加 CLI 命令，不改变 `scheduler prune` 的条件批量清理语义，
+不新增 schema migration。公开调用沿用 daemon 控制面的鉴权，不接受 guest
+提供的文件路径作为删除目标。
+
 ## Driver model
 
 `DriverSpec` is a single-config model. Exactly one of `boxlite`, `docker`,

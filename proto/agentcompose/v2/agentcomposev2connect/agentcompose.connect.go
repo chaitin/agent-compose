@@ -117,6 +117,9 @@ const (
 	// ProjectServicePruneSchedulerRunsProcedure is the fully-qualified name of the ProjectService's
 	// PruneSchedulerRuns RPC.
 	ProjectServicePruneSchedulerRunsProcedure = "/agentcompose.v2.ProjectService/PruneSchedulerRuns"
+	// ProjectServiceRemoveRunHistoryProcedure is the fully-qualified name of the ProjectService's
+	// RemoveRunHistory RPC.
+	ProjectServiceRemoveRunHistoryProcedure = "/agentcompose.v2.ProjectService/RemoveRunHistory"
 	// ProjectServiceStopSchedulerRunProcedure is the fully-qualified name of the ProjectService's
 	// StopSchedulerRun RPC.
 	ProjectServiceStopSchedulerRunProcedure = "/agentcompose.v2.ProjectService/StopSchedulerRun"
@@ -337,6 +340,8 @@ type ProjectServiceClient interface {
 	BatchGetLatestSchedulerRuns(context.Context, *connect.Request[v2.BatchGetLatestSchedulerRunsRequest]) (*connect.Response[v2.BatchGetLatestSchedulerRunsResponse], error)
 	StreamSchedulerRuns(context.Context, *connect.Request[v2.StreamSchedulerRunsRequest]) (*connect.ServerStreamForClient[v2.StreamSchedulerRunsResponse], error)
 	PruneSchedulerRuns(context.Context, *connect.Request[v2.PruneSchedulerRunsRequest]) (*connect.Response[v2.PruneSchedulerRunsResponse], error)
+	// 精确删除终态执行历史；材料清理失败时保留记录，使用同一身份重试。
+	RemoveRunHistory(context.Context, *connect.Request[v2.RemoveRunHistoryRequest]) (*connect.Response[v2.RemoveRunHistoryResponse], error)
 	StopSchedulerRun(context.Context, *connect.Request[v2.StopSchedulerRunRequest]) (*connect.Response[v2.StopSchedulerRunResponse], error)
 	SetSchedulerEnabled(context.Context, *connect.Request[v2.SetSchedulerEnabledRequest]) (*connect.Response[v2.SetSchedulerEnabledResponse], error)
 	SetSchedulerTriggerEnabled(context.Context, *connect.Request[v2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[v2.SetSchedulerTriggerEnabledResponse], error)
@@ -473,6 +478,12 @@ func NewProjectServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(projectServiceMethods.ByName("PruneSchedulerRuns")),
 			connect.WithClientOptions(opts...),
 		),
+		removeRunHistory: connect.NewClient[v2.RemoveRunHistoryRequest, v2.RemoveRunHistoryResponse](
+			httpClient,
+			baseURL+ProjectServiceRemoveRunHistoryProcedure,
+			connect.WithSchema(projectServiceMethods.ByName("RemoveRunHistory")),
+			connect.WithClientOptions(opts...),
+		),
 		stopSchedulerRun: connect.NewClient[v2.StopSchedulerRunRequest, v2.StopSchedulerRunResponse](
 			httpClient,
 			baseURL+ProjectServiceStopSchedulerRunProcedure,
@@ -516,6 +527,7 @@ type projectServiceClient struct {
 	batchGetLatestSchedulerRuns  *connect.Client[v2.BatchGetLatestSchedulerRunsRequest, v2.BatchGetLatestSchedulerRunsResponse]
 	streamSchedulerRuns          *connect.Client[v2.StreamSchedulerRunsRequest, v2.StreamSchedulerRunsResponse]
 	pruneSchedulerRuns           *connect.Client[v2.PruneSchedulerRunsRequest, v2.PruneSchedulerRunsResponse]
+	removeRunHistory             *connect.Client[v2.RemoveRunHistoryRequest, v2.RemoveRunHistoryResponse]
 	stopSchedulerRun             *connect.Client[v2.StopSchedulerRunRequest, v2.StopSchedulerRunResponse]
 	setSchedulerEnabled          *connect.Client[v2.SetSchedulerEnabledRequest, v2.SetSchedulerEnabledResponse]
 	setSchedulerTriggerEnabled   *connect.Client[v2.SetSchedulerTriggerEnabledRequest, v2.SetSchedulerTriggerEnabledResponse]
@@ -621,6 +633,11 @@ func (c *projectServiceClient) PruneSchedulerRuns(ctx context.Context, req *conn
 	return c.pruneSchedulerRuns.CallUnary(ctx, req)
 }
 
+// RemoveRunHistory calls agentcompose.v2.ProjectService.RemoveRunHistory.
+func (c *projectServiceClient) RemoveRunHistory(ctx context.Context, req *connect.Request[v2.RemoveRunHistoryRequest]) (*connect.Response[v2.RemoveRunHistoryResponse], error) {
+	return c.removeRunHistory.CallUnary(ctx, req)
+}
+
 // StopSchedulerRun calls agentcompose.v2.ProjectService.StopSchedulerRun.
 func (c *projectServiceClient) StopSchedulerRun(ctx context.Context, req *connect.Request[v2.StopSchedulerRunRequest]) (*connect.Response[v2.StopSchedulerRunResponse], error) {
 	return c.stopSchedulerRun.CallUnary(ctx, req)
@@ -666,6 +683,8 @@ type ProjectServiceHandler interface {
 	BatchGetLatestSchedulerRuns(context.Context, *connect.Request[v2.BatchGetLatestSchedulerRunsRequest]) (*connect.Response[v2.BatchGetLatestSchedulerRunsResponse], error)
 	StreamSchedulerRuns(context.Context, *connect.Request[v2.StreamSchedulerRunsRequest], *connect.ServerStream[v2.StreamSchedulerRunsResponse]) error
 	PruneSchedulerRuns(context.Context, *connect.Request[v2.PruneSchedulerRunsRequest]) (*connect.Response[v2.PruneSchedulerRunsResponse], error)
+	// 精确删除终态执行历史；材料清理失败时保留记录，使用同一身份重试。
+	RemoveRunHistory(context.Context, *connect.Request[v2.RemoveRunHistoryRequest]) (*connect.Response[v2.RemoveRunHistoryResponse], error)
 	StopSchedulerRun(context.Context, *connect.Request[v2.StopSchedulerRunRequest]) (*connect.Response[v2.StopSchedulerRunResponse], error)
 	SetSchedulerEnabled(context.Context, *connect.Request[v2.SetSchedulerEnabledRequest]) (*connect.Response[v2.SetSchedulerEnabledResponse], error)
 	SetSchedulerTriggerEnabled(context.Context, *connect.Request[v2.SetSchedulerTriggerEnabledRequest]) (*connect.Response[v2.SetSchedulerTriggerEnabledResponse], error)
@@ -798,6 +817,12 @@ func NewProjectServiceHandler(svc ProjectServiceHandler, opts ...connect.Handler
 		connect.WithSchema(projectServiceMethods.ByName("PruneSchedulerRuns")),
 		connect.WithHandlerOptions(opts...),
 	)
+	projectServiceRemoveRunHistoryHandler := connect.NewUnaryHandler(
+		ProjectServiceRemoveRunHistoryProcedure,
+		svc.RemoveRunHistory,
+		connect.WithSchema(projectServiceMethods.ByName("RemoveRunHistory")),
+		connect.WithHandlerOptions(opts...),
+	)
 	projectServiceStopSchedulerRunHandler := connect.NewUnaryHandler(
 		ProjectServiceStopSchedulerRunProcedure,
 		svc.StopSchedulerRun,
@@ -858,6 +883,8 @@ func NewProjectServiceHandler(svc ProjectServiceHandler, opts ...connect.Handler
 			projectServiceStreamSchedulerRunsHandler.ServeHTTP(w, r)
 		case ProjectServicePruneSchedulerRunsProcedure:
 			projectServicePruneSchedulerRunsHandler.ServeHTTP(w, r)
+		case ProjectServiceRemoveRunHistoryProcedure:
+			projectServiceRemoveRunHistoryHandler.ServeHTTP(w, r)
 		case ProjectServiceStopSchedulerRunProcedure:
 			projectServiceStopSchedulerRunHandler.ServeHTTP(w, r)
 		case ProjectServiceSetSchedulerEnabledProcedure:
@@ -951,6 +978,10 @@ func (UnimplementedProjectServiceHandler) StreamSchedulerRuns(context.Context, *
 
 func (UnimplementedProjectServiceHandler) PruneSchedulerRuns(context.Context, *connect.Request[v2.PruneSchedulerRunsRequest]) (*connect.Response[v2.PruneSchedulerRunsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.PruneSchedulerRuns is not implemented"))
+}
+
+func (UnimplementedProjectServiceHandler) RemoveRunHistory(context.Context, *connect.Request[v2.RemoveRunHistoryRequest]) (*connect.Response[v2.RemoveRunHistoryResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.ProjectService.RemoveRunHistory is not implemented"))
 }
 
 func (UnimplementedProjectServiceHandler) StopSchedulerRun(context.Context, *connect.Request[v2.StopSchedulerRunRequest]) (*connect.Response[v2.StopSchedulerRunResponse], error) {
