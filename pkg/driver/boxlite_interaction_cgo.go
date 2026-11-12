@@ -4,7 +4,10 @@ package driver
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../build/boxlite/include
-#cgo LDFLAGS: ${SRCDIR}/../../build/boxlite/lib/libboxlite.a -ldl -lpthread -lm
+// BoxLite v0.13.0 builds libboxlite.a with LLVM LTO (".llvmbc" sections), which
+// Go's cgo linker rejects, so link the shared library instead and keep
+// libboxlite.so on LD_LIBRARY_PATH at runtime.
+#cgo LDFLAGS: -L${SRCDIR}/../../build/boxlite/lib -lboxlite -ldl -lpthread -lm
 #include <stdint.h>
 #include <stdlib.h>
 #include "boxlite.h"

@@ -19,7 +19,6 @@ case "$driver" in
     DEFAULT_OUT_DIR="$ROOT_DIR/build/boxlite"
     REQUIRED_FILES=(
       include/boxlite.h
-      lib/libboxlite.a
       lib/libboxlite.so
     )
     REQUIRED_EXECUTABLES=(

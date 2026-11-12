@@ -176,7 +176,6 @@ preflight_linux_full_artifacts() {
 
   for path in \
     "$BOXLITE_ARTIFACT_DIR/include/boxlite.h" \
-    "$BOXLITE_ARTIFACT_DIR/lib/libboxlite.a" \
     "$BOXLITE_ARTIFACT_DIR/lib/libboxlite.so" \
     "$MICROSANDBOX_ARTIFACT_DIR/lib/libkrunfw.so" \
     "$MICROSANDBOX_ARTIFACT_DIR/lib/libmicrosandbox_go_ffi.so"; do

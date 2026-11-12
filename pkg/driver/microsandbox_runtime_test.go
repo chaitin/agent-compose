@@ -616,6 +616,18 @@ func TestMicrosandboxPrepareEnvironmentPreservesDockerDisks(t *testing.T) {
 			t.Fatalf("path %s missing after prepareEnvironment: %v", path, err)
 		}
 	}
+	// The v0.7 SDK's native backend creates sandbox state under these fixed
+	// home subdirectories and assumes they already exist; the driver must
+	// pre-create them so the first sandbox start does not fail with ENOENT.
+	for _, sub := range []string{"sandboxes", "agent"} {
+		info, err := os.Stat(filepath.Join(config.MicrosandboxHome, sub))
+		if err != nil {
+			t.Fatalf("microsandbox home subdir %s missing after prepareEnvironment: %v", sub, err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("microsandbox home subdir %s is not a directory", sub)
+		}
+	}
 }
 
 // The SDK resolves sandbox runtimes from MSB_HOME, which agent-compose points
