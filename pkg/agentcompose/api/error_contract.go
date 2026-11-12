@@ -65,8 +65,8 @@ func (errorContractInterceptor) WrapStreamingClient(next connect.StreamingClient
 //  3. A raw Connect error keeps its code and gets a reason derived from it.
 //  4. Any other domain error is classified by the shared sentinel table.
 //
-// Writes never claim NOT_APPLIED without a marker: effectForWrite is the only
-// source of that claim, and apierror.EffectFor defaults to UNKNOWN.
+// Writes never claim NOT_APPLIED unless apierror.EffectFor finds a marker or an
+// explicit Failure effect; anything else is UNKNOWN.
 func translateError(procedure string, err error) error {
 	if err == nil {
 		return nil
@@ -132,58 +132,54 @@ func rpcKindFor(procedure string) rpcKind {
 	return rpcWrite
 }
 
+// reasonCodes is the single reason -> Connect code table. It is a map rather
+// than a switch so TestReasonCodesCoverEveryReason can enumerate the wire enum
+// and fail when a new OperationErrorReason is added without a mapping.
+//
+// The inverse (reasonForConnectCode) is not a true inverse:
+// CodeAlreadyExists and CodeFailedPrecondition both collapse to
+// ReasonPreconditionFailed, and a generic CodeUnavailable maps to
+// ReasonInternal. TestReasonCodeRoundTrip pins those losses explicitly.
+var reasonCodes = map[apierror.Reason]connect.Code{
+	apierror.ReasonProjectNotFound:          connect.CodeNotFound,
+	apierror.ReasonSchedulerNotFound:        connect.CodeNotFound,
+	apierror.ReasonSchedulerRunNotFound:     connect.CodeNotFound,
+	apierror.ReasonRunNotFound:              connect.CodeNotFound,
+	apierror.ReasonSandboxNotFound:          connect.CodeNotFound,
+	apierror.ReasonImageNotFound:            connect.CodeNotFound,
+	apierror.ReasonVolumeNotFound:           connect.CodeNotFound,
+	apierror.ReasonResourceNotFound:         connect.CodeNotFound,
+	apierror.ReasonProjectSpecInvalid:       connect.CodeInvalidArgument,
+	apierror.ReasonAgentDefinitionInvalid:   connect.CodeInvalidArgument,
+	apierror.ReasonSchedulerInvalid:         connect.CodeInvalidArgument,
+	apierror.ReasonSchedulerScriptInvalid:   connect.CodeInvalidArgument,
+	apierror.ReasonNetworkPolicyRejected:    connect.CodeInvalidArgument,
+	apierror.ReasonInvalidRequest:           connect.CodeInvalidArgument,
+	apierror.ReasonImageReferenceInvalid:    connect.CodeInvalidArgument,
+	apierror.ReasonRevisionConflict:         connect.CodeFailedPrecondition,
+	apierror.ReasonPreconditionFailed:       connect.CodeFailedPrecondition,
+	apierror.ReasonImageInUse:               connect.CodeFailedPrecondition,
+	apierror.ReasonOperationBusy:            connect.CodeAborted,
+	apierror.ReasonUnsupported:              connect.CodeUnimplemented,
+	apierror.ReasonOperationCanceled:        connect.CodeCanceled,
+	apierror.ReasonOperationTimeout:         connect.CodeDeadlineExceeded,
+	apierror.ReasonSchedulerReconcileFailed: connect.CodeInternal,
+	apierror.ReasonImagePullFailed:          connect.CodeInternal,
+	apierror.ReasonImageBuildFailed:         connect.CodeInternal,
+	apierror.ReasonSandboxCreationFailed:    connect.CodeInternal,
+	apierror.ReasonSandboxStopFailed:        connect.CodeInternal,
+	apierror.ReasonInternal:                 connect.CodeInternal,
+	apierror.ReasonImageBackendUnavailable:  connect.CodeUnavailable,
+	apierror.ReasonVolumeUnavailable:        connect.CodeUnavailable,
+	apierror.ReasonSandboxRuntimeUnavail:    connect.CodeUnavailable,
+	apierror.ReasonStorageUnavailable:       connect.CodeUnavailable,
+}
+
 // codeForReason maps the stable failure category to a Connect code. Reasons
 // are the wire contract; the code is the conventional transport rendering.
 func codeForReason(reason apierror.Reason) connect.Code {
-	switch reason {
-	case apierror.ReasonProjectNotFound,
-		apierror.ReasonSchedulerNotFound,
-		apierror.ReasonSchedulerRunNotFound,
-		apierror.ReasonRunNotFound,
-		apierror.ReasonSandboxNotFound,
-		apierror.ReasonImageNotFound,
-		apierror.ReasonVolumeNotFound,
-		apierror.ReasonResourceNotFound:
-		return connect.CodeNotFound
-
-	case apierror.ReasonProjectSpecInvalid,
-		apierror.ReasonAgentDefinitionInvalid,
-		apierror.ReasonSchedulerInvalid,
-		apierror.ReasonSchedulerScriptInvalid,
-		apierror.ReasonNetworkPolicyRejected,
-		apierror.ReasonInvalidRequest,
-		apierror.ReasonImageReferenceInvalid:
-		return connect.CodeInvalidArgument
-
-	case apierror.ReasonRevisionConflict,
-		apierror.ReasonPreconditionFailed,
-		apierror.ReasonImageInUse:
-		return connect.CodeFailedPrecondition
-
-	case apierror.ReasonOperationBusy:
-		return connect.CodeAborted
-	case apierror.ReasonUnsupported:
-		return connect.CodeUnimplemented
-	case apierror.ReasonOperationCanceled:
-		return connect.CodeCanceled
-	case apierror.ReasonOperationTimeout:
-		return connect.CodeDeadlineExceeded
-
-	case apierror.ReasonSchedulerReconcileFailed,
-		apierror.ReasonImagePullFailed,
-		apierror.ReasonImageBuildFailed,
-		apierror.ReasonSandboxCreationFailed,
-		apierror.ReasonSandboxStopFailed,
-		apierror.ReasonInternal:
-		return connect.CodeInternal
-
-	case apierror.ReasonImageBackendUnavailable,
-		apierror.ReasonVolumeUnavailable,
-		apierror.ReasonSandboxRuntimeUnavail,
-		apierror.ReasonStorageUnavailable:
-		return connect.CodeUnavailable
-
-	default:
-		return connect.CodeInternal
+	if code, ok := reasonCodes[reason]; ok {
+		return code
 	}
+	return connect.CodeInternal
 }

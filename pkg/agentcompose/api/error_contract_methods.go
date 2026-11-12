@@ -15,7 +15,7 @@ import (
 // The table is read-only after initialization.
 var rpcKinds = map[string]rpcKind{
 	// ProjectService
-	agentcomposev2connect.ProjectServiceValidateProjectProcedure:              rpcRead,
+	agentcomposev2connect.ProjectServiceValidateProjectProcedure:              rpcRead, // pure validation; no mutation
 	agentcomposev2connect.ProjectServiceApplyProjectProcedure:                 rpcWrite,
 	agentcomposev2connect.ProjectServicePatchProjectProcedure:                 rpcWrite,
 	agentcomposev2connect.ProjectServiceGetProjectProcedure:                   rpcRead,
@@ -26,14 +26,14 @@ var rpcKinds = map[string]rpcKind{
 	agentcomposev2connect.ProjectServiceListSchedulersProcedure:               rpcRead,
 	agentcomposev2connect.ProjectServiceListSchedulerEventsProcedure:          rpcRead,
 	agentcomposev2connect.ProjectServiceListProjectSchedulerEventsProcedure:   rpcRead,
-	agentcomposev2connect.ProjectServiceStreamProjectSchedulerEventsProcedure: rpcRead,
+	agentcomposev2connect.ProjectServiceStreamProjectSchedulerEventsProcedure: rpcRead, // read-only event stream
 	agentcomposev2connect.ProjectServiceInvokeSchedulerProcedure:              rpcWrite,
 	agentcomposev2connect.ProjectServiceRunSchedulerProcedure:                 rpcWrite,
 	agentcomposev2connect.ProjectServiceStartSchedulerRunProcedure:            rpcWrite,
 	agentcomposev2connect.ProjectServiceGetSchedulerRunProcedure:              rpcRead,
 	agentcomposev2connect.ProjectServiceListSchedulerRunsProcedure:            rpcRead,
 	agentcomposev2connect.ProjectServiceBatchGetLatestSchedulerRunsProcedure:  rpcRead,
-	agentcomposev2connect.ProjectServiceStreamSchedulerRunsProcedure:          rpcRead,
+	agentcomposev2connect.ProjectServiceStreamSchedulerRunsProcedure:          rpcRead, // read-only run stream
 	agentcomposev2connect.ProjectServicePruneSchedulerRunsProcedure:           rpcWrite,
 	agentcomposev2connect.ProjectServiceStopSchedulerRunProcedure:             rpcWrite,
 	agentcomposev2connect.ProjectServiceSetSchedulerEnabledProcedure:          rpcWrite,
@@ -42,8 +42,8 @@ var rpcKinds = map[string]rpcKind{
 	// RunService
 	agentcomposev2connect.RunServiceRunAgentProcedure:             rpcWrite,
 	agentcomposev2connect.RunServiceStartAgentRunProcedure:        rpcWrite,
-	agentcomposev2connect.RunServiceStreamAgentRunProcedure:       rpcWrite,
-	agentcomposev2connect.RunServiceAttachAgentRunProcedure:       rpcWrite,
+	agentcomposev2connect.RunServiceStreamAgentRunProcedure:       rpcWrite, // creates a run and drives an agent
+	agentcomposev2connect.RunServiceAttachAgentRunProcedure:       rpcWrite, // drives an interactive agent run
 	agentcomposev2connect.RunServiceGetRunProcedure:               rpcRead,
 	agentcomposev2connect.RunServiceListRunsProcedure:             rpcRead,
 	agentcomposev2connect.RunServiceFollowRunLogsProcedure:        rpcRead,
@@ -53,9 +53,9 @@ var rpcKinds = map[string]rpcKind{
 	agentcomposev2connect.RunServiceListSandboxRunEventsProcedure: rpcRead,
 
 	// ExecService
-	agentcomposev2connect.ExecServiceExecProcedure:       rpcWrite,
-	agentcomposev2connect.ExecServiceStreamExecProcedure: rpcWrite,
-	agentcomposev2connect.ExecServiceAttachExecProcedure: rpcWrite,
+	agentcomposev2connect.ExecServiceExecProcedure:       rpcWrite, // executes a command that may mutate the sandbox
+	agentcomposev2connect.ExecServiceStreamExecProcedure: rpcWrite, // same as Exec, streamed
+	agentcomposev2connect.ExecServiceAttachExecProcedure: rpcWrite, // drives an interactive process
 
 	// ImageService
 	agentcomposev2connect.ImageServiceListImagesProcedure:   rpcRead,
@@ -119,7 +119,7 @@ var rpcKinds = map[string]rpcKind{
 	agentcomposev2connect.LLMServiceGetDefaultModelProcedure:   rpcRead,
 	agentcomposev2connect.LLMServiceSetDefaultModelProcedure:   rpcWrite,
 	agentcomposev2connect.LLMServiceClearDefaultModelProcedure: rpcWrite,
-	agentcomposev2connect.LLMServiceGenerateProcedure:          rpcRead,
+	agentcomposev2connect.LLMServiceGenerateProcedure:          rpcRead, // stateless upstream call; no daemon state changes
 
 	// ResourceService
 	agentcomposev2connect.ResourceServiceResolveIDProcedure: rpcRead,

@@ -10,13 +10,11 @@
 // and contract_test.go pins each constant against its protobuf counterpart so
 // the two cannot drift.
 //
-// The marker is deliberately the only way to claim NOT_APPLIED. Anything that
-// does not carry it is reported as UNKNOWN, which is the safe direction: a
+// A NOT_APPLIED claim requires either the marker or an explicit Failure
+// effect. Anything else is reported as UNKNOWN, which is the safe direction: a
 // forgotten annotation can never tell a caller that nothing was written when
 // something may have been.
 package apierror
-
-import "errors"
 
 // Reason is the transport-neutral copy of OperationErrorReason.
 type Reason int32
@@ -93,21 +91,39 @@ func NotApplied(err error) error {
 	return notAppliedError{err: err}
 }
 
-// IsNotApplied reports whether err carries the marker, including through any
-// wrapping. A Failure that states a non-unspecified effect is authoritative:
-// an explicit UNKNOWN overrides an inner marker, and an explicit NOT_APPLIED
-// needs no marker. A Failure that makes no effect claim falls through to the
-// marker so wrapping cannot silently downgrade an existing claim.
+// IsNotApplied reports whether err carries a NOT_APPLIED claim at any depth.
+// The chain is read from the outside in so that the first explicit effect
+// wins: an UNKNOWN Failure overrides an inner marker, a NOT_APPLIED Failure
+// needs no marker, and a Failure that makes no claim defers to its cause. A
+// marker is a claim in the same sense, so an outer marker is not hidden by an
+// inner unspecified Failure.
 func IsNotApplied(err error) bool {
-	if err == nil {
-		return false
+	for err != nil {
+		switch current := err.(type) {
+		case *Failure:
+			if current == nil {
+				return false
+			}
+			if current.Effect != EffectUnspecified {
+				return current.Effect == EffectNotApplied
+			}
+			err = current.Err
+		case notAppliedError:
+			return true
+		case interface{ Unwrap() []error }:
+			for _, inner := range current.Unwrap() {
+				if IsNotApplied(inner) {
+					return true
+				}
+			}
+			return false
+		case interface{ Unwrap() error }:
+			err = current.Unwrap()
+		default:
+			return false
+		}
 	}
-	var failure *Failure
-	if errors.As(err, &failure) && failure.Effect != EffectUnspecified {
-		return failure.Effect == EffectNotApplied
-	}
-	var marked notAppliedError
-	return errors.As(err, &marked)
+	return false
 }
 
 // EffectFor derives the effect a write RPC reports for err. Every error that

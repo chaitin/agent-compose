@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -205,5 +206,119 @@ func TestErrorContractCoversEveryRPC(t *testing.T) {
 		if !seen[procedure] {
 			t.Errorf("classification %s does not match any RPC in the proto", procedure)
 		}
+	}
+}
+
+// rpcKindOverrides documents the RPCs whose name does not encode their
+// direction. TestRPCKindMatchesVerb requires every such RPC to have an entry
+// and requires the entry to agree with rpcKinds, so an ambiguous method cannot
+// be classified silently.
+var rpcKindOverrides = map[string]struct {
+	kind   rpcKind
+	reason string
+}{
+	"Generate":                     {rpcRead, "stateless upstream generation; it does not change daemon state"},
+	"StreamAgentRun":               {rpcWrite, "creates a run and drives an agent"},
+	"StreamExec":                   {rpcWrite, "executes a command that may mutate the sandbox"},
+	"StreamProjectSchedulerEvents": {rpcRead, "read-only event stream"},
+	"StreamSchedulerRuns":          {rpcRead, "read-only run stream"},
+}
+
+var readVerbPrefixes = []string{"Get", "List", "Watch", "Inspect", "Validate", "Resolve", "BatchGet", "Download", "Follow"}
+var writeVerbPrefixes = []string{"Create", "Update", "Delete", "Remove", "Apply", "Patch", "Set", "Clear", "Prune", "Stop", "Start", "Run", "Invoke", "Pull", "Build", "Attach", "Exec", "Resume", "Abandon"}
+
+// TestRPCKindMatchesVerb is a second, independent classification check. It
+// cannot prove that a direction is semantically right, but it catches a
+// copy-paste or typo error in the exhaustive table and forces every ambiguous
+// method to state its rationale.
+func TestRPCKindMatchesVerb(t *testing.T) {
+	for procedure, kind := range rpcKinds {
+		name := procedure[strings.LastIndex(procedure, "/")+1:]
+		if override, ok := rpcKindOverrides[name]; ok {
+			if strings.TrimSpace(override.reason) == "" {
+				t.Errorf("override for %s has no rationale", name)
+			}
+			if kind != override.kind {
+				t.Errorf("RPC %s is %v in rpcKinds but %v in rpcKindOverrides", name, kind, override.kind)
+			}
+			continue
+		}
+		expected, ok := kindFromVerb(name)
+		if !ok {
+			t.Errorf("RPC %s has no verb convention; add it to rpcKindOverrides with a rationale", name)
+			continue
+		}
+		if kind != expected {
+			t.Errorf("RPC %s is classified %v, but its verb implies %v", name, kind, expected)
+		}
+	}
+}
+
+func kindFromVerb(name string) (rpcKind, bool) {
+	for _, prefix := range readVerbPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return rpcRead, true
+		}
+	}
+	for _, prefix := range writeVerbPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return rpcWrite, true
+		}
+	}
+	return rpcRead, false
+}
+
+// TestReasonCodesCoverEveryReason ties the reason table to the wire enum. A
+// new OperationErrorReason fails this test until it has a Connect code, so it
+// cannot silently fall through to CodeInternal.
+func TestReasonCodesCoverEveryReason(t *testing.T) {
+	for value, name := range agentcomposev2.OperationErrorReason_name {
+		if value == int32(apierror.ReasonUnspecified) {
+			continue
+		}
+		if _, ok := reasonCodes[apierror.Reason(value)]; !ok {
+			t.Errorf("reason %s (%d) has no Connect code mapping", name, value)
+		}
+	}
+}
+
+// TestReasonCodeRoundTrip pins the two mappings against each other. It is not
+// a perfect inverse, and the losses are deliberate:
+//
+//   - CodeAlreadyExists and CodeFailedPrecondition both collapse into
+//     ReasonPreconditionFailed, which has no way back to AlreadyExists;
+//   - a generic CodeUnavailable has no reason of its own and maps to
+//     ReasonInternal.
+//
+// Pinning them here means a future change has to choose a new behavior
+// explicitly instead of drifting.
+func TestReasonCodeRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		code connect.Code
+		kind ResourceKind
+		want connect.Code
+	}{
+		{"canceled", connect.CodeCanceled, ResourceGeneric, connect.CodeCanceled},
+		{"invalid argument", connect.CodeInvalidArgument, ResourceGeneric, connect.CodeInvalidArgument},
+		{"deadline exceeded", connect.CodeDeadlineExceeded, ResourceGeneric, connect.CodeDeadlineExceeded},
+		{"not found", connect.CodeNotFound, ResourceGeneric, connect.CodeNotFound},
+		{"sandbox not found", connect.CodeNotFound, ResourceSandbox, connect.CodeNotFound},
+		{"already exists collapses to failed precondition", connect.CodeAlreadyExists, ResourceGeneric, connect.CodeFailedPrecondition},
+		{"failed precondition", connect.CodeFailedPrecondition, ResourceGeneric, connect.CodeFailedPrecondition},
+		{"aborted", connect.CodeAborted, ResourceGeneric, connect.CodeAborted},
+		{"sandbox unavailable", connect.CodeUnavailable, ResourceSandbox, connect.CodeUnavailable},
+		{"image unavailable", connect.CodeUnavailable, ResourceImage, connect.CodeUnavailable},
+		{"generic unavailable has no reason", connect.CodeUnavailable, ResourceGeneric, connect.CodeInternal},
+		{"internal", connect.CodeInternal, ResourceGeneric, connect.CodeInternal},
+		{"unimplemented", connect.CodeUnimplemented, ResourceGeneric, connect.CodeUnimplemented},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reason := reasonForConnectCode(tc.code, tc.kind)
+			if got := codeForReason(reason); got != tc.want {
+				t.Errorf("codeForReason(reasonForConnectCode(%v, %v)) = %v, want %v", tc.code, tc.kind, got, tc.want)
+			}
+		})
 	}
 }

@@ -54,6 +54,10 @@ The interceptor applies these rules in order:
    - read RPC: always `UNSPECIFIED`;
    - write RPC: `NOT_APPLIED` only when the error carries the marker or an
      explicit typed claim, otherwise `UNKNOWN`.
+   The effect is read from the outside in: the first non-unspecified `Failure`
+   wins, a marker is a claim, and an unspecified `Failure` defers to its cause.
+   An inner NOT_APPLIED is therefore not lost behind an outer unspecified
+   wrapper.
 2. An error that already carries a detail keeps its reason and code. Only the
    effect is normalized when the RPC direction changed. This is the migration
    path for handlers that still call the old helpers.
@@ -61,22 +65,48 @@ The interceptor applies these rules in order:
    code.
 4. Any other error is classified by the existing domain sentinel table.
 
-A write never reports `NOT_APPLIED` without a marker. The fail-closed default
-is `UNKNOWN`; this is the same rule `apierror.EffectFor` and the proto comment
-already state.
+A write never reports `NOT_APPLIED` without a marker or an explicit typed
+claim. The fail-closed default is `UNKNOWN`; this is the same rule
+`apierror.EffectFor` and the proto comment already state.
+
+### Reason and code tables
+
+`reasonCodes` is the single reason-to-code table. It is a map rather than a
+switch so `TestReasonCodesCoverEveryReason` can iterate the wire enum and fail
+when a new `OperationErrorReason` has no mapping.
+
+The reverse mapping (`reasonForConnectCode`) is not a true inverse. Two losses
+are deliberate and pinned by `TestReasonCodeRoundTrip`:
+
+- `CodeAlreadyExists` and `CodeFailedPrecondition` both collapse into
+  `ReasonPreconditionFailed`, so the reason cannot recover `AlreadyExists`;
+- a generic `CodeUnavailable` has no dedicated reason and maps to
+  `ReasonInternal`.
+
+Existing handlers keep their original code because the interceptor preserves
+it; the mapping only applies when a producer returns a typed `Failure`.
 
 ## Read/Write Classification
 
 `error_contract_methods.go` contains an exhaustive map from procedure to
-`rpcRead` or `rpcWrite`. `TestErrorContractCoversEveryRPC` walks the proto
-service descriptor and fails in both directions:
+`rpcRead` or `rpcWrite`. Two tests guard it:
 
-- a procedure in the proto without a classification;
-- a classification that no longer matches a procedure.
+- `TestErrorContractCoversEveryRPC` walks the proto service descriptor and
+  fails in both directions: a procedure without a classification, and a
+  classification that no longer matches a procedure.
+- `TestRPCKindMatchesVerb` checks the classification against the method's verb
+  (`Get`/`List`/`Watch`/... are reads, `Create`/`Update`/`Remove`/... are
+  writes). Methods whose verb is ambiguous must appear in `rpcKindOverrides`
+  with a written rationale.
 
-A new RPC therefore cannot ship with an implicit direction. An unknown
-procedure is treated as a write at runtime (the fail-closed choice), but the
-test prevents that from reaching production.
+The verb test catches copy-paste and typo errors; it cannot prove that a
+direction is semantically right. Semantic review still belongs to the service
+owner. The durable fix is to move the classification into the proto as a
+method option, so it is reviewed with the API definition instead of in a
+separate Go table.
+
+An unknown procedure is treated as a write at runtime (the fail-closed choice),
+but the coverage test prevents that from reaching production.
 
 ## Migration
 
@@ -102,8 +132,10 @@ it untouched.
 - Upgrading a write's `UNSPECIFIED` effect to `UNKNOWN` is the documented
   behavior of `errors.proto`; clients must already treat `UNSPECIFIED` on a
   write as `UNKNOWN`.
-- An inner `NOT_APPLIED` without the marker is downgraded to `UNKNOWN`. This
-  matches the existing `preserveOrUpgradeDetail` rule: only code that can prove
-  it wrote nothing may claim `NOT_APPLIED`.
+- A `NOT_APPLIED` claim is accepted only through the `apierror.NotApplied`
+  marker or an explicit `Failure` effect. A legacy detail that says
+  `NOT_APPLIED` without either is downgraded to `UNKNOWN`. This matches the
+  existing `preserveOrUpgradeDetail` rule: only code that can prove it wrote
+  nothing may claim `NOT_APPLIED`.
 - Streaming RPCs attach the detail to the trailing error. The HTTP status
   cannot change after the first frame.

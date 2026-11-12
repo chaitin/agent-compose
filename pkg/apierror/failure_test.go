@@ -48,6 +48,36 @@ func TestIsNotAppliedHonorsFailureEffect(t *testing.T) {
 			err:  NewUnknownFailure(ReasonInternal, NotApplied(cause)),
 			want: false,
 		},
+		{
+			name: "unspecified failure falls through to a nested not-applied failure",
+			err:  NewFailure(ReasonInternal, NewNotAppliedFailure(ReasonProjectSpecInvalid, cause)),
+			want: true,
+		},
+		{
+			name: "unspecified failure falls through to a nested unknown failure",
+			err:  NewFailure(ReasonInternal, NewUnknownFailure(ReasonInternal, cause)),
+			want: false,
+		},
+		{
+			name: "outer not applied overrides an inner unknown",
+			err:  NewNotAppliedFailure(ReasonInternal, NewUnknownFailure(ReasonInternal, cause)),
+			want: true,
+		},
+		{
+			name: "outer unknown overrides an inner not applied",
+			err:  NewUnknownFailure(ReasonInternal, NewNotAppliedFailure(ReasonInternal, cause)),
+			want: false,
+		},
+		{
+			name: "outer marker is not hidden by an inner unspecified failure",
+			err:  NotApplied(NewFailure(ReasonInternal, cause)),
+			want: true,
+		},
+		{
+			name: "joined errors are searched for a claim",
+			err:  errors.Join(errors.New("other"), NewNotAppliedFailure(ReasonInternal, cause)),
+			want: true,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
