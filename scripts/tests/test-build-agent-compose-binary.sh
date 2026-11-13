@@ -282,7 +282,6 @@ assert_no_build
 [[ ! -e "$(dirname -- "$linux_output")" ]] || fail "preflight failure created the output directory"
 for missing_path in \
   build/boxlite/include/boxlite.h \
-  build/boxlite/lib/libboxlite.a \
   build/boxlite/lib/libboxlite.so \
   build/boxlite/runtime/boxlite-guest \
   build/boxlite/runtime/boxlite-shim \
@@ -308,7 +307,6 @@ assert_no_build
 # Populate exactly the artifact owner contract, including executable binaries.
 for artifact in \
   build/boxlite/include/boxlite.h \
-  build/boxlite/lib/libboxlite.a \
   build/boxlite/lib/libboxlite.so \
   build/microsandbox/lib/libkrunfw.so \
   build/microsandbox/lib/libmicrosandbox_go_ffi.so; do
@@ -587,7 +585,6 @@ case "$command" in
       boxlite-build)
         mkdir -p "$destination/include" "$destination/lib" "$destination/runtime"
         printf 'fixture\n' >"$destination/include/boxlite.h"
-        printf 'fixture\n' >"$destination/lib/libboxlite.a"
         printf 'fixture\n' >"$destination/lib/libboxlite.so"
         printf '#!/usr/bin/env sh\n' >"$destination/runtime/boxlite-guest"
         printf '#!/usr/bin/env sh\n' >"$destination/runtime/boxlite-shim"

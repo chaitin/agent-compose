@@ -20,11 +20,11 @@ import (
 // runtime that imports the SDK.
 //
 // SDK uncertainty: go.mod requires
-// github.com/superradcompany/microsandbox/sdk/go v0.7.3. The mapping was written
+// github.com/superradcompany/microsandbox/sdk/go v0.7.14. The mapping was written
 // against that version's options.go, where NetworkConfig carries
 // Rules []PolicyRule, DefaultEgress, DefaultIngress, DenyDomains, DenyDomainSuffixes,
 // DNS *DNSConfig, and DNSRebindProtection, and PolicyRule carries
-// Action/Direction/Destination/Protocol(s)/Port(s). A v0.7.3 SDK is available in
+// Action/Direction/Destination/Protocol(s)/Port(s). A v0.7.14 SDK is available in
 // the module cache here, so the field names are confirmed, but the sandbox
 // hypervisor semantics of a domain-suffix destination (".example.com") versus a
 // label wildcard ("*.example.com") are not verified without a real KVM run. The

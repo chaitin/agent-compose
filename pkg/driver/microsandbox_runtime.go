@@ -854,6 +854,15 @@ func (r *microsandboxRuntime) prepareEnvironment() (microsandbox.RuntimeConfig, 
 	if err := os.MkdirAll(r.config.MicrosandboxHome, 0o755); err != nil {
 		return microsandbox.RuntimeConfig{}, fmt.Errorf("create microsandbox home: %w", err)
 	}
+	// The v0.7 SDK's native backend keeps sandbox state under fixed home
+	// subdirectories (sandboxes/, agent/) and no longer creates them itself
+	// before creating a sandbox directory, so a bare home leaves the parent
+	// missing and the first sandbox start fails with ENOENT. Pre-create them.
+	for _, sub := range []string{"sandboxes", "agent"} {
+		if err := os.MkdirAll(filepath.Join(r.config.MicrosandboxHome, sub), 0o755); err != nil {
+			return microsandbox.RuntimeConfig{}, fmt.Errorf("create microsandbox %s dir: %w", sub, err)
+		}
+	}
 	if _, err := os.Stat(r.config.MicrosandboxMSBPath); err != nil {
 		return microsandbox.RuntimeConfig{}, fmt.Errorf("microsandbox msb binary missing at %s: %w", r.config.MicrosandboxMSBPath, err)
 	}

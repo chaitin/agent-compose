@@ -434,7 +434,6 @@ jobs:
         run: |
           set -euo pipefail
           test -s build/boxlite/include/boxlite.h
-          test -s build/boxlite/lib/libboxlite.a
           test -s build/boxlite/lib/libboxlite.so
           test -x build/boxlite/runtime/boxlite-guest
           test -x build/boxlite/runtime/boxlite-shim

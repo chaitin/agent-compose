@@ -129,14 +129,15 @@ func RegisterRoutes(di do.Injector) {
 			},
 		},
 	})
-	path, handler := agentcomposev2connect.NewProjectServiceHandler(projectHandler)
+	handlerOptions := api.ErrorContractHandlerOptions()
+	path, handler := agentcomposev2connect.NewProjectServiceHandler(projectHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	runDelegate := runControllerDelegate{
 		controller: do.MustInvoke[*runs.Controller](di),
 		supervisor: do.MustInvoke[*RunSupervisor](di),
 	}
 	runHandler := api.NewRunHandlerWithRunLogHub(runDelegate, do.MustInvoke[*configstore.ConfigStore](di), do.MustInvoke[*runs.RunLogHub](di), do.MustInvoke[*RunSupervisor](di))
-	path, handler = agentcomposev2connect.NewRunServiceHandler(runHandler)
+	path, handler = agentcomposev2connect.NewRunServiceHandler(runHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	execHandler := api.NewExecHandler(api.ExecHandlerDeps{
 		Config:   do.MustInvoke[*appconfig.Config](di),
@@ -146,16 +147,16 @@ func RegisterRoutes(di do.Injector) {
 			return do.MustInvoke[adapters.RuntimeProvider](di).ForSession(session)
 		},
 	}, runDelegate).WithLifecycleLocks(do.MustInvoke[*sandboxes.LifecycleLocks](di))
-	path, handler = agentcomposev2connect.NewExecServiceHandler(execHandler)
+	path, handler = agentcomposev2connect.NewExecServiceHandler(execHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	imageHandler := api.NewImageHandler(do.MustInvoke[*adapters.ImageBackends](di))
-	path, handler = agentcomposev2connect.NewImageServiceHandler(imageHandler)
+	path, handler = agentcomposev2connect.NewImageServiceHandler(imageHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	cacheHandler := api.NewCacheHandler(do.MustInvoke[*cache.Controller](di))
-	path, handler = agentcomposev2connect.NewCacheServiceHandler(cacheHandler)
+	path, handler = agentcomposev2connect.NewCacheServiceHandler(cacheHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	volumeHandler := api.NewVolumeHandler(do.MustInvoke[*volumes.Manager](di))
-	path, handler = agentcomposev2connect.NewVolumeServiceHandler(volumeHandler)
+	path, handler = agentcomposev2connect.NewVolumeServiceHandler(volumeHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	sandboxHandler := api.NewSandboxHandler(api.SandboxHandlerDeps{
 		Delegate:  do.MustInvoke[*adapters.SandboxRPCBridge](di),
@@ -178,20 +179,20 @@ func RegisterRoutes(di do.Injector) {
 		WithRemovalCoordinator(do.MustInvoke[*sandboxes.RemovalCoordinator](di)).
 		WithWorkspaceFiles(adapters.NewWorkspaceFiles(do.MustInvoke[*appconfig.Config](di))).
 		WithEgressPolicyObserver(do.MustInvoke[*adapters.SandboxEgressProxy](di))
-	path, handler = agentcomposev2connect.NewSandboxServiceHandler(sandboxHandler)
+	path, handler = agentcomposev2connect.NewSandboxServiceHandler(sandboxHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewSettingsServiceHandler(api.NewSettingsV2Handler(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)))
+	path, handler = agentcomposev2connect.NewSettingsServiceHandler(api.NewSettingsV2Handler(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewDashboardServiceHandler(api.NewDashboardV2Handler(do.MustInvoke[*dashboard.Hub](di)))
+	path, handler = agentcomposev2connect.NewDashboardServiceHandler(api.NewDashboardV2Handler(do.MustInvoke[*dashboard.Hub](di)), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewCapabilityServiceHandler(api.NewCapabilityV2Handler(do.MustInvoke[capabilities.Provider](di), capabilityRuntimeConfig{config: do.MustInvoke[*appconfig.Config](di)}))
+	path, handler = agentcomposev2connect.NewCapabilityServiceHandler(api.NewCapabilityV2Handler(do.MustInvoke[capabilities.Provider](di), capabilityRuntimeConfig{config: do.MustInvoke[*appconfig.Config](di)}), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewEngineServiceHandler(api.NewEngineCapabilitiesV2Handler(do.MustInvoke[capmatrix.Snapshot](di)))
+	path, handler = agentcomposev2connect.NewEngineServiceHandler(api.NewEngineCapabilitiesV2Handler(do.MustInvoke[capmatrix.Snapshot](di)), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewLLMServiceHandler(api.NewLLMHandler(do.MustInvoke[*adapters.LLMClient](di), do.MustInvoke[*configstore.ConfigStore](di)).WithUpstreamProbe(do.MustInvoke[*adapters.LLMUpstreamProber](di)))
+	path, handler = agentcomposev2connect.NewLLMServiceHandler(api.NewLLMHandler(do.MustInvoke[*adapters.LLMClient](di), do.MustInvoke[*configstore.ConfigStore](di)).WithUpstreamProbe(do.MustInvoke[*adapters.LLMUpstreamProber](di)), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	resourceHandler := api.NewResourceHandler(do.MustInvoke[*resources.Locator](di))
-	path, handler = agentcomposev2connect.NewResourceServiceHandler(resourceHandler)
+	path, handler = agentcomposev2connect.NewResourceServiceHandler(resourceHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 
 	registerProxyRoutes(app, di)
