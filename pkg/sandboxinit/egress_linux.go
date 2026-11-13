@@ -21,23 +21,27 @@ import (
 // session and reports the connections it observes. Audit mode never changes the
 // syscall outcome; the decision stays in the daemon.
 type egressSupervisor struct {
-	mode           EgressMode
-	sandboxID      string
-	binary         string
-	generation     uint64
-	sink           EgressAuditSink
-	logger         *slog.Logger
-	proxy          *egressProxyTarget
-	relay          *egressRelayTarget
-	dns            *egressDNS
-	bypassIPs      map[string]struct{}
-	localIPs       map[string]struct{}
-	proxyHost      string
-	proxyPort      int
-	dnsMu          sync.Mutex
-	dnsSockets     map[uint64]dnsSocketDestination
-	receives       *dnsRecvmsgQueue
-	connectTimeout time.Duration
+	mode       EgressMode
+	sandboxID  string
+	binary     string
+	generation uint64
+	sink       EgressAuditSink
+	logger     *slog.Logger
+	proxy      *egressProxyTarget
+	relay      *egressRelayTarget
+	dns        *egressDNS
+	bypassIPs  map[string]struct{}
+	localIPs   map[string]struct{}
+	proxyHost  string
+	proxyPort  int
+	// dnsMu guards the DNS socket identity cache and its bookkeeping.
+	dnsMu             sync.Mutex
+	dnsSockets        map[uint64]dnsSocketDestination
+	dnsSocketClock    uint64
+	dnsLastPrune      time.Time
+	dnsCapacityWarned bool
+	receives          *dnsRecvmsgQueue
+	connectTimeout    time.Duration
 
 	// relayMu guards the token the daemon delivers over the init control
 	// socket. relayReady is closed once the token is installed, which is what

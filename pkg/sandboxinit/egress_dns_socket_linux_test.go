@@ -4,7 +4,6 @@ package sandboxinit
 
 import (
 	"bytes"
-	"errors"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -98,12 +97,21 @@ func TestDNSSocketIdentityIntegration(t *testing.T) {
 }
 
 func TestDNSSocketCapacityIntegration(t *testing.T) {
-	var limit unix.Rlimit
-	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &limit); err != nil {
+	var original unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &original); err != nil {
 		t.Fatal(err)
 	}
-	if limit.Cur < dnsSocketCacheLimit+128 {
-		t.Skip("socket capacity regression requires enough file descriptors")
+	want := uint64(dnsSocketCacheLimit + 128)
+	if original.Cur < want {
+		if original.Max < want {
+			t.Skip("socket capacity regression requires enough file descriptors")
+		}
+		raised := original
+		raised.Cur = want
+		if err := unix.Setrlimit(unix.RLIMIT_NOFILE, &raised); err != nil {
+			t.Skipf("raise file descriptor limit: %v", err)
+		}
+		t.Cleanup(func() { _ = unix.Setrlimit(unix.RLIMIT_NOFILE, &original) })
 	}
 	s := &egressSupervisor{dnsSockets: make(map[uint64]dnsSocketDestination)}
 	fds := make([]int, 0, dnsSocketCacheLimit)
@@ -127,22 +135,68 @@ func TestDNSSocketCapacityIntegration(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	extra := boundDNSReviewSocket(t)
-	if err := s.rememberDNSSocket(extra, []byte("extra")); !errors.Is(err, unix.ENOSPC) {
-		t.Fatalf("full live cache did not refuse the new redirect: %v", err)
+	// Give every mapping a distinct age, then refresh one of them. The fresh
+	// mapping must survive an eviction while the oldest live mapping is removed.
+	for index, fd := range fds {
+		inode, _, err := dnsSocketIdentity(fd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry := s.dnsSockets[inode]
+		entry.lastUsed = uint64(index + 1)
+		s.dnsSockets[inode] = entry
 	}
 	if raw, err := s.dnsSocketSource(fds[0]); err != nil || string(raw) != "nameserver" {
-		t.Fatalf("live mapping was evicted: %x %v", raw, err)
+		t.Fatalf("refreshed mapping: %x %v", raw, err)
 	}
-	if err := unix.Close(fds[0]); err != nil {
-		t.Fatal(err)
-	}
-	fds[0] = -1
+	extra := boundDNSReviewSocket(t)
 	if err := s.rememberDNSSocket(extra, []byte("extra")); err != nil {
-		t.Fatalf("closed socket was not reclaimed: %v", err)
+		t.Fatalf("full live cache refused a new DNS redirect: %v", err)
 	}
 	if len(s.dnsSockets) != dnsSocketCacheLimit {
-		t.Fatalf("cache size %d", len(s.dnsSockets))
+		t.Fatalf("cache size %d, want %d", len(s.dnsSockets), dnsSocketCacheLimit)
+	}
+	if raw, err := s.dnsSocketSource(extra); err != nil || string(raw) != "extra" {
+		t.Fatalf("new redirect was not recorded: %x %v", raw, err)
+	}
+	if raw, err := s.dnsSocketSource(fds[0]); err != nil || string(raw) != "nameserver" {
+		t.Fatalf("recently used mapping was evicted: %x %v", raw, err)
+	}
+	evicted, _, err := dnsSocketIdentity(fds[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := s.dnsSockets[evicted]; exists {
+		t.Fatal("least recently used mapping was not evicted first")
+	}
+
+	// A closed socket must be reclaimed before another live mapping is evicted.
+	closed, _, err := dnsSocketIdentity(fds[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Close(fds[2]); err != nil {
+		t.Fatal(err)
+	}
+	fds[2] = -1
+	s.dnsMu.Lock()
+	s.dnsLastPrune = time.Time{}
+	s.dnsMu.Unlock()
+	second := boundDNSReviewSocket(t)
+	if err := s.rememberDNSSocket(second, []byte("second")); err != nil {
+		t.Fatalf("closed socket slot was not reclaimed: %v", err)
+	}
+	if _, exists := s.dnsSockets[closed]; exists {
+		t.Fatal("closed socket mapping was retained")
+	}
+	if len(s.dnsSockets) != dnsSocketCacheLimit {
+		t.Fatalf("cache size %d after reclaim, want %d", len(s.dnsSockets), dnsSocketCacheLimit)
+	}
+	if raw, err := s.dnsSocketSource(fds[0]); err != nil || string(raw) != "nameserver" {
+		t.Fatalf("live mapping was evicted while a closed slot was available: %x %v", raw, err)
+	}
+	if raw, err := s.dnsSocketSource(second); err != nil || string(raw) != "second" {
+		t.Fatalf("reclaimed redirect was not recorded: %x %v", raw, err)
 	}
 }
 
