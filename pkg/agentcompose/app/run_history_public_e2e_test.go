@@ -96,9 +96,15 @@ func TestE2EPublicRunHistoryRemoval(t *testing.T) {
 	exec("UPDATE project_run SET sandbox_id='' WHERE run_id=?", standaloneID)
 	// Retained sandbox material must be removed through its lifecycle first.
 	// This fixture represents old material without starting an external driver.
-	sandboxDir := s.store.SandboxDir(sandboxID)
+	// An unregistered date-partitioned directory has no metadata, so the
+	// layout resolver falls back to a nonexistent flat path.
+	sandboxDir := filepath.Join(s.config.SandboxRoot, "2026", "11", "12", sandboxID)
 	writeSkillsPublicE2EFile(t, filepath.Join(sandboxDir, "keep.txt"), "retained")
+	if s.store.SandboxDir(sandboxID) == sandboxDir {
+		t.Fatal("fixture unexpectedly registered its dated sandbox")
+	}
 	assertRefused()
+	assertSkillsPublicE2EFile(t, filepath.Join(sandboxDir, "keep.txt"), "retained")
 	if err := os.RemoveAll(sandboxDir); err != nil {
 		t.Fatal(err)
 	}

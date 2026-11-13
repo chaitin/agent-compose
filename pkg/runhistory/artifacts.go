@@ -45,6 +45,9 @@ func (a FSArtifacts) Remove(ctx context.Context, scope Scope) error {
 			}
 		}
 	}
+	if err := requireDatedSandboxesAbsent(ctx, a.SandboxRoot, scope.SandboxIDs); err != nil {
+		return err
+	}
 	for _, run := range scope.Runs {
 		for _, recorded := range []string{run.LogsPath, run.ArtifactsDir} {
 			if recorded == "" {
