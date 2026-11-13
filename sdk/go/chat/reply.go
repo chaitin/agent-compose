@@ -15,6 +15,7 @@ import (
 // number of times; events are retained, so a later call replays them from the
 // start rather than seeing only what has not been consumed yet.
 type Reply struct {
+	input        *InputPreparation
 	conversation *Conversation
 
 	mu     sync.Mutex

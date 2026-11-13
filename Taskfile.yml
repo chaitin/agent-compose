@@ -652,3 +652,15 @@ tasks:
       VERSION: '{{.VERSION}}'
     cmds:
       - ./scripts/build-agent-compose.sh
+
+  test:sdk:local:
+    desc: Verify SDK against the unpublished local proto contract using a temporary modfile
+    deps: ['generate:proto']
+    cmds:
+      - ./scripts/test-sdk-local.sh
+
+  lint:sdk:local:
+    desc: Lint Go SDK against the unpublished local proto contract
+    deps: ['generate:proto']
+    cmds:
+      - ./scripts/test-sdk-local.sh lint
