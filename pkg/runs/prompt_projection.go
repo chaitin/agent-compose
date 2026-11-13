@@ -316,30 +316,33 @@ func streamedFinalTextOverlap(logged, finalText string) int {
 }
 
 func (p *promptAttachProjector) AppendHumanMessage(message string) error {
-	return p.AppendHumanMessageFrame(message, "")
+	_, err := p.AppendHumanMessageFrame(message, "")
+	return err
 }
 
-func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID string) error {
+func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID string) (bool, error) {
 	text := promptAttachHumanLogText(message)
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.events != nil && strings.TrimSpace(message) != "" {
+		p.humanIndex++
+		_, created, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
+			ID: attachedHumanEventID(p.run.RunID, clientFrameID, p.humanIndex, message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
+		})
+		if err != nil || !created {
+			return false, err
+		}
+	}
 	p.persistedAssistantTurn = false
 	if text != "" {
 		if p.hasLoggedText && !p.logEndsWithNewline {
 			text = "\n" + text
 		}
 		if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
-			return err
+			return false, err
 		}
 	}
-	if p.events == nil || strings.TrimSpace(message) == "" {
-		return nil
-	}
-	p.humanIndex++
-	_, _, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
-		ID: attachedHumanEventID(p.run.RunID, clientFrameID, uint64(p.humanIndex), message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
-	})
-	return err
+	return true, nil
 }
 
 func (p *promptAttachProjector) AppendStderr(text string) error {
