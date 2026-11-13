@@ -29,9 +29,10 @@ func (c *Controller) finishRunInputFailure(transitionCtx, runCtx context.Context
 		// Publication was attempted but its outcome is ambiguous.
 		failed.State = domain.RunInputStateUnknown
 	}
-	// Every cause falls through to a storage failure, which is the correct
-	// classification for the raw IO errors the writer and store surface.
-	failed.FailureReason = int32(apierror.ReasonStorageUnavailable)
+	// Unclassified causes are internal, not storage: this path also receives
+	// workspace-preparation and sandbox-start failures, and the writer's raw
+	// IO errors carry no reason of their own.
+	failed.FailureReason = int32(apierror.ReasonInternal)
 	if errors.Is(cause, ErrInvalidRequest) || errors.Is(cause, domain.ErrInvalidArgument) {
 		failed.FailureReason = int32(apierror.ReasonInvalidRequest)
 	}

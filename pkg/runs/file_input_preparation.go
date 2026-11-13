@@ -89,15 +89,27 @@ func receiveRunInput(ctx context.Context, writer *sandboxstore.RunInputWriter, r
 	}
 }
 
+// collisionCandidate derives a non-conflicting publication name. It keeps a
+// dotfile's leading dot attached to its name (".gitignore" → ".gitignore (1)"
+// rather than " (1).gitignore") and otherwise mirrors the conventional
+// "name (N).ext" rename.
+func collisionCandidate(name string, suffix int) string {
+	if suffix == 0 {
+		return name
+	}
+	extension := filepath.Ext(name)
+	base := strings.TrimSuffix(name, extension)
+	if base == "" {
+		return fmt.Sprintf("%s (%d)", name, suffix)
+	}
+	return fmt.Sprintf("%s (%d)%s", base, suffix, extension)
+}
+
 func publishRunInput(ctx context.Context, store runInputStore, writer *sandboxstore.RunInputWriter, input domain.RunInputPreparation) (*domain.RunInputPreparation, error) {
 	input.Files = append([]domain.RunInputFile(nil), input.Files...)
 	for index, file := range input.Files {
 		for suffix := 0; ; suffix++ {
-			candidate := file.Name
-			if suffix > 0 {
-				extension := filepath.Ext(file.Name)
-				candidate = fmt.Sprintf("%s (%d)%s", strings.TrimSuffix(file.Name, extension), suffix, extension)
-			}
+			candidate := collisionCandidate(file.Name, suffix)
 			next := input
 			next.Files = append([]domain.RunInputFile(nil), input.Files...)
 			next.State = domain.RunInputStatePublishing

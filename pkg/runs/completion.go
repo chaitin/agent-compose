@@ -169,23 +169,23 @@ func (m *CompletionManager) completionWaitTimeout(ctx context.Context, runID str
 }
 
 func (m *CompletionManager) StageInterrupted(ctx context.Context, run domain.ProjectRunRecord, message string) error {
-	// Recovery is best-effort: if the store drops SaveRunInput this no-ops
-	// rather than failing the interrupt path, unlike the strict ErrUnsupported
-	// enforcement during live preparation.
+	// Input-evidence recovery is best-effort. The interrupt path must still
+	// mark the run failed even when the evidence cannot be re-read or
+	// downgraded: replayRunInput collapses an expired RECEIVING/PUBLISHING
+	// record to UNKNOWN at read time, so a missed persistence here cannot
+	// make an interrupted delivery replayable.
 	if store, ok := m.store.(runInputStore); ok {
 		// List projections intentionally omit the input record. Load the Run
 		// before recovery so a crash cannot strand RECEIVING/PUBLISHING evidence.
 		current, err := m.store.GetProjectRun(ctx, run.RunID)
 		if err != nil {
-			return err
-		}
-		input := current.InputPreparation
-		if input != nil && (input.State == domain.RunInputStateReceiving || input.State == domain.RunInputStatePublishing) {
+			m.logger.Warn("skip run input recovery during interrupt", "run_id", run.RunID, "error", err)
+		} else if input := current.InputPreparation; input != nil && (input.State == domain.RunInputStateReceiving || input.State == domain.RunInputStatePublishing) {
 			interrupted := *input
 			interrupted.State = domain.RunInputStateUnknown
 			interrupted.FailureReason = int32(apierror.ReasonOperationCanceled)
 			if err := store.SaveRunInput(ctx, *input, interrupted); err != nil {
-				return err
+				m.logger.Warn("downgrade run input evidence during interrupt", "run_id", run.RunID, "error", err)
 			}
 		}
 	}

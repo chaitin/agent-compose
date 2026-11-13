@@ -153,6 +153,25 @@ func TestRunInputLimitsAndUnsupportedEntrypoint(t *testing.T) {
 	}
 }
 
+func TestRunInputCollisionCandidate(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		suffix int
+		want   string
+	}{
+		{"a.txt", 0, "a.txt"},
+		{"a.txt", 1, "a (1).txt"},
+		{"README", 1, "README (1)"},
+		{"archive.tar.gz", 1, "archive.tar (1).gz"},
+		{".gitignore", 1, ".gitignore (1)"},
+		{".env", 2, ".env (2)"},
+	} {
+		if got := collisionCandidate(tc.name, tc.suffix); got != tc.want {
+			t.Errorf("collisionCandidate(%q, %d) = %q, want %q", tc.name, tc.suffix, got, tc.want)
+		}
+	}
+}
+
 func TestRunInputOwnershipIsPersistedBeforeTemporaryCreation(t *testing.T) {
 	c, sandbox, store, run := runInputFixture(t)
 	store.failState = "receiving"
