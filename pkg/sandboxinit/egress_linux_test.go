@@ -4,6 +4,7 @@ package sandboxinit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -428,6 +429,27 @@ func TestEgressHelperProcess(t *testing.T) {
 			os.Exit(1)
 		}
 		fmt.Printf("synthetic %s\n", ip)
+		return
+	}
+	if mode == "udp-unconnected-getpeername" {
+		query := buildDNSQuery(os.Getenv("INIT_EGRESS_HELPER_DNS_NAME"), dnsmessage.TypeA)
+		fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, 0)
+		if err != nil {
+			fmt.Printf("socket-error:%v\n", err)
+			os.Exit(1)
+		}
+		defer func() { _ = unix.Close(fd) }()
+		// sendto records a DNS identity for the socket, but the socket stays
+		// unconnected. getpeername must still report ENOTCONN.
+		if err := unix.Sendto(fd, query, 0, &unix.SockaddrInet4{Addr: [4]byte{8, 8, 8, 8}, Port: 53}); err != nil {
+			fmt.Printf("sendto-error:%v\n", err)
+			os.Exit(1)
+		}
+		if _, err := unix.Getpeername(fd); !errors.Is(err, unix.ENOTCONN) {
+			fmt.Printf("getpeername-error:%v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("getpeername-enotconn")
 		return
 	}
 	if mode == "udp-dns" || mode == "udp-sendmsg" {

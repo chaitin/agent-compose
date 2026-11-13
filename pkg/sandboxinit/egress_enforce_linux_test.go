@@ -4,8 +4,10 @@ package sandboxinit
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +18,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/sys/unix"
@@ -442,6 +445,27 @@ func TestInitEgressPolicyDNSConnectedGetpeername(t *testing.T) {
 	}
 }
 
+func TestInitEgressPolicyDNSUnconnectedGetpeername(t *testing.T) {
+	requireEnforceSupport(t)
+	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
+	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	waitForDNSPort(t)
+	output, err := runEgressHelperUDP(ctx, socket, "udp-unconnected-getpeername", "allowed.example")
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	if !strings.Contains(output, "getpeername-enotconn") {
+		t.Fatalf("helper output = %q, want ENOTCONN for an unconnected socket", output)
+	}
+}
+
 func waitForDNSPort(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -678,5 +702,58 @@ func TestInitEgressEnforceDeniesSendmsgWithAncillaryData(t *testing.T) {
 	}
 	if requests := proxy.received(); len(requests) != 0 {
 		t.Fatalf("proxy received %d requests for a datagram", len(requests))
+	}
+}
+
+func TestWriteDatagramSourceRespectsCallerCapacity(t *testing.T) {
+	source := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	backing := make([]byte, 8)
+	length := uint32(4)
+	if err := writeDatagramSource(
+		os.Getpid(),
+		uint64(uintptr(unsafe.Pointer(&backing[0]))),
+		uint64(uintptr(unsafe.Pointer(&length))),
+		source,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(backing[:4], source[:4]) {
+		t.Fatalf("short sockaddr copy = %v, want %v", backing[:4], source[:4])
+	}
+	if !bytes.Equal(backing[4:], make([]byte, 4)) {
+		t.Fatalf("short sockaddr wrote past the caller's capacity: %v", backing)
+	}
+	if length != uint32(len(source)) {
+		t.Fatalf("reported address length = %d, want %d", length, len(source))
+	}
+
+	length = uint32(len(source))
+	full := make([]byte, len(source))
+	if err := writeDatagramSource(
+		os.Getpid(),
+		uint64(uintptr(unsafe.Pointer(&full[0]))),
+		uint64(uintptr(unsafe.Pointer(&length))),
+		source,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(full, source) {
+		t.Fatalf("full sockaddr copy = %v, want %v", full, source)
+	}
+
+	length = 7
+	if err := writeDatagramSource(os.Getpid(), 0, uint64(uintptr(unsafe.Pointer(&length))), source); err != nil {
+		t.Fatal(err)
+	}
+	if length != 7 {
+		t.Fatalf("NULL source address changed the caller's length to %d", length)
+	}
+	if err := writeDatagramSource(
+		os.Getpid(),
+		uint64(uintptr(unsafe.Pointer(&full[0]))),
+		0,
+		source,
+	); !errors.Is(err, unix.EFAULT) {
+		t.Fatalf("missing address length pointer returned %v, want EFAULT", err)
 	}
 }

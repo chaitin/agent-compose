@@ -81,6 +81,9 @@ func TestDNSReplySource(t *testing.T) {
 		{&unix.SockaddrInet6{Addr: [16]byte{0: 0xfe, 1: 0x80, 15: 1}, ZoneId: 7, Port: 53}, false},
 	} {
 		raw := rawDNSReplySource(tc.source)
+		if got := isDNSStubSource(raw); got != tc.stub {
+			t.Fatalf("source %v classified as stub=%t, want %t", tc.source, got, tc.stub)
+		}
 		got := restoreDNSReplySource(original, raw)
 		want := raw
 		if tc.stub {

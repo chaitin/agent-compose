@@ -964,32 +964,43 @@ func (s *egressSupervisor) handleEnforceRecvfrom(listenerFD int, request *seccom
 		return
 	}
 	original = restoreDNSReplySource(original, rawDNSReplySource(from))
-	sourceAddress := request.Data.Args[4]
-	if sourceAddress != 0 {
-		if err := writeTargetMemory(pid, sourceAddress, original); err != nil {
-			event.Decision = "deny"
-			event.Reason = "cannot restore the nameserver address"
-			s.record(event)
-			replyConnect(listenerFD, request.ID, unix.EIO)
-			return
-		}
-	}
-	lengthPointer := request.Data.Args[5]
-	if lengthPointer != 0 {
-		var encoded [4]byte
-		binary.NativeEndian.PutUint32(encoded[:], uint32(len(original)))
-		if err := writeTargetMemory(pid, lengthPointer, encoded[:]); err != nil {
-			event.Decision = "deny"
-			event.Reason = "cannot restore the nameserver address length"
-			s.record(event)
-			replyConnect(listenerFD, request.ID, unix.EIO)
-			return
-		}
+	if err := writeDatagramSource(pid, request.Data.Args[4], request.Data.Args[5], original); err != nil {
+		event.Decision = "deny"
+		event.Reason = "cannot restore the nameserver address"
+		s.record(event)
+		replyConnect(listenerFD, request.ID, unix.EFAULT)
+		return
 	}
 	event.Decision = "allow"
 	event.Reason = "dns-stub-recvfrom"
 	s.record(event)
 	_ = ioctlNotifSend(listenerFD, &seccompNotifResp{ID: request.ID, Val: int64(read)})
+}
+
+// writeDatagramSource mirrors recvfrom's address output: the kernel copies
+// min(*addrlen, len(source)), then reports the full source length. Writing the
+// full source regardless of the caller's capacity would overwrite target
+// memory past a short sockaddr buffer.
+func writeDatagramSource(pid int, sourceAddress, lengthPointer uint64, source []byte) error {
+	if sourceAddress == 0 {
+		return nil
+	}
+	if lengthPointer == 0 {
+		return unix.EFAULT
+	}
+	var encoded [4]byte
+	if err := readTargetMemory(pid, lengthPointer, encoded[:]); err != nil {
+		return err
+	}
+	available := int(binary.NativeEndian.Uint32(encoded[:]))
+	written := min(available, len(source))
+	if written > 0 {
+		if err := writeTargetMemory(pid, sourceAddress, source[:written]); err != nil {
+			return err
+		}
+	}
+	binary.NativeEndian.PutUint32(encoded[:], uint32(len(source)))
+	return writeTargetMemory(pid, lengthPointer, encoded[:])
 }
 
 func recvDatagram(fd int, buffer []byte, timeout time.Duration, nonblocking bool) (int, unix.Sockaddr, unix.Errno) {
@@ -1063,6 +1074,14 @@ func (s *egressSupervisor) handleEnforceGetpeername(listenerFD int, request *sec
 		return
 	}
 	defer func() { _ = unix.Close(duplicate) }()
+	// Only a socket actually connected to the policy resolver may report the
+	// configured nameserver. An unconnected sendto socket must still return
+	// ENOTCONN, and a socket reconnected elsewhere must report its real peer.
+	peer, err := unix.Getpeername(duplicate)
+	if err != nil || !isDNSStubSource(rawDNSReplySource(peer)) {
+		replyContinue(listenerFD, request.ID)
+		return
+	}
 	original, err := s.dnsSocketSource(duplicate)
 	if err != nil {
 		replyConnect(listenerFD, request.ID, errnoFromError(err))
