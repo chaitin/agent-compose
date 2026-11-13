@@ -45,6 +45,7 @@ func TestSandboxInitCoreIntegration(t *testing.T) {
 		{"dns/recvmsg-cache-bound", TestDNSRecvmsgRecoveryCacheBound},
 		{"dns/recvmsg-allocation", TestDNSRecvmsgPacketAllocation},
 		{"dns/recvmsg-canceled", TestDNSRecvmsgCanceledPacketReplay},
+		{"dns/recvmsg-canceled-empty", TestDNSRecvmsgCanceledPacketReplayEmptyQueue},
 		{"dns/recvmsg-filter", TestDNSRecvmsgTargetFilter},
 		{"dns/socket-lifetime", TestDNSSocketLifetimeIntegration},
 		{"dns/socket-identity", TestDNSSocketIdentityIntegration},

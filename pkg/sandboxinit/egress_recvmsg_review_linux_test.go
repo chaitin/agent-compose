@@ -88,79 +88,104 @@ func TestDNSRecvmsgCanceledPacketReplay(t *testing.T) {
 	}
 	for _, mode := range []string{"normal", "truncate", "peek", "oob", "control-trunc", "control-partial"} {
 		t.Run(mode, func(t *testing.T) {
-			target, sender := boundDNSReviewSocket(t), boundDNSReviewSocket(t)
-			to, err := unix.Getsockname(target)
-			if err != nil {
-				t.Fatal(err)
-			}
-			payload := bytes.Repeat([]byte("dns-response"), 8)
-			if err := unix.SetsockoptInt(target, unix.SOL_SOCKET, unix.SO_TIMESTAMP, 1); err != nil {
-				t.Fatal(err)
-			}
-			if err := unix.Sendto(sender, payload, 0, to); err != nil {
-				t.Fatal(err)
-			}
-			// Each helper has its own real seccomp listener while inheriting this socket.
-			original := startDNSRecvmsgReviewHelper(t, target, "normal")
-			request := receiveDNSRecvmsgReview(t, original.listener)
-			fd, err := unix.Dup(target)
-			if err != nil {
-				t.Fatal(err)
-			}
-			packet, err := readDNSRecvmsgPacket(fd, 0)
-			if err != nil {
-				_ = unix.Close(fd)
-				t.Fatal(err)
-			}
-			packet.fd = fd
-			if err := original.command.Process.Kill(); err != nil {
-				t.Fatal(err)
-			}
-			_ = original.command.Wait()
-			waitForDNSCondition(t, func() bool { return !notificationIDValid(original.listener, request.ID) })
-			r := &dnsRecvmsg{request: request, listenerFD: original.listener}
-			if retained := r.complete(packet, nil, nil, 0, 0); retained != packet {
-				t.Fatal("canceled reply dropped the packet")
-			}
-			defer func() {
-				if packet != nil {
-					_ = unix.Close(packet.fd)
-				}
-			}()
-			second := []byte("next-response")
-			if err := unix.Sendto(sender, second, 0, to); err != nil {
-				t.Fatal(err)
-			}
-			next := startDNSRecvmsgReviewHelper(t, target, mode)
-			nextRequest := receiveDNSRecvmsgReview(t, next.listener)
-			r = &dnsRecvmsg{request: nextRequest, listenerFD: next.listener, fd: target}
-			if errno := r.readLayout(); errno != 0 {
-				t.Fatal(errno)
-			}
-			done, retained := r.try(packet)
-			if !done {
-				t.Fatal("replay stayed blocked on the empty kernel queue")
-			}
-			output, err := next.outputAndWait()
-			if err != nil || !strings.Contains(output, "replay-ok") {
-				t.Fatalf("replayed receive: %v %s", err, output)
-			}
-			tail := make([]byte, 128)
-			n, _, _, _, err := unix.Recvmsg(target, tail, nil, unix.MSG_DONTWAIT)
-			if err != nil || !bytes.Equal(tail[:max(n, 0)], second) {
-				t.Fatalf("replay consumed the next datagram: %v %q", err, tail[:max(n, 0)])
-			}
-			if mode == "peek" {
-				if retained != packet {
-					t.Fatal("MSG_PEEK consumed the retained packet")
-				}
-			} else {
-				if retained != nil {
-					t.Fatal("committed receive did not release the retained packet")
-				}
-				packet = nil
-			}
+			runDNSRecvmsgCanceledReplay(t, mode, true)
 		})
+	}
+}
+
+// A canceled receive leaves an empty kernel queue behind. The retained packet
+// must still be delivered, including for MSG_OOB, which UDP ignores.
+func TestDNSRecvmsgCanceledPacketReplayEmptyQueue(t *testing.T) {
+	if err := egressInterceptionSupported(); err != nil {
+		t.Skip(err)
+	}
+	for _, mode := range []string{"normal", "oob"} {
+		t.Run(mode, func(t *testing.T) {
+			runDNSRecvmsgCanceledReplay(t, mode, false)
+		})
+	}
+}
+
+func runDNSRecvmsgCanceledReplay(t *testing.T, mode string, queueNext bool) {
+	t.Helper()
+	target, sender := boundDNSReviewSocket(t), boundDNSReviewSocket(t)
+	to, err := unix.Getsockname(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte("dns-response"), 8)
+	if err := unix.SetsockoptInt(target, unix.SOL_SOCKET, unix.SO_TIMESTAMP, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Sendto(sender, payload, 0, to); err != nil {
+		t.Fatal(err)
+	}
+	// Each helper has its own real seccomp listener while inheriting this socket.
+	original := startDNSRecvmsgReviewHelper(t, target, "normal")
+	request := receiveDNSRecvmsgReview(t, original.listener)
+	fd, err := unix.Dup(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := readDNSRecvmsgPacket(fd, 0)
+	if err != nil {
+		_ = unix.Close(fd)
+		t.Fatal(err)
+	}
+	packet.fd = fd
+	if err := original.command.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = original.command.Wait()
+	waitForDNSCondition(t, func() bool { return !notificationIDValid(original.listener, request.ID) })
+	r := &dnsRecvmsg{request: request, listenerFD: original.listener}
+	if retained := r.complete(packet, nil, nil, 0, 0); retained != packet {
+		t.Fatal("canceled reply dropped the packet")
+	}
+	defer func() {
+		if packet != nil {
+			_ = unix.Close(packet.fd)
+		}
+	}()
+	second := []byte("next-response")
+	if queueNext {
+		if err := unix.Sendto(sender, second, 0, to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	next := startDNSRecvmsgReviewHelper(t, target, mode)
+	nextRequest := receiveDNSRecvmsgReview(t, next.listener)
+	r = &dnsRecvmsg{request: nextRequest, listenerFD: next.listener, fd: target}
+	if errno := r.readLayout(); errno != 0 {
+		t.Fatal(errno)
+	}
+	done, retained := r.try(packet)
+	if !done {
+		t.Fatal("replay stayed blocked on the empty kernel queue")
+	}
+	output, err := next.outputAndWait()
+	if err != nil || !strings.Contains(output, "replay-ok") {
+		t.Fatalf("replayed receive: %v %s", err, output)
+	}
+	if !queueNext {
+		if err := unix.Sendto(sender, second, 0, to); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tail := make([]byte, 128)
+	n, _, _, _, err := unix.Recvmsg(target, tail, nil, unix.MSG_DONTWAIT)
+	if err != nil || !bytes.Equal(tail[:max(n, 0)], second) {
+		t.Fatalf("replay consumed the next datagram: %v %q", err, tail[:max(n, 0)])
+	}
+	if mode == "peek" {
+		if retained != packet {
+			t.Fatal("MSG_PEEK consumed the retained packet")
+		}
+	} else {
+		if retained != nil {
+			t.Fatal("committed receive did not release the retained packet")
+		}
+		packet = nil
 	}
 }
 
