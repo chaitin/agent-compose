@@ -3,6 +3,7 @@ package runs
 import (
 	"context"
 	"errors"
+
 	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -19,13 +20,17 @@ func (c *Controller) finishRunInputFailure(transitionCtx, runCtx context.Context
 	run, sandbox, input, cause, send := request.Run, request.Sandbox, request.Input, request.Cause, request.Send
 	previous := *input
 	failed := previous
-	failed.State = "failed"
-	if previous.State == "ready" {
-		failed.State = "ready"
+	failed.State = domain.RunInputStateFailed
+	if previous.State == domain.RunInputStateReady {
+		// Delivery already committed durably; the failure is downstream of it.
+		failed.State = domain.RunInputStateReady
 	}
-	if previous.State == "publishing" {
-		failed.State = "unknown"
+	if previous.State == domain.RunInputStatePublishing {
+		// Publication was attempted but its outcome is ambiguous.
+		failed.State = domain.RunInputStateUnknown
 	}
+	// Every cause falls through to a storage failure, which is the correct
+	// classification for the raw IO errors the writer and store surface.
 	failed.FailureReason = int32(apierror.ReasonStorageUnavailable)
 	if errors.Is(cause, ErrInvalidRequest) || errors.Is(cause, domain.ErrInvalidArgument) {
 		failed.FailureReason = int32(apierror.ReasonInvalidRequest)
@@ -47,7 +52,9 @@ func (c *Controller) finishRunInputFailure(transitionCtx, runCtx context.Context
 		persistErr = store.SaveRunInput(transitionCtx, previous, failed)
 	}
 	if persistErr != nil {
-		failed.State = "unknown"
+		// The durable record could not be updated; only the wire evidence is
+		// downgraded to unknown.
+		failed.State = domain.RunInputStateUnknown
 	}
 	sandboxID := run.SandboxID
 	if sandbox != nil {

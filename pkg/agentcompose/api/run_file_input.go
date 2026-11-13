@@ -13,18 +13,10 @@ func RunInputToProto(input *domain.RunInputPreparation) *agentcomposev2.RunInput
 	if input == nil {
 		return nil
 	}
-	states := map[string]agentcomposev2.RunInputState{
-		"receiving":  agentcomposev2.RunInputState_RUN_INPUT_STATE_RECEIVING,
-		"publishing": agentcomposev2.RunInputState_RUN_INPUT_STATE_PUBLISHING,
-		"ready":      agentcomposev2.RunInputState_RUN_INPUT_STATE_READY,
-		"failed":     agentcomposev2.RunInputState_RUN_INPUT_STATE_FAILED,
-		"unknown":    agentcomposev2.RunInputState_RUN_INPUT_STATE_UNKNOWN,
-	}
-	state, ok := states[input.State]
-	if !ok {
-		state = agentcomposev2.RunInputState_RUN_INPUT_STATE_UNKNOWN
-	}
-	if (input.State == "receiving" || input.State == "publishing") && !time.Now().Before(input.Deadline) {
+	state := runInputStateToProto(input.State)
+	// A still-in-progress delivery whose deadline has passed is as ambiguous as
+	// an unknown one: the caller must reconcile, not assume success.
+	if (input.State == domain.RunInputStateReceiving || input.State == domain.RunInputStatePublishing) && !time.Now().Before(input.Deadline) {
 		state = agentcomposev2.RunInputState_RUN_INPUT_STATE_UNKNOWN
 	}
 	result := &agentcomposev2.RunInputPreparation{RunId: input.RunID, SandboxId: input.SandboxID, State: state, ManifestSha256: input.ManifestSHA256, Deadline: FormatProjectTime(input.Deadline)}
@@ -39,6 +31,23 @@ func RunInputToProto(input *domain.RunInputPreparation) *agentcomposev2.RunInput
 		result.Failure = &agentcomposev2.OperationErrorDetail{Reason: agentcomposev2.OperationErrorReason(input.FailureReason), Effect: agentcomposev2.OperationEffect_OPERATION_EFFECT_UNKNOWN}
 	}
 	return result
+}
+
+func runInputStateToProto(state domain.RunInputState) agentcomposev2.RunInputState {
+	switch state {
+	case domain.RunInputStateReceiving:
+		return agentcomposev2.RunInputState_RUN_INPUT_STATE_RECEIVING
+	case domain.RunInputStatePublishing:
+		return agentcomposev2.RunInputState_RUN_INPUT_STATE_PUBLISHING
+	case domain.RunInputStateReady:
+		return agentcomposev2.RunInputState_RUN_INPUT_STATE_READY
+	case domain.RunInputStateFailed:
+		return agentcomposev2.RunInputState_RUN_INPUT_STATE_FAILED
+	case domain.RunInputStateUnknown:
+		return agentcomposev2.RunInputState_RUN_INPUT_STATE_UNKNOWN
+	default:
+		return agentcomposev2.RunInputState_RUN_INPUT_STATE_UNKNOWN
+	}
 }
 
 func runFileInputCapabilities() *agentcomposev2.RunFileInputCapabilities {

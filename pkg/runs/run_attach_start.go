@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	domain "github.com/chaitin/agent-compose/pkg/model"
 	"io"
 	"strings"
 	"time"
+
+	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
 func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Context, receive RunAttachReceiver, send RunAttachSender, onStarted func(string, <-chan struct{})) error {
@@ -55,7 +56,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	}
 	if started.Run.InputPreparation != nil && !started.Run.InputAccepted {
 		input := replayRunInput(started.Run.InputPreparation)
-		if input.State == "ready" {
+		if input.State == domain.RunInputStateReady {
 			return send(RunAttachOutput{Kind: RunAttachOutputInputReady, Run: started.Run, Input: input})
 		}
 		return send(RunAttachOutput{Kind: RunAttachOutputError, Run: started.Run, Input: input, Code: "input_not_ready", Error: "run input preparation requires reconciliation", Terminal: true})

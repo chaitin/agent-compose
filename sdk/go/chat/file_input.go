@@ -12,6 +12,11 @@ import (
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
+// uploadChunkBytes is the fixed upload chunk size. It must never exceed the
+// daemon's advertised max_chunk_bytes; validateInput rejects a daemon that
+// advertises less, so the buffer and the server limit can never drift apart.
+const uploadChunkBytes = 256 << 10
+
 // InputFile supplies one immutable file. The SDK closes Content on every exit.
 // Content must support concurrent Close to interrupt a blocked Read.
 type InputFile struct {
@@ -119,7 +124,7 @@ func (c *Conversation) validateInput(ctx context.Context, input SendInput) ([]*a
 	if capability.GetProtocolVersion() != 1 || !capability.GetAttachAgentRun() {
 		return nil, invalidArgument("SendWithInput", "daemon does not support streamed file input")
 	}
-	if uint32(len(input.Files)) > capability.GetMaxFiles() || capability.GetMaxChunkBytes() < 256<<10 {
+	if uint32(len(input.Files)) > capability.GetMaxFiles() || capability.GetMaxChunkBytes() < uploadChunkBytes {
 		return nil, invalidArgument("SendWithInput", "file input exceeds daemon limits")
 	}
 	var total uint64
@@ -143,7 +148,7 @@ func uploadInput(ctx context.Context, stream *attachStream, files []InputFile) e
 	if len(files) == 0 {
 		return nil
 	}
-	buffer := make([]byte, 256<<10)
+	buffer := make([]byte, uploadChunkBytes)
 	for _, file := range files {
 		var offset uint64
 		for {

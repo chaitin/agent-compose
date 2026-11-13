@@ -6,13 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/chaitin/agent-compose/pkg/apierror"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 )
@@ -169,6 +169,9 @@ func (m *CompletionManager) completionWaitTimeout(ctx context.Context, runID str
 }
 
 func (m *CompletionManager) StageInterrupted(ctx context.Context, run domain.ProjectRunRecord, message string) error {
+	// Recovery is best-effort: if the store drops SaveRunInput this no-ops
+	// rather than failing the interrupt path, unlike the strict ErrUnsupported
+	// enforcement during live preparation.
 	if store, ok := m.store.(runInputStore); ok {
 		// List projections intentionally omit the input record. Load the Run
 		// before recovery so a crash cannot strand RECEIVING/PUBLISHING evidence.
@@ -177,9 +180,9 @@ func (m *CompletionManager) StageInterrupted(ctx context.Context, run domain.Pro
 			return err
 		}
 		input := current.InputPreparation
-		if input != nil && (input.State == "receiving" || input.State == "publishing") {
+		if input != nil && (input.State == domain.RunInputStateReceiving || input.State == domain.RunInputStatePublishing) {
 			interrupted := *input
-			interrupted.State = "unknown"
+			interrupted.State = domain.RunInputStateUnknown
 			interrupted.FailureReason = int32(apierror.ReasonOperationCanceled)
 			if err := store.SaveRunInput(ctx, *input, interrupted); err != nil {
 				return err

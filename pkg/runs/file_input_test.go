@@ -18,7 +18,7 @@ import (
 type inputEvidenceStore struct {
 	*fakeControllerStore
 	evidence  domain.RunInputPreparation
-	failState string
+	failState domain.RunInputState
 }
 
 func (s *inputEvidenceStore) SaveRunInput(_ context.Context, before, after domain.RunInputPreparation) error {

@@ -11,13 +11,26 @@ type RunInputFile struct {
 	RelativePath string `json:"relative_path,omitempty"`
 }
 
+// RunInputState is the delivery evidence lifecycle. A run's input evidence
+// moves receiving → publishing → ready on success; failures collapse incomplete
+// evidence to failed, and crash-ambiguous evidence to unknown.
+type RunInputState string
+
+const (
+	RunInputStateReceiving  RunInputState = "receiving"
+	RunInputStatePublishing RunInputState = "publishing"
+	RunInputStateReady      RunInputState = "ready"
+	RunInputStateFailed     RunInputState = "failed"
+	RunInputStateUnknown    RunInputState = "unknown"
+)
+
 // RunInputPreparation is durable delivery evidence owned by one Run.
 // Incomplete evidence after a crash is unknown; it never permits resubmission.
 type RunInputPreparation struct {
 	RunID          string         `json:"run_id"`
 	TemporaryNames []string       `json:"temporary_names,omitempty"`
 	SandboxID      string         `json:"sandbox_id,omitempty"`
-	State          string         `json:"state"`
+	State          RunInputState  `json:"state"`
 	ManifestSHA256 []byte         `json:"manifest_sha256"`
 	Files          []RunInputFile `json:"files"`
 	FailureReason  int32          `json:"failure_reason,omitempty"`

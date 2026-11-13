@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/google/uuid"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
@@ -99,7 +100,7 @@ func publishRunInput(ctx context.Context, store runInputStore, writer *sandboxst
 			}
 			next := input
 			next.Files = append([]domain.RunInputFile(nil), input.Files...)
-			next.State = "publishing"
+			next.State = domain.RunInputStatePublishing
 			next.Files[index].RelativePath = candidate
 			if err := store.SaveRunInput(ctx, input, next); err != nil {
 				return &input, err
@@ -119,7 +120,7 @@ func publishRunInput(ctx context.Context, store runInputStore, writer *sandboxst
 		return &input, err
 	}
 	ready := input
-	ready.State = "ready"
+	ready.State = domain.RunInputStateReady
 	if err := store.SaveRunInput(ctx, input, ready); err != nil {
 		return &input, err
 	}

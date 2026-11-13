@@ -5,12 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/chaitin/agent-compose/internal/projects"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/chaitin/agent-compose/internal/projects"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -42,7 +42,7 @@ func newRunInput(req RunAgentRequest) (*domain.RunInputPreparation, error) {
 		return nil, err
 	}
 	digest := sha256.Sum256(encoded)
-	return &domain.RunInputPreparation{State: "receiving", Files: files, ManifestSHA256: digest[:], Deadline: time.Now().UTC().Add(InputPreparationTimeout)}, nil
+	return &domain.RunInputPreparation{State: domain.RunInputStateReceiving, Files: files, ManifestSHA256: digest[:], Deadline: time.Now().UTC().Add(InputPreparationTimeout)}, nil
 }
 
 // ValidateInputFiles enforces the independently checked Runtime limits.
@@ -80,8 +80,10 @@ func replayRunInput(input *domain.RunInputPreparation) *domain.RunInputPreparati
 		return nil
 	}
 	copy := *input
-	if (copy.State == "receiving" || copy.State == "publishing") && !time.Now().Before(copy.Deadline) {
-		copy.State = "unknown"
+	// A missing deadline (e.g. evidence written before this field existed) is
+	// already past, so it collapses to unknown — the safe, never-replay state.
+	if (copy.State == domain.RunInputStateReceiving || copy.State == domain.RunInputStatePublishing) && !time.Now().Before(copy.Deadline) {
+		copy.State = domain.RunInputStateUnknown
 	}
 	return &copy
 }
