@@ -21,6 +21,7 @@ var rpcKinds = map[string]rpcKind{
 	agentcomposev2connect.ProjectServiceGetProjectProcedure:                   rpcRead,
 	agentcomposev2connect.ProjectServiceListProjectsProcedure:                 rpcRead,
 	agentcomposev2connect.ProjectServiceRemoveProjectProcedure:                rpcWrite,
+	agentcomposev2connect.ProjectServiceRemoveRunHistoryProcedure:             rpcWrite,
 	agentcomposev2connect.ProjectServiceWatchProjectProcedure:                 rpcRead,
 	agentcomposev2connect.ProjectServiceGetSchedulerProcedure:                 rpcRead,
 	agentcomposev2connect.ProjectServiceListSchedulersProcedure:               rpcRead,

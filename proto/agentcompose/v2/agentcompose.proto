@@ -38,6 +38,8 @@ service ProjectService {
   rpc BatchGetLatestSchedulerRuns(BatchGetLatestSchedulerRunsRequest) returns (BatchGetLatestSchedulerRunsResponse);
   rpc StreamSchedulerRuns(StreamSchedulerRunsRequest) returns (stream StreamSchedulerRunsResponse);
   rpc PruneSchedulerRuns(PruneSchedulerRunsRequest) returns (PruneSchedulerRunsResponse);
+  // 精确删除终态执行历史；材料清理失败时保留记录，使用同一身份重试。
+  rpc RemoveRunHistory(RemoveRunHistoryRequest) returns (RemoveRunHistoryResponse);
   rpc StopSchedulerRun(StopSchedulerRunRequest) returns (StopSchedulerRunResponse);
   rpc SetSchedulerEnabled(SetSchedulerEnabledRequest) returns (SetSchedulerEnabledResponse);
   rpc SetSchedulerTriggerEnabled(SetSchedulerTriggerEnabledRequest) returns (SetSchedulerTriggerEnabledResponse);
@@ -2825,3 +2827,25 @@ message GetEngineCapabilitiesResponse {
   // entry is "measured" or "simulated", never "declared".
   repeated EngineObservedCapability observations = 6;
 }
+
+enum RunHistoryKind {
+  RUN_HISTORY_KIND_UNSPECIFIED = 0;
+  RUN_HISTORY_KIND_RUN = 1;
+  RUN_HISTORY_KIND_SCHEDULER_RUN = 2;
+}
+
+// 不支持名称、短 ID 或条件筛选。不会停止执行、删除 Scheduler、共享事件或沙箱。
+// 必须先通过 RemoveSandbox 完成相关沙箱的删除；残留审计归档也会阻止历史删除。
+// Scheduler Run 会连同精确关联的子 Run、事件、投递链接和专属目录一起删除。
+// 运行中、收尾未完成、共享引用或不安全路径会被拒绝。
+// 成功表示指定历史和专属材料均已不存在；重复请求同样成功。
+// 清理或提交失败的效果为 UNKNOWN，须使用完全相同的身份重试，而非将 404 视为成功。
+message RemoveRunHistoryRequest {
+  string project_id = 1;
+  RunHistoryKind kind = 2;
+  string run_id = 3;
+  // 仅 SCHEDULER_RUN 必填；用于校验归属及在主记录已缺失时定位遗留目录。
+  string scheduler_id = 4;
+}
+
+message RemoveRunHistoryResponse {}

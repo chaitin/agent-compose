@@ -30,6 +30,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/resources"
+	"github.com/chaitin/agent-compose/pkg/runhistory"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -117,6 +118,16 @@ func RegisterRoutes(di do.Injector) {
 		SchedulerRuns:    schedulerController.SchedulerRuns(),
 		AgentModels:      newProjectAgentModelResolver(do.MustInvoke[*configstore.ConfigStore](di)),
 		SandboxDirs:      do.MustInvoke[*sandboxstore.Store](di),
+		RunHistory: &runhistory.Remover{
+			Store:      do.MustInvoke[*configstore.ConfigStore](di),
+			Schedulers: schedulerController,
+			Artifacts: runhistory.FSArtifacts{
+				DataRoot:           do.MustInvoke[*appconfig.Config](di).DataRoot,
+				SandboxRoot:        do.MustInvoke[*appconfig.Config](di).SandboxRoot,
+				SandboxArchiveRoot: do.MustInvoke[*appconfig.Config](di).SandboxArchiveRoot,
+				SandboxDirs:        do.MustInvoke[*sandboxstore.Store](di),
+			},
+		},
 	})
 	handlerOptions := api.ErrorContractHandlerOptions()
 	path, handler := agentcomposev2connect.NewProjectServiceHandler(projectHandler, handlerOptions...)
