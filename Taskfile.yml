@@ -660,24 +660,12 @@ tasks:
       - '{{.GO_TOOLCHAIN_ENV}} go test -race ./pkg/runs ./pkg/storage/configstore ./pkg/storage/sandboxstore ./pkg/agentcompose/api ./pkg/agentcompose/app -run "Test.*(RunInput|FileInput)" -count=1'
       - '{{.GO_TOOLCHAIN_ENV}} go -C proto test ./...'
 
-  test:sdk:local:
-    desc: Verify SDK against the unpublished local proto contract using a temporary modfile
-    deps: ['generate:proto']
-    cmds:
-      - ./scripts/test-sdk-local.sh
-
   format:go:
     desc: Format handwritten Go sources using repository formatter settings
     cmds:
       - '{{.GO_TOOLCHAIN_ENV}} golangci-lint fmt {{.GO_LINT_PACKAGES}}'
       - '{{.GO_TOOLCHAIN_ENV}} golangci-lint fmt -c {{.TASKFILE_DIR}}/.golangci.yml ./sdk/go/chat/...'
       - '{{.GO_TOOLCHAIN_ENV}} golangci-lint fmt ./test/e2e/...'
-
-  lint:sdk:local:
-    desc: Lint Go SDK against the unpublished local proto contract
-    deps: ['generate:proto']
-    cmds:
-      - ./scripts/test-sdk-local.sh lint
 
   lint:run-input:
     desc: Lint changed Run input boundaries on the native development host
