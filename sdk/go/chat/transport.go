@@ -19,6 +19,7 @@ import (
 // framing and procedure paths belong to the generated Connect client; what is
 // left here is the per-request credential and the naming of failures.
 type transport struct {
+	engine   agentcomposev2connect.EngineServiceClient
 	runs     agentcomposev2connect.RunServiceClient
 	projects agentcomposev2connect.ProjectServiceClient
 }
@@ -26,6 +27,7 @@ type transport struct {
 func newTransport(baseURL string, client *http.Client, token TokenSource, userAgent string) *transport {
 	identify := connect.WithInterceptors(&credentials{token: token, userAgent: userAgent})
 	return &transport{
+		engine:   agentcomposev2connect.NewEngineServiceClient(client, baseURL, identify),
 		runs:     agentcomposev2connect.NewRunServiceClient(client, baseURL, identify),
 		projects: agentcomposev2connect.NewProjectServiceClient(client, baseURL, identify),
 	}

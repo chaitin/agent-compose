@@ -38,9 +38,11 @@ var closeCallBound = 10 * time.Second
 // time; a [Conversation.Send] issued while an earlier Reply is still streaming
 // returns [ErrBusy].
 type Conversation struct {
-	agent  *Agent
-	id     string
-	labels map[string]string
+	openingRequestID string
+	openingFiles     []*agentcomposev2.RunInputFile
+	agent            *Agent
+	id               string
+	labels           map[string]string
 
 	mu     sync.Mutex
 	stream *attachStream
@@ -441,9 +443,11 @@ func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 		}
 		labels[conversationLabel] = c.id
 		start.Request = &agentcomposev2.RunAgentRequest{
-			ProjectId: c.agent.projectID,
-			AgentName: c.agent.name,
-			Prompt:    prompt,
+			ProjectId:       c.agent.projectID,
+			AgentName:       c.agent.name,
+			Prompt:          prompt,
+			ClientRequestId: cmp.Or(c.openingRequestID, newFrameID()),
+			InputFiles:      c.openingFiles,
 			// One run serves every turn of an open session, so the
 			// environment already outlives a turn without being pinned:
 			// stopping it when the run itself ends is enough. Keeping it
@@ -523,6 +527,23 @@ func (c *Conversation) stopRun(ctx context.Context, runID string) error {
 
 func (c *Conversation) handle(stream *attachStream, frame *agentcomposev2.AttachAgentRunResponse) {
 	switch body := frame.GetFrame().(type) {
+	case *agentcomposev2.AttachAgentRunResponse_InputReady:
+		input := inputPreparationFromProto(body.InputReady)
+		c.mu.Lock()
+		reply := c.current
+		if input != nil {
+			c.runID, c.sandboxID = input.RunID, input.SandboxID
+			c.pendingRun = false
+		}
+		c.mu.Unlock()
+		if reply != nil {
+			reply.mu.Lock()
+			reply.input = input
+			reply.mu.Unlock()
+			if input != nil && input.State != "ready" {
+				c.endSession(stream, &Error{Op: "FileInput", Code: "unknown", Message: "input preparation requires reconciliation with the original request ID"})
+			}
+		}
 	case *agentcomposev2.AttachAgentRunResponse_Started:
 		started := body.Started
 		c.mu.Lock()
@@ -573,6 +594,11 @@ func (c *Conversation) handle(stream *attachStream, frame *agentcomposev2.Attach
 		c.finishSession(stream, err, body.Result.GetResultJson(), c.eventTime(frame))
 
 	case *agentcomposev2.AttachAgentRunResponse_Error:
+		if reply := c.reply(); reply != nil && body.Error.GetInputPreparation() != nil {
+			reply.mu.Lock()
+			reply.input = inputPreparationFromProto(body.Error.GetInputPreparation())
+			reply.mu.Unlock()
+		}
 		failure := &Error{Op: "Send", Code: body.Error.GetCode(), Message: body.Error.GetMessage()}
 		if body.Error.GetTerminal() {
 			c.endSession(stream, failure)
