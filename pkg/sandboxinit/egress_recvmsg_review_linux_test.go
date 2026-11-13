@@ -86,24 +86,24 @@ func TestDNSRecvmsgCanceledPacketReplay(t *testing.T) {
 	if err := egressInterceptionSupported(); err != nil {
 		t.Skip(err)
 	}
-	for _, mode := range []string{"normal", "truncate", "peek", "control-trunc", "control-partial"} {
+	for _, mode := range []string{"normal", "truncate", "peek", "oob", "control-trunc", "control-partial"} {
 		t.Run(mode, func(t *testing.T) {
-			pair, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, 0)
+			target, sender := boundDNSReviewSocket(t), boundDNSReviewSocket(t)
+			to, err := unix.Getsockname(target)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer func() { _ = unix.Close(pair[0]); _ = unix.Close(pair[1]) }()
 			payload := bytes.Repeat([]byte("dns-response"), 8)
-			if err := unix.SetsockoptInt(pair[0], unix.SOL_SOCKET, unix.SO_TIMESTAMP, 1); err != nil {
+			if err := unix.SetsockoptInt(target, unix.SOL_SOCKET, unix.SO_TIMESTAMP, 1); err != nil {
 				t.Fatal(err)
 			}
-			if err := unix.Sendto(pair[1], payload, 0, nil); err != nil {
+			if err := unix.Sendto(sender, payload, 0, to); err != nil {
 				t.Fatal(err)
 			}
 			// Each helper has its own real seccomp listener while inheriting this socket.
-			original := startDNSRecvmsgReviewHelper(t, pair[0], "normal")
+			original := startDNSRecvmsgReviewHelper(t, target, "normal")
 			request := receiveDNSRecvmsgReview(t, original.listener)
-			fd, err := unix.Dup(pair[0])
+			fd, err := unix.Dup(target)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -128,12 +128,12 @@ func TestDNSRecvmsgCanceledPacketReplay(t *testing.T) {
 				}
 			}()
 			second := []byte("next-response")
-			if err := unix.Sendto(pair[1], second, 0, nil); err != nil {
+			if err := unix.Sendto(sender, second, 0, to); err != nil {
 				t.Fatal(err)
 			}
-			next := startDNSRecvmsgReviewHelper(t, pair[0], mode)
+			next := startDNSRecvmsgReviewHelper(t, target, mode)
 			nextRequest := receiveDNSRecvmsgReview(t, next.listener)
-			r = &dnsRecvmsg{request: nextRequest, listenerFD: next.listener, fd: pair[0]}
+			r = &dnsRecvmsg{request: nextRequest, listenerFD: next.listener, fd: target}
 			if errno := r.readLayout(); errno != 0 {
 				t.Fatal(errno)
 			}
@@ -146,7 +146,7 @@ func TestDNSRecvmsgCanceledPacketReplay(t *testing.T) {
 				t.Fatalf("replayed receive: %v %s", err, output)
 			}
 			tail := make([]byte, 128)
-			n, _, _, _, err := unix.Recvmsg(pair[0], tail, nil, unix.MSG_DONTWAIT)
+			n, _, _, _, err := unix.Recvmsg(target, tail, nil, unix.MSG_DONTWAIT)
 			if err != nil || !bytes.Equal(tail[:max(n, 0)], second) {
 				t.Fatalf("replay consumed the next datagram: %v %q", err, tail[:max(n, 0)])
 			}
@@ -257,6 +257,9 @@ func TestDNSRecvmsgReviewHelperProcess(t *testing.T) {
 	}
 	if mode == "peek" || mode == "source-peek" {
 		flags = unix.MSG_PEEK
+	}
+	if mode == "oob" {
+		flags = unix.MSG_OOB
 	}
 	if mode == "control-trunc" {
 		controlSize = 1

@@ -12,7 +12,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const dnsRecvmsgPendingLimit = 1024
+const (
+	dnsRecvmsgPendingLimit   = 1024
+	dnsRecvmsgPollRetryDelay = 10 * time.Millisecond
+)
 
 // One worker per supervisor serializes receives across exec listeners. A single
 // poll waits for socket readiness and the eventfd; cancellation is swept at
@@ -61,7 +64,9 @@ func (q *dnsRecvmsgQueue) submit(r *dnsRecvmsg) {
 		default:
 		}
 	}
-	replyConnect(r.listenerFD, r.request.ID, unix.ENOMEM)
+	// EAGAIN keeps the receive retryable. ENOMEM makes some resolvers abandon
+	// the query instead of polling the socket again.
+	replyConnect(r.listenerFD, r.request.ID, unix.EAGAIN)
 	r.close()
 }
 
@@ -139,8 +144,13 @@ func (q *dnsRecvmsgQueue) run() {
 			timeout = -1
 		}
 		_, err := unix.Poll(polls, timeout)
-		if err != nil && !errors.Is(err, unix.EINTR) {
-			return
+		if err != nil {
+			if !errors.Is(err, unix.EINTR) {
+				// A transient poll failure must not permanently disable DNS
+				// receives while the supervisor keeps serving notifications.
+				// Keep ownership of pending requests and retry after a pause.
+				time.Sleep(dnsRecvmsgPollRetryDelay)
+			}
 		}
 		if polls[0].Revents != 0 {
 			var value [8]byte

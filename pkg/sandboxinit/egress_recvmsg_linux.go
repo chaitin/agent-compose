@@ -166,7 +166,9 @@ func (r *dnsRecvmsg) try(packet *dnsRecvmsgPacket) (bool, *dnsRecvmsgPacket) {
 		control = make([]byte, int(min(r.message.Controllen, uint64(egressDatagramLimit))))
 	}
 	n, controlSize, flags, err := r.receive(buffer, control, unix.MSG_PEEK)
-	if packet != nil && errors.Is(err, unix.EAGAIN) && int(r.request.Data.Args[2])&unix.MSG_OOB == 0 {
+	if packet != nil && errors.Is(err, unix.EAGAIN) {
+		// The retained packet was consumed before this notification arrived;
+		// UDP ignores MSG_OOB, so an empty kernel queue must still replay it.
 		err = nil
 	}
 	if errors.Is(err, unix.EAGAIN) && !r.nonblocking && !r.expired() {
