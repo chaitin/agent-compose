@@ -27,7 +27,8 @@ const (
 )
 
 type InteractiveSession struct {
-	RunID string
+	fileInput bool
+	RunID     string
 
 	mu                 sync.Mutex
 	state              InteractiveSessionState
@@ -406,4 +407,18 @@ func (m *InteractiveSessionManager) Remove(runID string, state InteractiveSessio
 	}
 	s.Close(state)
 	return nil
+}
+
+// receiveContext lets preparation deadlines stop an incomplete upload even for DETACH.
+func (s *InteractiveSession) receiveContext(ctx context.Context) RunAttachReceiver {
+	return func() (RunAttachInput, error) {
+		select {
+		case <-ctx.Done():
+			return RunAttachInput{}, ctx.Err()
+		case <-s.done:
+			return RunAttachInput{}, ErrInteractiveSessionClosed
+		case input := <-s.input:
+			return input, nil
+		}
+	}
 }

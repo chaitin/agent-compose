@@ -1311,6 +1311,8 @@ message RunAgentRequest {
   string payload_json = 16;
   // Optional user-defined key/value labels attached to the run at start time.
   map<string, string> labels = 17;
+  // New files for this Run, in publication order. Only AttachAgentRun accepts them.
+  repeated RunInputFile input_files = 18;
 }
 
 message RunAgentResponse {
@@ -1342,6 +1344,8 @@ message AttachAgentRunRequest {
     AttachSignal signal = 5;
     AttachHumanMessage human_message = 6;
     AttachCancel cancel = 7;
+    RunInputFileChunk file_chunk = 8;
+    RunInputComplete input_complete = 9;
   }
 }
 
@@ -1358,6 +1362,7 @@ message AttachAgentRunResponse {
     AttachAgentTurnCompleted agent_turn_completed = 4;
     AttachResult result = 5;
     AttachError error = 6;
+    RunInputPreparation input_ready = 7;
   }
 }
 
@@ -1381,8 +1386,12 @@ message TranscriptEvent {
 }
 
 message GetRunRequest {
+  // Select by run_id OR the complete project/agent/source/client identity.
   string run_id = 1;
   string project_id = 2;
+  string client_request_id = 3;
+  string agent_name = 4;
+  RunSource source = 5;
 }
 
 message GetRunResponse {
@@ -1754,6 +1763,7 @@ message RunDetail {
   string error_stack = 11;
   // User-defined key/value labels attached to the run at start time.
   map<string, string> labels = 12;
+  RunInputPreparation input_preparation = 13;
 }
 
 message ExecRequest {
@@ -1915,6 +1925,8 @@ message AttachError {
   string message = 2;
   bool terminal = 3;
   map<string, string> details = 4;
+  OperationErrorDetail operation_error = 5;
+  RunInputPreparation input_preparation = 6;
 }
 
 message ExecResult {
@@ -2824,4 +2836,67 @@ message GetEngineCapabilitiesResponse {
   // system probe plus any measured process facts frozen with it. Source on each
   // entry is "measured" or "simulated", never "declared".
   repeated EngineObservedCapability observations = 6;
+  RunFileInputCapabilities run_file_input = 7;
+}
+
+// File IDs are opaque per-Run identities; names are single basenames, never paths.
+// sha256 is exactly 32 bytes. Zero-byte files use SHA-256 of empty content.
+message RunInputFile {
+  string file_id = 1;
+  string display_name = 2;
+  uint64 size_bytes = 3;
+  bytes sha256 = 4;
+}
+
+// AttachAgentRun frames have a 4 MiB decoded transport ceiling; file chunk
+// data has the smaller independently checked advertised limit.
+// Chunks must be contiguous. A fully received range may be replayed only with
+// identical bytes. Chunks after input_complete and file frames on reattach or
+// human_message are invalid. No reconnect/resume upload is promised.
+message RunInputFileChunk {
+  string file_id = 1;
+  uint64 offset = 2;
+  bytes data = 3;
+}
+message RunInputComplete {}
+
+enum RunInputState {
+  RUN_INPUT_STATE_UNSPECIFIED = 0;
+  RUN_INPUT_STATE_RECEIVING = 1;
+  RUN_INPUT_STATE_PUBLISHING = 2;
+  RUN_INPUT_STATE_READY = 3;
+  RUN_INPUT_STATE_FAILED = 4;
+  RUN_INPUT_STATE_UNKNOWN = 5;
+}
+
+// READY proves delivery, never execution success. UNKNOWN forbids automatic
+// replay. The same durable evidence is returned by GetRun and input_ready.
+message RunInputPreparation {
+  string run_id = 1;
+  string sandbox_id = 2;
+  RunInputState state = 3;
+  bytes manifest_sha256 = 4;
+  repeated RunInputFileResult files = 5;
+  OperationErrorDetail failure = 6;
+  google.protobuf.Timestamp deadline = 7;
+}
+message RunInputFileResult {
+  RunInputFile file = 1;
+  // Populated only for READY; publication candidates are never delivery proof.
+  string relative_path = 2;
+}
+
+// Absence or an unknown protocol_version means unsupported. Support is per
+// entrypoint and is conditional on the actual sandbox's driver and copy mode.
+message RunFileInputCapabilities {
+  uint32 protocol_version = 1;
+  bool attach_agent_run = 2;
+  bool start_agent_run = 3;
+  repeated string drivers = 4;
+  repeated WorkspaceMode workspace_modes = 5;
+  uint32 max_files = 6;
+  uint64 max_file_bytes = 7;
+  uint64 max_total_bytes = 8;
+  uint32 max_chunk_bytes = 9;
+  uint32 preparation_timeout_ms = 10;
 }

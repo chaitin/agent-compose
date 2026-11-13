@@ -47,9 +47,17 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 		if loadErr != nil {
 			return ProjectRunRecord{}, fmt.Errorf("load existing project run %s: %w", run.RunID, loadErr)
 		}
+		if err := validateRunInputReplay(existing, run); err != nil {
+			return ProjectRunRecord{}, err
+		}
 		run = existing
-	} else if err := insertProjectRunLabelsTx(ctx, tx, run.RunID, run.Labels); err != nil {
-		return ProjectRunRecord{}, err
+	} else {
+		if err := insertProjectRunLabelsTx(ctx, tx, run.RunID, run.Labels); err != nil {
+			return ProjectRunRecord{}, err
+		}
+		if err := insertRunInput(ctx, tx, run.InputPreparation); err != nil {
+			return ProjectRunRecord{}, err
+		}
 	}
 	if _, _, err := appendProjectRunEventsTx(ctx, tx, events); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("append create project run events: %w", err)
@@ -61,6 +69,7 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 	if err := tx.Commit(); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("commit create project run transaction: %w", err)
 	}
+	stored.InputAccepted = rows == 1 && stored.InputPreparation != nil
 	return stored, nil
 }
 
@@ -127,5 +136,6 @@ func getProjectRunTx(ctx context.Context, tx *sql.Tx, runID string) (ProjectRunR
 		return ProjectRunRecord{}, err
 	}
 	item.Labels = labels
-	return item, nil
+	item.InputPreparation, err = loadRunInput(ctx, tx, item.RunID)
+	return item, err
 }

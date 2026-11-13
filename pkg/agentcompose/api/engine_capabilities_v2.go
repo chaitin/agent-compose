@@ -32,6 +32,7 @@ func (h *EngineCapabilitiesV2Handler) GetCapabilities(_ context.Context, _ *conn
 	}
 	response := &agentcomposev2.GetEngineCapabilitiesResponse{
 		CompiledDrivers:     h.snapshot.CompiledDrivers(),
+		RunFileInput:        runFileInputCapabilities(),
 		CompiledDriversNote: capmatrix.CompiledDriversSemantics,
 		CapturedAt:          timestamppb.New(h.snapshot.CapturedAt()),
 		Observations:        engineObservedCapabilitiesV2(h.snapshot.Observations()),

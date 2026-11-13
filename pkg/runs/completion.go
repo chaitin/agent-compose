@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	"log/slog"
 	"os"
 	"strings"
@@ -168,6 +169,24 @@ func (m *CompletionManager) completionWaitTimeout(ctx context.Context, runID str
 }
 
 func (m *CompletionManager) StageInterrupted(ctx context.Context, run domain.ProjectRunRecord, message string) error {
+	if store, ok := m.store.(runInputStore); ok {
+		// List projections intentionally omit the input record. Load the Run
+		// before recovery so a crash cannot strand RECEIVING/PUBLISHING evidence.
+		current, err := m.store.GetProjectRun(ctx, run.RunID)
+		if err != nil {
+			return err
+		}
+		input := current.InputPreparation
+		if input != nil && (input.State == "receiving" || input.State == "publishing") {
+			interrupted := *input
+			interrupted.State = "unknown"
+			interrupted.FailureReason = int32(apierror.ReasonOperationCanceled)
+			if err := store.SaveRunInput(ctx, *input, interrupted); err != nil {
+				return err
+			}
+		}
+	}
+
 	req := TransitionRequest{RunID: run.RunID, Status: domain.ProjectRunStatusFailed, ExitCode: max(run.ExitCode, 1), Error: message}
 	payload, err := json.Marshal(req)
 	if err != nil {

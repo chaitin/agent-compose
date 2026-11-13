@@ -500,7 +500,8 @@ func (s *projectStore) GetProjectRun(ctx context.Context, runID string) (Project
 		return ProjectRunRecord{}, err
 	}
 	item.Labels = labels
-	return item, nil
+	item.InputPreparation, err = loadRunInput(ctx, s.db, item.RunID)
+	return item, err
 }
 
 func (s *projectStore) ListProjectRuns(ctx context.Context, projectID string, limit int) ([]ProjectRunRecord, error) {

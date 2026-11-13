@@ -15,6 +15,7 @@ import (
 )
 
 type StartRequest struct {
+	Input           *domain.RunInputPreparation
 	ProjectID       string
 	AgentName       string
 	Source          string
@@ -136,23 +137,27 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 		return domain.ProjectRunRecord{}, err
 	}
 	run := domain.ProjectRunRecord{
-		RunID:           runID,
-		ProjectID:       project.ID,
-		ProjectName:     project.Name,
-		ProjectRevision: project.CurrentRevision,
-		AgentName:       projectAgent.AgentName,
-		AgentID:         agent.ID,
-		Source:          req.Source,
-		SchedulerID:     req.SchedulerID,
-		SchedulerRunID:  req.SchedulerRunID,
-		TriggerID:       req.TriggerID,
-		Status:          domain.ProjectRunStatusPending,
-		Prompt:          req.Prompt,
-		Driver:          driver,
-		ImageRef:        firstNonEmpty(agent.GuestImage, projectAgent.Image),
-		CleanupPolicy:   NormalizeCleanupPolicy(req.CleanupPolicy),
-		ResultJSON:      "{}",
-		Labels:          req.Labels,
+		RunID:            runID,
+		InputPreparation: req.Input,
+		ProjectID:        project.ID,
+		ProjectName:      project.Name,
+		ProjectRevision:  project.CurrentRevision,
+		AgentName:        projectAgent.AgentName,
+		AgentID:          agent.ID,
+		Source:           req.Source,
+		SchedulerID:      req.SchedulerID,
+		SchedulerRunID:   req.SchedulerRunID,
+		TriggerID:        req.TriggerID,
+		Status:           domain.ProjectRunStatusPending,
+		Prompt:           req.Prompt,
+		Driver:           driver,
+		ImageRef:         firstNonEmpty(agent.GuestImage, projectAgent.Image),
+		CleanupPolicy:    NormalizeCleanupPolicy(req.CleanupPolicy),
+		ResultJSON:       "{}",
+		Labels:           req.Labels,
+	}
+	if run.InputPreparation != nil {
+		run.InputPreparation.RunID = runID
 	}
 	var initialEvents []domain.ProjectRunEventRecord
 	if strings.TrimSpace(run.Prompt) != "" {

@@ -3,13 +3,16 @@ package runs
 type RunAttachInputKind string
 
 const (
-	RunAttachInputStart        RunAttachInputKind = "start"
-	RunAttachInputStdin        RunAttachInputKind = "stdin"
-	RunAttachInputStdinEOF     RunAttachInputKind = "stdin_eof"
-	RunAttachInputResize       RunAttachInputKind = "resize"
-	RunAttachInputSignal       RunAttachInputKind = "signal"
-	RunAttachInputCancel       RunAttachInputKind = "cancel"
-	RunAttachInputHumanMessage RunAttachInputKind = "human_message"
+	RunAttachInputStart              RunAttachInputKind = "start"
+	RunAttachInputFileChunk          RunAttachInputKind = "file_chunk"
+	RunAttachInputComplete           RunAttachInputKind = "input_complete"
+	RunAttachInputUploadDisconnected RunAttachInputKind = "upload_disconnected"
+	RunAttachInputStdin              RunAttachInputKind = "stdin"
+	RunAttachInputStdinEOF           RunAttachInputKind = "stdin_eof"
+	RunAttachInputResize             RunAttachInputKind = "resize"
+	RunAttachInputSignal             RunAttachInputKind = "signal"
+	RunAttachInputCancel             RunAttachInputKind = "cancel"
+	RunAttachInputHumanMessage       RunAttachInputKind = "human_message"
 )
 
 type RunAttachMode string
@@ -29,6 +32,8 @@ const (
 )
 
 type RunAttachInput struct {
+	FileID           string
+	Offset           uint64
 	Kind             RunAttachInputKind
 	RunID            string
 	DisconnectPolicy AttachDisconnectPolicy

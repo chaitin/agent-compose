@@ -1,6 +1,7 @@
 package app
 
 import (
+	"connectrpc.com/connect"
 	"context"
 	"fmt"
 	"log/slog"
@@ -125,7 +126,12 @@ func RegisterRoutes(di do.Injector) {
 		supervisor: do.MustInvoke[*RunSupervisor](di),
 	}
 	runHandler := api.NewRunHandlerWithRunLogHub(runDelegate, do.MustInvoke[*configstore.ConfigStore](di), do.MustInvoke[*runs.RunLogHub](di), do.MustInvoke[*RunSupervisor](di))
-	path, handler = agentcomposev2connect.NewRunServiceHandler(runHandler)
+	path, handler = agentcomposev2connect.NewRunServiceHandler(runHandler, connect.WithConditionalHandlerOptions(func(spec connect.Spec) []connect.HandlerOption {
+		if spec.Procedure == agentcomposev2connect.RunServiceAttachAgentRunProcedure {
+			return []connect.HandlerOption{connect.WithReadMaxBytes(4 << 20)}
+		}
+		return nil
+	}))
 	app.Any(path+"*", echo.WrapHandler(handler))
 	execHandler := api.NewExecHandler(api.ExecHandlerDeps{
 		Config:   do.MustInvoke[*appconfig.Config](di),
