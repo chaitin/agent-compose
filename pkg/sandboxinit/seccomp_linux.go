@@ -348,16 +348,26 @@ func ioctlNotifRecv(listenerFD int, request *seccompNotif) error {
 }
 
 func ioctlNotifSend(listenerFD int, response *seccompNotifResp) error {
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(listenerFD), uintptr(unix.SECCOMP_IOCTL_NOTIF_SEND), uintptr(unsafe.Pointer(response)))
-	if errno != 0 {
-		return errno
+	for {
+		_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(listenerFD), uintptr(unix.SECCOMP_IOCTL_NOTIF_SEND), uintptr(unsafe.Pointer(response)))
+		if errno == unix.EINTR {
+			continue
+		}
+		if errno != 0 {
+			return errno
+		}
+		return nil
 	}
-	return nil
 }
 
 func notificationIDValid(listenerFD int, id uint64) bool {
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(listenerFD), uintptr(unix.SECCOMP_IOCTL_NOTIF_ID_VALID), uintptr(unsafe.Pointer(&id)))
-	return errno == 0
+	for {
+		_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(listenerFD), uintptr(unix.SECCOMP_IOCTL_NOTIF_ID_VALID), uintptr(unsafe.Pointer(&id)))
+		if errno == unix.EINTR {
+			continue
+		}
+		return errno == 0
+	}
 }
 
 // rawMsghdr and rawMmsghdr mirror the kernel's sendmmsg ABI. The listener is

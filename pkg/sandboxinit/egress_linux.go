@@ -21,22 +21,27 @@ import (
 // session and reports the connections it observes. Audit mode never changes the
 // syscall outcome; the decision stays in the daemon.
 type egressSupervisor struct {
-	mode           EgressMode
-	sandboxID      string
-	binary         string
-	generation     uint64
-	sink           EgressAuditSink
-	logger         *slog.Logger
-	proxy          *egressProxyTarget
-	relay          *egressRelayTarget
-	dns            *egressDNS
-	bypassIPs      map[string]struct{}
-	localIPs       map[string]struct{}
-	proxyHost      string
-	proxyPort      int
-	dnsMu          sync.Mutex
-	dnsSockets     map[uint64]dnsSocketDestination
-	connectTimeout time.Duration
+	mode       EgressMode
+	sandboxID  string
+	binary     string
+	generation uint64
+	sink       EgressAuditSink
+	logger     *slog.Logger
+	proxy      *egressProxyTarget
+	relay      *egressRelayTarget
+	dns        *egressDNS
+	bypassIPs  map[string]struct{}
+	localIPs   map[string]struct{}
+	proxyHost  string
+	proxyPort  int
+	// dnsMu guards the DNS socket identity cache and its bookkeeping.
+	dnsMu             sync.Mutex
+	dnsSockets        map[uint64]dnsSocketDestination
+	dnsSocketClock    uint64
+	dnsLastPrune      time.Time
+	dnsCapacityWarned bool
+	receives          *dnsRecvmsgQueue
+	connectTimeout    time.Duration
 
 	// relayMu guards the token the daemon delivers over the init control
 	// socket. relayReady is closed once the token is installed, which is what
@@ -74,19 +79,24 @@ func newEgressSupervisor(mode EgressMode, sandboxID string, sink EgressAuditSink
 			supervisor.relay = relay
 			supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(nil)
 			supervisor.startPolicyDNS(sandboxID, passthrough)
-			return supervisor, nil
+		} else {
+			proxy, err := loadEgressProxyTarget()
+			if err != nil {
+				return nil, err
+			}
+			supervisor.proxy = proxy
+			supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(proxy)
+			if address, ok := tcpAddrFromSockaddr(proxy.rawAddr); ok {
+				supervisor.proxyHost = address.IP.String()
+				supervisor.proxyPort = address.Port
+			}
+			supervisor.startPolicyDNS(sandboxID, egressDNSPassthrough(proxy))
 		}
-		proxy, err := loadEgressProxyTarget()
+		supervisor.receives, err = newDNSRecvmsgQueue()
 		if err != nil {
+			supervisor.dns.close()
 			return nil, err
 		}
-		supervisor.proxy = proxy
-		supervisor.localIPs, supervisor.bypassIPs = buildAddressSets(proxy)
-		if address, ok := tcpAddrFromSockaddr(proxy.rawAddr); ok {
-			supervisor.proxyHost = address.IP.String()
-			supervisor.proxyPort = address.Port
-		}
-		supervisor.startPolicyDNS(sandboxID, egressDNSPassthrough(proxy))
 	}
 	return supervisor, nil
 }
@@ -194,11 +204,13 @@ func (s *egressSupervisor) waitForRelay(ctx context.Context, timeout time.Durati
 	}
 }
 
-// close releases the DNS listeners. Mediation itself has no long-lived
-// resources beyond the per-session listeners.
+// close releases the DNS listeners and joins the receive worker.
 func (s *egressSupervisor) close() {
 	if s == nil {
 		return
+	}
+	if s.receives != nil {
+		s.receives.close()
 	}
 	s.dns.close()
 }
@@ -250,6 +262,14 @@ func (s *egressSupervisor) serve(listenerFD int, sessionID, marker string) {
 			if errors.Is(err, unix.EINTR) {
 				continue
 			}
+			if errors.Is(err, unix.ENOENT) {
+				// A signaled thread can cancel a queued notification before RECV
+				// acquires it. Only HUP means there are no filtered tasks left.
+				polls := []unix.PollFd{{Fd: int32(listenerFD), Events: unix.POLLIN}}
+				if _, pollErr := unix.Poll(polls, 0); errors.Is(pollErr, unix.EINTR) || pollErr == nil && polls[0].Revents&(unix.POLLHUP|unix.POLLNVAL) == 0 {
+					continue
+				}
+			}
 			return
 		}
 		s.handleNotification(listenerFD, &request, sessionID, marker)
@@ -265,6 +285,10 @@ func (s *egressSupervisor) handleNotification(listenerFD int, request *seccompNo
 			s.handleEnforceDatagram(listenerFD, request, sessionID, marker)
 		case int32(unix.SYS_RECVFROM):
 			s.handleEnforceRecvfrom(listenerFD, request, sessionID, marker)
+		case int32(unix.SYS_RECVMSG):
+			if receive := s.prepareDNSRecvmsg(listenerFD, request); receive != nil {
+				s.receives.submit(receive)
+			}
 		case int32(unix.SYS_GETPEERNAME):
 			s.handleEnforceGetpeername(listenerFD, request)
 		default:

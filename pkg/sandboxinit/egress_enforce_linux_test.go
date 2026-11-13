@@ -4,8 +4,10 @@ package sandboxinit
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +18,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"golang.org/x/net/dns/dnsmessage"
 	"golang.org/x/sys/unix"
@@ -442,6 +445,27 @@ func TestInitEgressPolicyDNSConnectedGetpeername(t *testing.T) {
 	}
 }
 
+func TestInitEgressPolicyDNSUnconnectedGetpeername(t *testing.T) {
+	requireEnforceSupport(t)
+	proxy := startFakeEgressProxy(t, "200 Connection Established", true)
+	t.Setenv("HTTP_PROXY", proxy.url("sandbox-1", "secret"))
+	_, socket := startTestInitWithOptions(t, Options{
+		SandboxID:  "sandbox-1",
+		MainShell:  "sleep 120",
+		EgressMode: EgressModeEnforce,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	waitForDNSPort(t)
+	output, err := runEgressHelperUDP(ctx, socket, "udp-unconnected-getpeername", "allowed.example")
+	if err != nil {
+		t.Fatalf("run helper: %v", err)
+	}
+	if !strings.Contains(output, "getpeername-enotconn") {
+		t.Fatalf("helper output = %q, want ENOTCONN for an unconnected socket", output)
+	}
+}
+
 func waitForDNSPort(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -681,43 +705,55 @@ func TestInitEgressEnforceDeniesSendmsgWithAncillaryData(t *testing.T) {
 	}
 }
 
-func TestPruneDNSSocketsDropsExpiredEntriesBeforeLiveOnes(t *testing.T) {
-	now := time.Now()
-	supervisor := &egressSupervisor{dnsSockets: make(map[uint64]dnsSocketDestination)}
-	for inode := uint64(0); inode < 3000; inode++ {
-		supervisor.dnsSockets[inode] = dnsSocketDestination{expires: now.Add(-time.Minute)}
+func TestWriteDatagramSourceRespectsCallerCapacity(t *testing.T) {
+	source := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	backing := make([]byte, 8)
+	length := uint32(4)
+	if err := writeDatagramSource(
+		os.Getpid(),
+		uint64(uintptr(unsafe.Pointer(&backing[0]))),
+		uint64(uintptr(unsafe.Pointer(&length))),
+		source,
+	); err != nil {
+		t.Fatal(err)
 	}
-	for inode := uint64(3000); inode < 3100; inode++ {
-		supervisor.dnsSockets[inode] = dnsSocketDestination{expires: now.Add(time.Minute)}
+	if !bytes.Equal(backing[:4], source[:4]) {
+		t.Fatalf("short sockaddr copy = %v, want %v", backing[:4], source[:4])
 	}
-	supervisor.pruneDNSSockets(now)
-	if got := len(supervisor.dnsSockets); got != 100 {
-		t.Fatalf("cache size = %d, want the 100 live entries", got)
+	if !bytes.Equal(backing[4:], make([]byte, 4)) {
+		t.Fatalf("short sockaddr wrote past the caller's capacity: %v", backing)
 	}
-	for inode := uint64(3000); inode < 3100; inode++ {
-		if _, ok := supervisor.dnsSockets[inode]; !ok {
-			t.Fatalf("live socket %d was evicted while expired entries remained", inode)
-		}
+	if length != uint32(len(source)) {
+		t.Fatalf("reported address length = %d, want %d", length, len(source))
 	}
-}
 
-func TestPruneDNSSocketsEvictsEarliestExpiryAtTheLimit(t *testing.T) {
-	now := time.Now()
-	supervisor := &egressSupervisor{dnsSockets: make(map[uint64]dnsSocketDestination)}
-	total := dnsSocketCacheLimit + 500
-	for inode := 0; inode < total; inode++ {
-		supervisor.dnsSockets[uint64(inode)] = dnsSocketDestination{expires: now.Add(time.Duration(inode) * time.Second)}
+	length = uint32(len(source))
+	full := make([]byte, len(source))
+	if err := writeDatagramSource(
+		os.Getpid(),
+		uint64(uintptr(unsafe.Pointer(&full[0]))),
+		uint64(uintptr(unsafe.Pointer(&length))),
+		source,
+	); err != nil {
+		t.Fatal(err)
 	}
-	supervisor.pruneDNSSockets(now)
-	if got, want := len(supervisor.dnsSockets), dnsSocketCacheLimit-1; got != want {
-		t.Fatalf("cache size = %d, want %d so the next insert fits", got, want)
+	if !bytes.Equal(full, source) {
+		t.Fatalf("full sockaddr copy = %v, want %v", full, source)
 	}
-	for inode := 0; inode < 501; inode++ {
-		if _, ok := supervisor.dnsSockets[uint64(inode)]; ok {
-			t.Fatalf("earliest-expiring socket %d was not evicted", inode)
-		}
+
+	length = 7
+	if err := writeDatagramSource(os.Getpid(), 0, uint64(uintptr(unsafe.Pointer(&length))), source); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := supervisor.dnsSockets[uint64(total-1)]; !ok {
-		t.Fatalf("newest socket %d was evicted", total-1)
+	if length != 7 {
+		t.Fatalf("NULL source address changed the caller's length to %d", length)
+	}
+	if err := writeDatagramSource(
+		os.Getpid(),
+		uint64(uintptr(unsafe.Pointer(&full[0]))),
+		0,
+		source,
+	); !errors.Is(err, unix.EFAULT) {
+		t.Fatalf("missing address length pointer returned %v, want EFAULT", err)
 	}
 }

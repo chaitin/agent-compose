@@ -33,15 +33,6 @@ const (
 	egressProxyEnvNames = 6
 )
 
-// dnsSocketDestination remembers the nameserver a workload socket was
-// redirected away from, so a later recvfrom can report the same source address
-// the client configured. Keyed by socket inode, which duplication and fork
-// share.
-type dnsSocketDestination struct {
-	raw     []byte
-	expires time.Time
-}
-
 // proxyEnvNames lists the proxy variables in both cases.
 var proxyEnvNames = [egressProxyEnvNames]string{
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
@@ -301,6 +292,10 @@ func (s *egressSupervisor) redirectToDNS(redirect dnsRedirect) {
 		s.denyConnect(listenerFD, id, event, "no sandbox DNS resolver for this address family")
 		return
 	}
+	if err := s.rememberDNSSocket(targetFD, redirect.rawDestination); err != nil {
+		s.denyConnect(listenerFD, id, event, fmt.Sprintf("cannot retain the DNS socket identity: %v", err))
+		return
+	}
 	if errno := connectSockaddr(targetFD, rawAddress, s.connectTimeout); errno != 0 {
 		event.Decision = "deny"
 		event.Reason = fmt.Sprintf("connect to the sandbox DNS resolver failed: %v", errno)
@@ -308,7 +303,6 @@ func (s *egressSupervisor) redirectToDNS(redirect dnsRedirect) {
 		replyConnect(listenerFD, id, errno)
 		return
 	}
-	s.rememberDNSSocket(targetFD, redirect.rawDestination)
 	event.Decision = "allow"
 	event.Reason = "dns-stub"
 	s.record(event)
@@ -800,7 +794,10 @@ func (s *egressSupervisor) handleEnforceDatagram(listenerFD int, request *seccom
 		return
 	}
 	stubAddress := s.dns.rawAddrForDomain(domain)
-	s.rememberDNSSocket(targetFD, rawDestination)
+	if err := s.rememberDNSSocket(targetFD, rawDestination); err != nil {
+		s.denyDatagram(listenerFD, request.ID, event, fmt.Sprintf("cannot retain the DNS socket identity: %v", err))
+		return
+	}
 	if errno := sendDatagram(targetFD, payload, stubAddress, s.connectTimeout); errno != 0 {
 		event.Decision = "deny"
 		event.Reason = fmt.Sprintf("send to the sandbox DNS resolver failed: %v", errno)
@@ -911,78 +908,6 @@ func sendDatagram(fd int, payload, address []byte, timeout time.Duration) unix.E
 	}
 }
 
-// dnsSocketCacheLimit bounds remembered redirected DNS sockets, and
-// dnsSocketLifetime bounds how long a mapping can be restored. The cache is
-// only an address-restoration aid for the workload's own socket queue; dropping
-// a live entry makes a client reject a valid response, so expired entries are
-// removed before any live one.
-const (
-	dnsSocketCacheLimit = 4096
-	dnsSocketLifetime   = 5 * time.Minute
-)
-
-// rememberDNSSocket records the nameserver a socket was redirected away from.
-func (s *egressSupervisor) rememberDNSSocket(fd int, rawDestination []byte) {
-	if s == nil || fd < 0 || len(rawDestination) == 0 {
-		return
-	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
-		return
-	}
-	now := time.Now()
-	entry := dnsSocketDestination{
-		raw:     append([]byte(nil), rawDestination...),
-		expires: now.Add(dnsSocketLifetime),
-	}
-	s.dnsMu.Lock()
-	defer s.dnsMu.Unlock()
-	s.pruneDNSSockets(now)
-	s.dnsSockets[stat.Ino] = entry
-}
-
-// pruneDNSSockets keeps the cache under its limit. Expired mappings are always
-// removed first; only when the live set itself exceeds the limit are the
-// earliest-expiring entries evicted, so a slot never loses its mapping while
-// an expired entry still occupies the cache. The caller must hold dnsMu.
-func (s *egressSupervisor) pruneDNSSockets(now time.Time) {
-	for inode, candidate := range s.dnsSockets {
-		if now.After(candidate.expires) {
-			delete(s.dnsSockets, inode)
-		}
-	}
-	for len(s.dnsSockets) >= dnsSocketCacheLimit {
-		var oldestInode uint64
-		var oldestExpiry time.Time
-		found := false
-		for inode, candidate := range s.dnsSockets {
-			if !found || candidate.expires.Before(oldestExpiry) {
-				oldestInode, oldestExpiry, found = inode, candidate.expires, true
-			}
-		}
-		if !found {
-			return
-		}
-		delete(s.dnsSockets, oldestInode)
-	}
-}
-
-// dnsSocketSource returns the nameserver address a redirected socket was
-// configured with.
-func (s *egressSupervisor) dnsSocketSource(fd int) ([]byte, bool) {
-	var stat unix.Stat_t
-	if err := unix.Fstat(fd, &stat); err != nil {
-		return nil, false
-	}
-	s.dnsMu.Lock()
-	defer s.dnsMu.Unlock()
-	entry, ok := s.dnsSockets[stat.Ino]
-	if !ok || time.Now().After(entry.expires) {
-		return nil, false
-	}
-	return append([]byte(nil), entry.raw...), true
-}
-
 // handleEnforceRecvfrom restores the configured nameserver address on a DNS
 // response. A client such as c-ares verifies the response source and would
 // otherwise reject every answer because the socket was redirected to the
@@ -996,8 +921,12 @@ func (s *egressSupervisor) handleEnforceRecvfrom(listenerFD int, request *seccom
 		return
 	}
 	defer func() { _ = unix.Close(duplicate) }()
-	original, ok := s.dnsSocketSource(duplicate)
-	if !ok {
+	original, err := s.dnsSocketSource(duplicate)
+	if err != nil {
+		replyConnect(listenerFD, request.ID, errnoFromError(err))
+		return
+	}
+	if original == nil {
 		replyContinue(listenerFD, request.ID)
 		return
 	}
@@ -1019,7 +948,7 @@ func (s *egressSupervisor) handleEnforceRecvfrom(listenerFD int, request *seccom
 		length = egressDatagramLimit
 	}
 	buffer := make([]byte, length)
-	read, errno := recvDatagram(duplicate, buffer, s.connectTimeout, isNonblocking(duplicate))
+	read, from, errno := recvDatagram(duplicate, buffer, s.connectTimeout, isNonblocking(duplicate))
 	if errno != 0 {
 		event.Decision = "deny"
 		event.Reason = fmt.Sprintf("receive from the sandbox DNS resolver failed: %v", errno)
@@ -1034,27 +963,13 @@ func (s *egressSupervisor) handleEnforceRecvfrom(listenerFD int, request *seccom
 		replyConnect(listenerFD, request.ID, unix.EIO)
 		return
 	}
-	sourceAddress := request.Data.Args[4]
-	if sourceAddress != 0 {
-		if err := writeTargetMemory(pid, sourceAddress, original); err != nil {
-			event.Decision = "deny"
-			event.Reason = "cannot restore the nameserver address"
-			s.record(event)
-			replyConnect(listenerFD, request.ID, unix.EIO)
-			return
-		}
-	}
-	lengthPointer := request.Data.Args[5]
-	if lengthPointer != 0 {
-		var encoded [4]byte
-		binary.NativeEndian.PutUint32(encoded[:], uint32(len(original)))
-		if err := writeTargetMemory(pid, lengthPointer, encoded[:]); err != nil {
-			event.Decision = "deny"
-			event.Reason = "cannot restore the nameserver address length"
-			s.record(event)
-			replyConnect(listenerFD, request.ID, unix.EIO)
-			return
-		}
+	original = restoreDNSReplySource(original, rawDNSReplySource(from))
+	if err := writeDatagramSource(pid, request.Data.Args[4], request.Data.Args[5], original); err != nil {
+		event.Decision = "deny"
+		event.Reason = "cannot restore the nameserver address"
+		s.record(event)
+		replyConnect(listenerFD, request.ID, unix.EFAULT)
+		return
 	}
 	event.Decision = "allow"
 	event.Reason = "dns-stub-recvfrom"
@@ -1062,33 +977,59 @@ func (s *egressSupervisor) handleEnforceRecvfrom(listenerFD int, request *seccom
 	_ = ioctlNotifSend(listenerFD, &seccompNotifResp{ID: request.ID, Val: int64(read)})
 }
 
-func recvDatagram(fd int, buffer []byte, timeout time.Duration, nonblocking bool) (int, unix.Errno) {
+// writeDatagramSource mirrors recvfrom's address output: the kernel copies
+// min(*addrlen, len(source)), then reports the full source length. Writing the
+// full source regardless of the caller's capacity would overwrite target
+// memory past a short sockaddr buffer.
+func writeDatagramSource(pid int, sourceAddress, lengthPointer uint64, source []byte) error {
+	if sourceAddress == 0 {
+		return nil
+	}
+	if lengthPointer == 0 {
+		return unix.EFAULT
+	}
+	var encoded [4]byte
+	if err := readTargetMemory(pid, lengthPointer, encoded[:]); err != nil {
+		return err
+	}
+	available := int(binary.NativeEndian.Uint32(encoded[:]))
+	written := min(available, len(source))
+	if written > 0 {
+		if err := writeTargetMemory(pid, sourceAddress, source[:written]); err != nil {
+			return err
+		}
+	}
+	binary.NativeEndian.PutUint32(encoded[:], uint32(len(source)))
+	return writeTargetMemory(pid, lengthPointer, encoded[:])
+}
+
+func recvDatagram(fd int, buffer []byte, timeout time.Duration, nonblocking bool) (int, unix.Sockaddr, unix.Errno) {
 	if nonblocking {
 		// A non-blocking client polls before receiving; blocking here would
 		// delay its event loop instead of letting it observe EAGAIN.
-		read, _, err := unix.Recvfrom(fd, buffer, 0)
+		read, from, err := unix.Recvfrom(fd, buffer, 0)
 		if read >= 0 {
-			return read, 0
+			return read, from, 0
 		}
-		return 0, errnoFromError(err)
+		return 0, nil, errnoFromError(err)
 	}
 	deadline := time.Now().Add(timeout)
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			return 0, unix.EAGAIN
+			return 0, nil, unix.EAGAIN
 		}
 		if err := waitFD(fd, unix.POLLIN, remaining); err != nil {
-			return 0, unix.EAGAIN
+			return 0, nil, unix.EAGAIN
 		}
-		read, _, err := unix.Recvfrom(fd, buffer, 0)
+		read, from, err := unix.Recvfrom(fd, buffer, 0)
 		if read >= 0 {
-			return read, 0
+			return read, from, 0
 		}
 		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EINTR) {
 			continue
 		}
-		return 0, errnoFromError(err)
+		return 0, nil, errnoFromError(err)
 	}
 }
 
@@ -1133,8 +1074,20 @@ func (s *egressSupervisor) handleEnforceGetpeername(listenerFD int, request *sec
 		return
 	}
 	defer func() { _ = unix.Close(duplicate) }()
-	original, ok := s.dnsSocketSource(duplicate)
-	if !ok {
+	// Only a socket actually connected to the policy resolver may report the
+	// configured nameserver. An unconnected sendto socket must still return
+	// ENOTCONN, and a socket reconnected elsewhere must report its real peer.
+	peer, err := unix.Getpeername(duplicate)
+	if err != nil || !isDNSStubSource(rawDNSReplySource(peer)) {
+		replyContinue(listenerFD, request.ID)
+		return
+	}
+	original, err := s.dnsSocketSource(duplicate)
+	if err != nil {
+		replyConnect(listenerFD, request.ID, errnoFromError(err))
+		return
+	}
+	if original == nil {
 		replyContinue(listenerFD, request.ID)
 		return
 	}
