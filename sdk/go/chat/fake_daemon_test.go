@@ -32,14 +32,13 @@ type fakeDaemon struct {
 	// The hooks below answer one procedure each. A procedure with no hook
 	// answers NotFound, which is what an unconfigured expectation should look
 	// like rather than a nil dereference.
-	listRuns          func(*agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error)
-	getRun            func(*agentcomposev2.GetRunRequest) (*agentcomposev2.GetRunResponse, error)
-	listRunEvents     func(*agentcomposev2.ListRunEventsRequest) (*agentcomposev2.ListRunEventsResponse, error)
-	stopRun           func(*agentcomposev2.StopRunRequest) (*agentcomposev2.StopRunResponse, error)
-	listProjects      func(*agentcomposev2.ListProjectsRequest) (*agentcomposev2.ListProjectsResponse, error)
-	getProject        func(*agentcomposev2.GetProjectRequest) (*agentcomposev2.GetProjectResponse, error)
-	attach            func(*fakeStream)
-	inputCapabilities *agentcomposev2.RunFileInputCapabilities
+	listRuns      func(*agentcomposev2.ListRunsRequest) (*agentcomposev2.ListRunsResponse, error)
+	getRun        func(*agentcomposev2.GetRunRequest) (*agentcomposev2.GetRunResponse, error)
+	listRunEvents func(*agentcomposev2.ListRunEventsRequest) (*agentcomposev2.ListRunEventsResponse, error)
+	stopRun       func(*agentcomposev2.StopRunRequest) (*agentcomposev2.StopRunResponse, error)
+	listProjects  func(*agentcomposev2.ListProjectsRequest) (*agentcomposev2.ListProjectsResponse, error)
+	getProject    func(*agentcomposev2.GetProjectRequest) (*agentcomposev2.GetProjectResponse, error)
+	attach        func(*fakeStream)
 
 	// hold keeps handlers that emulate a detached session parked until the
 	// test ends.
@@ -54,7 +53,6 @@ func newFakeDaemon(t *testing.T) *fakeDaemon {
 	daemon := &fakeDaemon{t: t, hold: make(chan struct{})}
 	mux := http.NewServeMux()
 	mux.Handle(agentcomposev2connect.NewRunServiceHandler(daemon))
-	mux.Handle(agentcomposev2connect.NewEngineServiceHandler(&fakeEngine{daemon: daemon}))
 	mux.Handle(agentcomposev2connect.NewProjectServiceHandler(&fakeProjects{daemon: daemon}))
 	daemon.server = httptest.NewServer(h2c.NewHandler(mux, &http2.Server{}))
 	t.Cleanup(daemon.server.Close)
@@ -260,14 +258,4 @@ func (p *fakeProjects) GetProject(_ context.Context, request *connect.Request[ag
 		return nil, err
 	}
 	return connect.NewResponse(response), nil
-}
-
-type fakeEngine struct {
-	agentcomposev2connect.UnimplementedEngineServiceHandler
-	daemon *fakeDaemon
-}
-
-func (e *fakeEngine) GetCapabilities(context.Context, *connect.Request[agentcomposev2.GetEngineCapabilitiesRequest]) (*connect.Response[agentcomposev2.GetEngineCapabilitiesResponse], error) {
-	e.daemon.record("GetCapabilities")
-	return connect.NewResponse(&agentcomposev2.GetEngineCapabilitiesResponse{RunFileInput: e.daemon.inputCapabilities}), nil
 }
