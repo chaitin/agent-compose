@@ -422,8 +422,8 @@ func testDaemonAppRegistersCoreRoutes(t *testing.T) {
 	}
 	runClient := agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL)
 	_, err = runClient.GetRun(context.Background(), connect.NewRequest(&agentcomposev2.GetRunRequest{}))
-	if connect.CodeOf(err) != connect.CodeInvalidArgument || err == nil || !strings.Contains(err.Error(), "run id is required") {
-		t.Fatalf("GetRun empty error = %v, want invalid argument with run id message", err)
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || err == nil || !strings.Contains(err.Error(), "run ID or complete request identity is required") {
+		t.Fatalf("GetRun empty error = %v, want invalid argument with run identity message", err)
 	}
 	execClient := agentcomposev2connect.NewExecServiceClient(server.Client(), server.URL)
 	_, err = execClient.Exec(context.Background(), connect.NewRequest(&agentcomposev2.ExecRequest{}))
