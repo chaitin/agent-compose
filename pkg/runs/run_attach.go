@@ -22,11 +22,12 @@ import (
 // attach frame executeStartedProjectRunAttach needs to run the interactive
 // attach loop.
 type startedRunAttachContext struct {
-	Run      domain.ProjectRunRecord
-	Request  RunAgentRequest
-	Warnings []string
-	Start    RunAttachInput
-	Mode     RunAttachMode
+	ReceiveInput func(context.Context) RunAttachReceiver
+	Run          domain.ProjectRunRecord
+	Request      RunAgentRequest
+	Warnings     []string
+	Start        RunAttachInput
+	Mode         RunAttachMode
 }
 
 func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach startedRunAttachContext, receive RunAttachReceiver, send RunAttachSender) (record domain.ProjectRunRecord, execErr error, err error) {
@@ -47,16 +48,28 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 	runContext := ctx
 	ctx, cancelPrep := cancelOnDaemonShutdown(ctx)
 	defer cancelPrep()
-	prepared, err := c.prepareProjectRun(ctx, run, req.Env)
+	prepCtx := ctx
+	if run.InputPreparation != nil {
+		var cancel context.CancelFunc
+		prepCtx, cancel = context.WithDeadline(ctx, run.InputPreparation.Deadline)
+		defer cancel()
+	}
+	prepared, err := c.prepareProjectRun(prepCtx, run, req.Env)
 	if err != nil {
+		if run.InputPreparation != nil {
+			return c.finishRunInputFailure(transitionCtx, ctx, runInputFailure{Run: run, Input: run.InputPreparation, Cause: err, Send: send})
+		}
 		run, markErr := c.completeProjectRunError(transitionCtx, ctx, TransitionRequest{
 			RunID: run.RunID,
 			Error: fmt.Sprintf("workspace preparation failed: %v", err),
 		}, err)
 		return withRunWarnings(run, warnings), err, markErr
 	}
-	sandboxResult, err := c.ensureProjectRunSandbox(ctx, run, prepared, req)
+	sandboxResult, err := c.ensureProjectRunSandbox(prepCtx, run, prepared, req)
 	if err != nil {
+		if run.InputPreparation != nil {
+			return c.finishRunInputFailure(transitionCtx, ctx, runInputFailure{Run: run, Sandbox: sandboxResult.Sandbox, Input: run.InputPreparation, Cause: err, Send: send})
+		}
 		transition := TransitionRequest{
 			RunID: run.RunID,
 			Error: fmt.Sprintf("sandbox start failed: %v", err),
@@ -66,6 +79,23 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 		}
 		run, markErr := c.completeProjectRunError(transitionCtx, ctx, transition, err)
 		return withRunWarnings(run, warnings), err, markErr
+	}
+	if run.InputPreparation != nil {
+		input, inputErr := c.prepareRunInput(prepCtx, run, sandboxResult.Sandbox, attach.ReceiveInput(prepCtx))
+		if inputErr != nil {
+			return c.finishRunInputFailure(transitionCtx, ctx, runInputFailure{Run: run, Sandbox: sandboxResult.Sandbox, Input: input, Cause: inputErr, Send: send})
+		}
+		run.InputPreparation = input
+		req.Prompt = promptWithInputFiles(req.Prompt, input.Files)
+		if err := send(RunAttachOutput{Kind: RunAttachOutputInputReady, Run: run, Input: input}); err != nil {
+			// Delivery is durable and must not roll back, but a broken output
+			// stream must not strand the run in PENDING: mark it failed so a
+			// retry with the same identity reconciles against a terminal run.
+			run, markErr := c.completeProjectRunError(transitionCtx, ctx, TransitionRequest{
+				RunID: run.RunID, SandboxID: sandboxResult.Sandbox.Summary.ID, ExitCode: 1, Error: "run input delivery acknowledgement failed",
+			}, err)
+			return run, nil, errors.Join(err, markErr)
+		}
 	}
 	span.SetAttributes(telemetry.AttrSandboxID.String(sandboxResult.Sandbox.Summary.ID))
 	warnings = append(warnings, sandboxResult.Warnings...)

@@ -258,6 +258,13 @@ func runAttachInputFromProto(request *agentcomposev2.AttachAgentRunRequest) runs
 		default:
 			input.Mode = runs.RunAttachModeInvalid
 		}
+	case *agentcomposev2.AttachAgentRunRequest_FileChunk:
+		input.Kind = runs.RunAttachInputFileChunk
+		input.FileID = frame.FileChunk.GetFileId()
+		input.Offset = frame.FileChunk.GetOffset()
+		input.Data = frame.FileChunk.GetData()
+	case *agentcomposev2.AttachAgentRunRequest_InputComplete:
+		input.Kind = runs.RunAttachInputComplete
 	case *agentcomposev2.AttachAgentRunRequest_Stdin:
 		input.Kind = runs.RunAttachInputStdin
 		input.Data = append([]byte(nil), frame.Stdin.GetData()...)
@@ -299,6 +306,7 @@ func runAgentRequestFromProto(msg *agentcomposev2.RunAgentRequest) runs.RunAgent
 		Jupyter:          msg.GetJupyter(),
 		Volumes:          volumeMountSpecsFromProto(msg.GetVolumes()),
 		Labels:           msg.GetLabels(),
+		InputFiles:       runInputFilesFromProto(msg.GetInputFiles()),
 	}
 }
 
@@ -340,4 +348,12 @@ func runConnectError(err error) error {
 		return api.ConnectErrorForDomainWrite(err, api.ResourceRun)
 	}
 	return api.NewOperationError(connect.CodeInternal, apierror.ReasonInternal, apierror.EffectFor(err), err)
+}
+
+func runInputFilesFromProto(files []*agentcomposev2.RunInputFile) []domain.RunInputFile {
+	result := make([]domain.RunInputFile, 0, len(files))
+	for _, file := range files {
+		result = append(result, domain.RunInputFile{ID: file.GetFileId(), Name: file.GetDisplayName(), Size: file.GetSizeBytes(), SHA256: file.GetSha256()})
+	}
+	return result
 }

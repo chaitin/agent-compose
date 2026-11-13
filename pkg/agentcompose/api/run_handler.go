@@ -200,8 +200,18 @@ func (h *RunHandler) GetRun(ctx context.Context, req *connect.Request[agentcompo
 		return nil, ErrorForCode(connect.CodeInternal, ResourceRun, fmt.Errorf("config store is required"))
 	}
 	runID := strings.TrimSpace(req.Msg.GetRunId())
-	if runID == "" {
-		return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceRun, fmt.Errorf("run id is required"))
+	identity := strings.TrimSpace(req.Msg.GetClientRequestId())
+	if identity != "" {
+		if runID != "" || strings.TrimSpace(req.Msg.GetProjectId()) == "" || strings.TrimSpace(req.Msg.GetAgentName()) == "" || ProjectRunSourceFilterFromProto(req.Msg.GetSource()) == "" {
+			return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceRun, fmt.Errorf("select Run by ID or complete request identity"))
+		}
+		var err error
+		runID, err = runs.ResolveRequestRunID(runs.RequestIdentity{ProjectID: req.Msg.GetProjectId(), AgentName: req.Msg.GetAgentName(), Source: ProjectRunSourceFilterFromProto(req.Msg.GetSource()), ClientRequestID: identity})
+		if err != nil {
+			return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceRun, err)
+		}
+	} else if runID == "" || req.Msg.GetAgentName() != "" || req.Msg.GetSource() != agentcomposev2.RunSource_RUN_SOURCE_UNSPECIFIED {
+		return nil, ErrorForCode(connect.CodeInvalidArgument, ResourceRun, fmt.Errorf("run ID or complete request identity is required"))
 	}
 	run, err := h.store.GetProjectRun(ctx, runID)
 	if err != nil {

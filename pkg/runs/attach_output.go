@@ -11,6 +11,7 @@ type RunAttachOutputKind string
 
 const (
 	RunAttachOutputStarted            RunAttachOutputKind = "started"
+	RunAttachOutputInputReady         RunAttachOutputKind = "input_ready"
 	RunAttachOutputData               RunAttachOutputKind = "output"
 	RunAttachOutputAgentEvent         RunAttachOutputKind = "agent_event"
 	RunAttachOutputAgentTurnCompleted RunAttachOutputKind = "agent_turn_completed"
@@ -19,6 +20,7 @@ const (
 )
 
 type RunAttachOutput struct {
+	Input       *domain.RunInputPreparation
 	Kind        RunAttachOutputKind
 	CreatedAt   time.Time
 	Run         domain.ProjectRunRecord

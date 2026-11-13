@@ -217,7 +217,11 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 	inputCtx, cancelInput := context.WithCancel(ctx)
 	defer cancelInput()
 	turnReady := make(chan struct{}, 1)
-	if prompt := strings.TrimSpace(runCtx.Request.Prompt); prompt != "" {
+	prompt := runCtx.Request.Prompt
+	if len(runCtx.Request.InputFiles) == 0 {
+		prompt = strings.TrimSpace(prompt)
+	}
+	if strings.TrimSpace(prompt) != "" {
 		session.beginInitialPromptTurn()
 		if err := input.HumanMessage(prompt); err != nil {
 			transition.ExitCode = 1

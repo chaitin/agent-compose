@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 )
@@ -168,6 +169,27 @@ func (m *CompletionManager) completionWaitTimeout(ctx context.Context, runID str
 }
 
 func (m *CompletionManager) StageInterrupted(ctx context.Context, run domain.ProjectRunRecord, message string) error {
+	// Input-evidence recovery is best-effort. The interrupt path must still
+	// mark the run failed even when the evidence cannot be re-read or
+	// downgraded: replayRunInput collapses an expired RECEIVING/PUBLISHING
+	// record to UNKNOWN at read time, so a missed persistence here cannot
+	// make an interrupted delivery replayable.
+	if store, ok := m.store.(runInputStore); ok {
+		// List projections intentionally omit the input record. Load the Run
+		// before recovery so a crash cannot strand RECEIVING/PUBLISHING evidence.
+		current, err := m.store.GetProjectRun(ctx, run.RunID)
+		if err != nil {
+			m.logger.Warn("skip run input recovery during interrupt", "run_id", run.RunID, "error", err)
+		} else if input := current.InputPreparation; input != nil && (input.State == domain.RunInputStateReceiving || input.State == domain.RunInputStatePublishing) {
+			interrupted := *input
+			interrupted.State = domain.RunInputStateUnknown
+			interrupted.FailureReason = int32(apierror.ReasonOperationCanceled)
+			if err := store.SaveRunInput(ctx, *input, interrupted); err != nil {
+				m.logger.Warn("downgrade run input evidence during interrupt", "run_id", run.RunID, "error", err)
+			}
+		}
+	}
+
 	req := TransitionRequest{RunID: run.RunID, Status: domain.ProjectRunStatusFailed, ExitCode: max(run.ExitCode, 1), Error: message}
 	payload, err := json.Marshal(req)
 	if err != nil {

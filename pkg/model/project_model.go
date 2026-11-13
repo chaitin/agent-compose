@@ -139,6 +139,9 @@ type ProjectSchedulerRecord struct {
 }
 
 type ProjectRunRecord struct {
+	InputPreparation *RunInputPreparation `json:"input_preparation,omitempty"`
+	// InputAccepted is transient: only the transaction that created input owns execution.
+	InputAccepted   bool      `json:"-"`
 	RunID           string    `json:"run_id"`
 	ProjectID       string    `json:"project_id"`
 	ProjectName     string    `json:"project_name,omitempty"`

@@ -652,3 +652,40 @@ tasks:
       VERSION: '{{.VERSION}}'
     cmds:
       - ./scripts/build-agent-compose.sh
+
+  test:run-input:
+    desc: Verify file input protocol, persistence, filesystem and lifecycle boundaries
+    deps: ['generate:proto']
+    cmds:
+      - '{{.GO_TOOLCHAIN_ENV}} go test -race ./pkg/runs ./pkg/storage/configstore ./pkg/storage/sandboxstore ./pkg/agentcompose/api ./pkg/agentcompose/app -run "Test.*(RunInput|FileInput)" -count=1'
+      - '{{.GO_TOOLCHAIN_ENV}} go -C proto test ./...'
+
+  format:go:
+    desc: Format handwritten Go sources using repository formatter settings
+    cmds:
+      - '{{.GO_TOOLCHAIN_ENV}} golangci-lint fmt {{.GO_LINT_PACKAGES}}'
+      - '{{.GO_TOOLCHAIN_ENV}} golangci-lint fmt -c {{.TASKFILE_DIR}}/.golangci.yml ./sdk/go/chat/...'
+      - '{{.GO_TOOLCHAIN_ENV}} golangci-lint fmt ./test/e2e/...'
+
+  lint:run-input:
+    desc: Lint changed Run input boundaries on the native development host
+    deps: ['generate:proto']
+    cmds:
+      - '{{.GO_TOOLCHAIN_ENV}} golangci-lint run --allow-parallel-runners ./pkg/runs/... ./pkg/model/... ./pkg/storage/configstore/... ./pkg/storage/sandboxstore/... ./pkg/agentcompose/api/... ./pkg/agentcompose/app/...'
+
+  test:run-input:regression:
+    desc: Run all regression tests in changed Run input boundaries
+    deps: ['generate:proto']
+    cmds:
+      - '{{.GO_TOOLCHAIN_ENV}} go test ./pkg/runs ./pkg/storage/configstore ./pkg/storage/sandboxstore ./pkg/agentcompose/api ./pkg/agentcompose/app -count=1 -timeout=10m'
+
+  test:e2e:docker-run-input:
+    desc: Verify Run file input with a real host daemon and Docker, replacing only the external model provider CLI
+    deps: ['build:agent-compose']
+    cmds:
+      - |
+        image="${AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE:-chaitin/agent-compose-guest:latest}"
+        docker image inspect "$image" >/dev/null
+        AGENT_COMPOSE_E2E_BINARY="$PWD/build/agent-compose" \
+          AGENT_COMPOSE_E2E_DOCKER_WORKSPACE_IMAGE="$image" \
+          {{.GO_TOOLCHAIN_ENV}} go test ./test/e2e -run '^TestE2EDockerRunInput$' -count=1 -timeout=10m -v

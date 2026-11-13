@@ -13,18 +13,19 @@ import (
 
 func ProjectRunDetailToProto(run domain.ProjectRunRecord) *agentcomposev2.RunDetail {
 	return &agentcomposev2.RunDetail{
-		Summary:      ProjectRunSummaryToProto(run),
-		Prompt:       run.Prompt,
-		Output:       run.Output,
-		ResultJson:   run.ResultJSON,
-		LogsPath:     run.LogsPath,
-		ArtifactsDir: run.ArtifactsDir,
-		CleanupError: run.CleanupError,
-		Driver:       run.Driver,
-		ImageRef:     run.ImageRef,
-		Warnings:     append([]string(nil), run.Warnings...),
-		ErrorStack:   run.ErrorStack,
-		Labels:       run.Labels,
+		Summary:          ProjectRunSummaryToProto(run),
+		InputPreparation: RunInputToProto(run.InputPreparation),
+		Prompt:           run.Prompt,
+		Output:           run.Output,
+		ResultJson:       run.ResultJSON,
+		LogsPath:         run.LogsPath,
+		ArtifactsDir:     run.ArtifactsDir,
+		CleanupError:     run.CleanupError,
+		Driver:           run.Driver,
+		ImageRef:         run.ImageRef,
+		Warnings:         append([]string(nil), run.Warnings...),
+		ErrorStack:       run.ErrorStack,
+		Labels:           run.Labels,
 	}
 }
 

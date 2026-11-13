@@ -99,3 +99,7 @@ func TestRunProjectCommandAttachRegisteredNotifiesRunningRun(t *testing.T) {
 		t.Fatalf("sent[0] = %#v, want a started frame for %s sandbox-1", sent[0], runID)
 	}
 }
+
+func TestE2ERunProjectCommandAttachRegisteredNotifiesRunningRun(t *testing.T) {
+	TestRunProjectCommandAttachRegisteredNotifiesRunningRun(t)
+}
