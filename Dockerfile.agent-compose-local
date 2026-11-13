@@ -60,6 +60,7 @@ COPY --from=go-build /out/agent-compose /app/agent-compose
 COPY --from=go-build /out/ac-supervisor /app/ac-supervisor
 RUN ln -sf /app/agent-compose /usr/local/bin/agent-compose
 COPY --from=boxlite-local /runtime /app/boxlite/runtime
+COPY --from=boxlite-local /lib/libboxlite.so /app/boxlite/lib/libboxlite.so
 COPY --from=microsandbox-local / /app/microsandbox
 RUN test -x /app/agent-compose && \
     test -x /app/ac-supervisor && \
@@ -67,6 +68,7 @@ RUN test -x /app/agent-compose && \
     mkfs.ext4 2>&1 | grep -Fq -- '[-d root-directory' && \
     test -x /app/boxlite/runtime/boxlite-guest && \
     test -x /app/boxlite/runtime/boxlite-shim && \
+    test -s /app/boxlite/lib/libboxlite.so && \
     test -x /app/microsandbox/bin/msb && \
     test -x /app/microsandbox/bin/agentd && \
     test -s /app/microsandbox/lib/libmicrosandbox_go_ffi.so && \
@@ -88,6 +90,6 @@ ENV BOXLITE_RUNTIME_DIR=/app/boxlite/runtime
 ENV MICROSANDBOX_HOME=/data/microsandbox
 ENV MICROSANDBOX_MSB_PATH=/app/microsandbox/bin/msb
 ENV MICROSANDBOX_LIB_PATH=/app/microsandbox/lib/libmicrosandbox_go_ffi.so
-ENV LD_LIBRARY_PATH=/app/boxlite/runtime:/app/microsandbox/lib
+ENV LD_LIBRARY_PATH=/app/boxlite/lib:/app/boxlite/runtime:/app/microsandbox/lib
 ENTRYPOINT ["/usr/bin/tini", "--", "/app/agent-compose"]
 CMD ["daemon"]

@@ -207,7 +207,7 @@ func boxliteRuntimeDerivedItem(path, kind string, info os.FileInfo, state boxlit
 	}
 	if item.Status != cache.StatusActive {
 		item.Status = cache.StatusUnknown
-		item.Warnings = cache.AppendWarnings(item.Warnings, "BoxLite v0.10.4 ABI does not support safe image remove/prune")
+		item.Warnings = cache.AppendWarnings(item.Warnings, "BoxLite image inventory is read-only: the runtime ABI has no safe image remove/prune operation")
 	}
 	return cache.EvaluateProtection(item)
 }
@@ -217,7 +217,7 @@ type boxliteRuntimeDerivedRemover struct {
 }
 
 func (r boxliteRuntimeDerivedRemover) Remove(ctx context.Context, item cache.Item) error {
-	return fmt.Errorf("%w: BoxLite v0.10.4 ABI does not support safe image remove/prune", cache.ErrRemoveUnavailable)
+	return fmt.Errorf("%w: BoxLite image inventory is read-only: the runtime ABI has no safe image remove/prune operation", cache.ErrRemoveUnavailable)
 }
 
 func isBoxliteUnknownSchemaError(err error) bool {

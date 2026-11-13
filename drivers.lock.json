@@ -2,12 +2,12 @@
   "drivers": {
     "boxlite": {
       "repo": "boxlite-ai/boxlite",
-      "version": "v0.10.4",
+      "version": "v0.13.0",
       "buildArg": "BOXLITE_VERSION"
     },
     "microsandbox": {
       "repo": "superradcompany/microsandbox",
-      "version": "v0.7.3",
+      "version": "v0.7.14",
       "buildArg": "MICROSANDBOX_VERSION",
       "goModule": "github.com/superradcompany/microsandbox/sdk/go"
     }

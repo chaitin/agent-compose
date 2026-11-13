@@ -538,7 +538,6 @@ tasks:
       - scripts/export-runtime-dev-artifact.sh
     generates:
       - build/boxlite/include/boxlite.h
-      - build/boxlite/lib/libboxlite.a
       - build/boxlite/lib/libboxlite.so
       - build/boxlite/runtime/boxlite-guest
       - build/boxlite/runtime/boxlite-shim

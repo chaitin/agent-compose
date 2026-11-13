@@ -26,7 +26,7 @@ require (
 	github.com/samber/oops v1.21.0
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/pflag v1.0.9
-	github.com/superradcompany/microsandbox/sdk/go v0.7.3
+	github.com/superradcompany/microsandbox/sdk/go v0.7.14
 	go.mongodb.org/mongo-driver/v2 v2.5.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.44.0

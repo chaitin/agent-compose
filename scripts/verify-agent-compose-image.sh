@@ -103,7 +103,7 @@ jq -e \
    (image_env.MICROSANDBOX_HOME == "/data/microsandbox") and
    (image_env.MICROSANDBOX_MSB_PATH == "/app/microsandbox/bin/msb") and
    (image_env.MICROSANDBOX_LIB_PATH == "/app/microsandbox/lib/libmicrosandbox_go_ffi.so") and
-   (image_env.LD_LIBRARY_PATH == "/app/boxlite/runtime:/app/microsandbox/lib")' \
+   (image_env.LD_LIBRARY_PATH == "/app/boxlite/lib:/app/boxlite/runtime:/app/microsandbox/lib")' \
   <<<"$image_metadata" >/dev/null \
   || die "image platform or default runtime environment mismatch: $image"
 

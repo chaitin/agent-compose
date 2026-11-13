@@ -4,7 +4,13 @@ package driver
 
 /*
 #cgo CFLAGS: -I${SRCDIR}/../../build/boxlite/include
-#cgo LDFLAGS: ${SRCDIR}/../../build/boxlite/lib/libboxlite.a -ldl -lpthread -lm
+// BoxLite v0.13.0 builds libboxlite.a with LLVM LTO (".llvmbc" sections), which
+// Go's cgo linker rejects, so link the shared library instead. The rpath makes
+// the binary resolve libboxlite.so relative to its own location (a local
+// build/agent-compose finds build/boxlite/lib, the image's /app/agent-compose
+// finds /app/boxlite/lib) without LD_LIBRARY_PATH, which the image still sets
+// as a fallback for other dlopen paths.
+#cgo LDFLAGS: -L${SRCDIR}/../../build/boxlite/lib -lboxlite -ldl -lpthread -lm -Wl,-rpath,$ORIGIN/boxlite/lib
 #include <stdint.h>
 #include <stdlib.h>
 #include "boxlite.h"
@@ -1306,7 +1312,10 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	C.boxlite_options_set_detach(options, 1)
 	C.boxlite_options_set_network_enabled(options)
 	resources := configuredSandboxResources(r.config)
-	C.boxlite_options_set_cpus(options, C.int(resources.CPUs))
+	// BoxLite v0.13 widened the CPU option from int to double to support
+	// fractional CPUs. configuredSandboxResources still resolves whole CPUs,
+	// so the value is widened rather than truncated.
+	C.boxlite_options_set_cpus(options, C.double(resources.CPUs))
 	C.boxlite_options_set_memory(options, C.int(resources.MemoryMiB))
 	C.boxlite_options_set_disk_size_gb(options, C.int(resources.DiskSizeGB))
 
