@@ -88,8 +88,13 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 		run.InputPreparation = input
 		req.Prompt = promptWithInputFiles(req.Prompt, input.Files)
 		if err := send(RunAttachOutput{Kind: RunAttachOutputInputReady, Run: run, Input: input}); err != nil {
-			// Delivery is durable; a lost acknowledgement must not roll it back.
-			return run, nil, err
+			// Delivery is durable and must not roll back, but a broken output
+			// stream must not strand the run in PENDING: mark it failed so a
+			// retry with the same identity reconciles against a terminal run.
+			run, markErr := c.completeProjectRunError(transitionCtx, ctx, TransitionRequest{
+				RunID: run.RunID, SandboxID: sandboxResult.Sandbox.Summary.ID, ExitCode: 1, Error: "run input delivery acknowledgement failed",
+			}, err)
+			return run, nil, errors.Join(err, markErr)
 		}
 	}
 	span.SetAttributes(telemetry.AttrSandboxID.String(sandboxResult.Sandbox.Summary.ID))
