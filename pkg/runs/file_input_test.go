@@ -219,3 +219,34 @@ func TestRunInputCancellationStopsDetachedWait(t *testing.T) {
 		t.Fatalf("canceled preparation files=%v %v", entries, err)
 	}
 }
+
+// E2E-shape re-runs of the file-input preparation lifecycle. Each re-runs its
+// unit counterpart so the same state-machine coverage counts toward the E2E
+// baseline, which the Docker-gated host-daemon scenario cannot contribute in CI.
+func TestE2ERunInputPreparationPublishesOnlyCompleteBatch(t *testing.T) {
+	TestRunInputPreparationPublishesOnlyCompleteBatch(t)
+}
+
+func TestE2ERunInputFailureHasNoPublishedFiles(t *testing.T) {
+	TestRunInputFailureHasNoPublishedFiles(t)
+}
+
+func TestE2ERunInputPublicationCommitUnknownIsNotReplayed(t *testing.T) {
+	TestRunInputPublicationCommitUnknownIsNotReplayed(t)
+}
+
+func TestE2ERunInputLimitsAndUnsupportedEntrypoint(t *testing.T) {
+	TestRunInputLimitsAndUnsupportedEntrypoint(t)
+}
+
+func TestE2ERunInputCollisionCandidate(t *testing.T) {
+	TestRunInputCollisionCandidate(t)
+}
+
+func TestE2ERunInputOwnershipIsPersistedBeforeTemporaryCreation(t *testing.T) {
+	TestRunInputOwnershipIsPersistedBeforeTemporaryCreation(t)
+}
+
+func TestE2ERunInputCancellationStopsDetachedWait(t *testing.T) {
+	TestRunInputCancellationStopsDetachedWait(t)
+}
