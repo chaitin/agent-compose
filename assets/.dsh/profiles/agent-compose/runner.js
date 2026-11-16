@@ -86,6 +86,53 @@ async function exitTree(ctx, code) {
   }
 }
 
+// The attachment store only admits rasters; every other file becomes a
+// verbatim file block (which the model sees as path text, not native content).
+const rasterImageMediaTypes = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+
+/** Read the per-run attachment list the runtime wrote for this turn. */
+async function readAttachments() {
+  const file = process.env.DSH_ATTACHMENTS_FILE;
+  if (!file) return [];
+  const parsed = JSON.parse(await fs.readFile(file, 'utf8'));
+  if (!Array.isArray(parsed?.attachments)) {
+    throw new Error('agent-compose-runner: DSH_ATTACHMENTS_FILE must contain an attachments array');
+  }
+  return parsed.attachments;
+}
+
+/**
+ * Turn attachment paths into durable refs and content blocks, preserving
+ * manifest order. Any read or store failure rejects the run: silently dropping
+ * an attachment would let the model answer a question it never saw the input to.
+ */
+async function attachmentBlocks(ctx, attachments) {
+  if (attachments.length === 0) return [];
+  const store = ctx.get('attachments');
+  if (store === undefined) {
+    throw new Error('agent-compose-runner: attachments were configured but the attachments service is not mounted');
+  }
+  const blocks = [];
+  for (const attachment of attachments) {
+    if (typeof attachment?.path !== 'string' || typeof attachment?.mediaType !== 'string') {
+      throw new Error('agent-compose-runner: each attachment requires a path and mediaType');
+    }
+    const data = await fs.readFile(attachment.path);
+    const name = typeof attachment.filename === 'string' && attachment.filename ? attachment.filename : undefined;
+    if (rasterImageMediaTypes.has(attachment.mediaType)) {
+      const [ref] = await store.saveImages([{ data, mediaType: attachment.mediaType, ...(name ? { name } : {}) }]);
+      if (ref === undefined) {
+        throw new Error('agent-compose-runner: image attachment was not stored');
+      }
+      blocks.push({ type: 'image', attachment: ref });
+      continue;
+    }
+    const ref = await store.saveFile({ data, ...(name ? { name } : {}) });
+    blocks.push({ type: 'file', attachment: ref });
+  }
+  return blocks;
+}
+
 async function run(ctx, config) {
   await ctx.get('loader')?.await();
   const agents = ctx.get('agents');
@@ -101,6 +148,9 @@ async function run(ctx, config) {
   }
 
   const promptText = await fs.readFile(config.promptFile, 'utf8');
+  // Parse the manifest before creating or resuming an agent so a malformed
+  // attachment list cannot leave a half-started session behind.
+  const attachments = await readAttachments();
   const resume = process.env.DSH_RESUME === '1';
   const requestedSessionId = config.sessionId ? SessionId(config.sessionId) : undefined;
   const selection = defaultModel.currentSelection();
@@ -143,8 +193,9 @@ async function run(ctx, config) {
   let exitCode = 0;
   try {
     await agent.whenIdle();
+    const content = [{ type: 'text', text: promptText }, ...(await attachmentBlocks(ctx, attachments))];
     agent.followup(createUserMessage({
-      content: [{ type: 'text', text: promptText }],
+      content,
       source: { kind: 'user' },
     }));
     await agent.whenIdle();

@@ -7,13 +7,13 @@ import { decodeBinary, decodeFrame, encodeBinary, encodeFrame, FRAME_VERSION, ty
 import { OpenCodeRunner } from "../src/runners/opencode.js";
 import { PiRunner } from "../src/runners/pi.js";
 import { runStreamCommand } from "../src/stream.js";
-import { withTempSession } from "./helpers.js";
+import { collectClaudeMessages, withTempSession } from "./helpers.js";
 
-const runInputs: string[] = [];
+const runInputs: unknown[][] = [];
 let codexEventFactory: ((turn: number) => Array<Record<string, unknown>>) | undefined;
 const thread = {
   id: "thread-1",
-  async runStreamed(input: string) {
+  async runStreamed(input: unknown[]) {
     runInputs.push(input);
     return {
       events: asyncGenerator(codexEventFactory?.(runInputs.length) || [
@@ -136,7 +136,10 @@ describe("runStreamCommand", () => {
         expect.objectContaining({ event: { kind: "text_delta", text: "answer 2" } }),
       ]);
       expect(frames.every((entry, index) => entry.seq === index)).toBe(true);
-      expect(runInputs).toEqual(["first", "second"]);
+      expect(runInputs).toEqual([
+        [{ type: "text", text: "first" }],
+        [{ type: "text", text: "second" }],
+      ]);
       expect(startThread).toHaveBeenCalledTimes(1);
       expect(resumeThread).not.toHaveBeenCalled();
       expect(frames.at(-1)).toMatchObject({
@@ -195,7 +198,9 @@ describe("runStreamCommand", () => {
 
       const frames = parseOutput(stdout.text);
       const failure = `Codex stream ended before turn.completed after ${message}`;
-      expect(runInputs).toEqual(previousTurn ? ["completed", "first"] : ["first"]);
+      expect(runInputs).toEqual(previousTurn
+        ? [[{ type: "text", text: "completed" }], [{ type: "text", text: "first" }]]
+        : [[{ type: "text", text: "first" }]]);
       expect(frames).toContainEqual(expect.objectContaining({
         type: "agent_event", event: { kind: "error", severity: "fatal", message: failure },
       }));
@@ -265,7 +270,7 @@ describe("runStreamCommand", () => {
         abortController,
       });
       const frames = parseOutput(stdout.text);
-      expect(runInputs).toEqual(["first"]);
+      expect(runInputs).toEqual([[{ type: "text", text: "first" }]]);
       expect(frames.at(-1)).toMatchObject({ type: "result", stopReason: "cancelled" });
       expect(frames.some((entry) => entry.type === "error" || (entry.event as { kind?: string })?.kind === "error")).toBe(false);
     });
@@ -418,7 +423,10 @@ describe("runStreamCommand", () => {
         expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "claude answer 2" }) }),
         expect.objectContaining({ event: expect.objectContaining({ kind: "step_end" }) }),
       ]);
-      expect(claudeState.queryCalls.map((call) => call.prompt)).toEqual(["first", "second"]);
+      expect(await Promise.all(claudeState.queryCalls.map((call) => collectClaudeMessages(call.prompt)))).toEqual([
+        [{ type: "user", parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: "first" }] } }],
+        [{ type: "user", parent_tool_use_id: null, message: { role: "user", content: [{ type: "text", text: "second" }] } }],
+      ]);
       expect(claudeState.queryCalls[0]?.options).not.toMatchObject({ resume: expect.anything() });
       expect(claudeState.queryCalls[1]?.options).toMatchObject({ resume: "claude-session-1" });
       expect(frames.at(-1)).toMatchObject({
@@ -437,9 +445,9 @@ describe("runStreamCommand", () => {
     await withTempSession(async (root) => {
       const stdout = new MemoryWritable();
       const stderr = new MemoryWritable();
-      const prompts: string[] = [];
-      vi.spyOn(OpenCodeRunner.prototype, "runPrompt").mockImplementation(async function (message) {
-        prompts.push(message);
+      const prompts: unknown[] = [];
+      vi.spyOn(OpenCodeRunner.prototype, "runPrompt").mockImplementation(async function (promptTurn) {
+        prompts.push(promptTurn);
         const turn = prompts.length;
         const self = this as unknown as {
           writer: { write(text: string): void; transcript(): string };
@@ -479,7 +487,10 @@ describe("runStreamCommand", () => {
         "agent_turn_completed",
         "result",
       ]);
-      expect(prompts).toEqual(["first", "second"]);
+      expect(prompts).toEqual([
+        { parts: [{ type: "text", text: "first" }] },
+        { parts: [{ type: "text", text: "second" }] },
+      ]);
       expect(frames.filter((entry) => entry.type === "agent_event")).toEqual([
         expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "opencode answer 1" }) }),
         expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "opencode answer 2" }) }),
@@ -500,9 +511,9 @@ describe("runStreamCommand", () => {
     await withTempSession(async (root) => {
       const stdout = new MemoryWritable();
       const stderr = new MemoryWritable();
-      const prompts: string[] = [];
-      vi.spyOn(PiRunner.prototype, "runPrompt").mockImplementation(async function (message) {
-        prompts.push(message);
+      const prompts: unknown[] = [];
+      vi.spyOn(PiRunner.prototype, "runPrompt").mockImplementation(async function (promptTurn) {
+        prompts.push(promptTurn);
         const turn = prompts.length;
         const self = this as unknown as {
           writer: { write(text: string): void; transcript(): string };
@@ -534,7 +545,10 @@ describe("runStreamCommand", () => {
       });
 
       const frames = parseOutput(stdout.text);
-      expect(prompts).toEqual(["first", "second"]);
+      expect(prompts).toEqual([
+        { parts: [{ type: "text", text: "first" }] },
+        { parts: [{ type: "text", text: "second" }] },
+      ]);
       expect(frames.filter((entry) => entry.type === "agent_event")).toEqual([
         expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "pi answer 1" }) }),
         expect.objectContaining({ event: expect.objectContaining({ kind: "text_delta", text: "pi answer 2" }) }),

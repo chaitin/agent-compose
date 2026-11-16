@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import { extractText } from "../text.js";
+import { mediaParts, renderTurnText, type TurnContent } from "../turn.js";
 import { flattenEnvMap, type RuntimeMCPServer } from "../mcp-config.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
@@ -59,7 +60,7 @@ export class DshRunner {
     private readonly writer: TranscriptTextWriter = new TranscriptWriter(),
   ) {}
 
-  async runPrompt(promptText: string): Promise<AgentResult> {
+  async runPrompt(turn: TurnContent): Promise<AgentResult> {
     this.reportedError = null;
     if (this.options.outputSchema) {
       throw new Error("structured JSON output is not supported by dsh runner");
@@ -89,7 +90,23 @@ export class DshRunner {
 
     try {
       const promptFile = path.join(invocationDir, "prompt.txt");
-      await fs.writeFile(promptFile, promptText, { encoding: "utf8", mode: 0o600 });
+      await fs.writeFile(promptFile, renderTurnText(turn), { encoding: "utf8", mode: 0o600 });
+
+      // The profile turns these paths into durable attachment refs before the
+      // followup; the runner never passes bytes through an env var.
+      const attachments = mediaParts(turn);
+      let attachmentsFile = "";
+      if (attachments.length > 0) {
+        attachmentsFile = path.join(invocationDir, "attachments.json");
+        const manifest = {
+          attachments: attachments.map((media) => ({
+            path: media.path,
+            mediaType: media.mediaType,
+            ...(media.filename ? { filename: media.filename } : {}),
+          })),
+        };
+        await fs.writeFile(attachmentsFile, JSON.stringify(manifest), { encoding: "utf8", mode: 0o600 });
+      }
 
       // Not an env var: runner.js is real ESM (unlike cordis.patch.yml's
       // `!!js` eval sandbox, which has no `require`), so it can read this
@@ -124,6 +141,11 @@ export class DshRunner {
         env.DSH_SYSTEM_CONTEXT_FILE = systemContextFile;
       } else {
         delete env.DSH_SYSTEM_CONTEXT_FILE;
+      }
+      if (attachmentsFile) {
+        env.DSH_ATTACHMENTS_FILE = attachmentsFile;
+      } else {
+        delete env.DSH_ATTACHMENTS_FILE;
       }
       if (resume) {
         env.DSH_RESUME = "1";

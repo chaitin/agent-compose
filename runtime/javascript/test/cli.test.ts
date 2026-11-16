@@ -35,6 +35,8 @@ describe("commander CLI", () => {
         "codex",
         "--message-file",
         "/tmp/message.txt",
+        "--content-file",
+        "/tmp/content.json",
         "--state-root",
         "/data/state",
         "--workspace",
@@ -57,6 +59,7 @@ describe("commander CLI", () => {
     expect(runPrompt).toHaveBeenCalledWith({
       provider: "codex",
       messageFile: "/tmp/message.txt",
+      contentFile: "/tmp/content.json",
       stateRoot: "/data/state",
       workspace: "/data/workspace",
       home: "/data/home",
@@ -335,7 +338,7 @@ describe("commander CLI", () => {
         });
 
         expect(result.finalText).toBe("ok");
-        expect(runPrompt).toHaveBeenCalledWith("hello");
+        expect(runPrompt).toHaveBeenCalledWith({ parts: [{ type: "text", text: "hello" }] });
         expect(claudeSpy).toHaveBeenCalledWith(expect.objectContaining({
           provider: "claude",
           stateRoot,
@@ -431,7 +434,7 @@ describe("commander CLI", () => {
         home: path.join(root, "home"),
       });
 
-      expect(runPrompt).toHaveBeenCalledWith("task body");
+      expect(runPrompt).toHaveBeenCalledWith({ parts: [{ type: "text", text: "task body" }] });
       const options = codexSpy.mock.calls.at(-1)?.[0] as { systemContext: string };
       expect(options.systemContext).toContain("## Agent Identity");
       expect(options.systemContext).toContain("Reply only in Chinese");
@@ -474,6 +477,86 @@ describe("commander CLI", () => {
       expect(options.systemContext).toContain("pdf: Read PDF files");
       expect(options.systemContext).toContain(path.join(home, ".agents", "skills", "pdf"));
       expect(options.systemContext).not.toContain("FULL BODY SHOULD NOT APPEAR");
+    });
+  });
+
+  it("runPromptCommand prefers an authoritative content manifest over the message text", async () => {
+    await withTempSession(async (root) => {
+      const messageFile = path.join(root, "message.txt");
+      const contentFile = path.join(root, "content.json");
+      const stateRoot = path.join(root, "state");
+      const mediaPath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-1");
+      await fs.mkdir(stateRoot, { recursive: true });
+      await fs.writeFile(messageFile, "legacy text projection", "utf8");
+      await fs.writeFile(contentFile, JSON.stringify({
+        version: 1,
+        parts: [
+          { text: "compare these" },
+          { media: { mediaType: "image/png", filename: "before.png", path: mediaPath, sizeBytes: 4, sha256: "abcd" } },
+          { text: "and these" },
+        ],
+      }), "utf8");
+
+      const runPrompt = vi.fn().mockResolvedValue({
+        provider: "claude",
+        threadId: "",
+        stopReason: "completed",
+        finalText: "ok",
+        transcript: "ok",
+        stderr: "",
+      });
+      vi.spyOn(await import("../src/runners/claude.js"), "ClaudeRunner").mockImplementation(function mockClaude(this: unknown, options: unknown) {
+        Object.assign(this as object, { options, runPrompt });
+      } as never);
+      const { runPromptCommand } = await import("../src/prompt.js");
+
+      await runPromptCommand({
+        provider: "claude",
+        messageFile,
+        contentFile,
+        stateRoot,
+        workspace: path.join(root, "workspace"),
+        home: path.join(root, "home"),
+      });
+
+      expect(runPrompt).toHaveBeenCalledWith({
+        parts: [
+          { type: "text", text: "compare these" },
+          { type: "media", mediaType: "image/png", filename: "before.png", path: mediaPath, sizeBytes: 4, sha256: "abcd" },
+          { type: "text", text: "and these" },
+        ],
+      });
+    });
+  });
+
+  it.each([
+    ["invalid JSON", "{", /--content-file must contain valid JSON/],
+    ["an unsupported version", JSON.stringify({ version: 2, parts: [{ text: "hi" }] }), /manifest version must be 1/],
+    ["a malformed part", JSON.stringify({ version: 1, parts: [{ media: { mediaType: "image/png" } }] }), /media\.path/],
+  ])("runPromptCommand rejects a content manifest with %s instead of falling back to text", async (_label, manifest, expected) => {
+    await withTempSession(async (root) => {
+      const messageFile = path.join(root, "message.txt");
+      const contentFile = path.join(root, "content.json");
+      const stateRoot = path.join(root, "state");
+      await fs.mkdir(stateRoot, { recursive: true });
+      await fs.writeFile(messageFile, "fallback text must not be used", "utf8");
+      await fs.writeFile(contentFile, manifest, "utf8");
+      const runPrompt = vi.fn();
+      const claudeSpy = vi.spyOn(await import("../src/runners/claude.js"), "ClaudeRunner").mockImplementation(function mockClaude(this: unknown, options: unknown) {
+        Object.assign(this as object, { options, runPrompt });
+      } as never);
+      const { runPromptCommand } = await import("../src/prompt.js");
+
+      await expect(runPromptCommand({
+        provider: "claude",
+        messageFile,
+        contentFile,
+        stateRoot,
+        workspace: path.join(root, "workspace"),
+        home: path.join(root, "home"),
+      })).rejects.toThrow(expected);
+      expect(claudeSpy).not.toHaveBeenCalled();
+      expect(runPrompt).not.toHaveBeenCalled();
     });
   });
 

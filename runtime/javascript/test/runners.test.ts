@@ -4,6 +4,7 @@ import path from "node:path";
 import { ClaudeRunner } from "../src/runners/claude.js";
 import { CodexRunner } from "../src/runners/codex.js";
 import { OpenCodeRunner } from "../src/runners/opencode.js";
+import { textTurn } from "../src/turn.js";
 import { captureStdio, runnerOptions, withTempSession } from "./helpers.js";
 
 afterEach(() => {
@@ -389,7 +390,7 @@ describe("OpenCodeRunner", () => {
         model: "anthropic/claude-sonnet-4-5",
       });
 
-      expect(runner.buildArgs("review", null)).toEqual([
+      expect(runner.buildArgs(textTurn("review"), null)).toEqual([
         "run",
         "be concise\n\nreview",
         "--format",
@@ -400,7 +401,13 @@ describe("OpenCodeRunner", () => {
         "--model",
         "anthropic/claude-sonnet-4-5",
       ]);
-      expect(runner.buildArgs("review", { provider: "opencode", threadId: "ses_1" })).toContain("ses_1");
+      expect(runner.buildArgs(textTurn("review"), { provider: "opencode", threadId: "ses_1" })).toContain("ses_1");
+      expect(runner.buildArgs({
+        parts: [
+          { type: "text", text: "review" },
+          { type: "media", mediaType: "image/png", path: `${root}/attachments/part-1` },
+        ],
+      }, null)).toEqual(expect.arrayContaining(["-f", `${root}/attachments/part-1`]));
     });
   });
 
@@ -620,7 +627,7 @@ describe("OpenCodeRunner", () => {
         ...runnerOptions(root, "", "opencode"),
         outputSchema: { type: "object" },
       });
-      await expect(schemaRunner.runPrompt("hello")).rejects.toThrow("structured JSON output is not supported by opencode runner");
+      await expect(schemaRunner.runPrompt(textTurn("hello"))).rejects.toThrow("structured JSON output is not supported by opencode runner");
     });
   });
 });

@@ -102,7 +102,7 @@ describe("runtime shape integration workflows", () => {
         claudeSpy.mockRestore();
       }
 
-      expect(runPrompt).toHaveBeenCalledWith("hello");
+      expect(runPrompt).toHaveBeenCalledWith({ parts: [{ type: "text", text: "hello" }] });
     });
   });
 });

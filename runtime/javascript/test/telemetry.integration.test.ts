@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { CodexRunner } from "../src/runners/codex.js";
 import { createInteractiveSession } from "../src/interactive.js";
+import { textTurn } from "../src/turn.js";
 import { runnerOptions, withTempSession } from "./helpers.js";
 
 const capture = vi.hoisted(() => ({ options: [] as any[] }));
@@ -19,7 +20,7 @@ const telemetry = { endpoint: "http://collector:4318", headers: { authorization:
 describe("telemetry runner integration", () => {
   it("configures Codex on prompt and interactive resume without overwriting developer instructions", async () => {
     await withTempSession(async (root) => {
-      await new CodexRunner({ ...runnerOptions(root, "instructions"), telemetry }).runPrompt("hello");
+      await new CodexRunner({ ...runnerOptions(root, "instructions"), telemetry }).runPrompt(textTurn("hello"));
       vi.stubEnv("AGENT_COMPOSE_TELEMETRY", JSON.stringify(telemetry));
       const session = await createInteractiveSession({ provider: "codex", stateRoot: path.join(root, "state"), home: path.join(root, "home"), workspace: root }, () => {});
       await session.runHumanMessage("next turn");
@@ -37,7 +38,7 @@ describe("telemetry runner integration", () => {
     await withTempSession(async (root) => {
       const traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
       const tracestate = "vendor=value";
-      await new CodexRunner({ ...runnerOptions(root, ""), telemetry: { ...telemetry, traceparent, tracestate } }).runPrompt("hello");
+      await new CodexRunner({ ...runnerOptions(root, ""), telemetry: { ...telemetry, traceparent, tracestate } }).runPrompt(textTurn("hello"));
       expect(capture.options).toHaveLength(1);
       expect(capture.options[0].env.TRACEPARENT).toBe(traceparent);
       // Codex's exec path reads both variables when loading its parent context.

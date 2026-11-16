@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 import { extractText, jsonString } from "../text.js";
+import { mediaParts, renderTurnText, type TurnContent } from "../turn.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
@@ -27,7 +28,7 @@ export class PiRunner {
     private readonly writer: TranscriptTextWriter = new TranscriptWriter(),
   ) {}
 
-  async runPrompt(promptText: string): Promise<AgentResult> {
+  async runPrompt(turn: TurnContent): Promise<AgentResult> {
     this.reportedError = null;
     this.latestAssistantError = null;
     this.lastAssistantStopReason = "";
@@ -56,7 +57,7 @@ export class PiRunner {
       // intentionally produces a warning; only pass IDs Pi already emitted.
       const managedAgentDir = process.env.PI_CODING_AGENT_DIR || path.join(this.options.home, ".pi", "agent");
       const agentDir = await preparePiAgentDir(managedAgentDir, invocationDir, this.options.mcpConfig);
-      const args = await this.buildArgs(promptText, stored?.threadId, sessionDir, invocationDir, agentDir !== managedAgentDir);
+      const args = await this.buildArgs(turn, stored?.threadId, sessionDir, invocationDir, agentDir !== managedAgentDir);
       const child = spawn("pi", args, {
         cwd: this.options.workspace,
         env: {
@@ -129,7 +130,7 @@ export class PiRunner {
   }
 
   async buildArgs(
-    promptText: string,
+    turn: TurnContent,
     sessionID: string | undefined,
     sessionDir: string,
     invocationDir: string,
@@ -163,7 +164,12 @@ export class PiRunner {
       // codemode exposure, which reaches their tools through codemode scripts.
       args.push("--extension", "builtin:mcp", "--extension", "builtin:codemode");
     }
-    args.push(promptText);
+    // Pi takes attachments as @file positionals and the prompt as the trailing
+    // positional, so media must precede the text.
+    for (const media of mediaParts(turn)) {
+      args.push(`@${media.path}`);
+    }
+    args.push(renderTurnText(turn));
     return args;
   }
 

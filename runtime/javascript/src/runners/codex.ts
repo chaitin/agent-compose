@@ -11,6 +11,7 @@ import { warn } from "../mpi.js";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
+import { mediaParts, renderTurnText, type TurnContent } from "../turn.js";
 import { appendDelta, TranscriptWriter, type TextWriter } from "../transcript.js";
 import type { AgentEvent, AgentEventSink } from "../agent-event.js";
 import { toolOutputText } from "../agent-event.js";
@@ -29,6 +30,24 @@ interface CodexItemState {
 
 interface TranscriptRecorder extends TextWriter {
   transcript(): string;
+}
+
+type CodexUserInput = { type: "text"; text: string } | { type: "local_image"; path: string };
+
+/**
+ * Codex attaches every image to the same turn, so the text projection is one
+ * leading input followed by the media in manifest order.
+ */
+function codexInputs(turn: TurnContent): CodexUserInput[] {
+  const inputs: CodexUserInput[] = [];
+  const text = renderTurnText(turn);
+  if (text) {
+    inputs.push({ type: "text", text });
+  }
+  for (const media of mediaParts(turn)) {
+    inputs.push({ type: "local_image", path: media.path });
+  }
+  return inputs;
 }
 
 function webSearchQuery(item: Record<string, unknown>): string {
@@ -84,8 +103,8 @@ export class CodexRunner {
   }
 
   async runTurn(
-    thread: { runStreamed(input: string, options?: unknown): Promise<{ events: AsyncIterable<unknown> }> },
-    promptText: string,
+    thread: { runStreamed(input: unknown, options?: unknown): Promise<{ events: AsyncIterable<unknown> }> },
+    turn: TurnContent,
     result: AgentResult,
   ): Promise<void> {
     this.reconnectMessage = undefined;
@@ -98,7 +117,7 @@ export class CodexRunner {
           ...(this.options.abortController ? { signal: this.options.abortController.signal } : {}),
         }
         : undefined;
-      const { events } = await thread.runStreamed(promptText, turnOptions);
+      const { events } = await thread.runStreamed(codexInputs(turn), turnOptions);
       for await (const event of events) {
         this.handleEvent(event as Record<string, unknown>, result);
       }
@@ -415,7 +434,7 @@ export class CodexRunner {
     }
   }
 
-  async runPrompt(promptText: string): Promise<AgentResult> {
+  async runPrompt(turn: TurnContent): Promise<AgentResult> {
     const { Codex } = await import("@openai/codex-sdk");
     const stored = await readStoredThread(this.options.sessionRoot, "codex");
     const codex = new Codex({
@@ -452,7 +471,7 @@ export class CodexRunner {
       stderr: "",
     };
 
-    await this.runTurn(thread, promptText, result);
+    await this.runTurn(thread, turn, result);
     result.threadId = thread.id || result.threadId;
     result.transcript = this.writer.transcript();
     if (!result.finalText && result.transcript) {

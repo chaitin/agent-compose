@@ -4,7 +4,8 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CODEX_SYSTEM_CONTEXT_HASH_VERSION, hashSystemContext } from "../src/codex-thread-resume.js";
-import { captureStdio, runnerOptions, withTempSession } from "./helpers.js";
+import { textTurn } from "../src/turn.js";
+import { captureStdio, collectClaudeMessages, runnerOptions, withTempSession } from "./helpers.js";
 
 const codexState = vi.hoisted(() => ({
   constructorOptions: [] as Array<Record<string, unknown>>,
@@ -152,7 +153,7 @@ describe("runner execution", () => {
       ];
       const stdio = captureStdio();
       try {
-        const result = await new CodexRunner(runnerOptions(root, "catalog body")).runPrompt("prompt");
+        const result = await new CodexRunner(runnerOptions(root, "catalog body")).runPrompt(textTurn("prompt"));
 
         expect(result).toMatchObject({
           provider: "codex",
@@ -183,7 +184,7 @@ describe("runner execution", () => {
       codexState.events = [
         { type: "item.completed", item: { id: "cmd", type: "command_execution", command: "pwd", aggregated_output: "/work\n" } },
       ];
-      const result = await new CodexRunner(runnerOptions(root)).runPrompt("prompt");
+      const result = await new CodexRunner(runnerOptions(root)).runPrompt(textTurn("prompt"));
       expect(result.finalText).toContain("$ pwd");
       expect(result.finalTextSource).toBe("transcript_fallback");
       expect(result.transcript).toBe(result.finalText);
@@ -200,7 +201,7 @@ describe("runner execution", () => {
       const abortController = new AbortController();
       abortController.abort();
 
-      const result = await new CodexRunner({ ...runnerOptions(root), abortController }).runPrompt("prompt");
+      const result = await new CodexRunner({ ...runnerOptions(root), abortController }).runPrompt(textTurn("prompt"));
 
       expect(result).toMatchObject({
         threadId: "thread-new",
@@ -225,7 +226,7 @@ describe("runner execution", () => {
           docs: { type: "remote", transport: "http", url: "https://docs.example/mcp", headers: { Authorization: { value: "Bearer token" } } },
         },
       });
-      await runner.runPrompt("prompt");
+      await runner.runPrompt(textTurn("prompt"));
       expect(claudeState.queryCalls.at(-1)?.options).toMatchObject({
         strictMcpConfig: true,
         mcpServers: {
@@ -246,7 +247,7 @@ describe("runner execution", () => {
           filesystem: { type: "local", command: "npx", args: ["-y", "server"], env: { TOKEN: { value: "secret" } } },
         },
       });
-      await runner.runPrompt("prompt");
+      await runner.runPrompt(textTurn("prompt"));
       const config = JSON.parse(await fs.readFile(path.join(root, "home", ".config", "opencode", "opencode.json"), "utf-8"));
       expect(config.mcp.filesystem).toMatchObject({ type: "local", command: ["npx", "-y", "server"], environment: { TOKEN: "secret" } });
     });
@@ -263,13 +264,13 @@ describe("runner execution", () => {
       codexState.runStreamedCalls = [];
       const stdio = captureStdio();
       try {
-        await new CodexRunner({ ...runnerOptions(root), outputSchema: schema }).runPrompt("prompt");
+        await new CodexRunner({ ...runnerOptions(root), outputSchema: schema }).runPrompt(textTurn("prompt"));
       } finally {
         stdio.restore();
       }
 
       expect(codexState.runStreamedCalls.at(-1)).toEqual({
-        input: "prompt",
+        input: [{ type: "text", text: "prompt" }],
         options: { outputSchema: schema },
       });
     });
@@ -283,7 +284,7 @@ describe("runner execution", () => {
         error: { message: "unexpected status 503 Service Unavailable: upstream down" },
       }];
 
-      await expect(new CodexRunner(runnerOptions(root)).runPrompt("prompt")).rejects.toThrow(
+      await expect(new CodexRunner(runnerOptions(root)).runPrompt(textTurn("prompt"))).rejects.toThrow(
         "unexpected status 503 Service Unavailable: upstream down",
       );
     });
@@ -310,7 +311,7 @@ describe("runner execution", () => {
       const result = await new CodexRunner({
         ...runnerOptions(root),
         onEvent: (event) => emitted.push(event),
-      }).runPrompt("prompt");
+      }).runPrompt(textTurn("prompt"));
 
       expect(result.finalText).toBe("recovered");
       expect(emitted).toContainEqual({
@@ -342,7 +343,7 @@ describe("runner execution", () => {
       await expect(new CodexRunner({
         ...runnerOptions(root),
         onEvent: (event) => emitted.push(event),
-      }).runPrompt("prompt")).rejects.toThrow(failure);
+      }).runPrompt(textTurn("prompt"))).rejects.toThrow(failure);
       expect(emitted).toContainEqual({ kind: "error", severity: "fatal", message: failure });
     });
   });
@@ -359,7 +360,7 @@ describe("runner execution", () => {
         ...runnerOptions(root),
         abortController,
         onEvent: (event) => emitted.push(event),
-      }).runPrompt("prompt");
+      }).runPrompt(textTurn("prompt"));
 
       expect(result.stopReason).toBe("cancelled");
       expect(emitted.some((event) => event.kind === "error")).toBe(false);
@@ -374,7 +375,7 @@ describe("runner execution", () => {
         { type: "turn.failed", error: { message: "reconnect attempts exhausted" } },
       ];
 
-      await expect(new CodexRunner(runnerOptions(root)).runPrompt("prompt")).rejects.toThrow(
+      await expect(new CodexRunner(runnerOptions(root)).runPrompt(textTurn("prompt"))).rejects.toThrow(
         "reconnect attempts exhausted",
       );
     });
@@ -394,7 +395,7 @@ describe("runner execution", () => {
       codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "resumed" } }];
       const stdio = captureStdio();
       try {
-        const result = await new CodexRunner(runnerOptions(root, "catalog body")).runPrompt("prompt");
+        const result = await new CodexRunner(runnerOptions(root, "catalog body")).runPrompt(textTurn("prompt"));
         expect(result.threadId).toBe("thread-resumed");
       } finally {
         stdio.restore();
@@ -416,7 +417,7 @@ describe("runner execution", () => {
       codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "fresh" } }];
       const stdio = captureStdio();
       try {
-        const result = await new CodexRunner(runnerOptions(root, "catalog body")).runPrompt("prompt");
+        const result = await new CodexRunner(runnerOptions(root, "catalog body")).runPrompt(textTurn("prompt"));
         expect(result.threadId).toBe("thread-new");
         expect(stdio.stderr).toContain("stored Codex thread has no system context fingerprint");
       } finally {
@@ -441,7 +442,7 @@ describe("runner execution", () => {
       codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "fresh" } }];
       const stdio = captureStdio();
       try {
-        const result = await new CodexRunner(runnerOptions(root, "new context")).runPrompt("prompt");
+        const result = await new CodexRunner(runnerOptions(root, "new context")).runPrompt(textTurn("prompt"));
         expect(result.threadId).toBe("thread-new");
         expect(stdio.stderr).toContain("system context changed");
       } finally {
@@ -472,7 +473,7 @@ describe("runner execution", () => {
       codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "fresh" } }];
       const stdio = captureStdio();
       try {
-        const result = await new CodexRunner(runnerOptions(root, "context")).runPrompt("prompt");
+        const result = await new CodexRunner(runnerOptions(root, "context")).runPrompt(textTurn("prompt"));
         expect(result.threadId).toBe("thread-new");
         expect(stdio.stderr).toContain("unsupported system context fingerprint version");
       } finally {
@@ -491,9 +492,9 @@ describe("runner execution", () => {
       codexState.events = [{ type: "item.completed", item: { id: "a1", type: "agent_message", text: "first" } }];
       const stdio = captureStdio();
       try {
-        await new CodexRunner(runnerOptions(root)).runPrompt("first prompt");
+        await new CodexRunner(runnerOptions(root)).runPrompt(textTurn("first prompt"));
         codexState.events = [{ type: "item.completed", item: { id: "a2", type: "agent_message", text: "second" } }];
-        await new CodexRunner(runnerOptions(root)).runPrompt("second prompt");
+        await new CodexRunner(runnerOptions(root)).runPrompt(textTurn("second prompt"));
       } finally {
         stdio.restore();
       }
@@ -501,7 +502,10 @@ describe("runner execution", () => {
       const stored = JSON.parse(await fs.readFile(path.join(root, "state", "agents", "providers", "codex.json"), "utf8"));
       expect(stored.threadId).toBe("codex-thread");
       expect(codexState.resumed).toBe("codex-thread");
-      expect(codexState.runStreamedCalls.map((call) => call.input)).toEqual(["first prompt", "second prompt"]);
+      expect(codexState.runStreamedCalls.map((call) => call.input)).toEqual([
+        [{ type: "text", text: "first prompt" }],
+        [{ type: "text", text: "second prompt" }],
+      ]);
     });
   });
 
@@ -519,7 +523,7 @@ describe("runner execution", () => {
       ];
       const stdio = captureStdio();
       try {
-        const result = await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt("prompt");
+        const result = await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt(textTurn("prompt"));
 
         expect(result).toMatchObject({
           provider: "claude",
@@ -551,12 +555,12 @@ describe("runner execution", () => {
       ];
       const stdio = captureStdio();
       try {
-        await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt("first prompt");
+        await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt(textTurn("first prompt"));
         claudeState.messages = [
           { type: "stream_event", session_id: "claude-session", event: { type: "content_block_delta", delta: { type: "text_delta", text: "second" } } },
           { type: "result", subtype: "success", stop_reason: "end_turn", result: "second" },
         ];
-        await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt("second prompt");
+        await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt(textTurn("second prompt"));
       } finally {
         stdio.restore();
       }
@@ -579,7 +583,7 @@ describe("runner execution", () => {
       const stdio = captureStdio();
       try {
         const result = await Promise.race([
-          new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt("prompt"),
+          new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt(textTurn("prompt")),
           new Promise<never>((_, reject) => setTimeout(() => reject(new Error("runner did not return after result")), 100)),
         ]);
 
@@ -605,14 +609,13 @@ describe("runner execution", () => {
       claudeState.queryCalls = [];
       const stdio = captureStdio();
       try {
-        const result = await new ClaudeRunner({ ...runnerOptions(root, "", "claude"), outputSchema: schema }).runPrompt("prompt");
+        const result = await new ClaudeRunner({ ...runnerOptions(root, "", "claude"), outputSchema: schema }).runPrompt(textTurn("prompt"));
         expect(result.finalText).toBe("{\"summary\":\"ok\"}");
       } finally {
         stdio.restore();
       }
 
       expect(claudeState.queryCalls.at(-1)).toMatchObject({
-        prompt: "prompt",
         options: {
           outputFormat: {
             type: "json_schema",
@@ -620,6 +623,13 @@ describe("runner execution", () => {
           },
         },
       });
+      expect(await collectClaudeMessages(claudeState.queryCalls.at(-1)?.prompt)).toEqual([
+        {
+          type: "user",
+          parent_tool_use_id: null,
+          message: { role: "user", content: [{ type: "text", text: "prompt" }] },
+        },
+      ]);
     });
   });
 
@@ -643,7 +653,7 @@ describe("runner execution", () => {
         const result = await new ClaudeRunner({
           ...runnerOptions(root, "", "claude"),
           outputSchema: { type: ["boolean", "null", "string", "number"] },
-        }).runPrompt("prompt");
+        }).runPrompt(textTurn("prompt"));
         expect(result.finalText).toBe(expectedFinalText);
       } finally {
         stdio.restore();
@@ -665,7 +675,7 @@ describe("runner execution", () => {
         const result = await new ClaudeRunner({
           ...runnerOptions(root, "", "claude"),
           outputSchema: { type: "object", properties: { summary: { type: "string" } } },
-        }).runPrompt("prompt");
+        }).runPrompt(textTurn("prompt"));
         expect(result.finalText).toBe("{\"summary\":\"fallback\"}");
       } finally {
         stdio.restore();
@@ -683,7 +693,7 @@ describe("runner execution", () => {
       const onEvent = vi.fn();
       const stdio = captureStdio();
       try {
-        await expect(new ClaudeRunner({ ...runnerOptions(root, "", "claude"), onEvent }).runPrompt("prompt")).rejects.toThrow("api failed");
+        await expect(new ClaudeRunner({ ...runnerOptions(root, "", "claude"), onEvent }).runPrompt(textTurn("prompt"))).rejects.toThrow("api failed");
         expect(onEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "error", severity: "fatal" }));
         expect(claudeState.closed).toBe(true);
       } finally {
@@ -706,7 +716,7 @@ describe("runner execution", () => {
         await expect(new ClaudeRunner({
           ...runnerOptions(root, "", "claude"),
           outputSchema: { type: "object", required: ["summary"], properties: { summary: { type: "string" } } },
-        }).runPrompt("prompt")).rejects.toThrow("structured output did not match schema");
+        }).runPrompt(textTurn("prompt"))).rejects.toThrow("structured output did not match schema");
       } finally {
         stdio.restore();
       }
@@ -721,7 +731,7 @@ describe("runner execution", () => {
       ];
       const stdio = captureStdio();
       try {
-        const result = await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt("prompt");
+        const result = await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt(textTurn("prompt"));
         expect(result.finalText).toBe("transcript only");
         expect(result.finalTextSource).toBe("transcript_fallback");
       } finally {
@@ -742,12 +752,12 @@ describe("runner execution", () => {
       ];
       const stdio = captureStdio();
       try {
-        await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt("first prompt");
+        await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt(textTurn("first prompt"));
         childProcessState.stdoutLines = [
           JSON.stringify({ type: "message", sessionID: "opencode-session", message: { content: "second" } }),
           JSON.stringify({ type: "result", response: "second" }),
         ];
-        await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt("second prompt");
+        await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt(textTurn("second prompt"));
       } finally {
         stdio.restore();
       }
@@ -766,7 +776,7 @@ describe("runner execution", () => {
         JSON.stringify({ type: "message", sessionID: "opencode-session", message: { content: "working" } }),
         JSON.stringify({ type: "tool_result", result: { text: "tool output" } }),
       ];
-      const result = await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt("prompt");
+      const result = await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt(textTurn("prompt"));
       expect(result.finalText).toContain("tool output");
       expect(result.finalTextSource).toBe("transcript_fallback");
       expect(result.transcript).toBe(result.finalText);
@@ -794,7 +804,7 @@ describe("runner execution", () => {
         }),
       ];
 
-      const result = await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt("prompt");
+      const result = await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt(textTurn("prompt"));
 
       expect(result).toMatchObject({
         threadId: "opencode-session",
@@ -838,7 +848,7 @@ describe("runner execution", () => {
         mcpConfig: {
           docs: { type: "local", command: "npx", args: ["-y", "server"], env: { TOKEN: { value: "secret" } } },
         },
-      }).runPrompt("user prompt");
+      }).runPrompt(textTurn("user prompt"));
 
       expect(result.provider).toBe("dsh");
       expect(result.finalText).toBe("dsh final answer");
@@ -874,6 +884,7 @@ describe("runner execution", () => {
     vi.stubEnv("DSH_SKILL_DIRS", "/host/leaked/skills");
     vi.stubEnv("DSH_MCP_SERVERS", JSON.stringify([{ transport: "stdio", serverName: "leaked", command: "evil" }]));
     vi.stubEnv("DSH_SYSTEM_CONTEXT_FILE", "/host/leaked/persona.txt");
+    vi.stubEnv("DSH_ATTACHMENTS_FILE", "/host/leaked/attachments.json");
 
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
@@ -888,7 +899,7 @@ describe("runner execution", () => {
         dshSessionEventLine("session-existing", { type: "turn/end", seq: 1, time: 1, data: { turn: 0, reason: { kind: "error", error: { code: "BOOM", message: "dsh failed" } } } }),
       ];
 
-      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt")))
         .rejects.toThrow("dsh turn ended with error (BOOM): dsh failed");
 
       const call = childProcessState.spawnCalls.at(-1);
@@ -900,6 +911,112 @@ describe("runner execution", () => {
       expect(env).not.toHaveProperty("DSH_SKILL_DIRS");
       expect(env).not.toHaveProperty("DSH_MCP_SERVERS");
       expect(env).not.toHaveProperty("DSH_SYSTEM_CONTEXT_FILE");
+      expect(env).not.toHaveProperty("DSH_ATTACHMENTS_FILE");
+    });
+  });
+
+  it("passes Codex media as local_image inputs after the text and omits empty text", async () => {
+    const { CodexRunner } = await import("../src/runners/codex.js");
+    await withTempSession(async (root) => {
+      const imagePath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-1");
+      const secondPath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-3");
+      await fs.mkdir(path.dirname(imagePath), { recursive: true });
+      await fs.writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      await fs.writeFile(secondPath, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+
+      await new CodexRunner(runnerOptions(root)).runPrompt({
+        parts: [
+          { type: "text", text: "compare these" },
+          { type: "media", mediaType: "image/png", filename: "before.png", path: imagePath },
+          { type: "media", mediaType: "image/jpeg", path: secondPath },
+        ],
+      });
+
+      expect(codexState.runStreamedCalls.at(-1)?.input).toEqual([
+        { type: "text", text: "compare these" },
+        { type: "local_image", path: imagePath },
+        { type: "local_image", path: secondPath },
+      ]);
+
+      await new CodexRunner(runnerOptions(root)).runPrompt({
+        parts: [{ type: "media", mediaType: "image/png", path: imagePath }],
+      });
+
+      expect(codexState.runStreamedCalls.at(-1)?.input).toEqual([{ type: "local_image", path: imagePath }]);
+    });
+  });
+
+  it("sends Claude images and PDFs as base64 content blocks", async () => {
+    const { ClaudeRunner } = await import("../src/runners/claude.js");
+    await withTempSession(async (root) => {
+      const imagePath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-1");
+      const pdfPath = path.join(root, "workspace", "reports", "q3.pdf");
+      const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02, 0x03]);
+      const pdfBytes = Buffer.from("%PDF-1.7\nq3 report\n", "utf8");
+      await fs.mkdir(path.dirname(imagePath), { recursive: true });
+      await fs.mkdir(path.dirname(pdfPath), { recursive: true });
+      await fs.writeFile(imagePath, imageBytes);
+      await fs.writeFile(pdfPath, pdfBytes);
+
+      const stdio = captureStdio();
+      try {
+        await new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt({
+          parts: [
+            { type: "text", text: "compare these" },
+            { type: "media", mediaType: "image/png", filename: "before.png", path: imagePath },
+            { type: "media", mediaType: "application/pdf", path: pdfPath, workspacePath: "reports/q3.pdf" },
+            { type: "text", text: "and these" },
+          ],
+        });
+      } finally {
+        stdio.restore();
+      }
+
+      expect(await collectClaudeMessages(claudeState.queryCalls.at(-1)?.prompt)).toEqual([{
+        type: "user",
+        parent_tool_use_id: null,
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "compare these" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: imageBytes.toString("base64") } },
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: pdfBytes.toString("base64") } },
+            { type: "text", text: "and these" },
+          ],
+        },
+      }]);
+    });
+  });
+
+  it("rejects a Claude media type it cannot represent", async () => {
+    const { ClaudeRunner } = await import("../src/runners/claude.js");
+    await withTempSession(async (root) => {
+      const bitmapPath = path.join(root, "bitmap.bmp");
+      await fs.writeFile(bitmapPath, Buffer.from([0x42, 0x4d]));
+
+      await expect(new ClaudeRunner(runnerOptions(root, "", "claude")).runPrompt({
+        parts: [{ type: "media", mediaType: "image/bmp", path: bitmapPath }],
+      })).rejects.toThrow('claude runner does not support media type "image/bmp"');
+    });
+  });
+
+  it("passes OpenCode media to the CLI through -f flags", async () => {
+    const { OpenCodeRunner } = await import("../src/runners/opencode.js");
+    await withTempSession(async (root) => {
+      const imagePath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-1");
+      const pdfPath = path.join(root, "workspace", "reports", "q3.pdf");
+
+      await new OpenCodeRunner(runnerOptions(root, "", "opencode")).runPrompt({
+        parts: [
+          { type: "text", text: "compare these" },
+          { type: "media", mediaType: "image/png", path: imagePath },
+          { type: "media", mediaType: "application/pdf", path: pdfPath },
+        ],
+      });
+
+      const args = childProcessState.spawnCalls.at(-1)?.args ?? [];
+      expect(args.slice(0, 2)).toEqual(["run", "compare these"]);
+      expect(args.slice(args.indexOf("-f"))).toEqual(["-f", imagePath, "-f", pdfPath]);
     });
   });
 });
