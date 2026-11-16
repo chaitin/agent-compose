@@ -99,7 +99,7 @@ func writeAgentInputPart(ctx context.Context, deps agentInputPartDeps) (agentinp
 	media := part.Media
 	switch media.Source {
 	case agentinput.SourceInline:
-		name := fmt.Sprintf("part-%d", deps.index)
+		name := fmt.Sprintf("part-%d%s", deps.index, agentinput.FileExtension(media.Type))
 		hostPath := filepath.Join(deps.hostDir, name)
 		if err := os.WriteFile(hostPath, media.Data, 0o600); err != nil {
 			return agentinput.ManifestPart{}, fmt.Errorf("write agent input part %d: %w", deps.index, err)

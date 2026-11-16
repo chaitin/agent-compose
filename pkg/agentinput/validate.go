@@ -39,6 +39,28 @@ func AllMediaTypes() []string {
 	return append(ImageMediaTypes(), MediaTypePDF)
 }
 
+// FileExtension returns the filename extension for a canonical media type.
+//
+// The extension is not cosmetic: some harnesses (opencode) infer an
+// attachment's MIME type from its path, so a materialized inline file without
+// one is attached as text/plain instead of an image.
+func FileExtension(mediaType string) string {
+	switch mediaType {
+	case MediaTypePNG:
+		return ".png"
+	case MediaTypeJPEG:
+		return ".jpg"
+	case MediaTypeGIF:
+		return ".gif"
+	case MediaTypeWebP:
+		return ".webp"
+	case MediaTypePDF:
+		return ".pdf"
+	default:
+		return ""
+	}
+}
+
 // Limits are the daemon-wide admission limits for one turn.
 type Limits struct {
 	MaxPartBytes uint64

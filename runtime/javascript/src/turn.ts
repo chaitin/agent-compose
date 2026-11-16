@@ -1,4 +1,5 @@
 import path from "node:path";
+import { stat } from "node:fs/promises";
 
 /**
  * One ordered piece of a turn's input.
@@ -47,6 +48,28 @@ export function renderTurnText(turn: TurnContent): string {
 /** The turn's media parts in manifest order. */
 export function mediaParts(turn: TurnContent): MediaPart[] {
   return turn.parts.filter((part): part is MediaPart => part.type === "media");
+}
+
+/**
+ * Verify every media path is a readable regular file before the turn starts.
+ *
+ * The daemon cannot do this for a workspace path when it does not share the
+ * sandbox filesystem, and a harness that silently substitutes placeholder text
+ * for a missing image would let the run "succeed" with the model answering
+ * about nothing. Failing here names the missing attachment instead.
+ */
+export async function verifyTurnMedia(turn: TurnContent): Promise<void> {
+  for (const media of mediaParts(turn)) {
+    let info;
+    try {
+      info = await stat(media.path);
+    } catch (error) {
+      throw new Error(`attachment ${media.path} is not readable`, { cause: error });
+    }
+    if (!info.isFile()) {
+      throw new Error(`attachment ${media.path} is not a regular file`);
+    }
+  }
 }
 
 /** Wrap plain text as a turn, preserving the pre-multimodal prompt path. */

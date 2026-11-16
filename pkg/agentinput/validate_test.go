@@ -176,3 +176,19 @@ func TestValidateTurnBytes(t *testing.T) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
 	}
 }
+
+func TestFileExtensionMatchesMediaType(t *testing.T) {
+	cases := map[string]string{
+		MediaTypePNG:    ".png",
+		MediaTypeJPEG:   ".jpg",
+		MediaTypeGIF:    ".gif",
+		MediaTypeWebP:   ".webp",
+		MediaTypePDF:    ".pdf",
+		"image/svg+xml": "",
+	}
+	for mediaType, want := range cases {
+		if got := FileExtension(mediaType); got != want {
+			t.Errorf("FileExtension(%q) = %q, want %q", mediaType, got, want)
+		}
+	}
+}

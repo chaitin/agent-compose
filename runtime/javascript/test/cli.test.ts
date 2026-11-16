@@ -485,8 +485,9 @@ describe("commander CLI", () => {
       const messageFile = path.join(root, "message.txt");
       const contentFile = path.join(root, "content.json");
       const stateRoot = path.join(root, "state");
-      const mediaPath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-1");
-      await fs.mkdir(stateRoot, { recursive: true });
+      const mediaPath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-1.png");
+      await fs.mkdir(path.dirname(mediaPath), { recursive: true });
+      await fs.writeFile(mediaPath, "png!", "utf8");
       await fs.writeFile(messageFile, "legacy text projection", "utf8");
       await fs.writeFile(contentFile, JSON.stringify({
         version: 1,

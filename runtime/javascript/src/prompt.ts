@@ -12,7 +12,7 @@ import { OpenCodeRunner } from "./runners/opencode.js";
 import { PiRunner } from "./runners/pi.js";
 import { readMCPConfig } from "./mcp-config.js";
 import { agentSystemPromptPath, buildSystemContext, readSystemPromptFile } from "./system-context.js";
-import { parseTurnManifest, textTurn, type TurnContent } from "./turn.js";
+import { parseTurnManifest, textTurn, verifyTurnMedia, type TurnContent } from "./turn.js";
 import type { AgentResult, RuntimeJsonSchema } from "./types.js";
 
 export interface PromptCommandOptions {
@@ -77,6 +77,7 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
 export async function runPromptCommand(commandOptions: PromptCommandOptions): Promise<AgentResult> {
   const options = await buildPromptRuntimeOptions(commandOptions);
   const turn = await readTurnContent(commandOptions);
+  await verifyTurnMedia(turn);
   const provider = options.provider;
   if (provider === "codex") {
     return await new CodexRunner(options).runPrompt(turn);

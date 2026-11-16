@@ -1,5 +1,8 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { mediaParts, parseTurnManifest, renderTurnText, textTurn } from "../src/turn.js";
+import { mediaParts, parseTurnManifest, renderTurnText, textTurn, verifyTurnMedia } from "../src/turn.js";
 import type { MediaPart, TurnContent } from "../src/turn.js";
 
 const image: MediaPart = {
@@ -146,5 +149,26 @@ describe("mediaParts", () => {
 
   it("returns no media for a text-only turn", () => {
     expect(mediaParts(textTurn("hello"))).toEqual([]);
+  });
+});
+
+describe("verifyTurnMedia", () => {
+  it("accepts a regular file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "turn-media-"));
+    const file = path.join(dir, "part-1.png");
+    await writeFile(file, "png");
+    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: file }] })).resolves.toBeUndefined();
+  });
+
+  it("rejects a missing attachment", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "turn-media-"));
+    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: path.join(dir, "missing.png") }] }))
+      .rejects.toThrow(/is not readable/);
+  });
+
+  it("rejects a directory", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "turn-media-"));
+    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: dir }] }))
+      .rejects.toThrow(/not a regular file/);
   });
 });

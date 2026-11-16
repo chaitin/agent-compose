@@ -56,13 +56,13 @@ func TestWriteAgentInputFilesMaterializesInlineAndWorkspaceMedia(t *testing.T) {
 		t.Fatalf("guest manifest = %q, want %q", guestManifest, wantGuestManifest)
 	}
 	hostDir := filepath.Join(workspace, "..", "state", "agents", "attachments", runID, "turn-0")
-	if _, err := os.Stat(filepath.Join(hostDir, "part-1")); err != nil {
+	if _, err := os.Stat(filepath.Join(hostDir, "part-1.png")); err != nil {
 		t.Fatalf("inline part was not written: %v", err)
 	}
 	if !bytes.Equal(pushed[wantGuestManifest], mustReadFile(t, filepath.Join(hostDir, "content.json"))) {
 		t.Fatalf("pushed manifest differs from the host copy")
 	}
-	if _, ok := pushed["/sandbox/state/agents/attachments/run-1/turn-0/part-1"]; !ok {
+	if _, ok := pushed["/sandbox/state/agents/attachments/run-1/turn-0/part-1.png"]; !ok {
 		t.Fatalf("inline part was not pushed to the guest: %v", keys(pushed))
 	}
 
@@ -77,7 +77,7 @@ func TestWriteAgentInputFilesMaterializesInlineAndWorkspaceMedia(t *testing.T) {
 		t.Errorf("first part = %+v", manifest.Parts[0])
 	}
 	inline := manifest.Parts[1].Media
-	if inline == nil || inline.Path != "/sandbox/state/agents/attachments/run-1/turn-0/part-1" || inline.SizeBytes != int64(len(pngFixture())) {
+	if inline == nil || inline.Path != "/sandbox/state/agents/attachments/run-1/turn-0/part-1.png" || inline.SizeBytes != int64(len(pngFixture())) {
 		t.Errorf("inline media = %+v", inline)
 	}
 	if inline.SHA256 == "" || len(inline.SHA256) != 64 {
