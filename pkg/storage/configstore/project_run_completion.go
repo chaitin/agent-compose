@@ -135,6 +135,9 @@ func (s *projectStore) finalizeProjectRunCompletion(ctx context.Context, run dom
 	if err != nil {
 		return domain.ProjectRunRecord{}, err
 	}
+	if err := validateHistoryArtifactPaths(run.LogsPath, run.ArtifactsDir); err != nil {
+		return domain.ProjectRunRecord{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.ProjectRunRecord{}, fmt.Errorf("begin finalize project run completion: %w", err)

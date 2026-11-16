@@ -118,6 +118,7 @@ func TestE2EPublicRunHistoryRemoval(t *testing.T) {
 		remove(request, 0)
 	}
 	assertSkillsPublicE2EAbsent(t, artifacts)
+	assertSkillsPublicE2EAbsent(t, filepath.Join(filepath.Dir(artifacts), ".history-removing-"+parentID))
 	assertCount := func(table, column, value string, want int) {
 		t.Helper()
 		var got int

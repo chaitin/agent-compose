@@ -16,7 +16,7 @@ type testSandboxDirs string
 func (r testSandboxDirs) SandboxDir(id string) string { return filepath.Join(string(r), id) }
 
 func TestRunHistoryArtifactsRejectUnsafeOrSharedPaths(t *testing.T) {
-	for _, name := range []string{"wrong_recorded_path", "symlink_leaf", "symlink_parent", "shared_file", "shared_symlink_parent", "sandbox_retained", "audit_archive", "unowned_run_artifact", "outside_run_artifact"} {
+	for _, name := range []string{"wrong_recorded_path", "symlink_leaf", "symlink_parent", "symlink_pending", "shared_file", "shared_symlink_parent", "sandbox_retained", "audit_archive", "unowned_run_artifact", "outside_run_artifact"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			outside := t.TempDir()
@@ -52,6 +52,10 @@ func TestRunHistoryArtifactsRejectUnsafeOrSharedPaths(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err := os.Symlink(outside, parent); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink_pending":
+				if err := os.Symlink(outside, filepath.Join(filepath.Dir(path), pendingHistoryName(runID))); err != nil {
 					t.Fatal(err)
 				}
 			case "shared_file":

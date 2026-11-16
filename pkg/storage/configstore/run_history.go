@@ -4,60 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
+	"slices"
 
-	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runhistory"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
-
-func (s *ConfigStore) RemoveRunHistory(ctx context.Context, id runhistory.Identity, removeArtifacts func(runhistory.Scope) error) error {
-	if err := id.Validate(); err != nil {
-		return apierror.NotApplied(err)
-	}
-	if removeArtifacts == nil {
-		return apierror.NotApplied(domain.ClassifyError(domain.ErrFailedPrecondition, "artifact remover is required", nil))
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return apierror.NotApplied(err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	// Acquire SQLite's writer lock before reading any candidate. Concurrent
-	// completion, child creation, and history removals cannot change this scope.
-	if _, err := tx.ExecContext(ctx, "UPDATE project SET updated_at=updated_at WHERE id=?", id.ProjectID); err != nil {
-		return apierror.NotApplied(err)
-	}
-	scope, err := loadRunHistoryScope(ctx, tx, id)
-	if err != nil {
-		return apierror.NotApplied(err)
-	}
-	if err := removeArtifacts(scope); err != nil {
-		// Files may already be partially removed. Never claim NOT_APPLIED or
-		// delete the identity/path records on this path.
-		return err
-	}
-	for _, run := range scope.Runs {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM project_run WHERE run_id=? AND project_id=?", run.RunID, id.ProjectID); err != nil {
-			return fmt.Errorf("delete project run history: %w", err)
-		}
-	}
-	if id.Kind == runhistory.SchedulerRun {
-		for _, table := range []string{"event_sandbox_link", "event_delivery", "scheduler_event"} {
-			if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE scheduler_id=? AND scheduler_run_id=?", id.SchedulerID, id.RunID); err != nil {
-				return fmt.Errorf("delete scheduler run history %s: %w", table, err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, "DELETE FROM scheduler_run WHERE scheduler_id=? AND run_id=?", id.SchedulerID, id.RunID); err != nil {
-			return fmt.Errorf("delete scheduler run history: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit run history removal (retry with the same identity): %w", err)
-	}
-	return nil
-}
 
 func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity) (runhistory.Scope, error) {
 	scope := runhistory.Scope{}
@@ -116,7 +68,7 @@ func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity
 	if id.Kind == runhistory.SchedulerRun {
 		args = append(args, id.RunID)
 	}
-	rows, err := tx.QueryContext(ctx, query, args...)
+	rows, err := tx.QueryContext(ctx, query+" ORDER BY run_id", args...)
 	if err != nil {
 		return scope, err
 	}
@@ -179,68 +131,9 @@ func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity
 	if err := protectRunHistoryReferences(ctx, tx, id, &scope); err != nil {
 		return scope, err
 	}
+	slices.Sort(scope.ProtectedPaths)
+	scope.ProtectedPaths = slices.Compact(scope.ProtectedPaths)
+	slices.Sort(scope.SandboxIDs)
+	scope.SandboxIDs = slices.Compact(scope.SandboxIDs)
 	return scope, nil
-}
-
-func protectRunHistoryReferences(ctx context.Context, tx *sql.Tx, id runhistory.Identity, scope *runhistory.Scope) error {
-	owned := make(map[string]bool, len(scope.Runs))
-	sandboxes := make(map[string]bool)
-	for _, run := range scope.Runs {
-		owned[run.RunID] = true
-	}
-	for _, sandboxID := range scope.SandboxIDs {
-		sandboxes[sandboxID] = true
-	}
-	for sandboxID := range sandboxes {
-		var referenced bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM scheduler_event WHERE linked_sandbox_id=? AND NOT(scheduler_id=? AND scheduler_run_id=?))
-			OR EXISTS(SELECT 1 FROM event_sandbox_link WHERE sandbox_id=? AND NOT(scheduler_id=? AND scheduler_run_id=?))
-			OR EXISTS(SELECT 1 FROM scheduler_sandbox_binding WHERE sandbox_id=?)`,
-			sandboxID, id.SchedulerID, id.RunID, sandboxID, id.SchedulerID, id.RunID, sandboxID).Scan(&referenced); err != nil {
-			return err
-		}
-		if referenced {
-			return domain.ClassifyError(domain.ErrReferenced, "sandbox has references outside this run history", nil)
-		}
-	}
-	rows, err := tx.QueryContext(ctx, "SELECT run_id, sandbox_id, logs_path, artifacts_dir FROM project_run")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var runID, sandboxID, logsPath, artifactsDir string
-		if err := rows.Scan(&runID, &sandboxID, &logsPath, &artifactsDir); err != nil {
-			return err
-		}
-		if owned[runID] {
-			continue
-		}
-		if sandboxes[sandboxID] {
-			return domain.ClassifyError(domain.ErrReferenced, "sandbox is referenced by another run", nil)
-		}
-		scope.ProtectedPaths = append(scope.ProtectedPaths, logsPath, artifactsDir)
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	rows, err = tx.QueryContext(ctx, "SELECT scheduler_id, run_id, artifacts_dir FROM scheduler_run")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var schedulerID, runID, path string
-		if err := rows.Scan(&schedulerID, &runID, &path); err != nil {
-			return err
-		}
-		if id.Kind != runhistory.SchedulerRun || schedulerID != id.SchedulerID || runID != id.RunID {
-			scope.ProtectedPaths = append(scope.ProtectedPaths, path)
-		}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	return err
 }

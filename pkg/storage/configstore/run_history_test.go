@@ -67,11 +67,11 @@ func TestRunHistoryStandaloneExactAndIdempotent(t *testing.T) {
 	f := newRunHistoryFixture(t, nil)
 	ctx := context.Background()
 	for range 2 {
-		if err := f.store.RemoveRunHistory(ctx, f.standalone, func(scope runhistory.Scope) error {
+		if err := f.store.RemoveRunHistory(ctx, f.standalone, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
 			if scope.SchedulerRun != nil || len(scope.Runs) > 1 {
 				t.Fatalf("unexpected scope: %+v", scope)
 			}
-			return nil
+			return &historyTestArtifacts{}, nil
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -98,11 +98,11 @@ func TestRunHistorySchedulerDeletesOnlyExactRelationsAndChildren(t *testing.T) {
 	if _, err := f.store.db.ExecContext(ctx, "INSERT INTO event_delivery(event_id,scheduler_id,trigger_id,scheduler_run_id,status,created_at,updated_at) VALUES('shared-topic-event',?,'other','other-run','run_succeeded',1,1)", f.scheduler.SchedulerID); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) error {
+	if err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
 		if len(scope.Runs) != 1 || scope.Runs[0].RunID != f.childID || scope.SchedulerRun.ID != f.scheduler.RunID {
 			t.Fatalf("scope: %+v", scope)
 		}
-		return nil
+		return &historyTestArtifacts{}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,10 @@ func TestRunHistoryRejectsUnsafeScopeBeforeArtifacts(t *testing.T) {
 				exec("INSERT INTO scheduler_sandbox_binding(scheduler_id,trigger_id,sandbox_id,sandbox_config_hash,created_at,updated_at) VALUES(?,'trigger','shared','hash',1,1)", id.SchedulerID)
 			}
 			called := false
-			err := f.store.RemoveRunHistory(ctx, id, func(runhistory.Scope) error { called = true; return nil })
+			err := f.store.RemoveRunHistory(ctx, id, func(runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+				called = true
+				return &historyTestArtifacts{}, nil
+			})
 			if err == nil || called || !apierror.IsNotApplied(err) {
 				t.Fatalf("err=%v called=%v", err, called)
 			}
@@ -196,14 +199,15 @@ func TestRunHistoryArtifactAndDatabaseFailuresRemainRetryableAfterRestart(t *tes
 					t.Fatal(err)
 				}
 			}
-			err = f.store.RemoveRunHistory(context.Background(), id, func(scope runhistory.Scope) error {
-				if err := remove.Remove(context.Background(), scope); err != nil {
-					return err
+			err = f.store.RemoveRunHistory(context.Background(), id, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+				prepared, err := remove.Prepare(context.Background(), scope)
+				if err != nil {
+					return nil, err
 				}
 				if phase == "artifacts" {
-					return errors.New("simulated interruption after partial cleanup")
+					return &historyTestArtifacts{PreparedArtifacts: prepared, afterRemove: errors.New("simulated interruption after partial cleanup")}, nil
 				}
-				return nil
+				return prepared, nil
 			})
 			if err == nil || apierror.IsNotApplied(err) {
 				t.Fatalf("err=%v", err)
@@ -229,7 +233,9 @@ func TestRunHistoryArtifactAndDatabaseFailuresRemainRetryableAfterRestart(t *tes
 					t.Fatal(err)
 				}
 			}
-			if err := store.RemoveRunHistory(context.Background(), id, func(scope runhistory.Scope) error { return remove.Remove(context.Background(), scope) }); err != nil {
+			if err := store.RemoveRunHistory(context.Background(), id, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+				return remove.Prepare(context.Background(), scope)
+			}); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := store.GetProjectRun(context.Background(), f.childID); !errors.Is(err, domain.ErrNotFound) {
@@ -271,17 +277,64 @@ func TestRunHistoryConcurrentDeleteAndMissingSchedulerRow(t *testing.T) {
 	for range 2 {
 		wg.Go(func() {
 			artifacts := runhistory.FSArtifacts{DataRoot: root}
-			errs <- FromDB(db.DB()).RemoveRunHistory(context.Background(), id, func(scope runhistory.Scope) error { return artifacts.Remove(context.Background(), scope) })
+			errs <- FromDB(db.DB()).RemoveRunHistory(context.Background(), id, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+				return artifacts.Prepare(context.Background(), scope)
+			})
 		})
 	}
 	wg.Wait()
 	close(errs)
 	for err := range errs {
 		if err != nil {
-			t.Fatal(err)
+			// A competing commit invalidates the snapshot before any further
+			// mutation. The same identity must succeed on retry.
+			if !errors.Is(err, domain.ErrFailedPrecondition) {
+				t.Fatal(err)
+			}
+			artifacts := runhistory.FSArtifacts{DataRoot: root}
+			if err := f.store.RemoveRunHistory(context.Background(), id, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+				return artifacts.Prepare(context.Background(), scope)
+			}); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("orphan directory remains: %v", err)
 	}
+}
+
+// A prepared operation can simulate post-cleanup failure without moving I/O
+// back into the snapshot or writer fence.
+type historyTestArtifacts struct {
+	runhistory.PreparedArtifacts
+	afterRemove error
+}
+
+func (p *historyTestArtifacts) Detach(ctx context.Context) error {
+	if p.PreparedArtifacts != nil {
+		return p.PreparedArtifacts.Detach(ctx)
+	}
+	return nil
+}
+func (p *historyTestArtifacts) Remove(ctx context.Context) error {
+	if p.PreparedArtifacts != nil {
+		if err := p.PreparedArtifacts.Remove(ctx); err != nil {
+			return err
+		}
+	}
+	return p.afterRemove
+}
+func (p *historyTestArtifacts) Close() error {
+	if p.PreparedArtifacts != nil {
+		return p.PreparedArtifacts.Close()
+	}
+	return nil
+}
+
+func (p *historyTestArtifacts) VerifyRemoved(ctx context.Context) error {
+	if p.PreparedArtifacts != nil {
+		return p.PreparedArtifacts.VerifyRemoved(ctx)
+	}
+	return nil
 }

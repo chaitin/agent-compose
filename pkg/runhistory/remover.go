@@ -2,7 +2,6 @@ package runhistory
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/identity"
@@ -54,15 +53,24 @@ type Scope struct {
 	ProtectedPaths []string
 }
 
-// Store holds a database write transaction from ownership/terminal-state checks
-// through artifact removal and deletion of the exact history rows. A failed
-// callback or commit retains the records and paths needed for a retry.
+// PreparedArtifacts isolates a validated directory with one atomic rename.
+// Only Detach runs under a short database write fence; Remove must run outside
+// transactions. Close releases the pinned filesystem descriptors.
+type PreparedArtifacts interface {
+	Detach(context.Context) error
+	Remove(context.Context) error
+	VerifyRemoved(context.Context) error
+	Close() error
+}
+
+// Store validates snapshots before isolation and final deletion, retaining
+// history until private artifact cleanup succeeds.
 type Store interface {
-	RemoveRunHistory(context.Context, Identity, func(Scope) error) error
+	RemoveRunHistory(context.Context, Identity, func(Scope) (PreparedArtifacts, error)) error
 }
 
 type ArtifactRemover interface {
-	Remove(context.Context, Scope) error
+	Prepare(context.Context, Scope) (PreparedArtifacts, error)
 }
 
 type SchedulerGuard interface {
@@ -93,13 +101,7 @@ func (r *Remover) RemoveRunHistory(ctx context.Context, id Identity) error {
 }
 
 func (r *Remover) remove(ctx context.Context, id Identity) error {
-	return r.Store.RemoveRunHistory(ctx, id, func(scope Scope) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := r.Artifacts.Remove(ctx, scope); err != nil {
-			return fmt.Errorf("remove run history artifacts (retry with the same identity): %w", err)
-		}
-		return nil
+	return r.Store.RemoveRunHistory(ctx, id, func(scope Scope) (PreparedArtifacts, error) {
+		return r.Artifacts.Prepare(ctx, scope)
 	})
 }

@@ -24,7 +24,7 @@ type FSArtifacts struct {
 	SandboxDirs        SandboxDirs
 }
 
-func (a FSArtifacts) Remove(ctx context.Context, scope Scope) error {
+func (a FSArtifacts) validate(ctx context.Context, scope Scope) error {
 	// Sandbox files also contain notebook, home, and audit state. Their own
 	// removal lifecycle must finish first; never unlink cells from a retained
 	// or shared sandbox just to hide a run from history.
@@ -84,6 +84,10 @@ func (a FSArtifacts) Remove(ctx context.Context, scope Scope) error {
 	if err != nil {
 		return err
 	}
+	pending, err := resolveRecordedPath(filepath.Join(filepath.Dir(target), pendingHistoryName(run.ID)))
+	if err != nil {
+		return err
+	}
 	for _, path := range scope.ProtectedPaths {
 		if path == "" {
 			continue
@@ -92,53 +96,11 @@ func (a FSArtifacts) Remove(ctx context.Context, scope Scope) error {
 		if err != nil {
 			return fmt.Errorf("verify shared artifact path: %w", err)
 		}
-		if pathsOverlap(resolvedTarget, protected) {
+		if pathsOverlap(resolvedTarget, protected) || pathsOverlap(pending, protected) {
 			return domain.ClassifyError(domain.ErrReferenced, "scheduler artifacts are referenced by another run", nil)
 		}
 	}
-	root, err := os.OpenRoot(rootPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return ctx.Err()
-	}
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	return removeRunDirectory(ctx, root, strings.Split(relative, string(filepath.Separator)))
-}
-
-// Pin each parent by an open descriptor and verify its inode. A concurrent
-// symlink swap must not redirect removal to another run, even within DataRoot.
-func removeRunDirectory(ctx context.Context, root *os.Root, parts []string) error {
-	entry, err := root.Lstat(parts[0])
-	if errors.Is(err, os.ErrNotExist) {
-		return ctx.Err()
-	}
-	if err != nil {
-		return err
-	}
-	if entry.Mode()&os.ModeSymlink != 0 || !entry.IsDir() {
-		return artifactPrecondition("scheduler artifact path must contain only directories, not symlinks", nil)
-	}
-	if len(parts) == 1 {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		return root.RemoveAll(parts[0])
-	}
-	child, err := root.OpenRoot(parts[0])
-	if err != nil {
-		return err
-	}
-	defer func() { _ = child.Close() }()
-	opened, err := child.Stat(".")
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(entry, opened) {
-		return artifactPrecondition("scheduler artifact parent changed during removal", nil)
-	}
-	return removeRunDirectory(ctx, child, parts[1:])
+	return ctx.Err()
 }
 
 func requireAbsent(path string) error {
