@@ -17,11 +17,15 @@ import (
 // AgentInputFileRequest describes the daemon and guest copies of one turn's
 // multimodal input.
 type AgentInputFileRequest struct {
-	Config         *appconfig.Config
-	Sandbox        *domain.Sandbox
-	RunID          string
-	Input          []agentinput.Part
-	WriteGuestFile GuestFileWriterFunc
+	Config  *appconfig.Config
+	Sandbox *domain.Sandbox
+	RunID   string
+	Input   []agentinput.Part
+	// NativeMediaTypes are the types the runner attaches to the model request.
+	// A type outside this set is materialized and referenced by path instead;
+	// an empty set keeps every type native for callers that do not narrow it.
+	NativeMediaTypes []string
+	WriteGuestFile   GuestFileWriterFunc
 }
 
 // WriteAgentInputFiles materializes inline media and writes the guest manifest
@@ -50,6 +54,7 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) (strin
 		return "", fmt.Errorf("create agent input dir: %w", err)
 	}
 
+	native := nativeMediaTypeSet(req.NativeMediaTypes)
 	parts := make([]agentinput.ManifestPart, 0, len(req.Input))
 	for index, part := range req.Input {
 		manifestPart, err := writeAgentInputPart(ctx, agentInputPartDeps{
@@ -58,6 +63,7 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) (strin
 			guestDir:       guestRel,
 			index:          index,
 			part:           part,
+			native:         native,
 			writeGuestFile: writeGuestFile,
 		})
 		if err != nil {
@@ -88,6 +94,7 @@ type agentInputPartDeps struct {
 	guestDir       string
 	index          int
 	part           agentinput.Part
+	native         map[string]struct{}
 	writeGuestFile GuestFileWriterFunc
 }
 
@@ -99,7 +106,7 @@ func writeAgentInputPart(ctx context.Context, deps agentInputPartDeps) (agentinp
 	media := part.Media
 	switch media.Source {
 	case agentinput.SourceInline:
-		name := fmt.Sprintf("part-%d%s", deps.index, agentinput.FileExtension(media.Type))
+		name := agentInputFileName(deps.index, *media)
 		hostPath := filepath.Join(deps.hostDir, name)
 		if err := os.WriteFile(hostPath, media.Data, 0o600); err != nil {
 			return agentinput.ManifestPart{}, fmt.Errorf("write agent input part %d: %w", deps.index, err)
@@ -121,22 +128,78 @@ func writeAgentInputPart(ctx context.Context, deps agentInputPartDeps) (agentinp
 			Path:      guestPath,
 			SizeBytes: int64(len(media.Data)),
 			SHA256:    digest,
+			Reference: !isNativeMediaType(deps.native, media.Type),
 		}}, nil
 	case agentinput.SourceWorkspacePath:
 		cleaned, err := agentinput.NormalizeWorkspacePath(media.WorkspacePath)
 		if err != nil {
 			return agentinput.ManifestPart{}, fmt.Errorf("agent input part %d: %w", deps.index, err)
 		}
+		guestPath := filepath.Join(deps.config.GuestWorkspacePath, cleaned)
 		return agentinput.ManifestPart{Media: &agentinput.ManifestMedia{
 			MediaType:     media.Type,
 			Filename:      media.Filename,
-			Path:          filepath.Join(deps.config.GuestWorkspacePath, cleaned),
+			Path:          guestPath,
 			WorkspacePath: cleaned,
 			SHA256:        media.SHA256,
+			Reference:     !isNativeMediaType(deps.native, media.Type),
 		}}, nil
 	default:
 		return agentinput.ManifestPart{}, fmt.Errorf("agent input part %d has no source", deps.index)
 	}
+}
+
+// agentInputFileName keeps an extension the agent's tools can use. Native types
+// get the canonical extension for their media type; a generic file keeps the
+// extension of the caller-supplied display name when it is safe.
+func agentInputFileName(index int, media agentinput.Media) string {
+	base := fmt.Sprintf("part-%d", index)
+	if extension := agentinput.FileExtension(media.Type); extension != "" {
+		return base + extension
+	}
+	if extension := safeFileExtension(media.Filename); extension != "" {
+		return base + extension
+	}
+	return base
+}
+
+func safeFileExtension(name string) string {
+	extension := filepath.Ext(name)
+	if len(extension) < 2 || len(extension) > 17 {
+		return ""
+	}
+	for _, r := range extension[1:] {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			continue
+		}
+		return ""
+	}
+	return extension
+}
+
+// isNativeMediaType reports whether provider attaches mediaType natively. An
+// empty native set keeps every type native, which is the behavior a caller that
+// does not narrow the policy expects.
+func isNativeMediaType(native map[string]struct{}, mediaType string) bool {
+	if len(native) == 0 {
+		return true
+	}
+	_, ok := native[mediaType]
+	return ok
+}
+
+// nativeMediaTypeSet converts the provider's native list into a lookup. An
+// empty list keeps every type native, which is the behavior a caller that does
+// not narrow the policy expects.
+func nativeMediaTypeSet(types []string) map[string]struct{} {
+	if len(types) == 0 {
+		return nil
+	}
+	set := make(map[string]struct{}, len(types))
+	for _, mediaType := range types {
+		set[mediaType] = struct{}{}
+	}
+	return set
 }
 
 // runStateSegment keeps a run ID safe to use as one path segment. Run IDs are

@@ -9,8 +9,18 @@ const ManifestVersion = 1
 // with already-materialized paths. It never carries bytes, so a large image is
 // written once and named once.
 type Manifest struct {
-	Version int            `json:"version"`
-	Parts   []ManifestPart `json:"parts"`
+	Version int `json:"version"`
+	// Limits are the admission limits the guest re-checks against the actual
+	// files. The daemon cannot stat a workspace path on every driver, and a
+	// runner otherwise reads an arbitrarily large file into memory.
+	Limits ManifestLimits `json:"limits"`
+	Parts  []ManifestPart `json:"parts"`
+}
+
+// ManifestLimits is the subset of Limits the guest enforces.
+type ManifestLimits struct {
+	MaxPartBytes uint64 `json:"maxPartBytes"`
+	MaxTurnBytes uint64 `json:"maxTurnBytes"`
 }
 
 // ManifestPart is one ordered piece of the turn.
@@ -31,11 +41,19 @@ type ManifestMedia struct {
 	WorkspacePath string `json:"workspacePath,omitempty"`
 	SizeBytes     int64  `json:"sizeBytes,omitempty"`
 	SHA256        string `json:"sha256,omitempty"`
+	// Reference marks a non-native type: the runtime verifies the file but
+	// renders a path reference for the agent instead of attaching it.
+	Reference bool `json:"reference,omitempty"`
 }
 
 // NewManifest stamps a manifest with the current schema version.
 func NewManifest(parts []ManifestPart) Manifest {
-	return Manifest{Version: ManifestVersion, Parts: parts}
+	limits := DefaultLimits()
+	return Manifest{
+		Version: ManifestVersion,
+		Limits:  ManifestLimits{MaxPartBytes: limits.MaxPartBytes, MaxTurnBytes: limits.MaxTurnBytes},
+		Parts:   parts,
+	}
 }
 
 // Marshal encodes the manifest the guest runtime reads.

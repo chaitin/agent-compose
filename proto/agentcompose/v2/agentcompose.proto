@@ -2868,9 +2868,10 @@ message AgentInputPart {
 
 message AgentInputMedia {
   // Required. Canonical lowercase IANA media type without parameters, for
-  // example "image/png" or "application/pdf". The server rejects a type the
-  // selected provider does not accept and verifies the declared type against
-  // the content's magic bytes.
+  // example "image/png" or "application/pdf". A type the selected provider
+  // does not consume natively is still accepted: the daemon materializes it
+  // and hands the agent a path reference instead of attaching it to the model
+  // request. Native types are verified against the content's magic bytes.
   string media_type = 1;
 
   // Optional display name. Never interpreted as a path.

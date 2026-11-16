@@ -80,6 +80,11 @@ func DefaultLimits() Limits {
 
 // Policy is the admission policy of one provider: the daemon limits narrowed by
 // what that provider consumes.
+//
+// MediaTypes lists the provider's *native* multimodal types. Any other valid
+// media type is still accepted: the daemon materializes it and hands the agent
+// a path reference instead of attaching it to the model request, which is what
+// lets TXT, CSV, code, Office documents, and archives use the same entry point.
 type Policy struct {
 	Limits     Limits
 	MediaTypes []string
@@ -143,10 +148,10 @@ func validateMedia(index int, media Media, policy Policy, limits Limits) (uint64
 	if err != nil {
 		return 0, fmt.Errorf("%w: part %d: %w", ErrInvalid, index, err)
 	}
-	if !policy.AllowsMediaType(mediaType) {
-		return 0, fmt.Errorf("%w: part %d media type %q is not supported by this provider (supported: %s)",
-			ErrInvalid, index, mediaType, strings.Join(policy.MediaTypes, ", "))
-	}
+	// A type outside the provider's native set is not rejected: it becomes a
+	// file reference the agent reads with its own tools. Only native types are
+	// attached to the model request, and only they are content-sniffed.
+	native := policy.AllowsMediaType(mediaType)
 	if media.SHA256 != "" && !IsSHA256(media.SHA256) {
 		return 0, fmt.Errorf("%w: part %d sha256 must be 64 lowercase hex characters", ErrInvalid, index)
 	}
@@ -159,8 +164,10 @@ func validateMedia(index int, media Media, policy Policy, limits Limits) (uint64
 		if size > limits.MaxPartBytes {
 			return 0, fmt.Errorf("%w: part %d is %d bytes, limit is %d", ErrInvalid, index, size, limits.MaxPartBytes)
 		}
-		if detected := DetectMediaType(media.Data); detected != mediaType {
-			return 0, fmt.Errorf("%w: part %d declares %q but content is %q", ErrInvalid, index, mediaType, detected)
+		if native {
+			if detected := DetectMediaType(media.Data); detected != mediaType {
+				return 0, fmt.Errorf("%w: part %d declares %q but content is %q", ErrInvalid, index, mediaType, detected)
+			}
 		}
 		if media.SHA256 != "" {
 			sum := sha256.Sum256(media.Data)

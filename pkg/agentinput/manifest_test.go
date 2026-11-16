@@ -58,7 +58,7 @@ func TestManifestOmitsOptionalFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if string(data) != `{"version":1,"parts":[{"text":"hi"}]}` {
+	if string(data) != `{"version":1,"limits":{"maxPartBytes":10485760,"maxTurnBytes":33554432},"parts":[{"text":"hi"}]}` {
 		t.Errorf("manifest = %s", data)
 	}
 }

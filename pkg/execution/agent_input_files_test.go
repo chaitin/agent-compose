@@ -89,6 +89,43 @@ func TestWriteAgentInputFilesMaterializesInlineAndWorkspaceMedia(t *testing.T) {
 	}
 }
 
+func TestWriteAgentInputFilesReferencesNonNativeMediaByPath(t *testing.T) {
+	session, config, workspace := inputSandbox(t)
+	input := []agentinput.Part{
+		agentinput.TextPart("read the file"),
+		agentinput.MediaPart(agentinput.Media{Type: "text/csv", Filename: "data.csv", Source: agentinput.SourceInline, Data: []byte("a,b\n1,2\n")}),
+	}
+	guestManifest, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+		Config: config, Sandbox: session, RunID: "run-4", Input: input,
+		NativeMediaTypes: agentinput.ImageMediaTypes(),
+	})
+	if err != nil {
+		t.Fatalf("WriteAgentInputFiles: %v", err)
+	}
+	if guestManifest == "" {
+		t.Fatal("guest manifest is empty")
+	}
+	hostManifest := filepath.Join(workspace, "..", "state", "agents", "attachments", "run-4", "turn-0", "content.json")
+	var manifest agentinput.Manifest
+	if err := json.Unmarshal(mustReadFile(t, hostManifest), &manifest); err != nil {
+		t.Fatalf("decode manifest: %v", err)
+	}
+	if len(manifest.Parts) != 2 || manifest.Parts[1].Media == nil {
+		t.Fatalf("parts = %+v, want the generic file kept as a reference part", manifest.Parts)
+	}
+	generic := manifest.Parts[1].Media
+	wantPath := "/sandbox/state/agents/attachments/run-4/turn-0/part-1.csv"
+	if !generic.Reference || generic.Path != wantPath {
+		t.Errorf("generic media = %+v, want a reference to %q", generic, wantPath)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "..", "state", "agents", "attachments", "run-4", "turn-0", "part-1.csv")); err != nil {
+		t.Fatalf("generic file was not materialized with its extension: %v", err)
+	}
+	if manifest.Limits.MaxPartBytes != agentinput.DefaultMaxPartBytes || manifest.Limits.MaxTurnBytes != agentinput.DefaultMaxTurnBytes {
+		t.Errorf("manifest limits = %+v, want the defaults", manifest.Limits)
+	}
+}
+
 func TestWriteAgentInputFilesWithoutInputWritesNothing(t *testing.T) {
 	session, config, workspace := inputSandbox(t)
 	guestManifest, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chaitin/agent-compose/pkg/agentinput"
+	"github.com/chaitin/agent-compose/pkg/capmatrix"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -124,7 +125,9 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
 	contentPath, err := execution.WriteAgentInputFiles(ctx, execution.AgentInputFileRequest{
-		Config: r.config, Sandbox: session, RunID: runID, Input: req.Input, WriteGuestFile: guestFileWriter,
+		Config: r.config, Sandbox: session, RunID: runID, Input: req.Input,
+		NativeMediaTypes: capmatrix.NativeMediaTypes(domain.NormalizeAgentKind(agent)),
+		WriteGuestFile:   guestFileWriter,
 	})
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err

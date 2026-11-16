@@ -28,7 +28,7 @@ func TestDeclaredProvidersDeclareMediaMatrix(t *testing.T) {
 		"claude":   {images, MediaOrderingInterleaved},
 		"opencode": {imagesAndPDF, MediaOrderingAggregate},
 		"pi":       {images, MediaOrderingAggregate},
-		"dsh":      {images, MediaOrderingInterleaved},
+		"dsh":      {images, MediaOrderingAggregate},
 	}
 	for name, want := range cases {
 		provider, ok := byName[name]

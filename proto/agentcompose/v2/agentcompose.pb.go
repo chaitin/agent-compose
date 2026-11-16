@@ -22245,9 +22245,10 @@ func (*AgentInputPart_Media) isAgentInputPart_Part() {}
 type AgentInputMedia struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Required. Canonical lowercase IANA media type without parameters, for
-	// example "image/png" or "application/pdf". The server rejects a type the
-	// selected provider does not accept and verifies the declared type against
-	// the content's magic bytes.
+	// example "image/png" or "application/pdf". A type the selected provider
+	// does not consume natively is still accepted: the daemon materializes it
+	// and hands the agent a path reference instead of attaching it to the model
+	// request. Native types are verified against the content's magic bytes.
 	MediaType string `protobuf:"bytes,1,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
 	// Optional display name. Never interpreted as a path.
 	Filename string `protobuf:"bytes,2,opt,name=filename,proto3" json:"filename,omitempty"`

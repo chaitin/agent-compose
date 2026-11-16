@@ -30,10 +30,12 @@ func TestValidateAdmitsInlineRasterImages(t *testing.T) {
 	}
 }
 
-func TestValidateAdmitsPDFOnlyForDocumentPolicy(t *testing.T) {
+func TestValidateAdmitsPDFUnderAnyPolicyAsGenericOrNative(t *testing.T) {
 	parts := []Part{TextPart("read"), MediaPart(Media{Type: MediaTypePDF, Source: SourceInline, Data: pdfBytes()})}
-	if err := Validate(parts, imageOnlyPolicy()); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("image policy err = %v, want ErrInvalid", err)
+	// A provider without native PDF support still accepts the file: execution
+	// materializes it and hands the agent a path reference.
+	if err := Validate(parts, imageOnlyPolicy()); err != nil {
+		t.Fatalf("image policy: %v", err)
 	}
 	documentPolicy := Policy{Limits: DefaultLimits(), MediaTypes: append(ImageMediaTypes(), MediaTypePDF)}
 	if err := Validate(parts, documentPolicy); err != nil {
@@ -91,16 +93,31 @@ func TestValidateRejectsInvalidLimitsAndShapes(t *testing.T) {
 			parts:  []Part{TextPart("a"), MediaPart(Media{Type: "image/png; charset=binary", Source: SourceInline, Data: pngBytes()})},
 			policy: imageOnlyPolicy(),
 		},
-		{
-			name:   "unsupported type",
-			parts:  []Part{TextPart("a"), MediaPart(Media{Type: "image/svg+xml", Source: SourceInline, Data: []byte("<svg/>")})},
-			policy: imageOnlyPolicy(),
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := Validate(tc.parts, tc.policy); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("err = %v, want ErrInvalid", err)
+			}
+		})
+	}
+}
+
+func TestValidateAcceptsGenericFileTypesAsReferences(t *testing.T) {
+	cases := []struct {
+		mediaType string
+		data      []byte
+	}{
+		{"text/csv", []byte("a,b\n1,2\n")},
+		{"application/zip", []byte("PK\x03\x04")},
+		{"application/vnd.openxmlformats-officedocument.wordprocessingml.document", []byte("PK\x03\x04")},
+		{"image/svg+xml", []byte("<svg/>")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.mediaType, func(t *testing.T) {
+			parts := []Part{TextPart("read"), MediaPart(Media{Type: tc.mediaType, Source: SourceInline, Data: tc.data})}
+			if err := Validate(parts, imageOnlyPolicy()); err != nil {
+				t.Fatalf("Validate: %v", err)
 			}
 		})
 	}

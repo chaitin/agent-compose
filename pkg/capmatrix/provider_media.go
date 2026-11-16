@@ -29,10 +29,21 @@ func declaredMediaTypes(provider string) []string {
 // ordered content blocks; codex, opencode, and pi attach all media to one turn
 // and join the text, so they aggregate.
 func declaredMediaOrdering(provider string) MediaOrdering {
+	// The dsh runner writes one text projection and appends the attachments to
+	// that single block, so its runtime behavior is aggregate even though the
+	// DSH content model could interleave. Declaring interleaved would make a
+	// client promise an order the model does not receive.
 	switch provider {
-	case "claude", "dsh":
+	case "claude":
 		return MediaOrderingInterleaved
 	default:
 		return MediaOrderingAggregate
 	}
+}
+
+// NativeMediaTypes returns the media types provider hands to its harness
+// natively. Any other media type is materialized as a file the agent reads with
+// its own tools instead of being attached to the model request.
+func NativeMediaTypes(provider string) []string {
+	return declaredMediaTypes(provider)
 }

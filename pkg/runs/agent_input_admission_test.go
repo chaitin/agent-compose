@@ -103,7 +103,7 @@ func TestAdmitAgentInputRejectsUnknownProvider(t *testing.T) {
 func TestAdmitAgentInputRejectsInvalidMedia(t *testing.T) {
 	_, _, err := admitAgentInput(context.Background(), stubAgentLookup{agent: domain.ProjectAgentRecord{Provider: "codex"}}, mediaProviders(), RunAgentRequest{
 		ProjectID: "project-1", AgentName: "worker", Prompt: "look",
-		Input: []agentinput.Part{agentinput.MediaPart(agentinput.Media{Type: agentinput.MediaTypePDF, Source: agentinput.SourceInline, Data: []byte("%PDF-1.7")})},
+		Input: []agentinput.Part{agentinput.MediaPart(agentinput.Media{Type: "text/plain"})},
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("err = %v, want ErrInvalidRequest", err)
