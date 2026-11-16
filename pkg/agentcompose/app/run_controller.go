@@ -15,6 +15,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/agentcompose/api"
 	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
+	"github.com/chaitin/agent-compose/pkg/capmatrix"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/dashboard"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -59,6 +60,7 @@ func NewRunController(di do.Injector) (*runs.Controller, error) {
 		Removal:         do.MustInvoke[*sandboxes.RemovalCoordinator](di),
 		Completion:      do.MustInvoke[*runs.CompletionManager](di),
 		Recorder:        do.MustInvoke[*telemetry.Recorder](di),
+		Providers:       do.MustInvoke[capmatrix.Snapshot](di).Providers(),
 	}), nil
 }
 
@@ -285,6 +287,7 @@ func runAgentRequestFromProto(msg *agentcomposev2.RunAgentRequest) runs.RunAgent
 		ProjectID:        msg.GetProjectId(),
 		AgentName:        msg.GetAgentName(),
 		Prompt:           msg.GetPrompt(),
+		Input:            api.AgentInputPartsFromProto(msg.GetInput()),
 		Command:          msg.GetCommand(),
 		Source:           api.ProjectRunSourceFromProto(msg.GetSource()),
 		SchedulerID:      msg.GetSchedulerId(),

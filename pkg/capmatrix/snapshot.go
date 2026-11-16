@@ -220,5 +220,8 @@ func cloneProvider(declaration ProviderCapabilities) ProviderCapabilities {
 		Provider:           declaration.Provider,
 		PreferredProtocols: append([]string(nil), declaration.PreferredProtocols...),
 		Features:           append([]ProviderFeature(nil), declaration.Features...),
+		MediaTypes:         append([]string(nil), declaration.MediaTypes...),
+		MaxAttachmentBytes: declaration.MaxAttachmentBytes,
+		MediaOrdering:      declaration.MediaOrdering,
 	}
 }

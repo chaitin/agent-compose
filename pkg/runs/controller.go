@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/chaitin/agent-compose/internal/projects"
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
+	"github.com/chaitin/agent-compose/pkg/capmatrix"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -127,6 +129,9 @@ type Controller struct {
 	interactiveSessions *InteractiveSessionManager
 	recorder            *telemetry.Recorder
 	detachCache         *detachCapabilityCache
+	// providerMedia is the startup provider media declaration keyed by
+	// normalized provider name.
+	providerMedia map[string]capmatrix.ProviderCapabilities
 }
 
 type llmFacadeTokenDeleter interface {
@@ -160,6 +165,10 @@ type ControllerDependencies struct {
 	InteractiveSessions *InteractiveSessionManager
 	// Recorder is optional: a nil recorder keeps daemon telemetry disabled.
 	Recorder *telemetry.Recorder
+	// Providers is the startup provider capability declaration. A run that
+	// carries multimodal input is admitted against the selected provider's
+	// media policy; an empty list therefore admits text-only runs only.
+	Providers []capmatrix.ProviderCapabilities
 }
 
 type SandboxRemoval interface {
@@ -171,7 +180,12 @@ func NewController(deps ControllerDependencies) *Controller {
 	if interactiveSessions == nil {
 		interactiveSessions = NewInteractiveSessionManager()
 	}
+	providerMedia := make(map[string]capmatrix.ProviderCapabilities, len(deps.Providers))
+	for _, provider := range deps.Providers {
+		providerMedia[provider.Provider] = provider
+	}
 	return &Controller{
+		providerMedia:       providerMedia,
 		config:              deps.Config,
 		store:               deps.Store,
 		configDB:            deps.ConfigDB,
@@ -198,9 +212,12 @@ func NewController(deps ControllerDependencies) *Controller {
 }
 
 type RunAgentRequest struct {
-	ProjectID                string
-	AgentName                string
-	Prompt                   string
+	ProjectID string
+	AgentName string
+	Prompt    string
+	// Input is the ordered multimodal turn. Empty means the prompt alone is
+	// the turn, which is the pre-vNext behavior.
+	Input                    []agentinput.Part
 	Command                  string
 	Source                   string
 	SchedulerID              string
@@ -260,6 +277,15 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		}
 	}
 	warnings := resolved.Warnings
+	input, inputWarnings, err := c.admitAgentInput(ctx, req)
+	if err != nil {
+		return StartedProjectRun{}, err
+	}
+	if len(input) > 0 {
+		req.Input = input
+		req.Prompt = agentinput.Text(input)
+	}
+	warnings = append(warnings, inputWarnings...)
 	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
 	run, err := coordinator.BeginRun(ctx, StartRequest{
 		ProjectID:       req.ProjectID,
@@ -320,6 +346,12 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	}
 	if first.Kind != RunAttachInputStart {
 		return fmt.Errorf("%w: first run attach frame must be start", ErrInvalidRequest)
+	}
+	// Interactive attach drives turns through the guest stream, which does not
+	// carry media yet. Refuse explicitly instead of running the turn with the
+	// text projection only and silently dropping the attachments.
+	if len(first.Request.Input) > 0 {
+		return fmt.Errorf("%w: multimodal input is not supported for interactive attach yet", domain.ErrUnsupported)
 	}
 	if first.RunID != "" {
 		return c.attachExistingInteractiveSession(ctx, first.RunID, receive, send)
@@ -753,6 +785,7 @@ func (c *Controller) completeProjectRunAgent(runCtx, prepCtx context.Context, sa
 		Model:             agentConfig.Model,
 		RunID:             run.RunID,
 		Message:           req.Prompt,
+		Input:             req.Input,
 		OutputSchemaJSON:  req.OutputSchemaJSON,
 		Stream: projectRunAgentExecutionStream(sandboxed.TransitionCtx, agentExecutionStreamRequest{
 			Coordinator: sandboxed.Coordinator,

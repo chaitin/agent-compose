@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/guestabi"
 	"github.com/chaitin/agent-compose/pkg/llms"
 )
@@ -25,6 +26,11 @@ const (
 	// FeatureSkillInjection covers the engine passing resolved skill
 	// directories to the provider CLI.
 	FeatureSkillInjection ExecutionFeature = "skill_injection"
+	// FeatureMediaInput covers the guest runtime accepting an ordered turn with
+	// non-text parts. It is a version gate: an older guest image that does not
+	// declare it must reject multimodal input instead of ignoring the extra
+	// parts. The media types it consumes are declared separately.
+	FeatureMediaInput ExecutionFeature = "media_input"
 )
 
 var canonicalFeatures = []ExecutionFeature{
@@ -32,7 +38,19 @@ var canonicalFeatures = []ExecutionFeature{
 	FeatureSessionResume,
 	FeatureStreaming,
 	FeatureSkillInjection,
+	FeatureMediaInput,
 }
+
+// MediaOrdering is how a provider consumes a turn that mixes text and media.
+type MediaOrdering string
+
+const (
+	// MediaOrderingInterleaved means the exact part sequence reaches the model.
+	MediaOrderingInterleaved MediaOrdering = "interleaved"
+	// MediaOrderingAggregate means text parts are joined in order and all media
+	// is attached to the turn.
+	MediaOrderingAggregate MediaOrdering = "aggregate"
+)
 
 // RequiredExecutionFeatures returns every provider execution feature the
 // engine reports, in canonical order.
@@ -55,6 +73,25 @@ type ProviderCapabilities struct {
 	PreferredProtocols []string
 	// Features covers RequiredExecutionFeatures exactly once each.
 	Features []ProviderFeature
+	// MediaTypes lists the canonical media types the provider consumes. Empty
+	// means it accepts no non-text input. It is the single source of truth;
+	// there are no separate image/document booleans.
+	MediaTypes []string
+	// MaxAttachmentBytes narrows EngineInputLimits.max_part_bytes for this
+	// provider. Zero means it adds no limit.
+	MaxAttachmentBytes uint64
+	// MediaOrdering is meaningful only when MediaTypes is non-empty.
+	MediaOrdering MediaOrdering
+}
+
+// MediaPolicy returns the admission policy for a turn targeting this provider.
+// The provider limit can only narrow the daemon-wide part limit.
+func (p ProviderCapabilities) MediaPolicy() agentinput.Policy {
+	limits := agentinput.DefaultLimits()
+	if p.MaxAttachmentBytes > 0 && p.MaxAttachmentBytes < limits.MaxPartBytes {
+		limits.MaxPartBytes = p.MaxAttachmentBytes
+	}
+	return agentinput.Policy{Limits: limits, MediaTypes: append([]string(nil), p.MediaTypes...)}
 }
 
 // Validate rejects a provider declaration that omits a required feature or
@@ -77,6 +114,38 @@ func (p ProviderCapabilities) Validate() error {
 		if _, ok := seen[feature]; !ok {
 			return fmt.Errorf("%w: provider %q does not declare required feature %q", ErrInvalidCapability, p.Provider, feature)
 		}
+	}
+	if err := p.validateMedia(); err != nil {
+		return err
+	}
+	if p.Feature(FeatureMediaInput) != (len(p.MediaTypes) > 0) {
+		return fmt.Errorf("%w: provider %q feature %q must be true exactly when media types are declared",
+			ErrInvalidCapability, p.Provider, FeatureMediaInput)
+	}
+	return nil
+}
+
+// validateMedia rejects a media declaration the runtime could not honor.
+func (p ProviderCapabilities) validateMedia() error {
+	known := make(map[string]struct{}, len(agentinput.AllMediaTypes()))
+	for _, mediaType := range agentinput.AllMediaTypes() {
+		known[mediaType] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(p.MediaTypes))
+	for _, mediaType := range p.MediaTypes {
+		if _, ok := known[mediaType]; !ok {
+			return fmt.Errorf("%w: provider %q declares unknown media type %q", ErrInvalidCapability, p.Provider, mediaType)
+		}
+		if _, duplicate := seen[mediaType]; duplicate {
+			return fmt.Errorf("%w: provider %q declares media type %q more than once", ErrInvalidCapability, p.Provider, mediaType)
+		}
+		seen[mediaType] = struct{}{}
+	}
+	if len(p.MediaTypes) > 0 && p.MediaOrdering != MediaOrderingInterleaved && p.MediaOrdering != MediaOrderingAggregate {
+		return fmt.Errorf("%w: provider %q declares media ordering %q", ErrInvalidCapability, p.Provider, p.MediaOrdering)
+	}
+	if len(p.MediaTypes) == 0 && p.MaxAttachmentBytes != 0 {
+		return fmt.Errorf("%w: provider %q declares a media limit without media types", ErrInvalidCapability, p.Provider)
 	}
 	return nil
 }
@@ -106,6 +175,7 @@ func declaredExecutionFeatures(provider string) map[ExecutionFeature]bool {
 			FeatureSessionResume:    true,
 			FeatureStreaming:        true,
 			FeatureSkillInjection:   false,
+			FeatureMediaInput:       true,
 		}
 	case "claude":
 		return map[ExecutionFeature]bool{
@@ -113,6 +183,7 @@ func declaredExecutionFeatures(provider string) map[ExecutionFeature]bool {
 			FeatureSessionResume:    true,
 			FeatureStreaming:        true,
 			FeatureSkillInjection:   true,
+			FeatureMediaInput:       true,
 		}
 	case "opencode":
 		return map[ExecutionFeature]bool{
@@ -120,6 +191,7 @@ func declaredExecutionFeatures(provider string) map[ExecutionFeature]bool {
 			FeatureSessionResume:    true,
 			FeatureStreaming:        true,
 			FeatureSkillInjection:   true,
+			FeatureMediaInput:       true,
 		}
 	case "pi", "dsh":
 		return map[ExecutionFeature]bool{
@@ -127,6 +199,7 @@ func declaredExecutionFeatures(provider string) map[ExecutionFeature]bool {
 			FeatureSessionResume:    true,
 			FeatureStreaming:        true,
 			FeatureSkillInjection:   true,
+			FeatureMediaInput:       true,
 		}
 	default:
 		return nil
@@ -203,6 +276,11 @@ func providerDeclaration(provider string, features map[ExecutionFeature]bool) (P
 	declaration := ProviderCapabilities{Provider: provider, PreferredProtocols: protocols}
 	for _, feature := range canonicalFeatures {
 		declaration.Features = append(declaration.Features, ProviderFeature{Feature: feature, Supported: features[feature]})
+	}
+	if features[FeatureMediaInput] {
+		declaration.MediaTypes = declaredMediaTypes(provider)
+		declaration.MediaOrdering = declaredMediaOrdering(provider)
+		declaration.MaxAttachmentBytes = agentinput.DefaultMaxPartBytes
 	}
 	if err := declaration.Validate(); err != nil {
 		return ProviderCapabilities{}, err

@@ -2,9 +2,11 @@ package execution
 
 import (
 	"fmt"
-	domain "github.com/chaitin/agent-compose/pkg/model"
 	"strings"
 	"time"
+
+	"github.com/chaitin/agent-compose/pkg/agentinput"
+	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
 const (
@@ -31,9 +33,11 @@ type ExecuteAgentRequest struct {
 	ProviderEnvItems  []domain.SandboxEnvVar
 	RunID             string
 	Message           string
-	Timeout           time.Duration
-	OutputSchemaJSON  string
-	Stream            AgentExecutionStream
+	// Input is the ordered multimodal turn. Empty keeps Message as the turn.
+	Input            []agentinput.Part
+	Timeout          time.Duration
+	OutputSchemaJSON string
+	Stream           AgentExecutionStream
 	// Detach runs the agent behind the guest supervisor so it can outlive a
 	// daemon restart. nil keeps the direct exec.
 	Detach *AgentDetach

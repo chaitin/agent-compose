@@ -6,7 +6,8 @@
       "features": [
         "structured_output",
         "session_resume",
-        "streaming"
+        "streaming",
+        "media_input"
       ]
     },
     "claude": {
@@ -15,7 +16,8 @@
         "structured_output",
         "session_resume",
         "streaming",
-        "skill_injection"
+        "skill_injection",
+        "media_input"
       ]
     },
     "opencode": {
@@ -23,7 +25,8 @@
       "features": [
         "session_resume",
         "streaming",
-        "skill_injection"
+        "skill_injection",
+        "media_input"
       ]
     },
     "pi": {
@@ -31,7 +34,8 @@
       "features": [
         "session_resume",
         "streaming",
-        "skill_injection"
+        "skill_injection",
+        "media_input"
       ]
     },
     "dsh": {
@@ -39,7 +43,8 @@
       "features": [
         "session_resume",
         "streaming",
-        "skill_injection"
+        "skill_injection",
+        "media_input"
       ]
     }
   }
