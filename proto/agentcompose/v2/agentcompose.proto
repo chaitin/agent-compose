@@ -1311,6 +1311,17 @@ message RunAgentRequest {
   string payload_json = 16;
   // Optional user-defined key/value labels attached to the run at start time.
   map<string, string> labels = 17;
+
+  // Ordered multimodal input. A non-empty prompt is prepended as the first
+  // text part, so an existing caller can keep sending prompt and add media
+  // without changing what the model reads first. When input is empty the
+  // prompt alone is the turn, which is exactly the pre-vNext behavior. At
+  // least one non-empty text part (from prompt or input) is required.
+  //
+  // Interactive prompt attach (AttachAgentRun, or StartAgentRun with
+  // interactive=true) does not accept media yet: its start frame returns
+  // UNIMPLEMENTED when input is non-empty, rather than dropping the parts.
+  repeated AgentInputPart input = 18;
 }
 
 message RunAgentResponse {
@@ -2793,6 +2804,15 @@ message EngineProviderCapabilities {
   // is the same order pkg/llms computes for the provider's dialect.
   repeated string preferred_protocols = 2;
   repeated EngineProviderFeature features = 3;
+  // Canonical media types this provider accepts as input. Empty means the
+  // provider accepts no non-text input. This is the single source of truth:
+  // there are no separate image/document booleans that could drift from it.
+  repeated string media_types = 4;
+  // Maximum bytes for one media part on this provider. Zero means the
+  // provider adds no limit beyond EngineInputLimits.max_part_bytes.
+  uint64 max_attachment_bytes = 5;
+  // Ordering semantics for mixed text/media input.
+  EngineProviderMediaOrdering media_ordering = 6;
 }
 
 message EngineProviderFeature {
@@ -2824,4 +2844,91 @@ message GetEngineCapabilitiesResponse {
   // system probe plus any measured process facts frozen with it. Source on each
   // entry is "measured" or "simulated", never "declared".
   repeated EngineObservedCapability observations = 6;
+  // Daemon-wide input limits. Absent means this daemon predates multimodal
+  // input and a client must not send AgentInputPart media.
+  EngineInputLimits input_limits = 7;
+}
+
+// AgentInputPart is one ordered piece of one human turn.
+//
+// The array is authoritative: text and media may interleave, and the order is
+// the order the model should see. Providers that cannot interleave receive
+// every media part attached to the same turn and their text parts joined in
+// order; providers that can preserve the exact sequence. The engine reports
+// which behavior applies through EngineProviderCapabilities.media_ordering.
+message AgentInputPart {
+  oneof part {
+    // Plain text. An empty string is invalid; omit the part instead.
+    string text = 1;
+
+    // Non-text media. Exactly one source must be set.
+    AgentInputMedia media = 2;
+  }
+}
+
+message AgentInputMedia {
+  // Required. Canonical lowercase IANA media type without parameters, for
+  // example "image/png" or "application/pdf". The server rejects a type the
+  // selected provider does not accept and verifies the declared type against
+  // the content's magic bytes.
+  string media_type = 1;
+
+  // Optional display name. Never interpreted as a path.
+  string filename = 2;
+
+  oneof source {
+    // Bytes supplied by the caller. The daemon materializes them inside the
+    // sandbox before the turn starts.
+    AgentInputMediaBytes bytes = 3;
+
+    // A file that already exists inside the sandbox workspace. This is the
+    // zero-copy carrier and the local equivalent of a provider file id.
+    AgentInputMediaWorkspacePath workspace_path = 4;
+  }
+}
+
+message AgentInputMediaBytes {
+  // Raw bytes; JSON transports encode them as base64.
+  bytes data = 1;
+
+  // Optional content digest. When set, the server verifies it and rejects a
+  // mismatch with INVALID_ARGUMENT.
+  string sha256 = 2;
+}
+
+message AgentInputMediaWorkspacePath {
+  // Workspace-relative, slash-separated path with the same grammar as
+  // SandboxWorkspaceEntry.path. Absolute paths, ".." escapes, NUL bytes, and
+  // components that are symlinks are rejected. Only the workspace root is
+  // addressable: home, state and mounted volumes are deliberately out of
+  // reach, because they carry credentials and daemon-owned control files.
+  string path = 1;
+
+  // Optional content digest. The daemon verifies it when it shares the sandbox
+  // filesystem; otherwise the guest runtime verifies it before the turn starts.
+  string sha256 = 2;
+}
+
+// EngineProviderMediaOrdering is how a provider consumes mixed text/media
+// input. UNSPECIFIED is treated as AGGREGATE so a provider added later cannot
+// make an older client assume interleaving.
+enum EngineProviderMediaOrdering {
+  ENGINE_PROVIDER_MEDIA_ORDERING_UNSPECIFIED = 0;
+  // The exact part sequence reaches the model.
+  ENGINE_PROVIDER_MEDIA_ORDERING_INTERLEAVED = 1;
+  // Text parts are joined in order and all media is attached to the turn.
+  ENGINE_PROVIDER_MEDIA_ORDERING_AGGREGATE = 2;
+}
+
+// EngineInputLimits are daemon-wide admission limits. They are reported so a
+// client can validate before sending a request that would be rejected.
+message EngineInputLimits {
+  // Maximum bytes for one AgentInputMedia part.
+  uint64 max_part_bytes = 1;
+  // Maximum total media bytes in one turn.
+  uint64 max_turn_bytes = 2;
+  // Maximum number of AgentInputPart entries in one turn.
+  uint32 max_parts = 3;
+  // Canonical media types accepted by at least one provider.
+  repeated string allowed_media_types = 4;
 }
