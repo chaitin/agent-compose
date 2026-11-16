@@ -6,7 +6,7 @@ import { flattenEnvMap } from "../mcp-config.js";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { jsonString } from "../text.js";
-import { mediaParts, type TurnContent } from "../turn.js";
+import { referenceText, type MediaPart, type TurnContent } from "../turn.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
 import { dominantUsageModel, toolKindForName, toolOutputText } from "../agent-event.js";
@@ -41,10 +41,6 @@ type ClaudeContentBlock =
  */
 async function claudeContentBlocks(turn: TurnContent): Promise<ClaudeContentBlock[]> {
   const blocks: ClaudeContentBlock[] = [];
-  // `mediaParts` is the shared media extractor; pairing it with the ordered
-  // parts keeps interleaved text and media in manifest order.
-  const media = mediaParts(turn);
-  let nextMedia = 0;
   for (const part of turn.parts) {
     if (part.type === "text") {
       if (part.text.trim() !== "") {
@@ -52,21 +48,26 @@ async function claudeContentBlocks(turn: TurnContent): Promise<ClaudeContentBloc
       }
       continue;
     }
-    const mediaPart = media[nextMedia];
-    nextMedia += 1;
-    const mediaType = mediaPart.mediaType;
-    if (isClaudeImageMediaType(mediaType)) {
-      const data = (await fs.readFile(mediaPart.path)).toString("base64");
-      blocks.push({ type: "image", source: { type: "base64", media_type: mediaType, data } });
+    if (part.reference) {
+      blocks.push({ type: "text", text: referenceText(part) });
       continue;
     }
-    if (mediaType !== "application/pdf") {
-      throw new Error(`claude runner does not support media type ${JSON.stringify(mediaType)}`);
-    }
-    const data = (await fs.readFile(mediaPart.path)).toString("base64");
-    blocks.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data } });
+    blocks.push(await claudeMediaBlock(part));
   }
   return blocks;
+}
+
+async function claudeMediaBlock(media: MediaPart): Promise<ClaudeContentBlock> {
+  const mediaType = media.mediaType;
+  if (isClaudeImageMediaType(mediaType)) {
+    const data = (await fs.readFile(media.path)).toString("base64");
+    return { type: "image", source: { type: "base64", media_type: mediaType, data } };
+  }
+  if (mediaType !== "application/pdf") {
+    throw new Error(`claude runner does not support media type ${JSON.stringify(mediaType)}`);
+  }
+  const data = (await fs.readFile(media.path)).toString("base64");
+  return { type: "document", source: { type: "base64", media_type: "application/pdf", data } };
 }
 
 function claudeUserMessage(blocks: ClaudeContentBlock[]): AsyncIterable<SDKUserMessage> {

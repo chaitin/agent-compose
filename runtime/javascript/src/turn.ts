@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
-import { stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 
 /**
  * One ordered piece of a turn's input.
@@ -16,6 +17,8 @@ export interface MediaPart {
   workspacePath?: string;
   sizeBytes?: number;
   sha256?: string;
+  /** Non-native type: verify the file but reference its path in the prompt. */
+  reference?: boolean;
 }
 
 export interface TextPart {
@@ -25,9 +28,19 @@ export interface TextPart {
 
 export type TurnPart = TextPart | MediaPart;
 
+export interface TurnLimits {
+  maxPartBytes: number;
+  maxTurnBytes: number;
+}
+
 export interface TurnContent {
   parts: TurnPart[];
+  limits?: TurnLimits;
 }
+
+/** Fallbacks used when an older manifest carries no limits. */
+const defaultMaxPartBytes = 10 << 20;
+const defaultMaxTurnBytes = 32 << 20;
 
 /** Manifest schema version understood by this runtime. */
 const manifestVersion = 1;
@@ -39,35 +52,102 @@ const manifestVersion = 1;
  * run history agree, including skipping whitespace-only parts.
  */
 export function renderTurnText(turn: TurnContent): string {
-  return turn.parts
-    .filter((part): part is TextPart => part.type === "text" && part.text.trim() !== "")
-    .map((part) => part.text)
-    .join("\n\n");
+  const texts: string[] = [];
+  for (const part of turn.parts) {
+    if (part.type === "text") {
+      if (part.text.trim() !== "") {
+        texts.push(part.text);
+      }
+      continue;
+    }
+    if (part.reference) {
+      texts.push(referenceText(part));
+    }
+  }
+  return texts.join("\n\n");
 }
 
-/** The turn's media parts in manifest order. */
+/**
+ * The text a non-native attachment becomes. The agent already has filesystem
+ * tools; naming the materialized path is what lets TXT, CSV, code, Office
+ * documents, and archives use the same input entry point.
+ */
+export function referenceText(media: MediaPart): string {
+  return `Attached file: ${media.path} (${media.mediaType}). Read it with your file tools.`;
+}
+
+/** The turn's native media parts in manifest order. */
 export function mediaParts(turn: TurnContent): MediaPart[] {
+  return turn.parts.filter((part): part is MediaPart => part.type === "media" && !part.reference);
+}
+
+/** Every media part, including path references, for pre-turn verification. */
+function allMediaParts(turn: TurnContent): MediaPart[] {
   return turn.parts.filter((part): part is MediaPart => part.type === "media");
 }
 
 /**
- * Verify every media path is a readable regular file before the turn starts.
+ * Verify every media path is a readable, non-symlinked regular file within the
+ * turn limits before the turn starts.
  *
- * The daemon cannot do this for a workspace path when it does not share the
- * sandbox filesystem, and a harness that silently substitutes placeholder text
- * for a missing image would let the run "succeed" with the model answering
- * about nothing. Failing here names the missing attachment instead.
+ * The daemon cannot stat a workspace path when it does not share the sandbox
+ * filesystem, so the guest enforces the same 10 MiB part / 32 MiB turn caps on
+ * the actual files. A missing file, a symlinked component, or an oversized file
+ * fails the run instead of being read into memory or silently replaced with
+ * placeholder text.
  */
-export async function verifyTurnMedia(turn: TurnContent): Promise<void> {
-  for (const media of mediaParts(turn)) {
+export async function verifyTurnMedia(turn: TurnContent, workspace: string): Promise<void> {
+  const limits = turn.limits ?? { maxPartBytes: defaultMaxPartBytes, maxTurnBytes: defaultMaxTurnBytes };
+  const root = path.resolve(workspace);
+  let total = 0;
+  for (const media of allMediaParts(turn)) {
+    const target = path.resolve(media.path);
+    await assertNoSymlinkPath(root, target, media.path);
     let info;
     try {
-      info = await stat(media.path);
+      info = await lstat(target);
     } catch (error) {
       throw new Error(`attachment ${media.path} is not readable`, { cause: error });
     }
+    if (info.isSymbolicLink()) {
+      throw new Error(`attachment ${media.path} is a symlink`);
+    }
     if (!info.isFile()) {
       throw new Error(`attachment ${media.path} is not a regular file`);
+    }
+    if (info.size > limits.maxPartBytes) {
+      throw new Error(`attachment ${media.path} is ${info.size} bytes, limit is ${limits.maxPartBytes}`);
+    }
+    total += info.size;
+    if (total > limits.maxTurnBytes) {
+      throw new Error(`turn attachments are ${total} bytes, limit is ${limits.maxTurnBytes}`);
+    }
+    if (media.sha256) {
+      const digest = createHash("sha256").update(await readFile(target)).digest("hex");
+      if (digest !== media.sha256) {
+        throw new Error(`attachment ${media.path} sha256 does not match its bytes`);
+      }
+    }
+  }
+}
+
+/**
+ * Reject a path whose components under the workspace root are symlinks. The
+ * daemon's lexical check cannot see a symlink an agent or a workspace source
+ * created, and following one could read daemon-owned state or another
+ * sandbox's files.
+ */
+async function assertNoSymlinkPath(root: string, target: string, displayPath: string): Promise<void> {
+  const relative = path.relative(root, target);
+  if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return;
+  }
+  let current = root;
+  for (const segment of relative.split(path.sep).filter(Boolean)) {
+    current = path.join(current, segment);
+    const info = await lstat(current).catch(() => undefined);
+    if (info?.isSymbolicLink()) {
+      throw new Error(`attachment ${displayPath} has a symlinked path component`);
     }
   }
 }
@@ -99,7 +179,30 @@ export function parseTurnManifest(raw: string): TurnContent {
   if (parsed.parts.length === 0) {
     throw new Error("--content-file manifest must contain at least one part");
   }
-  return { parts: parsed.parts.map((part, index) => parsePart(part, index)) };
+  const turn: TurnContent = { parts: parsed.parts.map((part, index) => parsePart(part, index)) };
+  const limits = parseLimits(parsed.limits);
+  if (limits) {
+    turn.limits = limits;
+  }
+  return turn;
+}
+
+function parseLimits(value: unknown): TurnLimits | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!isRecord(value)) {
+    throw new Error("--content-file manifest limits must be an object");
+  }
+  const maxPartBytes = value.maxPartBytes;
+  const maxTurnBytes = value.maxTurnBytes;
+  if (typeof maxPartBytes !== "number" || !Number.isFinite(maxPartBytes) || maxPartBytes <= 0) {
+    throw new Error("--content-file manifest limits.maxPartBytes must be a positive number");
+  }
+  if (typeof maxTurnBytes !== "number" || !Number.isFinite(maxTurnBytes) || maxTurnBytes <= 0) {
+    throw new Error("--content-file manifest limits.maxTurnBytes must be a positive number");
+  }
+  return { maxPartBytes, maxTurnBytes };
 }
 
 function parsePart(value: unknown, index: number): TurnPart {
@@ -150,6 +253,12 @@ function parseMedia(value: unknown, index: number): MediaPart {
   const sha256 = optionalString(value.sha256, index, "media.sha256");
   if (sha256) {
     media.sha256 = sha256;
+  }
+  if (value.reference !== undefined) {
+    if (typeof value.reference !== "boolean") {
+      throw manifestPartError(index, "media.reference must be a boolean");
+    }
+    media.reference = value.reference;
   }
   if (value.sizeBytes !== undefined) {
     if (typeof value.sizeBytes !== "number" || !Number.isFinite(value.sizeBytes) || value.sizeBytes < 0) {

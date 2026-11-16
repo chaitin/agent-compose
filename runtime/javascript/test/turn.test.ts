@@ -1,4 +1,5 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -153,22 +154,99 @@ describe("mediaParts", () => {
 });
 
 describe("verifyTurnMedia", () => {
+  async function tempDir(): Promise<string> {
+    return mkdtemp(path.join(tmpdir(), "turn-media-"));
+  }
+
   it("accepts a regular file", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "turn-media-"));
+    const dir = await tempDir();
     const file = path.join(dir, "part-1.png");
     await writeFile(file, "png");
-    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: file }] })).resolves.toBeUndefined();
+    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: file }] }, dir)).resolves.toBeUndefined();
   });
 
   it("rejects a missing attachment", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "turn-media-"));
-    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: path.join(dir, "missing.png") }] }))
+    const dir = await tempDir();
+    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: path.join(dir, "missing.png") }] }, dir))
       .rejects.toThrow(/is not readable/);
   });
 
   it("rejects a directory", async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), "turn-media-"));
-    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: dir }] }))
+    const dir = await tempDir();
+    await expect(verifyTurnMedia({ parts: [{ type: "media", mediaType: "image/png", path: dir }] }, dir))
       .rejects.toThrow(/not a regular file/);
+  });
+
+  it("enforces the per-part limit on the actual file size", async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, "part-1.png");
+    await writeFile(file, "12345");
+    await expect(verifyTurnMedia({
+      parts: [{ type: "media", mediaType: "image/png", path: file }],
+      limits: { maxPartBytes: 2, maxTurnBytes: 100 },
+    }, dir)).rejects.toThrow(/limit is 2/);
+  });
+
+  it("enforces the turn total across attachments", async () => {
+    const dir = await tempDir();
+    const first = path.join(dir, "a.png");
+    const second = path.join(dir, "b.png");
+    await writeFile(first, "123");
+    await writeFile(second, "456");
+    await expect(verifyTurnMedia({
+      parts: [
+        { type: "media", mediaType: "image/png", path: first },
+        { type: "media", mediaType: "image/png", path: second },
+      ],
+      limits: { maxPartBytes: 10, maxTurnBytes: 4 },
+    }, dir)).rejects.toThrow(/turn attachments/);
+  });
+
+  it("verifies a declared digest", async () => {
+    const dir = await tempDir();
+    const file = path.join(dir, "part-1.png");
+    await writeFile(file, "png");
+    const digest = createHash("sha256").update("different").digest("hex");
+    await expect(verifyTurnMedia({
+      parts: [{ type: "media", mediaType: "image/png", path: file, sha256: digest }],
+    }, dir)).rejects.toThrow(/sha256 does not match/);
+  });
+
+  it("rejects a symlinked path component", async () => {
+    const dir = await tempDir();
+    await mkdir(path.join(dir, "real"));
+    await writeFile(path.join(dir, "real", "secret.txt"), "x");
+    await symlink(path.join(dir, "real"), path.join(dir, "alias"));
+    await expect(verifyTurnMedia({
+      parts: [{ type: "media", mediaType: "text/plain", path: path.join(dir, "alias", "secret.txt") }],
+    }, dir)).rejects.toThrow(/symlink/);
+  });
+});
+
+describe("reference media", () => {
+  const reference: MediaPart = {
+    type: "media",
+    mediaType: "text/csv",
+    path: "/sandbox/state/agents/attachments/run-1/turn-0/part-1.csv",
+    reference: true,
+  };
+
+  it("renders a path reference into the text projection", () => {
+    const turn: TurnContent = { parts: [{ type: "text", text: "read" }, reference] };
+    expect(renderTurnText(turn)).toContain("Attached file: /sandbox/state/agents/attachments/run-1/turn-0/part-1.csv (text/csv)");
+  });
+
+  it("keeps reference media out of the native attachment list", () => {
+    const turn: TurnContent = { parts: [reference] };
+    expect(mediaParts(turn)).toEqual([]);
+  });
+
+  it("still verifies a reference file", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "turn-ref-"));
+    const file = path.join(dir, "data.csv");
+    await writeFile(file, "a,b\n");
+    await expect(verifyTurnMedia({
+      parts: [{ type: "media", mediaType: "text/csv", path: file, reference: true }],
+    }, dir)).resolves.toBeUndefined();
   });
 });

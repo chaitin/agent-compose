@@ -77,7 +77,7 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
 export async function runPromptCommand(commandOptions: PromptCommandOptions): Promise<AgentResult> {
   const options = await buildPromptRuntimeOptions(commandOptions);
   const turn = await readTurnContent(commandOptions);
-  await verifyTurnMedia(turn);
+  await verifyTurnMedia(turn, options.workspace);
   const provider = options.provider;
   if (provider === "codex") {
     return await new CodexRunner(options).runPrompt(turn);

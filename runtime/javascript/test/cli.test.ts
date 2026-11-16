@@ -493,7 +493,7 @@ describe("commander CLI", () => {
         version: 1,
         parts: [
           { text: "compare these" },
-          { media: { mediaType: "image/png", filename: "before.png", path: mediaPath, sizeBytes: 4, sha256: "abcd" } },
+          { media: { mediaType: "image/png", filename: "before.png", path: mediaPath, sizeBytes: 4 } },
           { text: "and these" },
         ],
       }), "utf8");
@@ -523,7 +523,7 @@ describe("commander CLI", () => {
       expect(runPrompt).toHaveBeenCalledWith({
         parts: [
           { type: "text", text: "compare these" },
-          { type: "media", mediaType: "image/png", filename: "before.png", path: mediaPath, sizeBytes: 4, sha256: "abcd" },
+          { type: "media", mediaType: "image/png", filename: "before.png", path: mediaPath, sizeBytes: 4 },
           { type: "text", text: "and these" },
         ],
       });
