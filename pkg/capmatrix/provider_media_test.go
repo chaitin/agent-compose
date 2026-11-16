@@ -25,7 +25,7 @@ func TestDeclaredProvidersDeclareMediaMatrix(t *testing.T) {
 		ordering   MediaOrdering
 	}{
 		"codex":    {images, MediaOrderingAggregate},
-		"claude":   {imagesAndPDF, MediaOrderingInterleaved},
+		"claude":   {images, MediaOrderingInterleaved},
 		"opencode": {imagesAndPDF, MediaOrderingAggregate},
 		"pi":       {images, MediaOrderingAggregate},
 		"dsh":      {images, MediaOrderingInterleaved},

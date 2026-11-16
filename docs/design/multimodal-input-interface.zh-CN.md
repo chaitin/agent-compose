@@ -111,7 +111,7 @@
 | Provider | 图片 | PDF/文档 | 音频 | 提交方式（字节载体） | 单轮 | 续轮/多轮 | 保序 | 主要限制 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | codex | ✅ png/jpeg/gif/webp | ❌ | ❌ | **本地路径**（`-i` / SDK `local_image`） | ✅ | ✅ `resume`/`fork` 都有 `-i` | ❌（文本合并，媒体整体附加） | 2048px 自动缩放；不支持则替换为占位文本（软失败） |
-| claude | ✅ png/jpeg/gif/webp | ✅ PDF（document block） | ❌ | **base64** content block（stream-json / SDK 异步迭代） | ✅ | ✅ 同一形状续轮 | ✅ | Anthropic API 5MB/图；CLI 自行 recompress |
+| claude | ✅ png/jpeg/gif/webp | ⚠️ document block 实测挂起；已按预案收窄为仅图片 | ❌ | **base64** content block（stream-json / SDK 异步迭代） | ✅ | ✅ 同一形状续轮 | ✅ | Anthropic API 5MB/图；CLI 自行 recompress |
 | opencode | ✅ png/jpeg/gif/webp | ✅ PDF | ❌ | **本地路径**（`-f/--file`，内部转 data URL） | ✅ | ✅ `--session` | ❌ | 10 MiB 常量上限；MIME 白名单；模型需 `capabilities.attachment` |
 | pi | ✅（MIME 探测） | ⚠️ 非图片按 UTF-8 **文本内联**（`<file>` 块），PDF 会乱码 → 按不支持处理 | ❌ | **本地路径**（位置参数 `@path`）或 RPC `images[]`（base64） | ✅ | ✅ `--session-id` | ❌（CLI 模式） | 自动缩放到 2000×2000；`--mode rpc` 才是结构化入口 |
 | dsh | ✅ png/jpeg/gif/webp | ⚠️ `file` block 无原生模态，模型侧投影为路径文本 | ❌ | **attachment ref**（`ctx.attachments.saveImages/saveFile` → `content` block） | ✅ | ✅ `DSH_RESUME` | ✅ | 4 种位图；模型路由需声明 image 输入，否则 `MODEL_DOES_NOT_SUPPORT_IMAGES` |
@@ -152,7 +152,7 @@
 
 ### 3.7 关键结论
 
-- **最小公倍数 = 位图图片**；**第二档 = PDF**（claude、opencode 真支持；pi 退化为文本；dsh 退化为路径文本；codex 不支持）。
+- **最小公倍数 = 位图图片**；**第二档 = PDF**（实测只有 opencode 的文本抽取路径可用；claude 的 document block 会挂起、pi 退化为文本、dsh 退化为路径文本、codex 不支持）。
 - **字节载体的最小公倍数 = 沙箱内路径**（codex/opencode/pi CLI 都吃路径；claude 需要 base64；dsh 需要 ref）。所以 runner 层应以"沙箱路径"为内部主表示，由每个 adapter 决定读成 base64 还是直接传路径。
 - **保序是加分项而不是基线**：只有 claude、dsh 能真正交错。契约必须声明三档能力，不能让调用方假设所有 provider 都保序。
 

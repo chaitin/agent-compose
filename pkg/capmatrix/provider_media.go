@@ -5,14 +5,19 @@ import "github.com/chaitin/agent-compose/pkg/agentinput"
 // declaredMediaTypes is the static provider media matrix.
 //
 // It mirrors what each guest runner can hand to its harness: every provider
-// consumes raster images, and only claude and opencode consume PDF documents
-// natively. codex has an image-only CLI, dsh projects a file block to path text,
-// and pi reads non-image files as UTF-8 text, which corrupts a PDF.
+// consumes raster images, and only opencode consumes PDF documents through a
+// verified path. claude's document block hangs against the facade, dsh projects
+// a file block to path text, and pi reads non-image files as UTF-8 text, which
+// corrupts a PDF.
 func declaredMediaTypes(provider string) []string {
 	switch provider {
-	case "codex", "pi", "dsh":
+	case "codex", "claude", "pi", "dsh":
 		return agentinput.ImageMediaTypes()
-	case "claude", "opencode":
+	case "opencode":
+		// opencode reads a PDF through its own text-extraction path, so it is
+		// the only provider whose document support has been verified end to end.
+		// claude's document block hangs against the facade and codex, pi, and
+		// dsh have no native document modality.
 		return append(agentinput.ImageMediaTypes(), agentinput.MediaTypePDF)
 	default:
 		return nil

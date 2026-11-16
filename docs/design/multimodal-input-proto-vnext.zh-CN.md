@@ -283,7 +283,7 @@ message RunDetail {
   "parts": [
     { "text": "比较这两张图" },
     { "media": { "mediaType": "image/png", "filename": "before.png",
-                 "path": "/…/state/agents/attachments/<run>/turn-0/part-1",
+                 "path": "/…/state/agents/attachments/<run>/turn-0/part-1.png",
                  "sizeBytes": 184320, "sha256": "…" } },
     { "media": { "mediaType": "application/pdf", "path": "/…/workspace/report.pdf",
                  "workspacePath": "report.pdf" } }
@@ -292,6 +292,7 @@ message RunDetail {
 ```
 
 5. guest 侧复核：对 `workspace_path` 附件做大小与魔数校验（daemon 在 K8s 上读不到 workspace）；失败时以非零退出并把 `INVALID_ARGUMENT` 语义带回 run。
+6. 内联附件落盘时按 `media_type` 保留扩展名（`part-1.png`）。这不是装饰：opencode 按路径推断 MIME，没有扩展名的附件会被当 `text/plain` 附给模型（e2e 发现）。
 
 **provider 专属（五个 adapter）**
 
@@ -331,7 +332,7 @@ message RunDetail {
 ## 6. 能力协商与版本门禁
 
 1. `pkg/capmatrix` 的 `canonicalFeatures` 追加一个粗粒度 key：`media_input`。语义仅为"该 guest runtime 能接收 `--content-file` 并处理附件"，用于**版本门禁**，不表达具体媒体种类。
-2. 具体媒体种类由 `EngineProviderCapabilities.media_types` 表达（daemon 静态表）：codex/pi/dsh 为四种位图，claude/opencode 另加 `application/pdf`。
+2. 具体媒体种类由 `EngineProviderCapabilities.media_types` 表达（daemon 静态表）：codex/claude/pi/dsh 为四种位图，仅 opencode 另加 `application/pdf`（claude 的 document block 在实测中挂起，已收窄）。
 3. `guest-images/guest-abi.json` 的每个 provider `features` 增加 `media_input`；`scripts/tests/test-provider-lock.sh` 的 known-keys 白名单同步增加（否则该测试会报 unknown capability key）。
 4. 旧 guest 镜像没有该 key → `DeclaredProvidersFromManifest` 得到 false → daemon 在 run 创建前返回 `Unimplemented` + `UNSUPPORTED`，detail 提示升级 guest 镜像。**不做"新 daemon 发新参数、旧 runtime 忽略"的静默降级。**
 5. `media_ordering` 与 `media_types` 来自 daemon 静态表，与 manifest 的 `media_input` 取交集：manifest 为 false 时整组能力视为不可用。
