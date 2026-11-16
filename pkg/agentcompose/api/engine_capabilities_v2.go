@@ -9,6 +9,7 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/capmatrix"
+	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
@@ -17,11 +18,13 @@ import (
 // startup, so this handler never probes a driver.
 type EngineCapabilitiesV2Handler struct {
 	snapshot capmatrix.Snapshot
+	config   *appconfig.Config
 }
 
-// NewEngineCapabilitiesV2Handler injects the startup capability snapshot.
-func NewEngineCapabilitiesV2Handler(snapshot capmatrix.Snapshot) *EngineCapabilitiesV2Handler {
-	return &EngineCapabilitiesV2Handler{snapshot: snapshot}
+// NewEngineCapabilitiesV2Handler injects the startup capability snapshot and
+// the daemon configuration that supplies the input limits.
+func NewEngineCapabilitiesV2Handler(snapshot capmatrix.Snapshot, config *appconfig.Config) *EngineCapabilitiesV2Handler {
+	return &EngineCapabilitiesV2Handler{snapshot: snapshot, config: config}
 }
 
 // GetCapabilities returns the frozen matrix. The snapshot is re-validated
@@ -36,7 +39,7 @@ func (h *EngineCapabilitiesV2Handler) GetCapabilities(_ context.Context, _ *conn
 		CompiledDriversNote: capmatrix.CompiledDriversSemantics,
 		CapturedAt:          timestamppb.New(h.snapshot.CapturedAt()),
 		Observations:        engineObservedCapabilitiesV2(h.snapshot.Observations()),
-		InputLimits:         engineInputLimitsV2(),
+		InputLimits:         engineInputLimitsV2(h.config),
 	}
 	for _, declaration := range h.snapshot.Drivers() {
 		driver := &agentcomposev2.EngineDriverCapabilities{Driver: declaration.Driver}
@@ -75,31 +78,25 @@ func engineProviderCapabilitiesV2(declaration capmatrix.ProviderCapabilities) *a
 			Supported: feature.Supported,
 		})
 	}
-	entry.MediaTypes = append([]string(nil), declaration.MediaTypes...)
-	entry.MaxAttachmentBytes = declaration.MaxAttachmentBytes
-	entry.MediaOrdering = engineProviderMediaOrderingV2(declaration.MediaOrdering)
 	return entry
 }
 
-// engineProviderMediaOrderingV2 keeps the unknown value for an empty ordering
-// so a client falls back to the aggregate behavior documented on the enum.
-func engineProviderMediaOrderingV2(ordering capmatrix.MediaOrdering) agentcomposev2.EngineProviderMediaOrdering {
-	switch ordering {
-	case capmatrix.MediaOrderingInterleaved:
-		return agentcomposev2.EngineProviderMediaOrdering_ENGINE_PROVIDER_MEDIA_ORDERING_INTERLEAVED
-	case capmatrix.MediaOrderingAggregate:
-		return agentcomposev2.EngineProviderMediaOrdering_ENGINE_PROVIDER_MEDIA_ORDERING_AGGREGATE
-	default:
-		return agentcomposev2.EngineProviderMediaOrdering_ENGINE_PROVIDER_MEDIA_ORDERING_UNSPECIFIED
-	}
-}
-
-func engineInputLimitsV2() *agentcomposev2.EngineInputLimits {
+func engineInputLimitsV2(config *appconfig.Config) *agentcomposev2.EngineInputLimits {
 	limits := agentinput.DefaultLimits()
+	if config != nil {
+		if config.AgentInputFileLimitBytes > 0 {
+			limits.MaxFileBytes = uint64(config.AgentInputFileLimitBytes)
+		}
+		if config.AgentInputTurnLimitBytes > 0 {
+			limits.MaxTurnBytes = uint64(config.AgentInputTurnLimitBytes)
+		}
+		if config.AgentInputFileLimit > 0 {
+			limits.MaxFiles = uint32(config.AgentInputFileLimit)
+		}
+	}
 	return &agentcomposev2.EngineInputLimits{
-		MaxPartBytes:      limits.MaxPartBytes,
-		MaxTurnBytes:      limits.MaxTurnBytes,
-		MaxParts:          limits.MaxParts,
-		AllowedMediaTypes: agentinput.AllMediaTypes(),
+		MaxFileBytes: limits.MaxFileBytes,
+		MaxTurnBytes: limits.MaxTurnBytes,
+		MaxFiles:     limits.MaxFiles,
 	}
 }

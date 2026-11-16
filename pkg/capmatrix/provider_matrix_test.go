@@ -69,10 +69,6 @@ func TestDeclaredProviderFeatureMatrix(t *testing.T) {
 			FeatureSessionResume:    strings.Contains(source, "readStoredThread"),
 			FeatureStreaming:        strings.Contains(source, "this.emit("),
 			FeatureSkillInjection:   strings.Contains(source, "options.skills"),
-			// Every runner consumes the turn manifest; claude imports
-			// referenceText, the others import mediaParts, so the shared module
-			// is the marker every media-capable runner carries.
-			FeatureMediaInput: strings.Contains(source, "../turn.js"),
 		}
 		for _, feature := range RequiredExecutionFeatures() {
 			if got := provider.Feature(feature); got != derived[feature] {

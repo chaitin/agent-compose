@@ -1,12 +1,9 @@
 import { providerTelemetryEnv } from "../telemetry.js";
 import { existsSync } from "node:fs";
-import fs from "node:fs/promises";
-import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { flattenEnvMap } from "../mcp-config.js";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { jsonString } from "../text.js";
-import { referenceText, type MediaPart, type TurnContent } from "../turn.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
 import { dominantUsageModel, toolKindForName, toolOutputText } from "../agent-event.js";
@@ -18,67 +15,6 @@ type PendingToolUse = {
   name: string;
   partialJson: string;
 };
-
-type ClaudeImageMediaType = "image/png" | "image/jpeg" | "image/gif" | "image/webp";
-
-const claudeImageMediaTypes: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-
-function isClaudeImageMediaType(mediaType: string): mediaType is ClaudeImageMediaType {
-  return claudeImageMediaTypes.has(mediaType);
-}
-
-type ClaudeContentBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; source: { type: "base64"; media_type: ClaudeImageMediaType; data: string } }
-  | { type: "document"; source: { type: "base64"; media_type: "application/pdf"; data: string } };
-
-/**
- * Claude maps the manifest to content blocks one part at a time, so text and
- * media keep their relative order. Text parts are already merged by the daemon,
- * and whitespace-only parts are dropped the same way `renderTurnText` drops
- * them. The SDK's string prompt cannot carry blocks, hence the async iterable
- * of one user message built below.
- */
-async function claudeContentBlocks(turn: TurnContent): Promise<ClaudeContentBlock[]> {
-  const blocks: ClaudeContentBlock[] = [];
-  for (const part of turn.parts) {
-    if (part.type === "text") {
-      if (part.text.trim() !== "") {
-        blocks.push({ type: "text", text: part.text });
-      }
-      continue;
-    }
-    if (part.reference) {
-      blocks.push({ type: "text", text: referenceText(part) });
-      continue;
-    }
-    blocks.push(await claudeMediaBlock(part));
-  }
-  return blocks;
-}
-
-async function claudeMediaBlock(media: MediaPart): Promise<ClaudeContentBlock> {
-  const mediaType = media.mediaType;
-  if (isClaudeImageMediaType(mediaType)) {
-    const data = (await fs.readFile(media.path)).toString("base64");
-    return { type: "image", source: { type: "base64", media_type: mediaType, data } };
-  }
-  if (mediaType !== "application/pdf") {
-    throw new Error(`claude runner does not support media type ${JSON.stringify(mediaType)}`);
-  }
-  const data = (await fs.readFile(media.path)).toString("base64");
-  return { type: "document", source: { type: "base64", media_type: "application/pdf", data } };
-}
-
-function claudeUserMessage(blocks: ClaudeContentBlock[]): AsyncIterable<SDKUserMessage> {
-  return (async function* messages(): AsyncGenerator<SDKUserMessage> {
-    yield {
-      type: "user",
-      parent_tool_use_id: null,
-      message: { role: "user", content: blocks },
-    };
-  })();
-}
 
 function hasOwn(object: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
@@ -431,14 +367,11 @@ export class ClaudeRunner {
     }
   }
 
-  async runPrompt(turn: TurnContent): Promise<AgentResult> {
+  async runPrompt(promptText: string): Promise<AgentResult> {
     const { query: claudeQuery } = await import("@anthropic-ai/claude-agent-sdk");
     const stored = await readStoredThread(this.options.sessionRoot, "claude");
-    // Read media before calling query so a missing or unreadable attachment
-    // fails the turn directly instead of surfacing as a stream error later.
-    const prompt = claudeUserMessage(await claudeContentBlocks(turn));
     const stream = claudeQuery({
-      prompt,
+      prompt: promptText,
       options: this.queryOptions(stored),
     });
 

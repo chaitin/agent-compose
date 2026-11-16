@@ -2,8 +2,6 @@ package execution
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,192 +12,144 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
-// AgentInputFileRequest describes the daemon and guest copies of one turn's
-// multimodal input.
+// AgentInputFileRequest describes the files of one turn.
 type AgentInputFileRequest struct {
-	Config  *appconfig.Config
-	Sandbox *domain.Sandbox
-	RunID   string
-	Input   []agentinput.Part
-	// NativeMediaTypes are the types the runner attaches to the model request.
-	// A type outside this set is materialized and referenced by path instead;
-	// an empty set keeps every type native for callers that do not narrow it.
-	NativeMediaTypes []string
-	WriteGuestFile   GuestFileWriterFunc
+	Config         *appconfig.Config
+	Sandbox        *domain.Sandbox
+	RunID          string
+	Input          []agentinput.Part
+	Limits         agentinput.Limits
+	WriteGuestFile GuestFileWriterFunc
 }
 
-// WriteAgentInputFiles materializes inline media and writes the guest manifest
-// for one turn. It returns the guest path of the manifest, which the runtime
-// reads through --content-file. An empty input returns an empty path and writes
-// nothing, so a text-only run keeps its existing prompt-file path.
+// ResolvedFile is one file after the daemon placed it inside the workspace (or
+// resolved an existing workspace path). The prompt references GuestPath.
+type ResolvedFile struct {
+	GuestPath string
+	Name      string
+	MediaType string
+	SizeBytes int64
+}
+
+// WriteAgentInputFiles writes inline files under the sandbox workspace and
+// resolves workspace references. It returns the files the prompt should name.
 //
-// Bytes are written under the sandbox state tree, not the workspace: they are
-// turn input rather than project content, so they must not pollute an agent's
-// diff and must not be reachable through the workspace file API.
-func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) (string, error) {
+// Files live under <workspace>/.agent-compose/uploads/<run>/turn-0 so the agent
+// can read them with its normal tools and later turns still find them. An empty
+// input writes nothing.
+func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) ([]ResolvedFile, error) {
 	if len(req.Input) == 0 {
-		return "", nil
+		return nil, nil
 	}
 	session, runID, writeGuestFile := req.Sandbox, req.RunID, req.WriteGuestFile
 	if session == nil || strings.TrimSpace(session.Summary.WorkspacePath) == "" {
-		return "", fmt.Errorf("sandbox workspace path is required to write agent input")
+		return nil, fmt.Errorf("sandbox workspace path is required to write agent input")
 	}
 	appconfig.ApplyDefaultGuestPaths(req.Config)
 	segment := runStateSegment(runID)
-	hostRel := filepath.Join("state", "agents", "attachments", segment, "turn-0")
-	guestRel := filepath.Join(req.Config.GuestStateRoot, "agents", "attachments", segment, "turn-0")
-
-	hostDir := filepath.Join(filepath.Dir(session.Summary.WorkspacePath), hostRel)
-	if err := os.MkdirAll(hostDir, 0o755); err != nil {
-		return "", fmt.Errorf("create agent input dir: %w", err)
+	hostDir := filepath.Join(session.Summary.WorkspacePath, ".agent-compose", "uploads", segment, "turn-0")
+	guestRel := filepath.Join(".agent-compose", "uploads", segment, "turn-0")
+	guestDir := filepath.Join(req.Config.GuestWorkspacePath, guestRel)
+	limits := req.Limits
+	if limits.MaxFileBytes == 0 {
+		limits.MaxFileBytes = agentinput.DefaultMaxFileBytes
 	}
 
-	native := nativeMediaTypeSet(req.NativeMediaTypes)
-	parts := make([]agentinput.ManifestPart, 0, len(req.Input))
+	files := make([]ResolvedFile, 0, len(req.Input))
+	used := make(map[string]struct{}, len(req.Input))
 	for index, part := range req.Input {
-		manifestPart, err := writeAgentInputPart(ctx, agentInputPartDeps{
+		if part.File == nil {
+			continue
+		}
+		file, err := writeAgentInputFile(ctx, agentInputFileDeps{
 			config:         req.Config,
+			session:        session,
 			hostDir:        hostDir,
-			guestDir:       guestRel,
+			guestDir:       guestDir,
 			index:          index,
-			part:           part,
-			native:         native,
+			file:           *part.File,
+			limits:         limits,
+			used:           used,
 			writeGuestFile: writeGuestFile,
 		})
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		parts = append(parts, manifestPart)
+		files = append(files, file)
 	}
-	manifest, err := agentinput.NewManifest(parts).Marshal()
-	if err != nil {
-		return "", fmt.Errorf("encode agent input manifest: %w", err)
-	}
-	hostManifest := filepath.Join(hostDir, "content.json")
-	if err := os.WriteFile(hostManifest, manifest, 0o600); err != nil {
-		return "", fmt.Errorf("write agent input manifest: %w", err)
-	}
-	guestManifest := filepath.Join(guestRel, "content.json")
-	if writeGuestFile != nil {
-		if err := writeGuestFile(ctx, guestManifest, manifest); err != nil {
-			return "", fmt.Errorf("push agent input manifest to guest: %w", err)
-		}
-	}
-	return guestManifest, nil
+	return files, nil
 }
 
-type agentInputPartDeps struct {
+type agentInputFileDeps struct {
 	config         *appconfig.Config
+	session        *domain.Sandbox
 	hostDir        string
 	guestDir       string
 	index          int
-	part           agentinput.Part
-	native         map[string]struct{}
+	file           agentinput.File
+	limits         agentinput.Limits
+	used           map[string]struct{}
 	writeGuestFile GuestFileWriterFunc
 }
 
-func writeAgentInputPart(ctx context.Context, deps agentInputPartDeps) (agentinput.ManifestPart, error) {
-	part := deps.part
-	if part.Media == nil {
-		return agentinput.ManifestPart{Text: part.Text}, nil
-	}
-	media := part.Media
-	switch media.Source {
+func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (ResolvedFile, error) {
+	file := deps.file
+	switch file.Source {
 	case agentinput.SourceInline:
-		name := agentInputFileName(deps.index, *media)
+		name := uniqueAgentInputName(deps.used, deps.index, agentinput.SafeFileName(file.Name, file.MediaType))
+		if err := os.MkdirAll(deps.hostDir, 0o755); err != nil {
+			return ResolvedFile{}, fmt.Errorf("create agent input dir: %w", err)
+		}
 		hostPath := filepath.Join(deps.hostDir, name)
-		if err := os.WriteFile(hostPath, media.Data, 0o600); err != nil {
-			return agentinput.ManifestPart{}, fmt.Errorf("write agent input part %d: %w", deps.index, err)
+		if err := os.WriteFile(hostPath, file.Data, 0o600); err != nil {
+			return ResolvedFile{}, fmt.Errorf("write agent input file %d: %w", deps.index, err)
 		}
 		guestPath := filepath.Join(deps.guestDir, name)
 		if deps.writeGuestFile != nil {
-			if err := deps.writeGuestFile(ctx, guestPath, media.Data); err != nil {
-				return agentinput.ManifestPart{}, fmt.Errorf("push agent input part %d to guest: %w", deps.index, err)
+			if err := deps.writeGuestFile(ctx, guestPath, file.Data); err != nil {
+				return ResolvedFile{}, fmt.Errorf("push agent input file %d to guest: %w", deps.index, err)
 			}
 		}
-		digest := media.SHA256
-		if digest == "" {
-			sum := sha256.Sum256(media.Data)
-			digest = hex.EncodeToString(sum[:])
-		}
-		return agentinput.ManifestPart{Media: &agentinput.ManifestMedia{
-			MediaType: media.Type,
-			Filename:  media.Filename,
-			Path:      guestPath,
-			SizeBytes: int64(len(media.Data)),
-			SHA256:    digest,
-			Reference: !isNativeMediaType(deps.native, media.Type),
-		}}, nil
+		return ResolvedFile{GuestPath: guestPath, Name: name, MediaType: file.MediaType, SizeBytes: int64(len(file.Data))}, nil
 	case agentinput.SourceWorkspacePath:
-		cleaned, err := agentinput.NormalizeWorkspacePath(media.WorkspacePath)
+		cleaned, err := agentinput.NormalizeWorkspacePath(file.WorkspacePath)
 		if err != nil {
-			return agentinput.ManifestPart{}, fmt.Errorf("agent input part %d: %w", deps.index, err)
+			return ResolvedFile{}, fmt.Errorf("agent input file %d: %w", deps.index, err)
 		}
-		guestPath := filepath.Join(deps.config.GuestWorkspacePath, cleaned)
-		return agentinput.ManifestPart{Media: &agentinput.ManifestMedia{
-			MediaType:     media.Type,
-			Filename:      media.Filename,
-			Path:          guestPath,
-			WorkspacePath: cleaned,
-			SHA256:        media.SHA256,
-			Reference:     !isNativeMediaType(deps.native, media.Type),
-		}}, nil
+		if size, ok := workspaceFileSize(deps.session, cleaned); ok && deps.limits.MaxFileBytes > 0 && uint64(size) > deps.limits.MaxFileBytes {
+			return ResolvedFile{}, fmt.Errorf("agent input file %d is %d bytes, limit is %d", deps.index, size, deps.limits.MaxFileBytes)
+		}
+		return ResolvedFile{
+			GuestPath: filepath.Join(deps.config.GuestWorkspacePath, cleaned),
+			Name:      filepath.Base(cleaned),
+			MediaType: file.MediaType,
+		}, nil
 	default:
-		return agentinput.ManifestPart{}, fmt.Errorf("agent input part %d has no source", deps.index)
+		return ResolvedFile{}, fmt.Errorf("agent input file %d has no source", deps.index)
 	}
 }
 
-// agentInputFileName keeps an extension the agent's tools can use. Native types
-// get the canonical extension for their media type; a generic file keeps the
-// extension of the caller-supplied display name when it is safe.
-func agentInputFileName(index int, media agentinput.Media) string {
-	base := fmt.Sprintf("part-%d", index)
-	if extension := agentinput.FileExtension(media.Type); extension != "" {
-		return base + extension
+// workspaceFileSize reports the size of a workspace file when the daemon shares
+// the sandbox filesystem. K8s does not, so the size is unknown there and the
+// guest cannot be asked to check it in this design; the limit is enforced
+// wherever the daemon can read the file.
+func workspaceFileSize(session *domain.Sandbox, relative string) (int64, bool) {
+	info, err := os.Stat(filepath.Join(session.Summary.WorkspacePath, relative))
+	if err != nil || !info.Mode().IsRegular() {
+		return 0, false
 	}
-	if extension := safeFileExtension(media.Filename); extension != "" {
-		return base + extension
-	}
-	return base
+	return info.Size(), true
 }
 
-func safeFileExtension(name string) string {
-	extension := filepath.Ext(name)
-	if len(extension) < 2 || len(extension) > 17 {
-		return ""
+func uniqueAgentInputName(used map[string]struct{}, index int, name string) string {
+	candidate := name
+	if _, exists := used[candidate]; exists {
+		extension := filepath.Ext(name)
+		base := strings.TrimSuffix(name, extension)
+		candidate = fmt.Sprintf("%s-%d%s", base, index, extension)
 	}
-	for _, r := range extension[1:] {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
-			continue
-		}
-		return ""
-	}
-	return extension
-}
-
-// isNativeMediaType reports whether provider attaches mediaType natively. An
-// empty native set keeps every type native, which is the behavior a caller that
-// does not narrow the policy expects.
-func isNativeMediaType(native map[string]struct{}, mediaType string) bool {
-	if len(native) == 0 {
-		return true
-	}
-	_, ok := native[mediaType]
-	return ok
-}
-
-// nativeMediaTypeSet converts the provider's native list into a lookup. An
-// empty list keeps every type native, which is the behavior a caller that does
-// not narrow the policy expects.
-func nativeMediaTypeSet(types []string) map[string]struct{} {
-	if len(types) == 0 {
-		return nil
-	}
-	set := make(map[string]struct{}, len(types))
-	for _, mediaType := range types {
-		set[mediaType] = struct{}{}
-	}
-	return set
+	used[candidate] = struct{}{}
+	return candidate
 }
 
 // runStateSegment keeps a run ID safe to use as one path segment. Run IDs are
@@ -221,6 +171,28 @@ func runStateSegment(runID string) string {
 	}
 	if builder.Len() > 128 {
 		return builder.String()[:128]
+	}
+	return builder.String()
+}
+
+// AppendFileReferences appends the sandbox paths of the turn's files to the
+// prompt. It is the only provider-facing step: every harness receives the same
+// text and reads the files with its own tools.
+func AppendFileReferences(message string, files []ResolvedFile) string {
+	if len(files) == 0 {
+		return message
+	}
+	var builder strings.Builder
+	builder.WriteString(message)
+	builder.WriteString("\n\nAttached files (read them with your file tools):")
+	for _, file := range files {
+		builder.WriteString("\n- ")
+		builder.WriteString(file.GuestPath)
+		if file.MediaType != "" {
+			builder.WriteString(" (")
+			builder.WriteString(file.MediaType)
+			builder.WriteString(")")
+		}
 	}
 	return builder.String()
 }

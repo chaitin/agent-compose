@@ -30,7 +30,7 @@ vi.mock("@openai/codex-sdk", () => ({
         codexMockState.threadOptions = threadOptions;
         return {
           id: "e2e-codex-thread",
-          runStreamed: vi.fn(async (input: unknown, options: unknown) => ({
+          runStreamed: vi.fn(async (input: string, options: unknown) => ({
             events: (async function* events() {
               yield {
                 type: "item.completed",
@@ -159,7 +159,7 @@ describe("runtime JavaScript E2E", () => {
         type: "result",
         threadId: "e2e-codex-thread",
         stopReason: "eof",
-        transcript: '{"input":[{"type":"text","text":"first"}]}\n{"input":[{"type":"text","text":"second"}]}',
+        transcript: '{"input":"first"}\n{"input":"second"}',
       });
     });
   });

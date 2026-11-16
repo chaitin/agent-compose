@@ -16,7 +16,6 @@ import { DshRunner } from "./runners/dsh.js";
 import { OpenCodeRunner } from "./runners/opencode.js";
 import { PiRunner } from "./runners/pi.js";
 import { readStoredThread, writeStoredThread } from "./session-state.js";
-import { textTurn, type TurnContent } from "./turn.js";
 import type { TextWriter, TranscriptTextWriter } from "./transcript.js";
 import type { AgentResult, Provider, RunnerOptions } from "./types.js";
 
@@ -57,7 +56,7 @@ export class CodexInteractiveSession implements InteractiveSession {
   private turnCount = 0;
   private thread?: {
     id?: string | null;
-    runStreamed(input: unknown, options?: unknown): Promise<{ events: AsyncIterable<unknown> }>;
+    runStreamed(input: string, options?: unknown): Promise<{ events: AsyncIterable<unknown> }>;
   };
 
   constructor(
@@ -117,7 +116,7 @@ export class CodexInteractiveSession implements InteractiveSession {
     this.turnCount++;
     this.result.finalText = "";
     this.result.finalTextSource = "none";
-    await this.runner.runTurn(this.thread, textTurn(message), this.result);
+    await this.runner.runTurn(this.thread, message, this.result);
     this.result.threadId = this.thread.id || this.result.threadId;
     this.result.transcript = this.runner.transcript();
     if (!this.result.finalText && this.result.transcript) {
@@ -169,7 +168,7 @@ function agentEventEmitter(emit: EmitInteractiveFrame): (event: AgentEvent) => v
 }
 
 interface PromptTurnRunner {
-  runPrompt(turn: TurnContent): Promise<AgentResult>;
+  runPrompt(message: string): Promise<AgentResult>;
 }
 
 class PromptRunnerInteractiveSession implements InteractiveSession {
@@ -216,7 +215,7 @@ class PromptRunnerInteractiveSession implements InteractiveSession {
       this.writer.beginTurn();
     }
     this.turnCount++;
-    const turnResult = await this.runner.runPrompt(textTurn(message));
+    const turnResult = await this.runner.runPrompt(message);
     this.result.threadId = turnResult.threadId || this.result.threadId;
     this.result.stopReason = turnResult.stopReason;
     this.result.finalText = turnResult.finalText;

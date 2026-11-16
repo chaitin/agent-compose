@@ -7,7 +7,6 @@ import readline from "node:readline";
 import { formatError } from "../errors.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
-import { mediaParts, renderTurnText, type TurnContent } from "../turn.js";
 import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
 import { toolKindForName, toolOutputText } from "../agent-event.js";
@@ -60,8 +59,7 @@ export class OpenCodeRunner {
     await fs.writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
   }
 
-  buildArgs(turn: TurnContent, stored: StoredThread | null): string[] {
-    const promptText = renderTurnText(turn);
+  buildArgs(promptText: string, stored: StoredThread | null): string[] {
     const userPrompt = this.options.systemContext
       ? `${this.options.systemContext}\n\n${promptText}`
       : promptText;
@@ -78,12 +76,6 @@ export class OpenCodeRunner {
     }
     if (stored?.threadId) {
       args.push("--session", stored.threadId);
-    }
-    // opencode reads each attachment itself; the runner only names the guest
-    // path. All attachments ride on the same message, so their order relative
-    // to the prompt text is aggregate, not interleaved.
-    for (const media of mediaParts(turn)) {
-      args.push("-f", media.path);
     }
     return args;
   }
@@ -301,7 +293,7 @@ export class OpenCodeRunner {
     }
   }
 
-  async runPrompt(turn: TurnContent): Promise<AgentResult> {
+  async runPrompt(promptText: string): Promise<AgentResult> {
     await this.writeMCPConfig();
     if (this.options.outputSchema) {
       throw new Error("structured JSON output is not supported by opencode runner");
@@ -321,7 +313,7 @@ export class OpenCodeRunner {
     };
 
     try {
-      const child = spawn("opencode", this.buildArgs(turn, stored), {
+      const child = spawn("opencode", this.buildArgs(promptText, stored), {
         cwd: this.options.workspace,
         env: await this.environment(),
         stdio: ["ignore", "pipe", "pipe"],

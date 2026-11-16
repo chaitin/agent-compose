@@ -11,7 +11,6 @@ import (
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
-	"github.com/chaitin/agent-compose/pkg/capmatrix"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -129,9 +128,6 @@ type Controller struct {
 	interactiveSessions *InteractiveSessionManager
 	recorder            *telemetry.Recorder
 	detachCache         *detachCapabilityCache
-	// providerMedia is the startup provider media declaration keyed by
-	// normalized provider name.
-	providerMedia map[string]capmatrix.ProviderCapabilities
 }
 
 type llmFacadeTokenDeleter interface {
@@ -165,10 +161,6 @@ type ControllerDependencies struct {
 	InteractiveSessions *InteractiveSessionManager
 	// Recorder is optional: a nil recorder keeps daemon telemetry disabled.
 	Recorder *telemetry.Recorder
-	// Providers is the startup provider capability declaration. A run that
-	// carries multimodal input is admitted against the selected provider's
-	// media policy; an empty list therefore admits text-only runs only.
-	Providers []capmatrix.ProviderCapabilities
 }
 
 type SandboxRemoval interface {
@@ -180,12 +172,7 @@ func NewController(deps ControllerDependencies) *Controller {
 	if interactiveSessions == nil {
 		interactiveSessions = NewInteractiveSessionManager()
 	}
-	providerMedia := make(map[string]capmatrix.ProviderCapabilities, len(deps.Providers))
-	for _, provider := range deps.Providers {
-		providerMedia[provider.Provider] = provider
-	}
 	return &Controller{
-		providerMedia:       providerMedia,
 		config:              deps.Config,
 		store:               deps.Store,
 		configDB:            deps.ConfigDB,
@@ -277,7 +264,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		}
 	}
 	warnings := resolved.Warnings
-	input, inputWarnings, err := c.admitAgentInput(ctx, req)
+	input, inputWarnings, err := c.admitAgentInput(req)
 	if err != nil {
 		return StartedProjectRun{}, err
 	}

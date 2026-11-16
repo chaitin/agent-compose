@@ -3,7 +3,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { textTurn } from "../src/turn.js";
 import { captureStdio, runnerOptions, withTempSession } from "./helpers.js";
 
 const processState = vi.hoisted(() => ({
@@ -81,7 +80,7 @@ describe("PiRunner", () => {
           // included) as AGENT_COMPOSE_RESOLVED_MODEL; the runner forwards it.
           model: "openai/gpt-5",
           skills: ["review"],
-        }).runPrompt(textTurn("user prompt"));
+        }).runPrompt("user prompt");
         expect(result).toMatchObject({
           provider: "pi",
           threadId: "pi-session",
@@ -136,7 +135,7 @@ describe("PiRunner", () => {
       await new PiRunner({
         ...runnerOptions(root, "", "pi"),
         model: "gateway/ignored-model",
-      }).runPrompt(textTurn("prompt"));
+      }).runPrompt("prompt");
       const call = processState.calls[0];
       expect(call.args[call.args.indexOf("--model") + 1]).toBe("agent-compose/anthropic/claude-3.5-sonnet");
     });
@@ -150,7 +149,7 @@ describe("PiRunner", () => {
         JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "partial output" } }),
         JSON.stringify({ type: "agent_end", messages: [], willRetry: false }),
       ];
-      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt"));
+      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt");
       expect(result.finalText).toBe("partial output");
       expect(result.finalTextSource).toBe("transcript_fallback");
       expect(result.transcript).toBe(result.finalText);
@@ -169,7 +168,7 @@ describe("PiRunner", () => {
       processState.exitCode = 2;
       const stdio = captureStdio();
       try {
-        await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt"))).rejects.toThrow("pi exited with code 2");
+        await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt")).rejects.toThrow("pi exited with code 2");
       } finally {
         stdio.restore();
       }
@@ -192,7 +191,7 @@ describe("PiRunner", () => {
           local: { type: "local", command: "server", args: ["--stdio"], env: { TOKEN: { value: "secret", secret: true } } },
           remote: { type: "remote", transport: "http", url: "https://mcp.example", headers: { Authorization: { value: "Bearer secret", secret: true } } },
         },
-      }).runPrompt(textTurn("prompt"));
+      }).runPrompt("prompt");
       const call = processState.calls[0];
       expect(call.args).toEqual(expect.arrayContaining([
         "--no-extensions",
@@ -215,7 +214,7 @@ describe("PiRunner", () => {
       await expect(new PiRunner({
         ...runnerOptions(root, "", "pi"),
         outputSchema: { type: "object" },
-      }).runPrompt(textTurn("prompt"))).rejects.toThrow("structured JSON output is not supported");
+      }).runPrompt("prompt")).rejects.toThrow("structured JSON output is not supported");
       expect(processState.calls).toHaveLength(0);
     });
   });
@@ -224,9 +223,9 @@ describe("PiRunner", () => {
     const { PiRunner } = await import("../src/runners/pi.js");
     await withTempSession(async (root) => {
       processState.lines = ["not-json"];
-      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt"))).rejects.toThrow("invalid JSON event");
+      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt")).rejects.toThrow("invalid JSON event");
       processState.lines = [JSON.stringify({ type: "agent_end" })];
-      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt"))).rejects.toThrow("without emitting a session id");
+      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt")).rejects.toThrow("without emitting a session id");
     });
   });
 
@@ -238,7 +237,7 @@ describe("PiRunner", () => {
         JSON.stringify({ type: "message_end", message: { role: "assistant", content: [], stopReason: "error", errorMessage: "OpenAI API error (401): Unauthorized" } }),
         JSON.stringify({ type: "agent_end", messages: [], willRetry: false }),
       ];
-      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt")))
+      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt"))
         .rejects.toThrow("pi model request failed: OpenAI API error (401): Unauthorized");
     });
   });
@@ -257,7 +256,7 @@ describe("PiRunner", () => {
         }),
         JSON.stringify({ type: "agent_end", messages: [], willRetry: false }),
       ];
-      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt")))
+      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt"))
         .rejects.toThrow("pi model request failed: flattened failure");
     });
   });
@@ -269,7 +268,7 @@ describe("PiRunner", () => {
         JSON.stringify({ type: "session", id: "pi-session" }),
         JSON.stringify({ type: "agent_end", stopReason: "error" }),
       ];
-      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt")))
+      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt"))
         .rejects.toThrow("pi agent ended with an error");
     });
   });
@@ -280,7 +279,7 @@ describe("PiRunner", () => {
       processState.lines = [JSON.stringify({ type: "session", id: "pi-session" })];
       processState.stderr = ["late diagnostic"];
       processState.exitCode = 2;
-      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt")))
+      await expect(new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt"))
         .rejects.toThrow("pi exited with code 2: late diagnostic");
     });
   });
@@ -294,7 +293,7 @@ describe("PiRunner", () => {
         JSON.stringify({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "recovered" }], stopReason: "stop" } }),
         JSON.stringify({ type: "agent_end", messages: [], willRetry: false }),
       ];
-      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt"));
+      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt");
       expect(result.finalText).toBe("recovered");
     });
   });
@@ -310,7 +309,7 @@ describe("PiRunner", () => {
         JSON.stringify({ type: "agent_end", messages: [], willRetry: false }),
         JSON.stringify({ type: "agent_settled", aborted: false }),
       ];
-      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt"));
+      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt");
       expect(result.finalText).toBe("recovered");
       expect(result.stopReason).toBe("completed");
     });
@@ -324,7 +323,7 @@ describe("PiRunner", () => {
         JSON.stringify({ type: "agent_end", messages: [], willRetry: false }),
         JSON.stringify({ type: "agent_settled", aborted: true }),
       ];
-      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt(textTurn("prompt"));
+      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt("prompt");
       expect(result.stopReason).toBe("cancelled");
     });
   });
@@ -334,42 +333,17 @@ describe("PiRunner", () => {
     await withTempSession(async (root) => {
       const skillsRoot = path.join(root, "home", ".agents", "skills");
       await fs.mkdir(skillsRoot, { recursive: true });
-      await expect(new PiRunner({ ...runnerOptions(root, "", "pi"), skills: ["../secret"] }).runPrompt(textTurn("prompt")))
+      await expect(new PiRunner({ ...runnerOptions(root, "", "pi"), skills: ["../secret"] }).runPrompt("prompt"))
         .rejects.toThrow("invalid pi skill name");
-      await expect(new PiRunner({ ...runnerOptions(root, "", "pi"), skills: ["missing"] }).runPrompt(textTurn("prompt")))
+      await expect(new PiRunner({ ...runnerOptions(root, "", "pi"), skills: ["missing"] }).runPrompt("prompt"))
         .rejects.toThrow();
       const outside = path.join(root, "outside.md");
       await fs.writeFile(outside, "outside");
       const escape = path.join(skillsRoot, "escape");
       await fs.mkdir(escape);
       await fs.symlink(outside, path.join(escape, "SKILL.md"));
-      await expect(new PiRunner({ ...runnerOptions(root, "", "pi"), skills: ["escape"] }).runPrompt(textTurn("prompt")))
+      await expect(new PiRunner({ ...runnerOptions(root, "", "pi"), skills: ["escape"] }).runPrompt("prompt"))
         .rejects.toThrow("escapes the skills directory");
-    });
-  });
-
-  it("passes media as @path positionals before the prompt", async () => {
-    const { PiRunner } = await import("../src/runners/pi.js");
-    await withTempSession(async (root) => {
-      const imagePath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-1");
-      const secondPath = path.join(root, "workspace", "reports", "q3.png");
-      await fs.mkdir(path.dirname(imagePath), { recursive: true });
-      await fs.mkdir(path.dirname(secondPath), { recursive: true });
-      await fs.writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-      await fs.writeFile(secondPath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-      processState.lines = [JSON.stringify({ type: "session", id: "pi-session" })];
-
-      const result = await new PiRunner(runnerOptions(root, "", "pi")).runPrompt({
-        parts: [
-          { type: "text", text: "compare these" },
-          { type: "media", mediaType: "image/png", filename: "before.png", path: imagePath },
-          { type: "media", mediaType: "image/png", path: secondPath },
-        ],
-      });
-
-      expect(result.threadId).toBe("pi-session");
-      const args = processState.calls.at(-1)?.args ?? [];
-      expect(args.slice(-3)).toEqual([`@${imagePath}`, `@${secondPath}`, "compare these"]);
     });
   });
 });

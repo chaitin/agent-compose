@@ -12,13 +12,11 @@ import { OpenCodeRunner } from "./runners/opencode.js";
 import { PiRunner } from "./runners/pi.js";
 import { readMCPConfig } from "./mcp-config.js";
 import { agentSystemPromptPath, buildSystemContext, readSystemPromptFile } from "./system-context.js";
-import { parseTurnManifest, textTurn, verifyTurnMedia, type TurnContent } from "./turn.js";
 import type { AgentResult, RuntimeJsonSchema } from "./types.js";
 
 export interface PromptCommandOptions {
   provider?: string;
   messageFile?: string;
-  contentFile?: string;
   promptText?: string;
   stateRoot?: string;
   sessionRoot?: string;
@@ -76,48 +74,30 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
 
 export async function runPromptCommand(commandOptions: PromptCommandOptions): Promise<AgentResult> {
   const options = await buildPromptRuntimeOptions(commandOptions);
-  const turn = await readTurnContent(commandOptions);
-  await verifyTurnMedia(turn, options.workspace);
+  const messageFile = commandOptions.messageFile;
+  if (!messageFile && commandOptions.promptText === undefined) {
+    throw new Error("--message-file is required");
+  }
+  const promptText = commandOptions.promptText ?? await readText(path.resolve(messageFile as string));
   const provider = options.provider;
   if (provider === "codex") {
-    return await new CodexRunner(options).runPrompt(turn);
+    return await new CodexRunner(options).runPrompt(promptText);
   }
   if (provider === "claude") {
-    return await new ClaudeRunner(options).runPrompt(turn);
+    return await new ClaudeRunner(options).runPrompt(promptText);
   }
   if (provider === "opencode") {
-    return await new OpenCodeRunner(options).runPrompt(turn);
+    return await new OpenCodeRunner(options).runPrompt(promptText);
   }
   if (provider === "pi") {
-    return await new PiRunner(options).runPrompt(turn);
+    return await new PiRunner(options).runPrompt(promptText);
   }
   if (provider === "dsh") {
-    return await new DshRunner(options).runPrompt(turn);
+    return await new DshRunner(options).runPrompt(promptText);
   }
   // normalizeProvider accepts only the Provider union, so this guard is
   // unreachable; it keeps the dispatch total for the type checker.
   throw new Error(`unsupported provider ${JSON.stringify(provider)}`);
-}
-
-/**
- * Build the turn the runner executes.
- *
- * `--content-file` is authoritative when present: a malformed manifest must
- * fail the run rather than silently degrade to its text projection, because
- * dropping media without telling the caller is worse than refusing the turn.
- * Without it, the legacy `--message-file`/prompt text becomes one text part.
- */
-async function readTurnContent(commandOptions: PromptCommandOptions): Promise<TurnContent> {
-  const contentFile = commandOptions.contentFile;
-  if (contentFile) {
-    return parseTurnManifest(await readText(path.resolve(contentFile)));
-  }
-  if (!commandOptions.messageFile && commandOptions.promptText === undefined) {
-    throw new Error("--message-file is required");
-  }
-  const promptText = commandOptions.promptText
-    ?? await readText(path.resolve(commandOptions.messageFile as string));
-  return textTurn(promptText);
 }
 
 function normalizeSkills(skills: string[] | undefined): string[] {

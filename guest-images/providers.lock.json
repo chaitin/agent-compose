@@ -10,8 +10,7 @@
       "features": [
         "structured_output",
         "session_resume",
-        "streaming",
-        "media_input"
+        "streaming"
       ]
     },
     "claude": {
@@ -23,8 +22,7 @@
         "structured_output",
         "session_resume",
         "streaming",
-        "skill_injection",
-        "media_input"
+        "skill_injection"
       ],
       "platformNpm": {
         "amd64": "@anthropic-ai/claude-code-linux-x64",
@@ -39,8 +37,7 @@
       "features": [
         "session_resume",
         "streaming",
-        "skill_injection",
-        "media_input"
+        "skill_injection"
       ]
     },
     "pi": {
@@ -51,8 +48,7 @@
       "features": [
         "session_resume",
         "streaming",
-        "skill_injection",
-        "media_input"
+        "skill_injection"
       ]
     },
     "dsh": {
@@ -64,8 +60,7 @@
       "features": [
         "session_resume",
         "streaming",
-        "skill_injection",
-        "media_input"
+        "skill_injection"
       ]
     }
   }

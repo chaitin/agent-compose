@@ -14,7 +14,7 @@ import (
 // three-state contract: every per-driver claim carries a state and a source,
 // and the backward-compatible enforced boolean agrees with the state.
 func TestEngineCapabilitiesHandlerReportsExplicitStateAndSource(t *testing.T) {
-	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t))
+	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t), nil)
 	response, err := handler.GetCapabilities(context.Background(), connect.NewRequest(&agentcomposev2.GetEngineCapabilitiesRequest{}))
 	if err != nil {
 		t.Fatalf("GetCapabilities() error = %v", err)
@@ -46,7 +46,7 @@ func TestEngineCapabilitiesHandlerReportsExplicitStateAndSource(t *testing.T) {
 // layer: the host probe is serialized with source=measured and never claims to
 // be a declaration.
 func TestEngineCapabilitiesHandlerReportsMeasuredSystemLayer(t *testing.T) {
-	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t))
+	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t), nil)
 	response, err := handler.GetCapabilities(context.Background(), connect.NewRequest(&agentcomposev2.GetEngineCapabilitiesRequest{}))
 	if err != nil {
 		t.Fatalf("GetCapabilities() error = %v", err)

@@ -4,7 +4,6 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { textTurn } from "../src/turn.js";
 import { runnerOptions, withTempSession } from "./helpers.js";
 
 const processState = vi.hoisted(() => ({
@@ -13,35 +12,16 @@ const processState = vi.hoisted(() => ({
   exitCode: 0,
   error: null as Error | null,
   kills: 0,
-  calls: [] as Array<{
-    command: string;
-    args: string[];
-    options: Record<string, unknown>;
-    systemContextFileContent: string | undefined;
-    attachmentsFileContent: string | undefined;
-    promptFileContent: string | undefined;
-  }>,
+  calls: [] as Array<{ command: string; args: string[]; options: Record<string, unknown>; systemContextFileContent: string | undefined }>,
 }));
 
 vi.mock("node:child_process", () => ({
   spawn: vi.fn((command: string, args: string[], options: Record<string, unknown>) => {
     // Read eagerly: dsh.ts removes its temp dir once the process "exits" below,
     // so the file is gone by the time a test's `await runPrompt(...)` resolves.
-    const env = options.env as Record<string, string> | undefined;
-    const systemContextFile = env?.DSH_SYSTEM_CONTEXT_FILE;
+    const systemContextFile = (options.env as Record<string, string> | undefined)?.DSH_SYSTEM_CONTEXT_FILE;
     const systemContextFileContent = systemContextFile ? readFileSync(systemContextFile, "utf8") : undefined;
-    const attachmentsFile = env?.DSH_ATTACHMENTS_FILE;
-    const attachmentsFileContent = attachmentsFile ? readFileSync(attachmentsFile, "utf8") : undefined;
-    const promptFile = env?.DSH_PROMPT_FILE;
-    const promptFileContent = promptFile ? readFileSync(promptFile, "utf8") : undefined;
-    processState.calls.push({
-      command,
-      args,
-      options,
-      systemContextFileContent,
-      attachmentsFileContent,
-      promptFileContent,
-    });
+    processState.calls.push({ command, args, options, systemContextFileContent });
     const child = new EventEmitter() as EventEmitter & { stdout: Readable; stderr: EventEmitter; kill: () => boolean };
     child.kill = () => {
       processState.kills += 1;
@@ -113,7 +93,7 @@ describe("DshRunner", () => {
         model: "deepseek-official/deepseek-v4-flash",
         effort: "high",
         skills: ["review"],
-      }).runPrompt(textTurn("user prompt"));
+      }).runPrompt("user prompt");
 
       expect(result.provider).toBe("dsh");
       expect(result.stopReason).toBe("completed");
@@ -158,7 +138,7 @@ describe("DshRunner", () => {
       await new DshRunner({
         ...runnerOptions(root, "", "dsh"),
         model: "agent-compose/org/deepseek-v4-flash",
-      }).runPrompt(textTurn("prompt"));
+      }).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_MODEL).toBe("org/deepseek-v4-flash");
     });
@@ -173,7 +153,7 @@ describe("DshRunner", () => {
       processState.lines = [
         sessionEventLine("session-existing", { type: "turn/end", seq: 1, time: 1, data: { turn: 0, reason: { kind: "completed" } } }),
       ];
-      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       expect(result.threadId).toBe("session-existing");
       const call = processState.calls[0];
       const env = call.options.env as Record<string, string>;
@@ -192,7 +172,7 @@ describe("DshRunner", () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
       processState.lines = [];
-      await new DshRunner({ ...runnerOptions(root, "", "dsh"), effort }).runPrompt(textTurn("prompt"));
+      await new DshRunner({ ...runnerOptions(root, "", "dsh"), effort }).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_REASONING_EFFORT).toBe(expected);
     });
@@ -201,7 +181,7 @@ describe("DshRunner", () => {
   it("does not set DSH_REASONING_EFFORT when effort is unset", async () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_REASONING_EFFORT).toBeUndefined();
     });
@@ -213,7 +193,7 @@ describe("DshRunner", () => {
       processState.lines = [
         sessionEventLine(undefined, { type: "turn/end", seq: 1, time: 1, data: { turn: 0, reason: { kind: "error", error: { code: "MISSING_CREDENTIAL", message: "no key" } } } }),
       ];
-      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
         .rejects.toThrow("dsh turn ended with error (MISSING_CREDENTIAL): no key");
     });
     for (const kind of ["aborted", "blocked", "max-tokens", "interrupted"]) {
@@ -221,7 +201,7 @@ describe("DshRunner", () => {
         processState.lines = [
           sessionEventLine(undefined, { type: "turn/end", seq: 1, time: 1, data: { turn: 0, reason: { kind } } }),
         ];
-        const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+        const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
         expect(result.stopReason).toBe(kind);
       });
     }
@@ -246,7 +226,7 @@ describe("DshRunner", () => {
             headers: { Authorization: { value: "Bearer token", secret: true } },
           },
         },
-      }).runPrompt(textTurn("prompt"));
+      }).runPrompt("prompt");
 
       const env = processState.calls[0].options.env as Record<string, string>;
       const servers = JSON.parse(env.DSH_MCP_SERVERS) as Array<Record<string, unknown>>;
@@ -276,7 +256,7 @@ describe("DshRunner", () => {
   it("does not set DSH_MCP_SERVERS when no MCP servers are configured", async () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_MCP_SERVERS).toBeUndefined();
     });
@@ -286,7 +266,7 @@ describe("DshRunner", () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
       const oversized = "x".repeat(129 * 1024);
-      await new DshRunner(runnerOptions(root, oversized, "dsh")).runPrompt(textTurn("prompt"));
+      await new DshRunner(runnerOptions(root, oversized, "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_SYSTEM_CONTEXT).toBeUndefined();
       expect(processState.calls[0].systemContextFileContent).toBe(oversized);
@@ -296,7 +276,7 @@ describe("DshRunner", () => {
   it("does not set DSH_SYSTEM_CONTEXT_FILE when there is no system context", async () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_SYSTEM_CONTEXT_FILE).toBeUndefined();
     });
@@ -306,51 +286,9 @@ describe("DshRunner", () => {
     vi.stubEnv("DSH_SYSTEM_CONTEXT_FILE", "/host/leaked/persona.txt");
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_SYSTEM_CONTEXT_FILE).toBeUndefined();
-    });
-  });
-
-  it("clears a host-inherited DSH_ATTACHMENTS_FILE when the turn has no media", async () => {
-    vi.stubEnv("DSH_ATTACHMENTS_FILE", "/host/leaked/attachments.json");
-    const { DshRunner } = await import("../src/runners/dsh.js");
-    await withTempSession(async (root) => {
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
-      const env = processState.calls[0].options.env as Record<string, string>;
-      expect(env.DSH_ATTACHMENTS_FILE).toBeUndefined();
-    });
-  });
-
-  it("writes the media manifest and points DSH_ATTACHMENTS_FILE at it", async () => {
-    const { DshRunner } = await import("../src/runners/dsh.js");
-    await withTempSession(async (root) => {
-      const imagePath = path.join(root, "state", "agents", "attachments", "run-1", "turn-0", "part-1");
-      const pdfPath = path.join(root, "workspace", "reports", "q3.pdf");
-      await fs.mkdir(path.dirname(imagePath), { recursive: true });
-      await fs.mkdir(path.dirname(pdfPath), { recursive: true });
-      await fs.writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
-      await fs.writeFile(pdfPath, Buffer.from("%PDF-1.7"));
-
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt({
-        parts: [
-          { type: "text", text: "compare these" },
-          { type: "media", mediaType: "image/png", filename: "before.png", path: imagePath },
-          { type: "media", mediaType: "application/pdf", path: pdfPath, workspacePath: "reports/q3.pdf" },
-        ],
-      });
-
-      const call = processState.calls[0];
-      const env = call.options.env as Record<string, string>;
-      expect(env.DSH_ATTACHMENTS_FILE).toBe(path.join(path.dirname(env.DSH_PROMPT_FILE), "attachments.json"));
-      expect(JSON.parse(call.attachmentsFileContent as string)).toEqual({
-        attachments: [
-          { path: imagePath, mediaType: "image/png", filename: "before.png" },
-          { path: pdfPath, mediaType: "application/pdf" },
-        ],
-      });
-      // The prompt file still carries only the text projection.
-      expect(call.promptFileContent).toBe("compare these");
     });
   });
 
@@ -358,7 +296,7 @@ describe("DshRunner", () => {
     vi.stubEnv("DSH_MCP_SERVERS", JSON.stringify([{ transport: "stdio", serverName: "leaked", command: "evil" }]));
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_MCP_SERVERS).toBeUndefined();
     });
@@ -371,7 +309,7 @@ describe("DshRunner", () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
       // No stored thread (so resume=false), no effort/skills configured.
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_RESUME).toBeUndefined();
       expect(env.DSH_REASONING_EFFORT).toBeUndefined();
@@ -390,7 +328,7 @@ describe("DshRunner", () => {
     vi.stubEnv("DSH_MODEL", "daemon-resolved-model");
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_MODEL).toBe("daemon-resolved-model");
     });
@@ -400,7 +338,7 @@ describe("DshRunner", () => {
     vi.stubEnv("DSH_MODEL", "daemon-resolved-model");
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
-      await new DshRunner({ ...runnerOptions(root, "", "dsh"), model: "configured-model" }).runPrompt(textTurn("prompt"));
+      await new DshRunner({ ...runnerOptions(root, "", "dsh"), model: "configured-model" }).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       expect(env.DSH_MODEL).toBe("configured-model");
     });
@@ -419,7 +357,7 @@ describe("DshRunner", () => {
             headers: { Authorization: { value: "x".repeat(129 * 1024) } },
           },
         },
-      }).runPrompt(textTurn("prompt"))).rejects.toThrow(/DSH_MCP_SERVERS is \d+ bytes, exceeding the \d+-byte exec\(\) argument limit/);
+      }).runPrompt("prompt")).rejects.toThrow(/DSH_MCP_SERVERS is \d+ bytes, exceeding the \d+-byte exec\(\) argument limit/);
       expect(processState.calls).toHaveLength(0);
     });
   });
@@ -432,7 +370,7 @@ describe("DshRunner", () => {
         mcpConfig: {
           docs: { type: "remote", transport: "sse", url: "https://docs.example.invalid/sse" },
         },
-      }).runPrompt(textTurn("prompt"))).rejects.toThrow('does not support MCP transport "sse" (server "docs")');
+      }).runPrompt("prompt")).rejects.toThrow('does not support MCP transport "sse" (server "docs")');
       expect(processState.calls).toHaveLength(0);
     });
   });
@@ -447,14 +385,14 @@ describe("DshRunner", () => {
     });
     let firstServerName: string | undefined;
     await withTempSession(async (root) => {
-      await new DshRunner(buildOptions(root)).runPrompt(textTurn("prompt"));
+      await new DshRunner(buildOptions(root)).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       const servers = JSON.parse(env.DSH_MCP_SERVERS) as Array<Record<string, unknown>>;
       firstServerName = servers[0].serverName as string;
       expect(firstServerName).toMatch(/^[A-Za-z0-9_-]{1,32}$/);
     });
     await withTempSession(async (root) => {
-      await new DshRunner(buildOptions(root)).runPrompt(textTurn("prompt"));
+      await new DshRunner(buildOptions(root)).runPrompt("prompt");
       const env = processState.calls[0].options.env as Record<string, string>;
       const servers = JSON.parse(env.DSH_MCP_SERVERS) as Array<Record<string, unknown>>;
       expect(servers[0].serverName).toBe(firstServerName);
@@ -467,7 +405,7 @@ describe("DshRunner", () => {
       await expect(new DshRunner({
         ...runnerOptions(root, "", "dsh"),
         outputSchema: { type: "object" },
-      }).runPrompt(textTurn("prompt"))).rejects.toThrow("structured JSON output is not supported");
+      }).runPrompt("prompt")).rejects.toThrow("structured JSON output is not supported");
       expect(processState.calls).toHaveLength(0);
     });
   });
@@ -476,12 +414,12 @@ describe("DshRunner", () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
       processState.lines = ["not-json"];
-      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
         .rejects.toThrow("invalid JSON event");
     });
     await withTempSession(async (root) => {
       processState.lines = [sessionEventLine("some-other-session", { type: "turn/end", seq: 1, time: 1, data: { turn: 0, reason: { kind: "completed" } } })];
-      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
         .rejects.toThrow("unexpected session");
     });
   });
@@ -495,7 +433,7 @@ describe("DshRunner", () => {
         "agent-compose-runner (file:///root/.dsh/profiles/agent-compose/runner.js): failed to import\n",
       ];
 
-      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
         .rejects.toThrow("could not activate the agent-compose profile");
       // Stopping the child is what makes this fail instead of waiting forever.
       expect(processState.kills).toBe(1);
@@ -509,7 +447,7 @@ describe("DshRunner", () => {
         "dsh: error: The requested module '@deepseek-ai/dsh-system-prompt' does not provide an export named 'PERSONA_ORDER'\n",
       ];
 
-      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
         .rejects.toThrow("could not activate the agent-compose profile");
       expect(processState.kills).toBe(1);
     });
@@ -526,7 +464,7 @@ describe("DshRunner", () => {
         "The requested module 'left-pad' does not provide an export named 'pad'\n",
       ];
 
-      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
 
       expect(result.stderr).toContain("does not provide an export named");
       expect(processState.kills).toBe(0);
@@ -544,7 +482,7 @@ describe("DshRunner", () => {
         "deepseek-account (@deepseek-ai/dsh-deepseek-account-platform): pending (waiting for services: credentials, authorization)\n",
       ];
 
-      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
 
       expect(result.stderr).toContain("2 entries did not activate");
       expect(processState.kills).toBe(0);
@@ -557,7 +495,7 @@ describe("DshRunner", () => {
       processState.lines = [];
       processState.stderr = ["late diagnostic"];
       processState.exitCode = 2;
-      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
         .rejects.toThrow("dsh exited with code 2: late diagnostic");
     });
   });
@@ -568,7 +506,7 @@ describe("DshRunner", () => {
       const stderrWrite = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       processState.stderr = ["MCP server startup log\n"];
 
-      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
 
       expect(stderrWrite).toHaveBeenCalledWith(Buffer.from("MCP server startup log\n"));
       expect(result.stderr).toBe("MCP server startup log\n");
@@ -586,7 +524,7 @@ describe("DshRunner", () => {
       const multibyte = Buffer.from("好");
       processState.stderr = [multibyte.subarray(0, 1), multibyte.subarray(1)];
 
-      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt"));
+      const result = await new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt");
 
       const forwarded = Buffer.concat(stderrWrite.mock.calls.map(([chunk]) => Buffer.from(chunk as Uint8Array)));
       expect(forwarded).toEqual(multibyte);
@@ -599,7 +537,7 @@ describe("DshRunner", () => {
     const { DshRunner } = await import("../src/runners/dsh.js");
     await withTempSession(async (root) => {
       processState.error = new Error("ENOENT: dsh not found");
-      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner(runnerOptions(root, "", "dsh")).runPrompt("prompt"))
         .rejects.toThrow("ENOENT");
     });
   });
@@ -609,16 +547,16 @@ describe("DshRunner", () => {
     await withTempSession(async (root) => {
       const skillsRoot = path.join(root, "home", ".agents", "skills");
       await fs.mkdir(skillsRoot, { recursive: true });
-      await expect(new DshRunner({ ...runnerOptions(root, "", "dsh"), skills: ["../secret"] }).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner({ ...runnerOptions(root, "", "dsh"), skills: ["../secret"] }).runPrompt("prompt"))
         .rejects.toThrow("invalid dsh skill name");
-      await expect(new DshRunner({ ...runnerOptions(root, "", "dsh"), skills: ["missing"] }).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner({ ...runnerOptions(root, "", "dsh"), skills: ["missing"] }).runPrompt("prompt"))
         .rejects.toThrow();
       const outside = path.join(root, "outside.md");
       await fs.writeFile(outside, "outside");
       const escape = path.join(skillsRoot, "escape");
       await fs.mkdir(escape);
       await fs.symlink(outside, path.join(escape, "SKILL.md"));
-      await expect(new DshRunner({ ...runnerOptions(root, "", "dsh"), skills: ["escape"] }).runPrompt(textTurn("prompt")))
+      await expect(new DshRunner({ ...runnerOptions(root, "", "dsh"), skills: ["escape"] }).runPrompt("prompt"))
         .rejects.toThrow("escapes the skills directory");
     });
   });

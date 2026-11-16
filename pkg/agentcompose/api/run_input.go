@@ -10,7 +10,7 @@ import (
 // A missing or malformed part is preserved as its zero value instead of being
 // dropped: admission must reject it with a message naming the part index, and a
 // transport that silently discarded it would let a caller believe the content
-// reached the model.
+// reached the agent.
 func AgentInputPartsFromProto(values []*agentcomposev2.AgentInputPart) []agentinput.Part {
 	if len(values) == 0 {
 		return nil
@@ -25,8 +25,8 @@ func AgentInputPartsFromProto(values []*agentcomposev2.AgentInputPart) []agentin
 			parts = append(parts, agentinput.TextPart(text.Text))
 			continue
 		}
-		if media := value.GetMedia(); media != nil {
-			parts = append(parts, agentinput.MediaPart(agentInputMediaFromProto(media)))
+		if file := value.GetFile(); file != nil {
+			parts = append(parts, agentinput.FilePart(agentInputFileFromProto(file)))
 			continue
 		}
 		parts = append(parts, agentinput.Part{})
@@ -34,17 +34,17 @@ func AgentInputPartsFromProto(values []*agentcomposev2.AgentInputPart) []agentin
 	return parts
 }
 
-func agentInputMediaFromProto(media *agentcomposev2.AgentInputMedia) agentinput.Media {
-	out := agentinput.Media{
-		Type:     media.GetMediaType(),
-		Filename: media.GetFilename(),
+func agentInputFileFromProto(file *agentcomposev2.AgentInputFile) agentinput.File {
+	out := agentinput.File{
+		Name:      file.GetFilename(),
+		MediaType: file.GetMediaType(),
 	}
-	switch source := media.GetSource().(type) {
-	case *agentcomposev2.AgentInputMedia_Bytes:
+	switch source := file.GetSource().(type) {
+	case *agentcomposev2.AgentInputFile_Bytes:
 		out.Source = agentinput.SourceInline
 		out.Data = append([]byte(nil), source.Bytes.GetData()...)
 		out.SHA256 = source.Bytes.GetSha256()
-	case *agentcomposev2.AgentInputMedia_WorkspacePath:
+	case *agentcomposev2.AgentInputFile_WorkspacePath:
 		out.Source = agentinput.SourceWorkspacePath
 		out.WorkspacePath = source.WorkspacePath.GetPath()
 		out.SHA256 = source.WorkspacePath.GetSha256()

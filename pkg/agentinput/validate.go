@@ -4,133 +4,67 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net/http"
 	"path"
+	"path/filepath"
 	"strings"
 )
 
-// Canonical media types the daemon accepts. Providers declare the subset they
-// consume through pkg/capmatrix.
+// Admission defaults. They are daemon-wide and can be narrowed or widened
+// through AGENT_INPUT_* configuration.
 const (
-	MediaTypePNG  = "image/png"
-	MediaTypeJPEG = "image/jpeg"
-	MediaTypeGIF  = "image/gif"
-	MediaTypeWebP = "image/webp"
-	MediaTypePDF  = "application/pdf"
-)
-
-// Admission defaults. They are daemon-wide; a provider may only narrow them.
-const (
-	DefaultMaxPartBytes = 10 << 20
+	DefaultMaxFileBytes = 10 << 20
 	DefaultMaxTurnBytes = 32 << 20
-	DefaultMaxParts     = 20
+	DefaultMaxFiles     = 20
 
 	maxWorkspacePathBytes = 4096
 )
 
-// ImageMediaTypes returns the canonical raster image types, in stable order.
-func ImageMediaTypes() []string {
-	return []string{MediaTypePNG, MediaTypeJPEG, MediaTypeGIF, MediaTypeWebP}
-}
-
-// AllMediaTypes returns every canonical media type the daemon understands, in
-// stable order. A provider declares the subset it consumes.
-func AllMediaTypes() []string {
-	return append(ImageMediaTypes(), MediaTypePDF)
-}
-
-// FileExtension returns the filename extension for a canonical media type.
-//
-// The extension is not cosmetic: some harnesses (opencode) infer an
-// attachment's MIME type from its path, so a materialized inline file without
-// one is attached as text/plain instead of an image.
-func FileExtension(mediaType string) string {
-	switch mediaType {
-	case MediaTypePNG:
-		return ".png"
-	case MediaTypeJPEG:
-		return ".jpg"
-	case MediaTypeGIF:
-		return ".gif"
-	case MediaTypeWebP:
-		return ".webp"
-	case MediaTypePDF:
-		return ".pdf"
-	default:
-		return ""
-	}
-}
-
 // Limits are the daemon-wide admission limits for one turn.
 type Limits struct {
-	MaxPartBytes uint64
+	MaxFileBytes uint64
 	MaxTurnBytes uint64
-	MaxParts     uint32
+	MaxFiles     uint32
 }
 
-// DefaultLimits returns the limits every daemon applies before a provider
-// narrows them.
+// DefaultLimits returns the limits a daemon applies when no configuration
+// overrides them.
 func DefaultLimits() Limits {
 	return Limits{
-		MaxPartBytes: DefaultMaxPartBytes,
+		MaxFileBytes: DefaultMaxFileBytes,
 		MaxTurnBytes: DefaultMaxTurnBytes,
-		MaxParts:     DefaultMaxParts,
+		MaxFiles:     DefaultMaxFiles,
 	}
 }
 
-// Policy is the admission policy of one provider: the daemon limits narrowed by
-// what that provider consumes.
-//
-// MediaTypes lists the provider's *native* multimodal types. Any other valid
-// media type is still accepted: the daemon materializes it and hands the agent
-// a path reference instead of attaching it to the model request, which is what
-// lets TXT, CSV, code, Office documents, and archives use the same entry point.
-type Policy struct {
-	Limits     Limits
-	MediaTypes []string
-}
-
-// AllowsMediaType reports whether the policy accepts mediaType.
-func (p Policy) AllowsMediaType(mediaType string) bool {
-	for _, allowed := range p.MediaTypes {
-		if allowed == mediaType {
-			return true
-		}
-	}
-	return false
-}
-
-// Validate admits one normalized turn. It checks part shape, media type
-// syntax, the provider allowlist, size limits, digests, and that the declared
-// media type matches the content's magic bytes for inline bytes.
-func Validate(parts []Part, policy Policy) error {
+// Validate admits one normalized turn. Every file type is accepted; only the
+// shape, size, digest, and workspace path are checked.
+func Validate(parts []Part, limits Limits) error {
 	if len(parts) == 0 {
 		return fmt.Errorf("%w: a turn requires at least one part", ErrInvalid)
 	}
-	limits := policy.Limits
-	if limits.MaxPartBytes == 0 {
-		limits.MaxPartBytes = DefaultMaxPartBytes
+	if limits.MaxFileBytes == 0 {
+		limits.MaxFileBytes = DefaultMaxFileBytes
 	}
 	if limits.MaxTurnBytes == 0 {
 		limits.MaxTurnBytes = DefaultMaxTurnBytes
 	}
-	if limits.MaxParts == 0 {
-		limits.MaxParts = DefaultMaxParts
+	if limits.MaxFiles == 0 {
+		limits.MaxFiles = DefaultMaxFiles
 	}
-	if uint32(len(parts)) > limits.MaxParts {
-		return fmt.Errorf("%w: turn has %d parts, limit is %d", ErrInvalid, len(parts), limits.MaxParts)
+	if uint32(len(parts)) > limits.MaxFiles {
+		return fmt.Errorf("%w: turn has %d parts, limit is %d", ErrInvalid, len(parts), limits.MaxFiles)
 	}
 	var totalBytes uint64
 	for index, part := range parts {
-		if part.Media != nil {
+		if part.File != nil {
 			if part.Text != "" {
-				return fmt.Errorf("%w: part %d sets both text and media", ErrInvalid, index)
+				return fmt.Errorf("%w: part %d sets both text and file", ErrInvalid, index)
 			}
-			mediaBytes, err := validateMedia(index, *part.Media, policy, limits)
+			fileBytes, err := validateFile(index, *part.File, limits)
 			if err != nil {
 				return err
 			}
-			totalBytes += mediaBytes
+			totalBytes += fileBytes
 			continue
 		}
 		if strings.TrimSpace(part.Text) == "" {
@@ -138,66 +72,61 @@ func Validate(parts []Part, policy Policy) error {
 		}
 	}
 	if limits.MaxTurnBytes > 0 && totalBytes > limits.MaxTurnBytes {
-		return fmt.Errorf("%w: turn media is %d bytes, limit is %d", ErrInvalid, totalBytes, limits.MaxTurnBytes)
+		return fmt.Errorf("%w: turn files are %d bytes, limit is %d", ErrInvalid, totalBytes, limits.MaxTurnBytes)
 	}
 	return nil
 }
 
-func validateMedia(index int, media Media, policy Policy, limits Limits) (uint64, error) {
-	mediaType, err := canonicalMediaType(media.Type)
-	if err != nil {
-		return 0, fmt.Errorf("%w: part %d: %w", ErrInvalid, index, err)
+func validateFile(index int, file File, limits Limits) (uint64, error) {
+	if strings.TrimSpace(file.Name) == "" {
+		return 0, fmt.Errorf("%w: part %d file name is required", ErrInvalid, index)
 	}
-	// A type outside the provider's native set is not rejected: it becomes a
-	// file reference the agent reads with its own tools. Only native types are
-	// attached to the model request, and only they are content-sniffed.
-	native := policy.AllowsMediaType(mediaType)
-	if media.SHA256 != "" && !IsSHA256(media.SHA256) {
+	if strings.ContainsRune(file.Name, 0) {
+		return 0, fmt.Errorf("%w: part %d file name contains a NUL byte", ErrInvalid, index)
+	}
+	if file.MediaType != "" {
+		if _, err := canonicalMediaType(file.MediaType); err != nil {
+			return 0, fmt.Errorf("%w: part %d: %w", ErrInvalid, index, err)
+		}
+	}
+	if file.SHA256 != "" && !IsSHA256(file.SHA256) {
 		return 0, fmt.Errorf("%w: part %d sha256 must be 64 lowercase hex characters", ErrInvalid, index)
 	}
-	switch media.Source {
+	switch file.Source {
 	case SourceInline:
-		size := uint64(len(media.Data))
+		size := uint64(len(file.Data))
 		if size == 0 {
 			return 0, fmt.Errorf("%w: part %d has no bytes", ErrInvalid, index)
 		}
-		if size > limits.MaxPartBytes {
-			return 0, fmt.Errorf("%w: part %d is %d bytes, limit is %d", ErrInvalid, index, size, limits.MaxPartBytes)
+		if size > limits.MaxFileBytes {
+			return 0, fmt.Errorf("%w: part %d is %d bytes, limit is %d", ErrInvalid, index, size, limits.MaxFileBytes)
 		}
-		if native {
-			if detected := DetectMediaType(media.Data); detected != mediaType {
-				return 0, fmt.Errorf("%w: part %d declares %q but content is %q", ErrInvalid, index, mediaType, detected)
-			}
-		}
-		if media.SHA256 != "" {
-			sum := sha256.Sum256(media.Data)
-			if hex.EncodeToString(sum[:]) != media.SHA256 {
+		if file.SHA256 != "" {
+			sum := sha256.Sum256(file.Data)
+			if hex.EncodeToString(sum[:]) != file.SHA256 {
 				return 0, fmt.Errorf("%w: part %d sha256 does not match its bytes", ErrInvalid, index)
 			}
 		}
 		return size, nil
 	case SourceWorkspacePath:
-		cleaned, err := NormalizeWorkspacePath(media.WorkspacePath)
-		if err != nil {
+		if _, err := NormalizeWorkspacePath(file.WorkspacePath); err != nil {
 			return 0, fmt.Errorf("%w: part %d: %w", ErrInvalid, index, err)
 		}
 		// The daemon cannot stat the file when it does not share the sandbox
-		// filesystem, so size is checked by the guest runtime before the turn.
-		_ = cleaned
+		// filesystem. Execution enforces the limit wherever it can read it.
 		return 0, nil
 	default:
-		return 0, fmt.Errorf("%w: part %d media has no source", ErrInvalid, index)
+		return 0, fmt.Errorf("%w: part %d file has no source", ErrInvalid, index)
 	}
 }
 
-// canonicalMediaType accepts a lowercase slash-separated type and rejects
-// parameters, uppercase, and empty components. Rejecting rather than
-// normalizing keeps a caller from believing a type was honored when it was
-// silently rewritten.
+// canonicalMediaType validates an optional media type. Uppercase, parameters,
+// and empty components are rejected; the value is informational and never
+// gates acceptance.
 func canonicalMediaType(value string) (string, error) {
 	mediaType := strings.TrimSpace(value)
 	if mediaType == "" {
-		return "", fmt.Errorf("media type is required")
+		return "", fmt.Errorf("media type is empty")
 	}
 	if strings.ContainsAny(mediaType, "; ") {
 		return "", fmt.Errorf("media type %q must not carry parameters", mediaType)
@@ -212,18 +141,10 @@ func canonicalMediaType(value string) (string, error) {
 	return mediaType, nil
 }
 
-// DetectMediaType returns the canonical media type inferred from magic bytes,
-// or "application/octet-stream" when the content is not one of the admitted
-// formats.
-func DetectMediaType(data []byte) string {
-	return strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0])
-}
-
 // NormalizeWorkspacePath validates and cleans a workspace-relative path.
 //
-// Only the workspace root is addressable. Absolute paths, ".." escapes, NUL
-// bytes, and over-long paths are rejected; a path that cleans to the root is
-// rejected because it names no file.
+// Absolute paths, ".." escapes, NUL bytes, and over-long paths are rejected; a
+// path that cleans to the root is rejected because it names no file.
 func NormalizeWorkspacePath(value string) (string, error) {
 	if value == "" {
 		return "", fmt.Errorf("workspace path is required")
@@ -255,4 +176,58 @@ func IsSHA256(value string) bool {
 		}
 	}
 	return true
+}
+
+// SafeFileName turns a display name into one safe path segment, keeping a
+// useful extension. It never returns an empty string.
+func SafeFileName(name, mediaType string) string {
+	base := filepath.Base(strings.TrimSpace(name))
+	var builder strings.Builder
+	for _, r := range base {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+			builder.WriteRune(r)
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	sanitized := strings.Trim(builder.String(), ".")
+	if sanitized == "" {
+		sanitized = "file"
+	}
+	if len(sanitized) > 128 {
+		extension := filepath.Ext(sanitized)
+		sanitized = sanitized[:128-len(extension)] + extension
+	}
+	if filepath.Ext(sanitized) == "" {
+		if extension := extensionForMediaType(mediaType); extension != "" {
+			sanitized += extension
+		}
+	}
+	return sanitized
+}
+
+func extensionForMediaType(mediaType string) string {
+	switch mediaType {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "application/pdf":
+		return ".pdf"
+	case "text/plain":
+		return ".txt"
+	case "text/csv":
+		return ".csv"
+	case "application/json":
+		return ".json"
+	case "application/zip":
+		return ".zip"
+	default:
+		return ""
+	}
 }

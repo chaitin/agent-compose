@@ -257,6 +257,9 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	t.Setenv("WEBHOOK_QUEUE_RULES_JSON", `[{"name":"repo-a","workers":2,"match":{"topic":"webhook.github.push"}}]`)
 	t.Setenv("WEBHOOK_QUEUE_DEFAULT_WORKERS", "6")
 	t.Setenv("WORKSPACE_UPLOAD_LIMIT_BYTES", "4321")
+	t.Setenv("AGENT_INPUT_FILE_LIMIT_BYTES", "2222")
+	t.Setenv("AGENT_INPUT_TURN_LIMIT_BYTES", "3333")
+	t.Setenv("AGENT_INPUT_FILE_LIMIT", "9")
 
 	di := do.New()
 	do.ProvideValue(di, slog.Default())
@@ -306,6 +309,10 @@ func testNewConfigParsesEnvironment(t *testing.T) {
 	}
 	if config.WebhookBodyLimitBytes != 1234 || config.WorkspaceUploadLimitBytes != 4321 {
 		t.Fatalf("limits = %d/%d", config.WebhookBodyLimitBytes, config.WorkspaceUploadLimitBytes)
+	}
+	if config.AgentInputFileLimitBytes != 2222 || config.AgentInputTurnLimitBytes != 3333 || config.AgentInputFileLimit != 9 {
+		t.Fatalf("agent input limits = %d/%d/%d",
+			config.AgentInputFileLimitBytes, config.AgentInputTurnLimitBytes, config.AgentInputFileLimit)
 	}
 	if config.WebhookQueueRulesJSON == "" || config.WebhookQueueDefaultWorkers != 6 {
 		t.Fatalf("webhook queue config = %q/%d", config.WebhookQueueRulesJSON, config.WebhookQueueDefaultWorkers)

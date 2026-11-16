@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/chaitin/agent-compose/pkg/agentinput"
-	"github.com/chaitin/agent-compose/pkg/capmatrix"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -81,6 +80,24 @@ type AgentRunRequest struct {
 	Detach *AgentRunDetach
 }
 
+// inputLimits reads the daemon-wide file limits for this run.
+func (r *AgentRunner) inputLimits() agentinput.Limits {
+	limits := agentinput.DefaultLimits()
+	if r.config == nil {
+		return limits
+	}
+	if r.config.AgentInputFileLimitBytes > 0 {
+		limits.MaxFileBytes = uint64(r.config.AgentInputFileLimitBytes)
+	}
+	if r.config.AgentInputTurnLimitBytes > 0 {
+		limits.MaxTurnBytes = uint64(r.config.AgentInputTurnLimitBytes)
+	}
+	if r.config.AgentInputFileLimit > 0 {
+		limits.MaxFiles = uint32(r.config.AgentInputFileLimit)
+	}
+	return limits
+}
+
 // AgentRunDetach is the detached-execution part of an agent run.
 type AgentRunDetach struct {
 	ExecutionID string
@@ -112,6 +129,18 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
 	guestFileWriter := r.guestFileWriterFor(session)
+	files, err := execution.WriteAgentInputFiles(ctx, execution.AgentInputFileRequest{
+		Config: r.config, Sandbox: session, RunID: runID, Input: req.Input,
+		Limits:         r.inputLimits(),
+		WriteGuestFile: guestFileWriter,
+	})
+	if err != nil {
+		return domain.ExecResult{}, domain.AgentRunResult{}, err
+	}
+	// Files are written into the workspace before the prompt so the prompt can
+	// name their sandbox paths. Every provider receives the same text; no
+	// provider-specific attachment path exists.
+	message = execution.AppendFileReferences(message, files)
 	promptPath, err := execution.WriteAgentPromptFile(ctx, execution.AgentPromptFileRequest{
 		Config: r.config, Sandbox: session, Agent: agent, Message: message, WriteGuestFile: guestFileWriter,
 	})
@@ -120,14 +149,6 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 	}
 	schemaPath, err := execution.WriteAgentOutputSchemaFile(ctx, execution.AgentOutputSchemaFileRequest{
 		Config: r.config, Sandbox: session, Agent: agent, SchemaJSON: outputSchemaJSON, WriteGuestFile: guestFileWriter,
-	})
-	if err != nil {
-		return domain.ExecResult{}, domain.AgentRunResult{}, err
-	}
-	contentPath, err := execution.WriteAgentInputFiles(ctx, execution.AgentInputFileRequest{
-		Config: r.config, Sandbox: session, RunID: runID, Input: req.Input,
-		NativeMediaTypes: capmatrix.NativeMediaTypes(domain.NormalizeAgentKind(agent)),
-		WriteGuestFile:   guestFileWriter,
 	})
 	if err != nil {
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
@@ -174,13 +195,12 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 		runtimeModel = strings.TrimSpace(runtimeConfig.Model)
 	}
 	spec := BuildAgentExecSpec(ctx, r.config, AgentExecSpecRequest{
-		Session:     session,
-		Agent:       agent,
-		Model:       runtimeModel,
-		PromptPath:  promptPath,
-		ContentPath: contentPath,
-		SchemaPath:  schemaPath,
-		SkillNames:  skillNames,
+		Session:    session,
+		Agent:      agent,
+		Model:      runtimeModel,
+		PromptPath: promptPath,
+		SchemaPath: schemaPath,
+		SkillNames: skillNames,
 	})
 	spec.Env["AGENT_COMPOSE_RUN_ID"] = runID
 	spec.Env["AGENT_COMPOSE_PROJECT_ID"] = ""
@@ -212,7 +232,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 		result, err = r.executeDetachedAgent(ctx, detachedAgentExec{
 			Session: session, VMState: vmState, Runtime: runtime, Env: spec.Env, Detach: req.Detach, Stream: stream,
 			TaskArgs: agentPromptArgs(r.config, AgentExecSpecRequest{
-				Agent: agent, Model: runtimeModel, PromptPath: promptPath, ContentPath: contentPath, SchemaPath: schemaPath, SkillNames: skillNames,
+				Agent: agent, Model: runtimeModel, PromptPath: promptPath, SchemaPath: schemaPath, SkillNames: skillNames,
 			}),
 		})
 	} else {
@@ -549,11 +569,8 @@ type AgentExecSpecRequest struct {
 	Agent      string
 	Model      string
 	PromptPath string
-	// ContentPath is the guest manifest of a multimodal turn. Empty means the
-	// turn is the prompt file alone.
-	ContentPath string
-	SchemaPath  string
-	SkillNames  []string
+	SchemaPath string
+	SkillNames []string
 }
 
 // agentPromptArgs is the `agent-compose-runtime prompt` subcommand and flags
@@ -573,9 +590,6 @@ func agentPromptArgs(config *appconfig.Config, req AgentExecSpecRequest) []strin
 	if strings.TrimSpace(model) != "" {
 		args = append(args, "--model", strings.TrimSpace(model))
 	}
-	if strings.TrimSpace(req.ContentPath) != "" {
-		args = append(args, "--content-file", req.ContentPath)
-	}
 	if strings.TrimSpace(schemaPath) != "" {
 		args = append(args, "--output-schema-file", schemaPath)
 	}
@@ -589,7 +603,7 @@ func agentPromptArgs(config *appconfig.Config, req AgentExecSpecRequest) []strin
 
 func BuildAgentExecSpec(ctx context.Context, config *appconfig.Config, req AgentExecSpecRequest) domain.ExecSpec {
 	session, agent, model := req.Session, req.Agent, req.Model
-	promptPath, contentPath, schemaPath, skillNames := req.PromptPath, req.ContentPath, req.SchemaPath, req.SkillNames
+	promptPath, schemaPath, skillNames := req.PromptPath, req.SchemaPath, req.SkillNames
 	localConfig := *config
 	appconfig.ApplyDefaultGuestPaths(&localConfig)
 	config = &localConfig
@@ -599,7 +613,7 @@ func BuildAgentExecSpec(ctx context.Context, config *appconfig.Config, req Agent
 	// The args are the subcommand followed by flag/value pairs; only the
 	// values are quoted, as the command line always was.
 	args := agentPromptArgs(config, AgentExecSpecRequest{
-		Agent: agent, Model: model, PromptPath: promptPath, ContentPath: contentPath, SchemaPath: schemaPath, SkillNames: skillNames,
+		Agent: agent, Model: model, PromptPath: promptPath, SchemaPath: schemaPath, SkillNames: skillNames,
 	})
 	words := make([]string, 0, len(args))
 	for i, arg := range args {

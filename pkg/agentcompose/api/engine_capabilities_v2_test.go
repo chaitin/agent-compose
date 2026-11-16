@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/chaitin/agent-compose/pkg/capmatrix"
+	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
@@ -26,8 +27,27 @@ func testEngineSnapshot(t *testing.T) capmatrix.Snapshot {
 	return snapshot
 }
 
+func TestEngineCapabilitiesHandlerReportsConfiguredInputLimits(t *testing.T) {
+	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t), &appconfig.Config{
+		AgentInputFileLimitBytes: 1234,
+		AgentInputTurnLimitBytes: 5678,
+		AgentInputFileLimit:      7,
+	})
+	response, err := handler.GetCapabilities(context.Background(), connect.NewRequest(&agentcomposev2.GetEngineCapabilitiesRequest{}))
+	if err != nil {
+		t.Fatalf("GetCapabilities() error = %v", err)
+	}
+	limits := response.Msg.GetInputLimits()
+	if limits == nil {
+		t.Fatal("input_limits is missing")
+	}
+	if limits.GetMaxFileBytes() != 1234 || limits.GetMaxTurnBytes() != 5678 || limits.GetMaxFiles() != 7 {
+		t.Fatalf("input limits = %d/%d/%d", limits.GetMaxFileBytes(), limits.GetMaxTurnBytes(), limits.GetMaxFiles())
+	}
+}
+
 func TestEngineCapabilitiesHandlerReportsFrozenMatrix(t *testing.T) {
-	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t))
+	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t), nil)
 	response, err := handler.GetCapabilities(context.Background(), connect.NewRequest(&agentcomposev2.GetEngineCapabilitiesRequest{}))
 	if err != nil {
 		t.Fatalf("GetCapabilities() error = %v", err)
@@ -76,7 +96,7 @@ func TestEngineCapabilitiesHandlerReportsFrozenMatrix(t *testing.T) {
 }
 
 func TestEngineCapabilitiesHandlerReportsProviderMatrix(t *testing.T) {
-	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t))
+	handler := NewEngineCapabilitiesV2Handler(testEngineSnapshot(t), nil)
 	response, err := handler.GetCapabilities(context.Background(), connect.NewRequest(&agentcomposev2.GetEngineCapabilitiesRequest{}))
 	if err != nil {
 		t.Fatalf("GetCapabilities() error = %v", err)

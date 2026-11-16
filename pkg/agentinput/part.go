@@ -1,10 +1,10 @@
-// Package agentinput owns the ordered multimodal input of one agent turn: its
-// value object, the compatibility merge with the legacy prompt, admission
-// rules, and the guest-side manifest shape.
+// Package agentinput owns the ordered text/file input of one agent turn: its
+// value object, the compatibility merge with the legacy prompt, and admission
+// rules.
 //
-// The package is deliberately free of I/O and of provider-specific behavior.
-// Materializing bytes into a sandbox belongs to pkg/execution; translating a
-// turn into a provider CLI invocation belongs to the guest runtime.
+// Files are provider-neutral. The daemon materializes them inside the sandbox
+// workspace and appends their paths to the prompt, so a harness reads them with
+// its own tools. This package never decides how a provider consumes a file.
 package agentinput
 
 import (
@@ -16,11 +16,11 @@ import (
 // ErrInvalid reports input that a caller must correct.
 var ErrInvalid = errors.New("invalid agent input")
 
-// Source identifies how a media part carries its bytes.
+// Source identifies how a file carries its bytes.
 type Source int
 
 const (
-	// SourceUnspecified is an invalid media part.
+	// SourceUnspecified is an invalid file.
 	SourceUnspecified Source = iota
 	// SourceInline carries bytes uploaded with the request.
 	SourceInline
@@ -29,20 +29,19 @@ const (
 	SourceWorkspacePath
 )
 
-// Part is one ordered piece of a human turn. Exactly one of Text and Media is
+// Part is one ordered piece of a human turn. Exactly one of Text and File is
 // set.
 type Part struct {
-	Text  string
-	Media *Media
+	Text string
+	File *File
 }
 
-// Media is one non-text part. Exactly one source is set.
-type Media struct {
-	// Type is the canonical lowercase IANA media type, for example
-	// "image/png". It is required.
-	Type string
-	// Filename is an optional display name. It is never interpreted as a path.
-	Filename string
+// File is one input file. Exactly one source is set.
+type File struct {
+	// Name is the display name and the basis of the materialized file name.
+	Name string
+	// MediaType is optional and informational. It never gates acceptance.
+	MediaType string
 	// Source selects which of Data and WorkspacePath carries the content.
 	Source Source
 	// Data holds inline bytes when Source is SourceInline.
@@ -59,22 +58,17 @@ func TextPart(text string) Part {
 	return Part{Text: text}
 }
 
-// MediaPart returns a media part.
-func MediaPart(media Media) Part {
-	return Part{Media: &media}
+// FilePart returns a file part.
+func FilePart(file File) Part {
+	return Part{File: &file}
 }
 
-// Normalize merges the legacy prompt with the ordered parts into the turn the
-// guest runtime receives.
+// Normalize merges the legacy prompt with the ordered parts into the turn.
 //
-// A non-empty prompt is prepended as the first text part rather than rejected.
-// That is the compatibility rule: a caller that already sends prompt keeps
-// working untouched, and a caller that adds input media does not have to move
-// or repeat its text. Adjacent text parts are joined with a blank line so the
-// manifest stays small and the model sees one block per run of text.
-//
-// The returned warnings are user-visible and explain the normalization when
-// both prompt and input were supplied.
+// A non-empty prompt is prepended as the first text part rather than rejected:
+// an existing caller keeps sending prompt and a new caller adds files without
+// repeating or moving its text. Adjacent text parts are joined with a blank
+// line so the prompt stays compact.
 func Normalize(prompt string, parts []Part) ([]Part, []string, error) {
 	normalized := make([]Part, 0, len(parts)+1)
 	var warnings []string
@@ -92,13 +86,13 @@ func Normalize(prompt string, parts []Part) ([]Part, []string, error) {
 	hasText := false
 	for index, part := range normalized {
 		switch {
-		case part.Media != nil && part.Text != "":
-			return nil, warnings, fmt.Errorf("%w: part %d sets both text and media", ErrInvalid, index)
-		case part.Media != nil:
+		case part.File != nil && part.Text != "":
+			return nil, warnings, fmt.Errorf("%w: part %d sets both text and file", ErrInvalid, index)
+		case part.File != nil:
 			merged = append(merged, part)
 		case strings.TrimSpace(part.Text) != "":
 			hasText = true
-			if last := len(merged) - 1; last >= 0 && merged[last].Media == nil {
+			if last := len(merged) - 1; last >= 0 && merged[last].File == nil {
 				merged[last].Text += "\n\n" + part.Text
 				continue
 			}
@@ -114,11 +108,11 @@ func Normalize(prompt string, parts []Part) ([]Part, []string, error) {
 }
 
 // Text returns the turn's text projection: text parts joined with a blank
-// line, in order. It is what RunDetail.prompt keeps reporting.
+// line, in order. File references are appended by the execution layer.
 func Text(parts []Part) string {
 	var texts []string
 	for _, part := range parts {
-		if part.Media == nil && strings.TrimSpace(part.Text) != "" {
+		if part.File == nil && strings.TrimSpace(part.Text) != "" {
 			texts = append(texts, part.Text)
 		}
 	}
@@ -129,10 +123,10 @@ func cloneParts(parts []Part) []Part {
 	out := make([]Part, len(parts))
 	for index, part := range parts {
 		out[index] = part
-		if part.Media != nil {
-			media := *part.Media
-			media.Data = append([]byte(nil), part.Media.Data...)
-			out[index].Media = &media
+		if part.File != nil {
+			file := *part.File
+			file.Data = append([]byte(nil), part.File.Data...)
+			out[index].File = &file
 		}
 	}
 	return out

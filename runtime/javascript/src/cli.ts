@@ -32,7 +32,6 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
     .command("prompt")
     .requiredOption("--provider <provider>", "agent provider: codex, claude, opencode, pi, or dsh")
     .requiredOption("--message-file <path>", "prompt file path")
-    .option("--content-file <path>", "multimodal turn manifest path")
     .option("--state-root <path>", "agent-compose runtime state root")
     .option("--workspace <path>", "agent working directory")
     .option("--home <path>", "agent HOME directory")
@@ -42,7 +41,6 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
     .action(async (options: {
       provider: string;
       messageFile: string;
-      contentFile?: string;
       stateRoot?: string;
       workspace?: string;
       home?: string;

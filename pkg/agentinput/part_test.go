@@ -7,19 +7,18 @@ import (
 )
 
 func TestNormalizeMergesPromptAsLeadingText(t *testing.T) {
-	media := MediaPart(Media{Type: MediaTypePNG, Source: SourceInline, Data: pngBytes()})
-	parts, warnings, err := Normalize("compare these", []Part{media})
+	parts, warnings, err := Normalize("compare these", []Part{FilePart(File{Name: "a.csv", Source: SourceInline, Data: []byte("a,b\n")})})
 	if err != nil {
 		t.Fatalf("Normalize: %v", err)
 	}
 	if len(parts) != 2 {
 		t.Fatalf("parts = %d, want 2", len(parts))
 	}
-	if parts[0].Media != nil || parts[0].Text != "compare these" {
+	if parts[0].File != nil || parts[0].Text != "compare these" {
 		t.Errorf("first part = %+v, want the prompt as text", parts[0])
 	}
-	if parts[1].Media == nil {
-		t.Errorf("second part = %+v, want the media part", parts[1])
+	if parts[1].File == nil {
+		t.Errorf("second part = %+v, want the file part", parts[1])
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "prepended") {
 		t.Errorf("warnings = %v, want one prepend warning", warnings)
@@ -31,7 +30,7 @@ func TestNormalizePromptOnlyIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Normalize: %v", err)
 	}
-	if len(parts) != 1 || parts[0].Text != "just text" || parts[0].Media != nil {
+	if len(parts) != 1 || parts[0].Text != "just text" || parts[0].File != nil {
 		t.Fatalf("parts = %+v, want one text part", parts)
 	}
 	if len(warnings) != 0 {
@@ -40,7 +39,7 @@ func TestNormalizePromptOnlyIsUnchanged(t *testing.T) {
 }
 
 func TestNormalizeInputOnly(t *testing.T) {
-	parts, _, err := Normalize("", []Part{TextPart("look"), MediaPart(Media{Type: MediaTypePNG, Source: SourceInline, Data: pngBytes()})})
+	parts, _, err := Normalize("", []Part{TextPart("look"), FilePart(File{Name: "a.csv", Source: SourceInline, Data: []byte("x")})})
 	if err != nil {
 		t.Fatalf("Normalize: %v", err)
 	}
@@ -70,9 +69,9 @@ func TestNormalizeRejectsInvalidTurns(t *testing.T) {
 	}{
 		{name: "empty", prompt: "", parts: nil},
 		{name: "whitespace prompt", prompt: " \n\t", parts: nil},
-		{name: "media only", prompt: "", parts: []Part{MediaPart(Media{Type: MediaTypePNG, Source: SourceInline, Data: pngBytes()})}},
-		{name: "empty text part", prompt: "", parts: []Part{TextPart(""), MediaPart(Media{Type: MediaTypePNG, Source: SourceInline, Data: pngBytes()})}},
-		{name: "text and media on one part", prompt: "", parts: []Part{{Text: "x", Media: &Media{Type: MediaTypePNG}}}},
+		{name: "file only", prompt: "", parts: []Part{FilePart(File{Name: "a.csv", Source: SourceInline, Data: []byte("x")})}},
+		{name: "empty text part", prompt: "", parts: []Part{TextPart(""), FilePart(File{Name: "a.csv", Source: SourceInline, Data: []byte("x")})}},
+		{name: "text and file on one part", prompt: "", parts: []Part{{Text: "x", File: &File{Name: "a.csv"}}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -97,7 +96,7 @@ func TestNormalizeDoesNotMutateCallerParts(t *testing.T) {
 }
 
 func TestTextProjectionJoinsTextParts(t *testing.T) {
-	parts := []Part{TextPart("a"), MediaPart(Media{Type: MediaTypePNG}), TextPart("b")}
+	parts := []Part{TextPart("a"), FilePart(File{Name: "x"}), TextPart("b")}
 	if got := Text(parts); got != "a\n\nb" {
 		t.Errorf("Text = %q, want %q", got, "a\n\nb")
 	}

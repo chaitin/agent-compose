@@ -50,7 +50,7 @@ unknown_features=$(jq -r '
   | to_entries
   | map(.value.features[])
   | unique
-  | map(select(. != "structured_output" and . != "session_resume" and . != "streaming" and . != "skill_injection" and . != "media_input"))
+  | map(select(. != "structured_output" and . != "session_resume" and . != "streaming" and . != "skill_injection"))
   | join(",")
 ' "$ABI_FILE")
 if [[ -n $unknown_features ]]; then
