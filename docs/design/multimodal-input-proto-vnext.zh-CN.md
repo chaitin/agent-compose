@@ -64,6 +64,14 @@ message AgentInputFileWorkspacePath {
   string sha256 = 2;
 }
 
+message AttachHumanMessage {
+  string text = 1;
+  map<string, string> metadata = 2;
+  // Ordered text and file input for this human turn; same materialization as
+  // RunAgentRequest.input.
+  repeated AgentInputPart input = 3;
+}
+
 message EngineInputLimits {
   uint64 max_file_bytes = 1;
   uint64 max_turn_bytes = 2;
@@ -116,6 +124,8 @@ Attached files (read them with your file tools):
 
 **R6 生命周期。** 文件在 workspace 内，不随 run 结束删除；一次性 sandbox 随 sandbox 回收。同一 sandbox 的后续 run 可以直接使用上一轮路径（提示词已包含）。
 
+**R9 对话轮次。** 非交互多轮就是同一 sandbox 上的连续 `RunAgent`：第 N 轮可以带新文件，第 N+1 轮即使不带文件也能读取此前所有路径。交互式 `AttachAgentRun` 的 `AttachHumanMessage.input` 使用同一套物化逻辑（目录按 `turn-<n>` 编号），因此首轮与中间轮注入的文件都能被后续轮访问。
+
 **R7 幂等。** `client_request_id` 语义不变；附件不参与 key。
 
 **R8 失败显式。** 超限、空文件、非法 workspace 路径、sha256 不符都在 run 创建前返回 `InvalidArgument`；`command` 与 `input` 互斥。
@@ -158,7 +168,7 @@ runtime、guest ABI、provider 适配层都不参与文件处理。
 
 - **K8s 上的 workspace 路径**：daemon 读不到 Pod 内文件，`workspace_path` 来源不预检存在性、符号链接与大小；文件不存在或不可读时由 harness 在读取时报错。内联 `bytes` 始终在 daemon 侧校验。需要严格上限的调用方应使用 `bytes`。
 - **模型是否"看懂"文件**：取决于 harness 的工具与上游模型；本接口只保证文件可访问、路径已给出。
-- **续轮输入**：`AttachHumanMessage.input` 不在本 PR（设计见 §10）。
+- **交互式 attach 的实时文件流**：服务端与单测已支持 `AttachHumanMessage.input`；本轮用同 sandbox 连续 run 做了多轮实测，attach 的实时 h2c 客户端未纳入本次自动化（不影响同一物化逻辑）。
 - **不持久化文件描述**：`RunDetail` 只记录文本投影，不记录附件列表；后续 PR 再补。
 
 ## 8. 兼容性
@@ -178,9 +188,21 @@ runtime、guest ABI、provider 适配层都不参与文件处理。
 | --- | --- | --- |
 | P0 | proto + 生成代码 + config 限制 + capability `input_limits` | `task lint`、`task test`；纯文本回归 |
 | P1（本 PR） | 准入、物化到 workspace、提示词注入、任意类型、大小/摘要/路径校验 | 5 provider 文本回归；CSV/ZIP/图片等文件可被 agent 读取；超限/逃逸/摘要失败各一条 |
-| P2 | 续轮 `AttachHumanMessage.input`；响应侧附件描述 | 交互 attach 两轮；`RunDetail` 可展示文件 |
+| P1（本 PR，续） | 续轮 `AttachHumanMessage.input`（按 turn 编号落盘） | 交互 attach 的 start/human 帧单测；同 sandbox 多轮 run 实测 |
+| P2 | 响应侧附件描述 | `RunDetail` 可展示文件 |
 
 ## 10. 接口示例
+
+### 10.0 多轮对话
+
+```text
+turn 1  RunAgent(input=[data.csv], sandbox=KEEP_RUNNING)   → 读取 beta=2
+turn 2  RunAgent(sandbox_id, prompt="再读一次 data.csv")    → 仍能访问，beta=2
+turn 3  RunAgent(sandbox_id, input=[second.csv])           → 读取 gamma=3
+turn 4  RunAgent(sandbox_id, prompt="两个文件都读")          → 2,3
+```
+
+文件按上传轮次落在 `.agent-compose/uploads/<run-id>/turn-<n>/`，不随 run 删除。
 
 ### 10.1 文本 + CSV
 

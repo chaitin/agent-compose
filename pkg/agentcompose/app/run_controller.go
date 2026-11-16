@@ -276,6 +276,7 @@ func runAttachInputFromProto(request *agentcomposev2.AttachAgentRunRequest) runs
 	case *agentcomposev2.AttachAgentRunRequest_HumanMessage:
 		input.Kind = runs.RunAttachInputHumanMessage
 		input.Text = frame.HumanMessage.GetText()
+		input.Parts = api.AgentInputPartsFromProto(frame.HumanMessage.GetInput())
 	}
 	return input
 }

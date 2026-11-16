@@ -14,9 +14,11 @@ import (
 
 // AgentInputFileRequest describes the files of one turn.
 type AgentInputFileRequest struct {
-	Config         *appconfig.Config
-	Sandbox        *domain.Sandbox
-	RunID          string
+	Config  *appconfig.Config
+	Sandbox *domain.Sandbox
+	RunID   string
+	// Turn numbers the per-run upload directory (0 is the opening turn).
+	Turn           int
 	Input          []agentinput.Part
 	Limits         agentinput.Limits
 	WriteGuestFile GuestFileWriterFunc
@@ -47,8 +49,9 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) ([]Res
 	}
 	appconfig.ApplyDefaultGuestPaths(req.Config)
 	segment := runStateSegment(runID)
-	hostDir := filepath.Join(session.Summary.WorkspacePath, ".agent-compose", "uploads", segment, "turn-0")
-	guestRel := filepath.Join(".agent-compose", "uploads", segment, "turn-0")
+	turnDir := fmt.Sprintf("turn-%d", req.Turn)
+	hostDir := filepath.Join(session.Summary.WorkspacePath, ".agent-compose", "uploads", segment, turnDir)
+	guestRel := filepath.Join(".agent-compose", "uploads", segment, turnDir)
 	guestDir := filepath.Join(req.Config.GuestWorkspacePath, guestRel)
 	limits := req.Limits
 	if limits.MaxFileBytes == 0 {

@@ -40,7 +40,10 @@
 | `bundle.zip`（二进制） | 落盘 + 提示词路径 | ✅ 回答 `BANANA` | codex 用 `python3 zipfile` 解包读取 |
 | `report.docx` | 落盘 + 提示词路径 | ✅ 读取 `word/document.xml` | codex 用 `python3 zipfile` 解包 |
 | `red.png` | 落盘 + 提示词路径 | ✅ 回答 `red` | claude 用 `Read` 工具查看图片 |
-| 后续追问 | 同一 sandbox 第二次 run，不再上传 | ✅ 回答 `3`（含表头 3 行） | codex 读取第一次 run 留下的路径 |
+| 多轮：turn 1 | 上传 `data.csv` | ✅ `2` | 首轮文件落盘并被读取 |
+| 多轮：turn 2 | 不带文件，仅提示"再读一次" | ✅ `2` | 读取 turn 1 的路径 |
+| 多轮：turn 3 | 中间轮新增 `second.csv` | ✅ `3` | 新文件落盘并被读取 |
+| 多轮：turn 4 | 不带文件，要求读两个文件 | ✅ `2,3` | 同时访问 turn 1 与 turn 3 的文件 |
 
 ## C. Provider 解耦验证
 
@@ -48,6 +51,17 @@
 - codex 读取 CSV/ZIP/DOCX，claude 读取 PNG，都通过各自工具完成。
 - `GetEngineCapabilities.providers` 不再有 `media_types`/`media_ordering`；`input_limits` 是唯一输入上限来源。
 - guest runtime 未改动：`agent-compose-runtime prompt --message-file` 仍是唯一入口，guest 镜像无需为本功能升级。
+
+## C. 对话轮次矩阵（同一 sandbox）
+
+| 轮次 | 输入 | 结果 |
+| --- | --- | --- |
+| 1 | `data.csv`（beta=2） | `2` |
+| 2 | 无文件，引用上一轮路径 | `2` |
+| 3 | 新增 `second.csv`（gamma=3） | `3` |
+| 4 | 无文件，要求读两个文件 | `2,3` |
+
+文件目录按上传轮次编号：`.agent-compose/uploads/<run-id>/turn-<n>/`。交互式 attach 的 `AttachHumanMessage.input` 复用同一物化逻辑，已有 start/human 消息的单元测试覆盖。
 
 ## D. 已知限制
 

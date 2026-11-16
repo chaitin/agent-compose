@@ -334,12 +334,6 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	if first.Kind != RunAttachInputStart {
 		return fmt.Errorf("%w: first run attach frame must be start", ErrInvalidRequest)
 	}
-	// Interactive attach drives turns through the guest stream, which does not
-	// carry media yet. Refuse explicitly instead of running the turn with the
-	// text projection only and silently dropping the attachments.
-	if len(first.Request.Input) > 0 {
-		return fmt.Errorf("%w: multimodal input is not supported for interactive attach yet", domain.ErrUnsupported)
-	}
 	if first.RunID != "" {
 		return c.attachExistingInteractiveSession(ctx, first.RunID, receive, send)
 	}
@@ -349,7 +343,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	if mode == RunAttachModeUnspecified && commandText != "" {
 		mode = RunAttachModeCommand
 	}
-	if mode == RunAttachModeUnspecified && strings.TrimSpace(req.Prompt) != "" {
+	if mode == RunAttachModeUnspecified && (strings.TrimSpace(req.Prompt) != "" || len(req.Input) > 0) {
 		mode = RunAttachModePrompt
 	}
 	if mode != RunAttachModeCommand && mode != RunAttachModePrompt {
@@ -358,7 +352,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	if mode == RunAttachModeCommand && commandText == "" {
 		return fmt.Errorf("%w: run attach command is required", ErrInvalidRequest)
 	}
-	if mode == RunAttachModePrompt && strings.TrimSpace(req.Prompt) == "" {
+	if mode == RunAttachModePrompt && strings.TrimSpace(req.Prompt) == "" && len(req.Input) == 0 {
 		return fmt.Errorf("%w: run attach prompt is required", ErrInvalidRequest)
 	}
 	started, err := c.StartProjectRun(ctx, req)

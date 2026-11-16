@@ -171,3 +171,21 @@ func TestWriteAgentInputFilesRejectsMissingWorkspaceFile(t *testing.T) {
 		t.Fatalf("err = %v, want a missing-file error", err)
 	}
 }
+
+func TestWriteAgentInputFilesNumbersTurnDirectories(t *testing.T) {
+	session, config, workspace := inputSandbox(t)
+	files, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+		Config: config, Sandbox: session, RunID: "run-7", Turn: 2,
+		Input:  []agentinput.Part{agentinput.TextPart("x"), agentinput.FilePart(agentinput.File{Name: "a.csv", Source: agentinput.SourceInline, Data: []byte("a")})},
+		Limits: agentinput.Limits{MaxFileBytes: 1024},
+	})
+	if err != nil {
+		t.Fatalf("WriteAgentInputFiles: %v", err)
+	}
+	if len(files) != 1 || !strings.Contains(files[0].GuestPath, "/turn-2/") {
+		t.Fatalf("files = %+v, want a turn-2 path", files)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".agent-compose", "uploads", "run-7", "turn-2", "a.csv")); err != nil {
+		t.Fatalf("turn-2 file missing: %v", err)
+	}
+}

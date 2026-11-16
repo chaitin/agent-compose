@@ -1878,6 +1878,10 @@ message AttachSignal {
 message AttachHumanMessage {
   string text = 1;
   map<string, string> metadata = 2;
+  // Ordered text and file input for this human turn. Files are materialized
+  // inside the sandbox workspace and their paths are appended to the message,
+  // exactly like RunAgentRequest.input.
+  repeated AgentInputPart input = 3;
 }
 
 message AttachCancel {
