@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 
@@ -31,6 +32,9 @@ func newCLISandboxHostCommand() *cobra.Command {
 }
 
 func runSandboxHost(ctx context.Context) error {
+	// First, so no write the host makes, including the log lines below, can end
+	// it with SIGPIPE.
+	notifySIGPIPE()
 	if err := godotenv.Load(); err != nil {
 		// The parser embeds the unparsed remainder of the file in its message,
 		// which can include provider credentials.
@@ -56,6 +60,20 @@ func runSandboxHost(ctx context.Context) error {
 	defer func() { _ = lockFile.Close() }()
 
 	return driverpkg.ServeSandboxHost(ctx, conf)
+}
+
+// notifySIGPIPE keeps a write to a closed pipe or socket from terminating the
+// host and every VM it owns. The microsandbox and BoxLite drivers run native
+// code on threads the Go runtime did not create, and Go ends the process when
+// SIGPIPE arrives on such a thread unless the program has registered for it
+// (os/signal, "Go programs that use cgo or SWIG"); the same registration also
+// covers writes to a closed stdout or stderr. With it, those writes fail with
+// EPIPE where they happen. Notify is used rather than Ignore because an
+// ignored SIGPIPE would be inherited by the child processes the host starts.
+func notifySIGPIPE() {
+	// Nothing reads the channel: delivery to it never blocks, and the
+	// registration alone changes how the runtime handles the signal.
+	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 }
 
 // acquireSandboxHostLock takes an exclusive, non-blocking advisory lock so only
