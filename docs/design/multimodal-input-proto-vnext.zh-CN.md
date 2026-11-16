@@ -217,12 +217,12 @@ message RunDetail {
 | `RunAgentRequest.input` | 唯一能表达"文本 + 媒体 + 顺序"的入口；被 4 个启动 RPC 共享 | 只能加并列的 attachments，丢掉顺序与未来扩展性 |
 | `AgentInputPart.text` | 让文本也是 part，顺序才有意义；与业界 `content[]` 同构 | 文本与媒体分成两个数组，交错语义无处安放 |
 | `AgentInputPart.media` | 把非文本内容收进同一个判别式 oneof，新增媒体种类不需要新 part 类型 | 每加一种媒体就加一个 part case，part 类型爆炸 |
-| `media_type` | 业界的共性；provider 白名单与魔数校验都需要它；opencode/pi/dsh 都靠它分流 | 只能靠扩展名猜，SVG/多态文件无法拦截 |
+| `media_type` | 业界的共性；原生类型靠它做魔数校验与 provider 分流，通用文件靠它记录类型 | 只能靠扩展名猜；通用文件也无法向 agent 说明类型 |
 | `filename` | opencode 的 `FilePartInput.filename`、DSH 的展示名、UI 回显 | 展示退化为哈希路径 |
 | `bytes` source | 远程调用方唯一可行的入口（今天没有 upload RPC） | 调用方必须先 Exec 写文件，二进制不可靠且需要 sandbox 已运行 |
 | `workspace_path` source | 零拷贝；agent 自己产出的文件（截图、图表）天然在 workspace；resume 后仍有效 | 所有媒体都要 base64 穿过控制面，大图成本翻倍 |
 | `sha256`（可选） | 幂等重试与 TOCTOU 校验；K8s 下由 guest 侧复核 | 无法判断两次请求是不是同一张图；路径被并发改写无法察觉 |
-| `EngineProviderCapabilities.media_types` | 调用方要在发请求前知道能不能发 PDF/图 | 只能发出去再收 `INVALID_ARGUMENT`，CLI/UI 无法预判 |
+| `EngineProviderCapabilities.media_types` | 调用方要在发请求前知道哪些类型会被原生附加（其余类型会变成文件路径引用） | CLI/UI 无法预判哪些类型能直接进模型 |
 | `max_attachment_bytes` | opencode 10 MiB 与 Anthropic 5MB 的差异需要暴露 | 客户端只能按全局上限猜，容易踩 provider 上限 |
 | `media_ordering` | 保序与否直接改变模型看到的内容，必须可查询 | 调用方会假设所有 provider 都交错，产生难以复现的预期差 |
 | `GetEngineCapabilitiesResponse.input_limits` | 一次性拿到全局上限与允许类型；也是"本 daemon 是否支持多模态"的探测点 | 客户端只能硬编码常量；旧 daemon 兼容探测缺失 |
@@ -247,7 +247,7 @@ message RunDetail {
 
 | 层 | 代码位置 | 负责 | 不负责 |
 | --- | --- | --- | --- |
-| 控制面（daemon） | `pkg/runs`、`pkg/agentcompose/api`、`pkg/execution` | 形状/MIME/上限/provider 白名单校验；`bytes` 落盘并推送到 guest；写 content manifest；能力协商；持久化描述 | 任何 provider 的调用形状 |
+| 控制面（daemon） | `pkg/runs`、`pkg/agentcompose/api`、`pkg/execution` | 形状/MIME/上限校验；`bytes` 落盘并推送到 guest；原生类型之外的媒体改写为文件路径引用；写 content manifest；能力协商 | 任何 provider 的调用形状 |
 | 启动脚本（guest runtime） | `runtime/javascript/src/prompt.ts`、`stream.ts` | 解析 manifest；guest 侧复核（K8s 无共享 FS 时）；构造 `TurnContent`；分发 runner；错误映射 | 网络上传、能力广告 |
 | runner adapter | `runtime/javascript/src/runners/*.ts`、`assets/.dsh/profiles/agent-compose/runner.js` | part → 具体 CLI/SDK 调用形状；保序/聚合；provider 错误透传 | 校验、落盘 |
 | harness 原生 | 各 CLI/SDK 二进制 | 读文件、格式校验、缩放、base64、API 编码、模型能力门禁 | 我们的 part 语义 |
@@ -307,7 +307,7 @@ message RunDetail {
 ### 5.4 daemon 必须做的事（与 provider 无关）
 
 1. `pkg/agentcompose/api`：proto → 领域类型映射；`input` 非空时校验 `prompt` 为空。
-2. `pkg/runs`：准入校验（part 形状、MIME 语法、魔数、provider 白名单、单 part/单轮上限、part 数）。
+2. `pkg/runs`：准入校验（part 形状、MIME 语法、原生类型的魔数、单 part/单轮上限、part 数）。非原生类型不拒绝，交给 execution 物化并以路径引用。
 3. `pkg/execution/agent_input_files.go`（新文件，单一职责）：
    - `bytes` 写宿主 `state/agents/attachments/<run-id>/turn-<n>/part-<i>`（`0600`），并通过既有 `GuestFileWriterFunc` 推送到 guest（K8s 路径已存在）；
    - 写 `content.json`（上述路径清单）；
@@ -327,12 +327,18 @@ message RunDetail {
 
 因此 `AgentInputMediaWorkspacePath.sha256` 的校验也是"能校验就早校验，不能就 guest 校验"，这一点写进了字段注释，不能假设 daemon 一定能读。
 
+### 5.6 通用文件与 guest 侧硬校验
+
+**通用文件（非原生类型）。** 不在 `media_types` 里的类型不会被拒绝：daemon 把它物化到 `state/agents/attachments/...`（按类型保留安全扩展名，否则沿用调用方 `filename` 的安全扩展名），并在 manifest 的同一顺序位置写入 `reference: true` 的 media part。runtime 像校验原生附件一样校验它（存在、普通文件、无符号链接、体积、摘要），再把它渲染成 `Attached file: <guest path> (<mime>). Read it with your file tools.` 的文本；runner 不会把它附加到模型请求。TXT/CSV/代码/Office/压缩包因此复用同一入口，具体读取能力由 harness 与 sandbox 工具决定。安全约束不变：单 part/单轮上限、workspace 相对路径、符号链接拒绝、可选 sha256 校验。
+
+**guest 侧复核。** manifest 携带 `limits.maxPartBytes` / `limits.maxTurnBytes`。runtime 在 turn 开始前对每个媒体文件执行 `lstat`（拒绝符号链接，含 workspace 路径分量）、检查普通文件、按实际大小校验单 part 与单轮上限，并在声明了 `sha256` 时计算摘要比对。daemon 不共享文件系统（K8s）时，这一步是唯一的上限与完整性检查。
+
 ---
 
 ## 6. 能力协商与版本门禁
 
 1. `pkg/capmatrix` 的 `canonicalFeatures` 追加一个粗粒度 key：`media_input`。语义仅为"该 guest runtime 能接收 `--content-file` 并处理附件"，用于**版本门禁**，不表达具体媒体种类。
-2. 具体媒体种类由 `EngineProviderCapabilities.media_types` 表达（daemon 静态表）：codex/claude/pi/dsh 为四种位图，仅 opencode 另加 `application/pdf`（claude 的 document block 在实测中挂起，已收窄）。
+2. `EngineProviderCapabilities.media_types` 表达**原生**媒体类型（daemon 静态表）：codex/claude/pi/dsh 为四种位图，仅 opencode 另加 `application/pdf`（claude 的 document block 在实测中挂起，已收窄）。其余类型（TXT/CSV/代码/Office/压缩包等）仍被接受，但以文件路径引用交给 agent 的工具读取，不进入模型请求。
 3. `guest-images/guest-abi.json` 的每个 provider `features` 增加 `media_input`；`scripts/tests/test-provider-lock.sh` 的 known-keys 白名单同步增加（否则该测试会报 unknown capability key）。
 4. 旧 guest 镜像没有该 key → `DeclaredProvidersFromManifest` 得到 false → daemon 在 run 创建前返回 `Unimplemented` + `UNSUPPORTED`，detail 提示升级 guest 镜像。**不做"新 daemon 发新参数、旧 runtime 忽略"的静默降级。**
 5. `media_ordering` 与 `media_types` 来自 daemon 静态表，与 manifest 的 `media_input` 取交集：manifest 为 false 时整组能力视为不可用。
@@ -344,7 +350,7 @@ message RunDetail {
 
 ```text
 client ── RunAgent(request.input=[...]) ──▶ daemon
-                                             │ 1. 形状/合并/MIME/上限/provider 白名单/摘要
+                                             │ 1. 形状/合并/MIME/上限/摘要
                                              │ 2. bytes 落盘 <sandbox>/state/agents/attachments/<run>/turn-0/
                                              │ 3. GuestFileWriter 推送（仅 K8s 等无共享 FS 的 driver）
                                              │ 4. 写 content.json（路径清单，不含字节）
@@ -394,7 +400,7 @@ client ── RunAgent(request.input=[...]) ──▶ daemon
 ## 10. 待确认
 
 1. **v1 是否允许"只有图片、没有文本"的一轮**？本文按不允许设计（要求至少一个非空 text part），因为 codex/opencode 对空 prompt 的行为不一致；如果产品需要，建议由调用方注入一个明确的短文本，而不是 daemon 静默补默认值。
-2. **PDF 在 claude 上的端到端支持**：SDK 类型与 CLI 解析层接受 `document` block，Anthropic API 也原生支持 PDF，但 `claude -p --input-format stream-json` 传 PDF 没有官方文档。P1 先按"支持"实现并加端到端用例，验证失败则把 claude 的 `media_types` 收窄为四种位图。
+2. **PDF 在 claude 上的端到端支持**：已按预案收窄为四种位图；PDF 作为通用文件以路径引用交给 claude 的 Read 工具，不再使用会挂起的 `document` block。
 3. **`max_part_bytes` 的默认值**：本文建议 10 MiB（对齐 opencode 硬上限量级），但 Anthropic 单图 5MB，claude 依赖 CLI recompress。需要在 P1 用真实图片验证后再定稿。
 4. **附件是否随 run 历史保留字节**：本文只保留描述；若 UI 需要重新展示，再在 P3 增加 artifacts 目录与下载 RPC。
 
@@ -490,7 +496,7 @@ Authorization: Bearer <daemon-token>
 }
 ```
 
-说明：`workspacePath.path` 与 `SandboxWorkspaceEntry.path` 同一套语法（相对、无 `..`、无符号链接分量）；`home`/`state`/挂载卷不可寻址。PDF 只有 `claude`、`opencode` 接受，其它 provider 返回 `invalid_argument`，detail 带 `supportedMediaTypes`。
+说明：`workspacePath.path` 与 `SandboxWorkspaceEntry.path` 同一套语法（相对、无 `..`、无符号链接分量，guest 侧再次逐分量校验）；`home`/`state`/挂载卷不可寻址。PDF 只有 `opencode` 原生接受；其它 provider 不拒绝，而是把它当成通用文件给出路径引用，由 agent 的文件工具读取。
 
 ### 11.4 示例 4：prompt + input 合并（线上旧调用方的升级路径）
 
@@ -664,8 +670,10 @@ Source: &agentcomposev2.AgentInputMedia_WorkspacePath{
 | --- | --- |
 | `input` 与 `prompt` 同时非空 | 正常：`prompt` 前置为首个 text part，`warnings` 说明 |
 | `mediaType` 缺失/非规范 | `invalid_argument` |
-| 声明 MIME 与魔数不符 | `invalid_argument` |
-| 图片超过单 part 上限 | `invalid_argument`，detail 带实际上限 |
-| 给 codex 发 PDF | `invalid_argument`，detail 带 `supportedMediaTypes` |
-| `workspacePath` 逃逸根/不存在 | `invalid_argument` / `not_found` |
+| 声明 MIME 与魔数不符（原生类型） | `invalid_argument` |
+| 内联 part 超过上限 | `invalid_argument`，detail 带实际上限 |
+| workspace 文件超过上限 | run 失败：`attachment ... limit is ...`（guest 侧按实际大小校验） |
+| 给 codex 发 PDF | 正常：PDF 不是 codex 的原生类型，作为通用文件生成路径引用 |
+| `workspacePath` 逃逸根 | `invalid_argument` |
+| `workspacePath` 不存在/是符号链接 | run 失败：`attachment ... is not readable` / `has a symlinked path component` |
 | guest 镜像不支持（无 `media_input`） | `unimplemented`（`UNSUPPORTED`），提示升级镜像 |

@@ -22,14 +22,14 @@
 | A3 | `prompt` + `input` 合并 | ✅ | warning `prompt was prepended as the first text part because input is also set`；模型同时看到 prompt 与图片 |
 | A4 | 只有 `input`（无 prompt） | ✅ | codex/claude/pi 均 SUCCEEDED；`RunDetail.prompt` 等于文本投影 |
 | A5 | 只有媒体、没有文本 | ✅ 拒绝 | `invalid_argument: a turn requires at least one non-empty text part` |
-| A6 | 不支持的 MIME（svg） | ✅ 拒绝 | `image/svg+xml is not supported ... (supported: image/png, ...)` |
+| A6 | 通用 MIME（SVG/CSV/ZIP） | ✅ 接受为文件路径引用 | 非原生类型不拒绝；执行层物化为 `reference` part，由 agent 工具读取 |
 | A7 | 声明 MIME 与魔数不符 | ✅ 拒绝 | `declares "image/png" but content is "image/jpeg"` |
 | A8 | 超过单 part 上限 | ✅ 拒绝 | `part 1 is 11534344 bytes, limit is 10485760` |
 | A9 | workspace 路径逃逸 | ✅ 拒绝 | `workspace path "../etc/passwd" escapes the workspace` |
 | A10 | sha256 不匹配 | ✅ 拒绝 | `part 1 sha256 does not match its bytes` |
 | A11 | `command` + `input` | ✅ 拒绝 | `input cannot be combined with command` |
 | A12 | 交互式启动带 media | ✅ 拒绝 | `unimplemented: multimodal input is not supported for interactive attach yet` |
-| A13 | PDF 的 provider 白名单 | ✅ | codex/claude/pi/dsh `invalid_argument`；opencode 接受并读出 `BANANA` |
+| A13 | PDF 的原生/通用分流 | ✅ | opencode 原生读出 `BANANA`；codex/claude/pi/dsh 作为通用文件路径引用 |
 | A14 | 旧 guest ABI（无 `media_input`） | ✅ 拒绝 | 能力表 `mediaTypes` 为空；请求返回 `unimplemented: provider "codex" does not accept media input` |
 | A15 | 幂等键重放 | ✅ | 同一 `clientRequestId` 返回原 runId（`9765b18a...`），不产生第二个 run |
 
@@ -37,11 +37,11 @@
 
 | Provider | 文本 | prompt+图片 | 仅 input | workspace 图片 | 多图 | PDF |
 | --- | --- | --- | --- | --- | --- | --- |
-| codex | ✅ | ✅ `red` | ✅ `red` | ✅ `red` | ✅ `red, blue` | ✅ 准入拒绝 |
-| claude | ✅ | ✅ `red` | ✅ `red` | ✅ `red` | ✅ `red, blue` | ✅ 准入拒绝（已收窄） |
-| opencode | ✅ | ⛔ 模型能力阻断 | — | — | — | ✅ `BANANA` |
-| pi | ✅ | ✅ `red` | ✅ `red` | ✅ `red` | ✅ `red, blue` | ✅ 准入拒绝 |
-| dsh | ✅ | ✅ `red`（事件 `finalText`） | n/t | ✅ `red`（事件 `finalText`） | n/t | ✅ 准入拒绝 |
+| codex | ✅ | ✅ `red` | ✅ `red` | ✅ `red` | ✅ `red, blue` | ✅ 通用文件引用 |
+| claude | ✅ | ✅ `red` | ✅ `red` | ✅ `red` | ✅ `red, blue` | ⚠️ 通用引用；上游拒绝 file content |
+| opencode | ✅ | ⛔ 模型能力阻断 | — | — | — | ✅ `BANANA`（原生） |
+| pi | ✅ | ✅ `red` | ✅ `red` | ✅ `red` | ✅ `red, blue` | ✅ 通用文件引用 |
+| dsh | ✅ | ✅ `red`（事件 `finalText`） | n/t | ✅ `red`（事件 `finalText`） | n/t | ✅ 通用文件引用 |
 
 `—` 表示与 opencode 图片阻断同因（同一模型能力门禁），未重复执行；`n/t` 表示未跑（时间成本），行为与已跑组合一致。
 
@@ -88,3 +88,17 @@ POST /agentcompose.v2.RunService/RunAgent
  "prompt":"What is the dominant color? Answer one word.",
  "input":[{"media":{"mediaType":"image/png","bytes":{"data":"<base64>","sha256":"<hex>"}}}]}
 ```
+
+## G. 评审修复回归（第二轮）
+
+针对 review 的 3 个 finding 与"支持通用文件"建议，重新构建镜像后回归：
+
+| 用例 | 结果 | 证据 |
+| --- | --- | --- |
+| workspace 文件超过 10 MiB | ✅ run 失败 | `attachment /workspace/big.bin is 11534336 bytes, limit is 10485760` |
+| workspace 内符号链接逃逸（指向 `/data/state`） | ✅ run 失败 | `attachment /workspace/escape/agents has a symlinked path component` |
+| 通用 CSV（`text/csv`，内联） | ✅ codex 读取并回答 | transcript 中 `cat .../part-1.csv`，输出 `2` |
+| dsh 的 `media_ordering` | ✅ 改为 `aggregate` | 能力查询返回 `ENGINE_PROVIDER_MEDIA_ORDERING_AGGREGATE` |
+| 通用 PDF（claude，workspace 路径） | ⚠️ 上游限制 | claude 的 Read 工具把文件内容发往 `/v1/chat/completions`，网关返回 502 `File content is not supported ... use /v1/responses`；这是 harness/上游组合的限制，不是输入契约 |
+
+host 侧单元测试覆盖：`pkg/agentinput`、`pkg/execution` 新增 `reference`、体积/摘要、扩展名用例；runtime 新增 `verifyTurnMedia` 的体积/摘要/符号链接/引用渲染用例。
