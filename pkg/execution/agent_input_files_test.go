@@ -141,3 +141,33 @@ func TestRunStateSegmentKeepsIDsPathSafe(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteAgentInputFilesRejectsWorkspaceSymlink(t *testing.T) {
+	session, config, workspace := inputSandbox(t)
+	if err := os.WriteFile(filepath.Join(workspace, "secret.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write secret: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(workspace, "secret.txt"), filepath.Join(workspace, "alias.txt")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	_, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+		Config: config, Sandbox: session, RunID: "run-5",
+		Input:  []agentinput.Part{agentinput.TextPart("read"), agentinput.FilePart(agentinput.File{Name: "alias.txt", Source: agentinput.SourceWorkspacePath, WorkspacePath: "alias.txt"})},
+		Limits: agentinput.Limits{MaxFileBytes: 1024},
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want a symlink error", err)
+	}
+}
+
+func TestWriteAgentInputFilesRejectsMissingWorkspaceFile(t *testing.T) {
+	session, config, _ := inputSandbox(t)
+	_, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+		Config: config, Sandbox: session, RunID: "run-6",
+		Input:  []agentinput.Part{agentinput.TextPart("read"), agentinput.FilePart(agentinput.File{Name: "missing.csv", Source: agentinput.SourceWorkspacePath, WorkspacePath: "missing.csv"})},
+		Limits: agentinput.Limits{MaxFileBytes: 1024},
+	})
+	if err == nil || !strings.Contains(err.Error(), "not readable") {
+		t.Fatalf("err = %v, want a missing-file error", err)
+	}
+}

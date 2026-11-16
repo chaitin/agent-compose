@@ -101,8 +101,18 @@ func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (Resolved
 			return ResolvedFile{}, fmt.Errorf("create agent input dir: %w", err)
 		}
 		hostPath := filepath.Join(deps.hostDir, name)
-		if err := os.WriteFile(hostPath, file.Data, 0o600); err != nil {
+		// O_EXCL refuses an existing path, including a symlink an earlier agent
+		// could have planted in the workspace, so the write never follows one.
+		handle, err := os.OpenFile(hostPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
 			return ResolvedFile{}, fmt.Errorf("write agent input file %d: %w", deps.index, err)
+		}
+		if _, err := handle.Write(file.Data); err != nil {
+			_ = handle.Close()
+			return ResolvedFile{}, fmt.Errorf("write agent input file %d: %w", deps.index, err)
+		}
+		if err := handle.Close(); err != nil {
+			return ResolvedFile{}, fmt.Errorf("close agent input file %d: %w", deps.index, err)
 		}
 		guestPath := filepath.Join(deps.guestDir, name)
 		if deps.writeGuestFile != nil {
@@ -116,7 +126,11 @@ func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (Resolved
 		if err != nil {
 			return ResolvedFile{}, fmt.Errorf("agent input file %d: %w", deps.index, err)
 		}
-		if size, ok := workspaceFileSize(deps.session, cleaned); ok && deps.limits.MaxFileBytes > 0 && uint64(size) > deps.limits.MaxFileBytes {
+		size, err := checkWorkspaceFile(deps.session, cleaned)
+		if err != nil {
+			return ResolvedFile{}, fmt.Errorf("agent input file %d: %w", deps.index, err)
+		}
+		if deps.limits.MaxFileBytes > 0 && uint64(size) > deps.limits.MaxFileBytes {
 			return ResolvedFile{}, fmt.Errorf("agent input file %d is %d bytes, limit is %d", deps.index, size, deps.limits.MaxFileBytes)
 		}
 		return ResolvedFile{
@@ -129,16 +143,40 @@ func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (Resolved
 	}
 }
 
-// workspaceFileSize reports the size of a workspace file when the daemon shares
-// the sandbox filesystem. K8s does not, so the size is unknown there and the
-// guest cannot be asked to check it in this design; the limit is enforced
-// wherever the daemon can read the file.
-func workspaceFileSize(session *domain.Sandbox, relative string) (int64, bool) {
-	info, err := os.Stat(filepath.Join(session.Summary.WorkspacePath, relative))
-	if err != nil || !info.Mode().IsRegular() {
-		return 0, false
+// checkWorkspaceFile validates a workspace-relative reference and returns its
+// size. When the daemon shares the sandbox filesystem it walks every component
+// with lstat, rejecting symlinks and missing files; a symlink could otherwise
+// expose daemon-owned state to the agent.
+//
+// K8s does not share the filesystem: the workspace root is absent, so the
+// reference is returned unchecked and the harness fails if it cannot read it.
+func checkWorkspaceFile(session *domain.Sandbox, relative string) (int64, error) {
+	root := session.Summary.WorkspacePath
+	if _, err := os.Stat(root); err != nil {
+		return 0, nil
 	}
-	return info.Size(), true
+	current := root
+	segments := strings.Split(relative, "/")
+	for index, segment := range segments {
+		current = filepath.Join(current, segment)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return 0, fmt.Errorf("workspace file %q is not readable", relative)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return 0, fmt.Errorf("workspace file %q has a symlinked path component", relative)
+		}
+		if index < len(segments)-1 && !info.IsDir() {
+			return 0, fmt.Errorf("workspace file %q has a non-directory path component", relative)
+		}
+		if index == len(segments)-1 {
+			if !info.Mode().IsRegular() {
+				return 0, fmt.Errorf("workspace file %q is not a regular file", relative)
+			}
+			return info.Size(), nil
+		}
+	}
+	return 0, fmt.Errorf("workspace file %q is not readable", relative)
 }
 
 func uniqueAgentInputName(used map[string]struct{}, index int, name string) string {

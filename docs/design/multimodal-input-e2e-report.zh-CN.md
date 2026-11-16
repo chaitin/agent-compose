@@ -51,7 +51,7 @@
 
 ## D. 已知限制
 
-- **K8s 的 workspace 路径大小**：daemon 读不到 Pod 内文件，`workspacePath` 来源不做大小校验；内联 `bytes` 始终校验。需要严格上限时使用 `bytes`。
+- **K8s 的 workspace 路径**：daemon 读不到 Pod 内文件，`workspacePath` 不做存在性/符号链接/大小预检；内联 `bytes` 始终校验。需要严格上限时使用 `bytes`。
 - **模型是否理解文件**：取决于 harness 工具与上游模型；接口只保证可访问、路径已给出。
 - **续轮 `AttachHumanMessage.input`**：不在本 PR；同一 sandbox 的后续 run 已可访问既有路径。
 - **`RunDetail` 不含附件描述**：仅文本投影；后续 PR 补。
