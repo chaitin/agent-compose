@@ -6,6 +6,9 @@
 - 接口定稿：[`multimodal-input-proto-vnext.zh-CN.md`](multimodal-input-proto-vnext.zh-CN.md)（proto 全文与原生/启动脚本分工）
 - 相关文档：[`engine_capability_matrix.md`](engine_capability_matrix.md)、[`proto_v2_api_contract.md`](proto_v2_api_contract.md)、[`sandbox-workspace-file-api.zh-CN.md`](sandbox-workspace-file-api.zh-CN.md)、[`runtime-bidirectional-stream-design.md`](runtime-bidirectional-stream-design.md)
 
+> **设计变更（2026-11-16）**：最终实现改为 provider-neutral 的"文件落 workspace + 提示词附路径"，不再按 provider 原生模态适配。本文的 provider 原生能力矩阵保留为调研背景；接口定义以 [`multimodal-input-proto-vnext.zh-CN.md`](multimodal-input-proto-vnext.zh-CN.md) 为准。下文关于 `media_types` / `media_ordering` / 原生 content block 的提案已被取代。
+
+
 ## 0. 结论（TL;DR）
 
 1. **业界已经收敛出一个共同形状**：一次用户输入 = **有序的、带判别标签的 content part 数组**；每个非文本 part 携带 **显式 MIME**，字节通过 **内联 base64 / 远程 URL / 上传句柄** 三者之一提供。OpenAI Chat/Responses、Anthropic Messages、Gemini、MCP、A2A 全部如此，差别只在嵌套层级和字段拼写。
@@ -180,7 +183,7 @@
 
 ---
 
-## 5. 接口提案
+## 5. 接口提案（初版，已被 vNext 简化方案取代）
 
 ### 5.1 设计原则
 
