@@ -146,6 +146,7 @@ func (c *Controller) init() {
 			WriteArtifact:              c.WriteRunArtifact,
 			EnterRun:                   c.EnterRun,
 			LeaveRun:                   c.LeaveRun,
+			HistoryRemoving:            c.HistoryRemoving,
 			AddSchedulerEvent:          c.AddSchedulerEvent,
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,
@@ -154,11 +155,12 @@ func (c *Controller) init() {
 	}
 	if c.invocations == nil {
 		c.invocations = NewInvocationExecutor(InvocationExecutorDependencies{
-			Engine:      c.deps.Engine,
-			HostFactory: c.deps.HostFactory,
-			EnterRun:    c.EnterRun,
-			LeaveRun:    c.LeaveRun,
-			NewID:       c.deps.NewID,
+			Engine:          c.deps.Engine,
+			HostFactory:     c.deps.HostFactory,
+			EnterRun:        c.EnterRun,
+			LeaveRun:        c.LeaveRun,
+			HistoryRemoving: c.HistoryRemoving,
+			NewID:           c.deps.NewID,
 		})
 	}
 	if c.schedulerRuns == nil {

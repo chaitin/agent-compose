@@ -2,6 +2,7 @@ package schedulers
 
 import (
 	"context"
+	"strings"
 
 	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -32,4 +33,12 @@ func (c *Controller) WithIdleScheduler(ctx context.Context, schedulerID string, 
 	// Filesystem and SQLite work must not hold the controller-wide mutex:
 	// unrelated schedulers can still enter, leave, and refresh their state.
 	return action(ctx)
+}
+
+// HistoryRemoving reports whether exact history removal currently holds the
+// scheduler, so refused entries are not recorded as concurrency skips.
+func (c *Controller) HistoryRemoving(schedulerID string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.historyRemoving[strings.TrimSpace(schedulerID)]
 }

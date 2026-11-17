@@ -71,6 +71,7 @@ type RunExecutorDependencies struct {
 	WriteArtifact              func(dir, name, content string) error
 	EnterRun                   func(scheduler domain.Scheduler) bool
 	LeaveRun                   func(schedulerID string)
+	HistoryRemoving            func(schedulerID string) bool
 	AddSchedulerEvent          func(ctx context.Context, event SchedulerEventInput) error
 	UpdateTriggerEventDelivery func(ctx context.Context, run domain.SchedulerRunSummary)
 	Notify                     func(reason string)
@@ -82,6 +83,8 @@ type RunExecutor struct {
 }
 
 var ErrRunBusyForRetry = errors.New("scheduler is already running")
+
+const schedulerHistoryRemovingMessage = "scheduler run history removal in progress"
 
 func NewRunExecutor(deps RunExecutorDependencies) *RunExecutor {
 	return &RunExecutor{deps: deps}
@@ -130,6 +133,11 @@ func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (Prepa
 	if !entered && !e.enterRun(scheduler) {
 		if options.RetryWhenBusy {
 			return PreparedRun{}, ErrRunBusyForRetry
+		}
+		if e.historyRemoving(scheduler.Summary.ID) {
+			// Not a concurrency skip: recording a skipped run, last error, or
+			// artifacts here would invent history and invalidate the removal.
+			return PreparedRun{}, domain.ResourceError(domain.ErrFailedPrecondition, "scheduler", scheduler.Summary.ID, schedulerHistoryRemovingMessage, nil)
 		}
 		if err := os.MkdirAll(run.ArtifactsDir, 0o755); err != nil {
 			return PreparedRun{}, fmt.Errorf("create scheduler run artifacts dir: %w", err)
@@ -327,6 +335,10 @@ func (e *RunExecutor) enterRun(scheduler domain.Scheduler) bool {
 		return true
 	}
 	return e.deps.EnterRun(scheduler)
+}
+
+func (e *RunExecutor) historyRemoving(schedulerID string) bool {
+	return e.deps.HistoryRemoving != nil && e.deps.HistoryRemoving(schedulerID)
 }
 
 func (e *RunExecutor) leaveRun(schedulerID string) {

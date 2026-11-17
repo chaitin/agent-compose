@@ -3,6 +3,7 @@ package configstore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -64,8 +65,11 @@ func (s *ConfigStore) detachRunHistory(ctx context.Context, id runhistory.Identi
 		}
 		return p.Close()
 	}, func(*sql.Tx) error {
-		started = true
-		return artifacts.Detach(ctx)
+		// Detach refuses before its atomic rename, and a failed rename leaves
+		// the directory in place, so only a successful Detach has an effect.
+		err := artifacts.Detach(ctx)
+		started = err == nil
+		return err
 	})
 	if err != nil && !started {
 		err = apierror.NotApplied(err)
@@ -88,6 +92,9 @@ func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Ide
 			_ = conn.Close()
 			return err
 		}
+		if afterRunHistorySnapshot != nil {
+			afterRunHistorySnapshot()
+		}
 		oldOwners, newOwners := expected, current
 		oldOwners.ProtectedPaths, newOwners.ProtectedPaths = nil, nil
 		if !reflect.DeepEqual(oldOwners, newOwners) {
@@ -104,9 +111,14 @@ func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Ide
 		}
 		err = commitRunHistoryFence(ctx, conn, id, version, action)
 		_ = conn.Close() // Return the reserved connection on every exit.
+		if errors.Is(err, errRunHistorySnapshotStale) {
+			// data_version moves on any commit to any table. Re-read and
+			// compare ownership again instead of refusing the request.
+			continue
+		}
 		return err
 	}
-	return domain.ClassifyError(domain.ErrFailedPrecondition, "history paths keep changing; retry with the same identity", nil)
+	return domain.ClassifyError(domain.ErrFailedPrecondition, "history paths or database kept changing; retry with the same identity", nil)
 }
 
 func commitRunHistoryFence(ctx context.Context, conn *sql.Conn, id runhistory.Identity, version int64, action func(*sql.Tx) error) error {
@@ -140,6 +152,13 @@ func readRunHistorySnapshot(ctx context.Context, conn *sql.Conn, id runhistory.I
 	return scope, version, tx.Commit()
 }
 
+// afterRunHistorySnapshot lets tests commit inside the snapshot/fence window.
+var afterRunHistorySnapshot func()
+
+// errRunHistorySnapshotStale reports that some commit landed between the
+// snapshot read and the fence; withRunHistoryFence re-reads and retries.
+var errRunHistorySnapshotStale = domain.ClassifyError(domain.ErrFailedPrecondition, "database changed during history validation; retry with the same identity", nil)
+
 func fenceRunHistorySnapshot(ctx context.Context, conn *sql.Conn, id runhistory.Identity, version int64) (*sql.Tx, error) {
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
@@ -153,7 +172,7 @@ func fenceRunHistorySnapshot(ctx context.Context, conn *sql.Conn, id runhistory.
 		err = tx.QueryRowContext(ctx, "PRAGMA data_version").Scan(&current)
 	}
 	if err == nil && current != version {
-		err = domain.ClassifyError(domain.ErrFailedPrecondition, "database changed during history validation; retry with the same identity", nil)
+		err = errRunHistorySnapshotStale
 	}
 	if err != nil {
 		_ = tx.Rollback() // Preserve the validation error.

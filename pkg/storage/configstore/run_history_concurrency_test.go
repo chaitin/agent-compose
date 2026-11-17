@@ -209,3 +209,74 @@ func TestRunHistoryVersionFenceRejectsConcurrentCommit(t *testing.T) {
 		t.Fatalf("concurrent commit was not fenced: %v", err)
 	}
 }
+
+func TestRunHistoryFenceRetriesAfterUnrelatedCommit(t *testing.T) {
+	f, root := newDiskHistoryFixture(t, 4)
+	a := runhistory.FSArtifacts{DataRoot: root}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	snapshots := 0
+	afterRunHistorySnapshot = func() {
+		snapshots++
+		// One unrelated commit inside each fence window: the detach fence
+		// (first snapshot) and the finish fence (third snapshot).
+		if snapshots == 1 || snapshots == 3 {
+			if _, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET output=? WHERE run_id=?", fmt.Sprint("unrelated ", snapshots), f.standalone.RunID); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	t.Cleanup(func() { afterRunHistorySnapshot = nil })
+	if err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+		return a.Prepare(ctx, scope)
+	}); err != nil {
+		t.Fatalf("unrelated commits refused removal: %v", err)
+	}
+	if snapshots != 4 {
+		t.Fatalf("expected one retry per fence, got %d snapshots", snapshots)
+	}
+	if _, err := os.Stat(filepath.Join(root, "schedulers", f.scheduler.SchedulerID, "runs", f.scheduler.RunID)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("artifacts remain: %v", err)
+	}
+}
+
+func TestRunHistoryFenceBoundsRetriesUnderConstantCommits(t *testing.T) {
+	f, root := newDiskHistoryFixture(t, 4)
+	a := runhistory.FSArtifacts{DataRoot: root}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	afterRunHistorySnapshot = func() {
+		if _, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET output=output||'x' WHERE run_id=?", f.standalone.RunID); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { afterRunHistorySnapshot = nil })
+	err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+		return a.Prepare(ctx, scope)
+	})
+	if !errors.Is(err, domain.ErrFailedPrecondition) || !apierror.IsNotApplied(err) {
+		t.Fatalf("constant commits must refuse before detach: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "schedulers", f.scheduler.SchedulerID, "runs", f.scheduler.RunID, "private.json")); err != nil {
+		t.Fatalf("refused removal touched artifacts: %v", err)
+	}
+}
+
+type refusingDetachArtifacts struct{ runhistory.PreparedArtifacts }
+
+func (refusingDetachArtifacts) Detach(context.Context) error {
+	return domain.ClassifyError(domain.ErrFailedPrecondition, "scheduler artifact changed during preparation", nil)
+}
+
+func TestRunHistoryDetachRefusalIsNotApplied(t *testing.T) {
+	f, root := newDiskHistoryFixture(t, 4)
+	a := runhistory.FSArtifacts{DataRoot: root}
+	ctx := context.Background()
+	err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+		p, err := a.Prepare(ctx, scope)
+		return refusingDetachArtifacts{p}, err
+	})
+	if !errors.Is(err, domain.ErrFailedPrecondition) || !apierror.IsNotApplied(err) {
+		t.Fatalf("refused detach must be NOT_APPLIED: %v", err)
+	}
+}
