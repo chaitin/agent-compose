@@ -3,6 +3,8 @@ package runhistory
 import (
 	"context"
 
+	"github.com/google/uuid"
+
 	"github.com/chaitin/agent-compose/pkg/apierror"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -23,15 +25,23 @@ type Identity struct {
 }
 
 func (id Identity) Validate() error {
-	if !canonicalID(id.ProjectID) || !canonicalID(id.RunID) {
+	if !canonicalID(id.ProjectID) {
 		return domain.ClassifyError(domain.ErrInvalidArgument, "project and run ids must be complete resource ids", nil)
 	}
 	switch id.Kind {
 	case Run:
+		if !canonicalID(id.RunID) {
+			return domain.ClassifyError(domain.ErrInvalidArgument, "project and run ids must be complete resource ids", nil)
+		}
 		if id.SchedulerID != "" {
 			return domain.ClassifyError(domain.ErrInvalidArgument, "a standalone run must not specify a scheduler id", nil)
 		}
 	case SchedulerRun:
+		// InvokeScheduler executions have no scheduler_run row; their child
+		// runs and events carry a UUID execution id instead of a resource id.
+		if !canonicalID(id.RunID) && !canonicalExecutionUUID(id.RunID) {
+			return domain.ClassifyError(domain.ErrInvalidArgument, "project and run ids must be complete resource ids", nil)
+		}
 		if !canonicalID(id.SchedulerID) {
 			return domain.ClassifyError(domain.ErrInvalidArgument, "scheduler id must be a complete resource id", nil)
 		}
@@ -44,6 +54,13 @@ func (id Identity) Validate() error {
 func canonicalID(value string) bool {
 	hash, err := identity.Hash(value)
 	return err == nil && hash == value
+}
+
+// canonicalExecutionUUID accepts only the exact lowercase hyphenated form that
+// uuid.NewString produces, so prefixes and alternate spellings stay invalid.
+func canonicalExecutionUUID(value string) bool {
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.String() == value
 }
 
 type Scope struct {
