@@ -65,7 +65,7 @@ func (a FSArtifacts) validate(ctx context.Context, scope Scope) error {
 		return ctx.Err()
 	}
 	run := scope.SchedulerRun
-	if !identity.IsID(run.SchedulerID) || !(identity.IsID(run.ID) || canonicalExecutionUUID(run.ID)) || strings.TrimSpace(a.DataRoot) == "" {
+	if !identity.IsID(run.SchedulerID) || !identity.IsID(run.ID) || strings.TrimSpace(a.DataRoot) == "" {
 		return artifactPrecondition("cannot verify scheduler artifact owner", nil)
 	}
 	rootPath, err := filepath.Abs(a.DataRoot)
