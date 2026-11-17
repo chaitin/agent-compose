@@ -47,10 +47,9 @@ func canonicalID(value string) bool {
 }
 
 type Scope struct {
-	Runs           []domain.ProjectRunRecord
-	SandboxIDs     []string
-	SchedulerRun   *domain.SchedulerRunSummary
-	ProtectedPaths []string
+	Runs         []domain.ProjectRunRecord
+	SandboxIDs   []string
+	SchedulerRun *domain.SchedulerRunSummary
 }
 
 // PreparedArtifacts isolates a validated directory with one atomic rename.

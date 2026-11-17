@@ -131,8 +131,6 @@ func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity
 	if err := protectRunHistoryReferences(ctx, tx, id, &scope); err != nil {
 		return scope, err
 	}
-	slices.Sort(scope.ProtectedPaths)
-	scope.ProtectedPaths = slices.Compact(scope.ProtectedPaths)
 	slices.Sort(scope.SandboxIDs)
 	scope.SandboxIDs = slices.Compact(scope.SandboxIDs)
 	return scope, nil

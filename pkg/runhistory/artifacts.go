@@ -80,26 +80,6 @@ func (a FSArtifacts) validate(ctx context.Context, scope Scope) error {
 			return artifactPrecondition("recorded scheduler artifacts do not match the canonical run path", err)
 		}
 	}
-	resolvedTarget, err := resolveRecordedPath(target)
-	if err != nil {
-		return err
-	}
-	pending, err := resolveRecordedPath(filepath.Join(filepath.Dir(target), pendingHistoryName(run.ID)))
-	if err != nil {
-		return err
-	}
-	for _, path := range scope.ProtectedPaths {
-		if path == "" {
-			continue
-		}
-		protected, err := resolveRecordedPath(path)
-		if err != nil {
-			return fmt.Errorf("verify shared artifact path: %w", err)
-		}
-		if pathsOverlap(resolvedTarget, protected) || pathsOverlap(pending, protected) {
-			return domain.ClassifyError(domain.ErrReferenced, "scheduler artifacts are referenced by another run", nil)
-		}
-	}
 	return ctx.Err()
 }
 
@@ -158,39 +138,4 @@ func (a FSArtifacts) verifyRunArtifactAbsent(sandboxID, recorded string) error {
 
 func artifactPrecondition(message string, cause error) error {
 	return domain.ClassifyError(domain.ErrFailedPrecondition, message, cause)
-}
-
-func pathsOverlap(a, b string) bool {
-	for _, pair := range [][2]string{{a, b}, {b, a}} {
-		relative, err := filepath.Rel(pair[0], pair[1])
-		if err == nil && (relative == "." || filepath.IsLocal(relative)) {
-			return true
-		}
-	}
-	return false
-}
-
-// Resolve existing ancestors too: a recorded log may not have been created yet,
-// but a symlinked parent can still make it a reference into another run's tree.
-func resolveRecordedPath(path string) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	current := absolute
-	var suffix []string
-	for {
-		resolved, err := filepath.EvalSymlinks(current)
-		if err == nil {
-			for i := len(suffix) - 1; i >= 0; i-- {
-				resolved = filepath.Join(resolved, suffix[i])
-			}
-			return resolved, nil
-		}
-		if !errors.Is(err, os.ErrNotExist) || filepath.Dir(current) == current {
-			return "", err
-		}
-		suffix = append(suffix, filepath.Base(current))
-		current = filepath.Dir(current)
-	}
 }

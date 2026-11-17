@@ -3,7 +3,6 @@ package configstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -34,13 +33,16 @@ func (s *ConfigStore) RemoveRunHistory(ctx context.Context, id runhistory.Identi
 }
 
 func (s *ConfigStore) runHistorySnapshot(ctx context.Context, id runhistory.Identity) (runhistory.Scope, error) {
-	conn, err := s.db.Conn(ctx)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return runhistory.Scope{}, err
 	}
-	defer func() { _ = conn.Close() }()
-	scope, _, err := readRunHistorySnapshot(ctx, conn, id)
-	return scope, err
+	defer func() { _ = tx.Rollback() }()
+	scope, err := loadRunHistoryScope(ctx, tx, id)
+	if err != nil {
+		return scope, err
+	}
+	return scope, tx.Commit()
 }
 
 func (s *ConfigStore) detachRunHistory(ctx context.Context, id runhistory.Identity, prepare func(runhistory.Scope) (runhistory.PreparedArtifacts, error)) (scope runhistory.Scope, artifacts runhistory.PreparedArtifacts, err error) {
@@ -48,6 +50,7 @@ func (s *ConfigStore) detachRunHistory(ctx context.Context, id runhistory.Identi
 	if err != nil {
 		return scope, nil, apierror.NotApplied(err)
 	}
+	// Filesystem validation runs outside any transaction or reserved connection.
 	artifacts, err = prepare(scope)
 	if err != nil {
 		return scope, nil, apierror.NotApplied(err)
@@ -58,13 +61,7 @@ func (s *ConfigStore) detachRunHistory(ctx context.Context, id runhistory.Identi
 		}
 	}()
 	started := false
-	err = s.withRunHistoryFence(ctx, id, scope, func(current runhistory.Scope) error {
-		p, err := prepare(current)
-		if err != nil {
-			return err
-		}
-		return p.Close()
-	}, func(*sql.Tx) error {
+	err = s.withRunHistoryFence(ctx, id, scope, func(*sql.Tx) error {
 		// Detach refuses before its atomic rename, and a failed rename leaves
 		// the directory in place, so only a successful Detach has an effect.
 		err := artifacts.Detach(ctx)
@@ -77,108 +74,33 @@ func (s *ConfigStore) detachRunHistory(ctx context.Context, id runhistory.Identi
 	return scope, artifacts, err
 }
 
-// Re-read the relevant scope after slow filesystem preparation, then fence
-// that fresh snapshot. Unrelated commits during preparation need no retry.
-func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Identity, expected runhistory.Scope, refresh func(runhistory.Scope) error, action func(*sql.Tx) error) error {
-	// Bound retries when unrelated runs keep publishing new artifact paths.
-	// A path-set change needs fresh filesystem checks, not immediate refusal.
-	for attempt := 0; attempt < 3; attempt++ {
-		conn, err := s.db.Conn(ctx)
-		if err != nil {
-			return err
-		}
-		current, version, err := readRunHistorySnapshot(ctx, conn, id)
-		if err != nil {
-			_ = conn.Close()
-			return err
-		}
-		if afterRunHistorySnapshot != nil {
-			afterRunHistorySnapshot()
-		}
-		oldOwners, newOwners := expected, current
-		oldOwners.ProtectedPaths, newOwners.ProtectedPaths = nil, nil
-		if !reflect.DeepEqual(oldOwners, newOwners) {
-			_ = conn.Close()
-			return domain.ClassifyError(domain.ErrFailedPrecondition, "history ownership changed during validation; retry with the same identity", nil)
-		}
-		if !slices.Equal(current.ProtectedPaths, expected.ProtectedPaths) {
-			_ = conn.Close() // Filesystem validation must not occupy the pool.
-			if err := refresh(current); err != nil {
-				return err
-			}
-			expected = current
-			continue
-		}
-		err = commitRunHistoryFence(ctx, conn, id, version, action)
-		_ = conn.Close() // Return the reserved connection on every exit.
-		if errors.Is(err, errRunHistorySnapshotStale) {
-			// data_version moves on any commit to any table. Re-read and
-			// compare ownership again instead of refusing the request.
-			continue
-		}
-		return err
-	}
-	return domain.ClassifyError(domain.ErrFailedPrecondition, "history paths or database kept changing; retry with the same identity", nil)
-}
-
-func commitRunHistoryFence(ctx context.Context, conn *sql.Conn, id runhistory.Identity, version int64, action func(*sql.Tx) error) error {
-	tx, err := fenceRunHistorySnapshot(ctx, conn, id, version)
+// withRunHistoryFence takes the writer lock, re-reads this history's scope in
+// the same transaction and runs action only if the scope still equals the one
+// the filesystem work validated. Every scope query is indexed and bounded by
+// this history, so reading under the lock is cheap, and commits elsewhere in
+// the database never invalidate the request.
+func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Identity, expected runhistory.Scope, action func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Write first: a deferred SQLite transaction that reads before its first
+	// write can fail to upgrade once another writer commits.
+	if _, err := tx.ExecContext(ctx, "UPDATE project SET updated_at=updated_at WHERE id=?", id.ProjectID); err != nil {
+		return err
+	}
+	current, err := loadRunHistoryScope(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(current, expected) {
+		return domain.ClassifyError(domain.ErrFailedPrecondition, "run history changed during validation; retry with the same identity", nil)
+	}
 	if err := action(tx); err != nil {
 		return err
 	}
 	return tx.Commit()
-}
-
-func readRunHistorySnapshot(ctx context.Context, conn *sql.Conn, id runhistory.Identity) (runhistory.Scope, int64, error) {
-	var version int64
-	// data_version is connection-local and changes on commits by other
-	// connections. Reserving this connection makes the later comparison valid.
-	if err := conn.QueryRowContext(ctx, "PRAGMA data_version").Scan(&version); err != nil {
-		return runhistory.Scope{}, 0, err
-	}
-	tx, err := conn.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return runhistory.Scope{}, 0, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	scope, err := loadRunHistoryScope(ctx, tx, id)
-	if err != nil {
-		return scope, 0, err
-	}
-	return scope, version, tx.Commit()
-}
-
-// afterRunHistorySnapshot lets tests commit inside the snapshot/fence window.
-var afterRunHistorySnapshot func()
-
-// errRunHistorySnapshotStale reports that some commit landed between the
-// snapshot read and the fence; withRunHistoryFence re-reads and retries.
-var errRunHistorySnapshotStale = domain.ClassifyError(domain.ErrFailedPrecondition, "database changed during history validation; retry with the same identity", nil)
-
-func fenceRunHistorySnapshot(ctx context.Context, conn *sql.Conn, id runhistory.Identity, version int64) (*sql.Tx, error) {
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	// Take the writer lock first, then verify no commit invalidated the snapshot.
-	// Only an atomic rename or indexed deletes follow; never scans or RemoveAll.
-	_, err = tx.ExecContext(ctx, "UPDATE project SET updated_at=updated_at WHERE id=?", id.ProjectID)
-	var current int64
-	if err == nil {
-		err = tx.QueryRowContext(ctx, "PRAGMA data_version").Scan(&current)
-	}
-	if err == nil && current != version {
-		err = errRunHistorySnapshotStale
-	}
-	if err != nil {
-		_ = tx.Rollback() // Preserve the validation error.
-		return nil, err
-	}
-	return tx, nil
 }
 
 func (s *ConfigStore) finishRunHistory(ctx context.Context, id runhistory.Identity, previous runhistory.Scope, prepare func(runhistory.Scope) (runhistory.PreparedArtifacts, error)) error {
@@ -207,14 +129,7 @@ func (s *ConfigStore) finishRunHistory(ctx context.Context, id runhistory.Identi
 	if err := artifacts.VerifyRemoved(ctx); err != nil {
 		return err
 	}
-	return s.withRunHistoryFence(ctx, id, scope, func(current runhistory.Scope) error {
-		p, err := prepare(current)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = p.Close() }()
-		return p.VerifyRemoved(ctx)
-	}, func(tx *sql.Tx) error {
+	return s.withRunHistoryFence(ctx, id, scope, func(tx *sql.Tx) error {
 		query, args := "DELETE FROM project_run WHERE run_id=? AND project_id=?", []any{id.RunID, id.ProjectID}
 		if id.Kind == runhistory.SchedulerRun {
 			query, args = "DELETE FROM project_run WHERE scheduler_run_id=? AND scheduler_id=? AND project_id=?", []any{id.RunID, id.SchedulerID, id.ProjectID}

@@ -16,7 +16,7 @@ type testSandboxDirs string
 func (r testSandboxDirs) SandboxDir(id string) string { return filepath.Join(string(r), id) }
 
 func TestRunHistoryArtifactsRejectUnsafeOrSharedPaths(t *testing.T) {
-	for _, name := range []string{"wrong_recorded_path", "symlink_leaf", "symlink_parent", "symlink_pending", "shared_file", "shared_symlink_parent", "sandbox_retained", "audit_archive", "unowned_run_artifact", "outside_run_artifact"} {
+	for _, name := range []string{"wrong_recorded_path", "symlink_leaf", "symlink_parent", "symlink_pending", "sandbox_retained", "audit_archive", "unowned_run_artifact", "outside_run_artifact"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			outside := t.TempDir()
@@ -58,14 +58,6 @@ func TestRunHistoryArtifactsRejectUnsafeOrSharedPaths(t *testing.T) {
 				if err := os.Symlink(outside, filepath.Join(filepath.Dir(path), pendingHistoryName(runID))); err != nil {
 					t.Fatal(err)
 				}
-			case "shared_file":
-				scope.ProtectedPaths = []string{filepath.Join(path, "payload.json")}
-			case "shared_symlink_parent":
-				alias := filepath.Join(root, "alias")
-				if err := os.Symlink(path, alias); err != nil {
-					t.Fatal(err)
-				}
-				scope.ProtectedPaths = []string{filepath.Join(alias, "not-created-yet.log")}
 			case "sandbox_retained":
 				id := identity.NewID(identity.ResourceSandbox, "shared")
 				scope.SandboxIDs = []string{id}

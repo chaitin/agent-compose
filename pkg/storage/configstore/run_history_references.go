@@ -8,11 +8,7 @@ import (
 )
 
 func protectRunHistoryReferences(ctx context.Context, tx *sql.Tx, id runhistory.Identity, scope *runhistory.Scope) error {
-	owned := make(map[string]bool, len(scope.Runs))
 	sandboxes := make(map[string]bool)
-	for _, run := range scope.Runs {
-		owned[run.RunID] = true
-	}
 	for _, sandboxID := range scope.SandboxIDs {
 		sandboxes[sandboxID] = true
 	}
@@ -32,41 +28,35 @@ func protectRunHistoryReferences(ctx context.Context, tx *sql.Tx, id runhistory.
 	if id.Kind != runhistory.SchedulerRun {
 		return nil // Standalone runs do not remove a scheduler artifact directory.
 	}
-	rows, err := tx.QueryContext(ctx, "SELECT run_id, logs_path, artifacts_dir FROM project_run WHERE logs_path<>'' OR artifacts_dir<>''")
+	// Writers only accept paths inside a scheduler run's directory for that
+	// run itself (validateHistoryArtifactPaths), so another record can point
+	// into this directory only through rows of the same scheduler. Check those
+	// lexically through the scheduler indexes: the cost is bounded by this
+	// scheduler, not by all history. Removal never follows symlinks, so an
+	// alias elsewhere cannot make it delete anything outside this directory.
+	// instr on the run id narrows candidates cheaply; exact segment matching
+	// then decides whether a path is inside this run's or its pending directory.
+	rows, err := tx.QueryContext(ctx, `SELECT logs_path, artifacts_dir FROM project_run WHERE project_id=? AND scheduler_id=? AND COALESCE(scheduler_run_id,'')<>?
+			AND (instr(logs_path, ?)>0 OR instr(artifacts_dir, ?)>0)
+		UNION ALL SELECT '', artifacts_dir FROM scheduler_run WHERE scheduler_id=? AND run_id<>? AND instr(artifacts_dir, ?)>0`,
+		id.ProjectID, id.SchedulerID, id.RunID, id.RunID, id.RunID, id.SchedulerID, id.RunID, id.RunID)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var runID, logsPath, artifactsDir string
-		if err := rows.Scan(&runID, &logsPath, &artifactsDir); err != nil {
+	referenced := false
+	for rows.Next() && !referenced {
+		var logsPath, artifactsDir string
+		if err := rows.Scan(&logsPath, &artifactsDir); err != nil {
 			return err
 		}
-		if owned[runID] {
-			continue
-		}
-		scope.ProtectedPaths = append(scope.ProtectedPaths, logsPath, artifactsDir)
+		referenced = insideSchedulerRunDir(logsPath, id.SchedulerID, id.RunID) || insideSchedulerRunDir(artifactsDir, id.SchedulerID, id.RunID)
 	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return err
 	}
-	rows, err = tx.QueryContext(ctx, "SELECT scheduler_id, run_id, artifacts_dir FROM scheduler_run WHERE artifacts_dir<>''")
-	if err != nil {
-		return err
+	if referenced {
+		return domain.ClassifyError(domain.ErrReferenced, "scheduler artifacts are referenced by another run", nil)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var schedulerID, runID, path string
-		if err := rows.Scan(&schedulerID, &runID, &path); err != nil {
-			return err
-		}
-		if id.Kind != runhistory.SchedulerRun || schedulerID != id.SchedulerID || runID != id.RunID {
-			scope.ProtectedPaths = append(scope.ProtectedPaths, path)
-		}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	return err
+	return nil
 }

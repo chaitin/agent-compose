@@ -142,8 +142,8 @@ func TestRunHistoryRechecksScopeAfterCleanup(t *testing.T) {
 						_, err = f.store.CreateProjectRun(ctx, run)
 						return err
 					case "shared_path":
-						_, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET logs_path=? WHERE run_id=?", filepath.Join(path, "private.json"), f.standalone.RunID)
-						return err
+						// Writers reject this path; a legacy sibling row bypasses them.
+						return insertLegacySiblingSchedulerRun(ctx, f, filepath.Join(path, "private.json"))
 					default:
 						return os.MkdirAll(path, 0o755)
 					}
@@ -166,7 +166,7 @@ func TestRunHistoryFinalSnapshotRejectsConcurrentReference(t *testing.T) {
 		preparations++
 		if preparations == 2 {
 			path := filepath.Join(root, "schedulers", f.scheduler.SchedulerID, "runs", f.scheduler.RunID, "private.json")
-			if _, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET logs_path=? WHERE run_id=?", path, f.standalone.RunID); err != nil {
+			if err := insertLegacySiblingSchedulerRun(ctx, f, path); err != nil {
 				return nil, err
 			}
 		}
@@ -176,7 +176,7 @@ func TestRunHistoryFinalSnapshotRejectsConcurrentReference(t *testing.T) {
 		t.Fatalf("stale final validation was accepted or claimed NOT_APPLIED: %v", err)
 	}
 	assertPruneTestRowCount(t, f.store, pruneTestRowCountCheck{Table: "project_run", Where: "run_id='" + f.childID + "'", Want: 1})
-	if _, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET logs_path='' WHERE run_id=?", f.standalone.RunID); err != nil {
+	if _, err := f.store.db.ExecContext(ctx, "DELETE FROM scheduler_run WHERE run_id='legacy-sibling'"); err != nil {
 		t.Fatal(err)
 	}
 	if err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
@@ -186,79 +186,29 @@ func TestRunHistoryFinalSnapshotRejectsConcurrentReference(t *testing.T) {
 	}
 }
 
-func TestRunHistoryVersionFenceRejectsConcurrentCommit(t *testing.T) {
-	f, _ := newDiskHistoryFixture(t, 4)
-	ctx := context.Background()
-	conn, err := f.store.db.Conn(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = conn.Close() }()
-	_, version, err := readRunHistorySnapshot(ctx, conn, f.scheduler)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET output='concurrent' WHERE run_id=?", f.standalone.RunID); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := fenceRunHistorySnapshot(ctx, conn, f.scheduler, version)
-	if tx != nil {
-		_ = tx.Rollback()
-	}
-	if !errors.Is(err, domain.ErrFailedPrecondition) {
-		t.Fatalf("concurrent commit was not fenced: %v", err)
-	}
-}
-
-func TestRunHistoryFenceRetriesAfterUnrelatedCommit(t *testing.T) {
+func TestRunHistoryUnrelatedCommitsNeverRefuseRemoval(t *testing.T) {
 	f, root := newDiskHistoryFixture(t, 4)
 	a := runhistory.FSArtifacts{DataRoot: root}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	snapshots := 0
-	afterRunHistorySnapshot = func() {
-		snapshots++
-		// One unrelated commit inside each fence window: the detach fence
-		// (first snapshot) and the finish fence (third snapshot).
-		if snapshots == 1 || snapshots == 3 {
-			if _, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET output=? WHERE run_id=?", fmt.Sprint("unrelated ", snapshots), f.standalone.RunID); err != nil {
-				t.Error(err)
-			}
-		}
-	}
-	t.Cleanup(func() { afterRunHistorySnapshot = nil })
-	if err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
-		return a.Prepare(ctx, scope)
-	}); err != nil {
-		t.Fatalf("unrelated commits refused removal: %v", err)
-	}
-	if snapshots != 4 {
-		t.Fatalf("expected one retry per fence, got %d snapshots", snapshots)
-	}
-	if _, err := os.Stat(filepath.Join(root, "schedulers", f.scheduler.SchedulerID, "runs", f.scheduler.RunID)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("artifacts remain: %v", err)
-	}
-}
-
-func TestRunHistoryFenceBoundsRetriesUnderConstantCommits(t *testing.T) {
-	f, root := newDiskHistoryFixture(t, 4)
-	a := runhistory.FSArtifacts{DataRoot: root}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	afterRunHistorySnapshot = func() {
-		if _, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET output=output||'x' WHERE run_id=?", f.standalone.RunID); err != nil {
-			t.Error(err)
-		}
-	}
-	t.Cleanup(func() { afterRunHistorySnapshot = nil })
+	// Commit to an unrelated run in every window between a snapshot and its
+	// fence. The fence compares this history's scope, not a database version.
+	writes := 0
 	err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+		writes++
+		if _, err := f.store.db.ExecContext(ctx, "UPDATE project_run SET output=? WHERE run_id=?", fmt.Sprint("unrelated ", writes), f.standalone.RunID); err != nil {
+			return nil, err
+		}
+		if _, err := f.store.db.ExecContext(ctx, "INSERT INTO scheduler_run(run_id,scheduler_id,status,artifacts_dir,started_at) VALUES(?,?,'succeeded',?,1)", fmt.Sprint("other-", writes), f.scheduler.SchedulerID, filepath.Join(root, "schedulers", f.scheduler.SchedulerID, "runs", fmt.Sprint("other-", writes))); err != nil {
+			return nil, err
+		}
 		return a.Prepare(ctx, scope)
 	})
-	if !errors.Is(err, domain.ErrFailedPrecondition) || !apierror.IsNotApplied(err) {
-		t.Fatalf("constant commits must refuse before detach: %v", err)
+	if err != nil {
+		t.Fatalf("unrelated commits refused removal: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "schedulers", f.scheduler.SchedulerID, "runs", f.scheduler.RunID, "private.json")); err != nil {
-		t.Fatalf("refused removal touched artifacts: %v", err)
+	if writes != 2 {
+		t.Fatalf("expected one preparation per phase, got %d", writes)
 	}
 }
 
@@ -278,5 +228,55 @@ func TestRunHistoryDetachRefusalIsNotApplied(t *testing.T) {
 	})
 	if !errors.Is(err, domain.ErrFailedPrecondition) || !apierror.IsNotApplied(err) {
 		t.Fatalf("refused detach must be NOT_APPLIED: %v", err)
+	}
+}
+
+// insertLegacySiblingSchedulerRun records a path inside the target's directory
+// for another run of the same scheduler, bypassing the writer ownership rule
+// the way rows written before it could.
+func insertLegacySiblingSchedulerRun(ctx context.Context, f runHistoryFixture, path string) error {
+	_, err := f.store.db.ExecContext(ctx, "INSERT INTO scheduler_run(run_id,scheduler_id,status,artifacts_dir,started_at) VALUES('legacy-sibling',?,'succeeded',?,1)", f.scheduler.SchedulerID, path)
+	return err
+}
+
+func TestRunHistoryFenceRejectsOwnershipChangeAfterSnapshot(t *testing.T) {
+	for _, phase := range []int{1, 2} {
+		t.Run(fmt.Sprint("phase", phase), func(t *testing.T) {
+			f, root := newDiskHistoryFixture(t, 4)
+			a := runhistory.FSArtifacts{DataRoot: root}
+			ctx := context.Background()
+			lateChild := identity.NewID(identity.ResourceRun, "late-child", f.scheduler.ProjectID)
+			preparations := 0
+			// Preparation runs between each phase's snapshot and its fence, so
+			// a child created here is visible only to the fence's re-read.
+			err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+				preparations++
+				if preparations == phase {
+					run, err := f.store.GetProjectRun(ctx, f.childID)
+					if err != nil {
+						return nil, err
+					}
+					run.RunID = lateChild
+					if _, err := f.store.CreateProjectRun(ctx, run); err != nil {
+						return nil, err
+					}
+				}
+				return a.Prepare(ctx, scope)
+			})
+			if !errors.Is(err, domain.ErrFailedPrecondition) {
+				t.Fatalf("ownership change after snapshot was accepted: %v", err)
+			}
+			if phase == 1 && !apierror.IsNotApplied(err) {
+				t.Fatalf("refusal before detach must be NOT_APPLIED: %v", err)
+			}
+			for _, runID := range []string{f.childID, lateChild} {
+				assertPruneTestRowCount(t, f.store, pruneTestRowCountCheck{Table: "project_run", Where: "run_id='" + runID + "'", Want: 1})
+			}
+			if phase == 1 {
+				if _, err := os.Stat(filepath.Join(root, "schedulers", f.scheduler.SchedulerID, "runs", f.scheduler.RunID, "private.json")); err != nil {
+					t.Fatalf("refused detach changed artifacts: %v", err)
+				}
+			}
+		})
 	}
 }

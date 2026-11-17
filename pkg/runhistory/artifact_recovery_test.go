@@ -47,12 +47,6 @@ func TestRunHistoryIsolatedDirectorySurvivesCancellationAndReopen(t *testing.T) 
 	if data, err := os.ReadFile(filepath.Join(pending, "private.json")); err != nil || string(data) != "private" {
 		t.Fatalf("pending retry material lost: %q, %v", data, err)
 	}
-	// A new instance must still reject shared pending files before retrying.
-	scope.ProtectedPaths = []string{filepath.Join(pending, "private.json")}
-	if _, err := a.Prepare(context.Background(), scope); !errors.Is(err, domain.ErrReferenced) {
-		t.Fatalf("shared pending material accepted: %v", err)
-	}
-	scope.ProtectedPaths = nil
 	if err := (FSArtifacts{DataRoot: root}).Remove(context.Background(), scope); err != nil {
 		t.Fatal(err)
 	}
