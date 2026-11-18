@@ -284,6 +284,11 @@ func (r *k8sRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmStat
 			ok = false
 		}
 	}
+	if ok {
+		if err := requireReusedK8sPodResourceLimits(pod, sandbox.ResourceLimits); err != nil {
+			return SandboxVMInfo{}, err
+		}
+	}
 	created := false
 	if !ok {
 		pod, err = r.createPod(ctx, clientset, sandbox, vmState, effective)

@@ -88,12 +88,19 @@ func SandboxSpecToProto(sandbox *compose.NormalizedSandboxSpec) *agentcomposev2.
 	if sandbox == nil {
 		return nil
 	}
-	result := &agentcomposev2.SandboxSpec{StoppedRuntimePolicy: sandbox.StoppedRuntimePolicy}
-	if sandbox.Network == nil {
-		return result
+	return &agentcomposev2.SandboxSpec{
+		StoppedRuntimePolicy: sandbox.StoppedRuntimePolicy,
+		Network:              sandboxNetworkSpecToProto(sandbox.Network),
+		Resources:            SandboxResourcesSpecToProto(sandbox.Resources),
 	}
-	network := &agentcomposev2.SandboxNetworkSpec{Default: sandbox.Network.Default}
-	for _, entry := range sandbox.Network.Allow {
+}
+
+func sandboxNetworkSpecToProto(spec *compose.NormalizedSandboxNetworkSpec) *agentcomposev2.SandboxNetworkSpec {
+	if spec == nil {
+		return nil
+	}
+	network := &agentcomposev2.SandboxNetworkSpec{Default: spec.Default}
+	for _, entry := range spec.Allow {
 		network.Allow = append(network.Allow, &agentcomposev2.SandboxNetworkAllowSpec{
 			Host:          entry.Host,
 			Port:          int32(entry.Port),
@@ -105,15 +112,14 @@ func SandboxSpecToProto(sandbox *compose.NormalizedSandboxSpec) *agentcomposev2.
 			InjectHeaders: cloneStringMap(entry.InjectHeaders),
 		})
 	}
-	for _, entry := range sandbox.Network.Deny {
+	for _, entry := range spec.Deny {
 		network.Deny = append(network.Deny, &agentcomposev2.SandboxNetworkDenySpec{
 			Host:     entry.Host,
 			Port:     int32(entry.Port),
 			Binaries: append([]string(nil), entry.Binaries...),
 		})
 	}
-	result.Network = network
-	return result
+	return network
 }
 
 func MCPServerSpecsToProto(values map[string]compose.NormalizedMCPServerSpec) []*agentcomposev2.MCPServerSpec {

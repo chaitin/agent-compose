@@ -3,10 +3,12 @@ package driver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
+	"github.com/chaitin/agent-compose/pkg/driver/sandboxhost"
 	containerapi "github.com/docker/docker/api/types/container"
 )
 
@@ -125,15 +127,105 @@ func TestSandboxHostMarshalCarriesResourceLimits(t *testing.T) {
 	}
 }
 
-func TestRequireResourceLimitsProtocolVersion(t *testing.T) {
+func TestRequireResourceLimitsFeature(t *testing.T) {
 	limits := &SandboxResourceLimits{MemoryMiB: 1024}
-	if err := requireResourceLimitsProtocolVersion(sandboxHostResourceLimitsProtocolVersion-1, limits); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
-		t.Fatalf("old host error = %v, want a fail-closed refusal", err)
+	if err := requireResourceLimitsFeature(false, limits); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
+		t.Fatalf("host without the feature error = %v, want a fail-closed refusal", err)
 	}
-	if err := requireResourceLimitsProtocolVersion(sandboxHostResourceLimitsProtocolVersion, limits); err != nil {
-		t.Fatalf("current host error = %v, want nil", err)
+	if err := requireResourceLimitsFeature(true, limits); err != nil {
+		t.Fatalf("host with the feature error = %v, want nil", err)
 	}
-	if err := requireResourceLimitsProtocolVersion(0, nil); err != nil {
+	if err := requireResourceLimitsFeature(false, nil); err != nil {
 		t.Fatalf("undeclared on any host = %v, want nil", err)
+	}
+}
+
+// A host that gains the feature must stay usable by an older daemon, so the
+// feature is a handshake field, not a protocol bump.
+func TestSandboxHostAdvertisesResourceLimitsWithoutAProtocolBump(t *testing.T) {
+	if sandboxHostProtocolVersion != sandboxHostDenyProtocolVersion {
+		t.Fatalf("protocol version = %d; resource limits must not bump it past %d, or a daemon one version behind refuses the host", sandboxHostProtocolVersion, sandboxHostDenyProtocolVersion)
+	}
+	handshake := newSandboxHostHandshake(&sandboxhost.HandshakeResponse{ProtocolVersion: sandboxHostProtocolVersion, Features: sandboxHostFeatures})
+	if !handshake.features[sandboxHostFeatureResourceLimits] {
+		t.Fatalf("handshake features = %v, want %q", handshake.features, sandboxHostFeatureResourceLimits)
+	}
+	old := newSandboxHostHandshake(&sandboxhost.HandshakeResponse{ProtocolVersion: sandboxHostProtocolVersion})
+	if old.features[sandboxHostFeatureResourceLimits] {
+		t.Fatal("a host that sent no features must not read as supporting resource limits")
+	}
+}
+
+// A refusal raised inside the sandbox-host must reach the daemon as the
+// resource-limits sentinel, not as the guest-not-ready sentinel that shares
+// FailedPrecondition, or the daemon would retry a request that cannot succeed.
+func TestSandboxHostStatusCarriesResourceLimitsRefusal(t *testing.T) {
+	refusal := fmt.Errorf("%w: declared 1500 millicpus is not a whole number of vCPUs", ErrSandboxResourceLimitsUnavailable)
+	got := fromGRPCError(sandboxHostStatus(refusal))
+	if !errors.Is(got, ErrSandboxResourceLimitsUnavailable) || errors.Is(got, ErrGuestRuntimeNotReady) {
+		t.Fatalf("decoded refusal = %v, want ErrSandboxResourceLimitsUnavailable only", got)
+	}
+	notReady := fromGRPCError(sandboxHostStatus(fmt.Errorf("%w: booting", ErrGuestRuntimeNotReady)))
+	if !errors.Is(notReady, ErrGuestRuntimeNotReady) || errors.Is(notReady, ErrSandboxResourceLimitsUnavailable) {
+		t.Fatalf("decoded not-ready = %v, want ErrGuestRuntimeNotReady only", notReady)
+	}
+}
+
+func TestRequireReusedRuntimeResourceLimits(t *testing.T) {
+	declared := &SandboxResourceLimits{CPUMillis: 2000, MemoryMiB: 1024}
+	if err := requireReusedRuntimeResourceLimits("runtime r1", declared, *declared); err != nil {
+		t.Fatalf("matching runtime = %v, want reused", err)
+	}
+	if err := requireReusedRuntimeResourceLimits("runtime r1", nil, SandboxResourceLimits{}); err != nil {
+		t.Fatalf("undeclared = %v, want any runtime reused", err)
+	}
+	// Only declared dimensions are compared: memory is not declared here.
+	if err := requireReusedRuntimeResourceLimits("runtime r1", &SandboxResourceLimits{CPUMillis: 2000}, SandboxResourceLimits{CPUMillis: 2000, MemoryMiB: 4096}); err != nil {
+		t.Fatalf("undeclared memory compared: %v", err)
+	}
+	err := requireReusedRuntimeResourceLimits("docker container c1", declared, SandboxResourceLimits{})
+	if !errors.Is(err, ErrSandboxResourceLimitsUnavailable) || !strings.Contains(err.Error(), "docker container c1") ||
+		!strings.Contains(err.Error(), "cpus unlimited (declared 2)") || !strings.Contains(err.Error(), "memory unlimited (declared 1024Mi)") ||
+		!strings.Contains(err.Error(), "remove the sandbox") {
+		t.Fatalf("unlimited runtime error = %v, want a refusal naming the runtime, both dimensions, and the fix", err)
+	}
+	if err := requireReusedRuntimeResourceLimits("r", &SandboxResourceLimits{CPUMillis: 500}, SandboxResourceLimits{CPUMillis: 1500}); err == nil || !strings.Contains(err.Error(), "cpus 1.500 (declared 0.500)") {
+		t.Fatalf("fractional mismatch error = %v", err)
+	}
+}
+
+// TestValidateReusedDockerContainerResourceLimits covers the reuse path: a
+// container created before the declaration existed carries no limit and must
+// not be reused for a declaring sandbox.
+func TestValidateReusedDockerContainerResourceLimits(t *testing.T) {
+	limits := &SandboxResourceLimits{CPUMillis: 1000, MemoryMiB: 512}
+	declaring := &Sandbox{Summary: SandboxSummary{ID: "sandbox-1"}, ResourceLimits: limits}
+
+	unlimited := dockerInspectWith(&containerapi.HostConfig{})
+	if err := validateReusedDockerContainer(unlimited, declaring, false); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
+		t.Fatalf("reusing an unlimited container = %v, want a refusal", err)
+	}
+	limited := &containerapi.HostConfig{}
+	applyDockerResourceLimits(limited, limits)
+	if err := validateReusedDockerContainer(dockerInspectWith(limited), declaring, false); err != nil {
+		t.Fatalf("reusing a container with the declared limits = %v, want reused", err)
+	}
+	// A memory limit host swap can stretch is not the declared ceiling.
+	swappable := *limited
+	swappable.MemorySwap = 0
+	if err := validateReusedDockerContainer(dockerInspectWith(&swappable), declaring, false); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
+		t.Fatalf("reusing a swappable container = %v, want a refusal", err)
+	}
+	if err := validateReusedDockerContainer(unlimited, &Sandbox{Summary: SandboxSummary{ID: "sandbox-1"}}, false); err != nil {
+		t.Fatalf("undeclared sandbox = %v, want any container reused", err)
+	}
+}
+
+func TestBoxliteBoxResourceLimits(t *testing.T) {
+	if got := boxliteBoxResourceLimits(2, 2048); got != (SandboxResourceLimits{CPUMillis: 2000, MemoryMiB: 2048}) {
+		t.Fatalf("boxliteBoxResourceLimits(2, 2048) = %+v", got)
+	}
+	if got := boxliteBoxResourceLimits(0, 0); got.Declared() {
+		t.Fatalf("an unreported size = %+v, want zero", got)
 	}
 }

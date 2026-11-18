@@ -1005,13 +1005,8 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 			mountsForMatch = append(append([]mountapi.Mount{}, mounts...), initMount)
 		}
 		if r.dockerSandboxMountsMatch(containerInfo, mountsForMatch, sandbox) {
-			if supervisorMode {
-				if !dockerSandboxUsesSupervisor(containerInfo) {
-					return containerapi.InspectResponse{}, false, nil, fmt.Errorf("docker sandbox container %s predates SANDBOX_SUPERVISOR=enforce and has an external network; remove the sandbox and create it again", containerInfo.ID)
-				}
-				if err := validateDockerSandboxSupervisorNetwork(containerInfo); err != nil {
-					return containerapi.InspectResponse{}, false, nil, err
-				}
+			if err := validateReusedDockerContainer(containerInfo, sandbox, supervisorMode); err != nil {
+				return containerapi.InspectResponse{}, false, nil, err
 			}
 			return containerInfo, false, nil, nil
 		}
@@ -1155,6 +1150,21 @@ func (r *dockerRuntime) inspectCreatedDockerContainer(ctx context.Context, docke
 		return containerapi.InspectResponse{}, err
 	}
 	return containerInfo, nil
+}
+
+// validateReusedDockerContainer checks an existing container that is about to
+// be reused against what this start requires and that cannot change on a live
+// container: the supervisor shape and the declared resource limits.
+func validateReusedDockerContainer(containerInfo containerapi.InspectResponse, sandbox *Sandbox, supervisorMode bool) error {
+	if supervisorMode {
+		if !dockerSandboxUsesSupervisor(containerInfo) {
+			return fmt.Errorf("docker sandbox container %s predates SANDBOX_SUPERVISOR=enforce and has an external network; remove the sandbox and create it again", containerInfo.ID)
+		}
+		if err := validateDockerSandboxSupervisorNetwork(containerInfo); err != nil {
+			return err
+		}
+	}
+	return requireReusedDockerResourceLimits(containerInfo, sandbox.ResourceLimits)
 }
 
 func (r *dockerRuntime) validateLegacyDockerRecreate(sandbox *Sandbox, vmState VMState) error {

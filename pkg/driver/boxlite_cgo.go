@@ -187,9 +187,12 @@ type cgoBoxHandle struct {
 }
 
 type cgoBoxInfo struct {
-	ID    string `json:"id"`
-	Name  string `json:"name,omitempty"`
-	State struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// CPUs and MemoryMiB are the size the box was created with.
+	CPUs      float64 `json:"cpus,omitempty"`
+	MemoryMiB int     `json:"memory_mib,omitempty"`
+	State     struct {
 		Status  string `json:"status"`
 		Running bool   `json:"running"`
 	} `json:"state"`
@@ -966,6 +969,10 @@ func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox
 						return nil, false, err
 					}
 				} else {
+					if err := requireReusedRuntimeResourceLimits("boxlite box "+existingID, sandbox.ResourceLimits, boxliteBoxResourceLimits(info.CPUs, info.MemoryMiB)); err != nil {
+						box.free()
+						return nil, false, err
+					}
 					if !info.State.Running {
 						if err := r.startBox(ctx, box); err != nil {
 							box.free()
@@ -975,6 +982,12 @@ func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox
 					return box, false, nil
 				}
 			} else {
+				// The box's size is unknown, so a declaring sandbox cannot
+				// tell whether it would run with the declared limit.
+				if sandbox.ResourceLimits.Declared() {
+					box.free()
+					return nil, false, fmt.Errorf("%w: read the size of existing boxlite box %s: %w", ErrSandboxResourceLimitsUnavailable, existingID, infoErr)
+				}
 				return box, false, nil
 			}
 		}
@@ -1042,7 +1055,7 @@ func cStringOrEmpty(value *C.char) string {
 // metadata struct. BoxLite v0.10 extended CBoxInfo with fields this runtime does
 // not read yet, so the conversion stays explicit about what is used.
 func cgoBoxInfoFromC(raw *C.struct_CBoxInfo) cgoBoxInfo {
-	info := cgoBoxInfo{ID: cStringOrEmpty(raw.id), Name: cStringOrEmpty(raw.name)}
+	info := cgoBoxInfo{ID: cStringOrEmpty(raw.id), Name: cStringOrEmpty(raw.name), CPUs: float64(raw.cpus), MemoryMiB: int(raw.memory_mib)}
 	info.State.Status = cStringOrEmpty(raw.status)
 	info.State.Running = raw.running != 0
 	return info

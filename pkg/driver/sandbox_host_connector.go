@@ -36,13 +36,13 @@ const (
 // selected driver is Docker or k8s never dials or spawns a host, and so a
 // compose-deployed daemon simply attaches to the pre-started host.
 type SandboxHostConnector struct {
-	socketPath      string
-	dataRoot        string
-	mode            SandboxHostMode
-	mu              sync.Mutex
-	client          sandboxhost.SandboxHostClient
-	conn            *grpc.ClientConn
-	protocolVersion int64
+	socketPath string
+	dataRoot   string
+	mode       SandboxHostMode
+	mu         sync.Mutex
+	client     sandboxhost.SandboxHostClient
+	conn       *grpc.ClientConn
+	handshake  sandboxHostHandshake
 }
 
 func NewSandboxHostConnector(socketPath, dataRoot string, mode SandboxHostMode) *SandboxHostConnector {
@@ -60,13 +60,13 @@ func (c *SandboxHostConnector) Client(ctx context.Context) (sandboxhost.SandboxH
 	if c.client != nil {
 		return c.client, nil
 	}
-	client, conn, version, err := c.dialOrSpawn(ctx)
+	client, conn, handshake, err := c.dialOrSpawn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	c.client = client
 	c.conn = conn
-	c.protocolVersion = version
+	c.handshake = handshake
 	return client, nil
 }
 
@@ -84,19 +84,28 @@ func (c *SandboxHostConnector) Client(ctx context.Context) (sandboxhost.SandboxH
 func (c *SandboxHostConnector) ProtocolVersion() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.protocolVersion
+	return c.handshake.version
 }
 
-func (c *SandboxHostConnector) dialOrSpawn(ctx context.Context) (sandboxhost.SandboxHostClient, *grpc.ClientConn, int64, error) {
+// HasFeature reports whether the sandbox-host advertised the named feature
+// during the last successful dial. Like ProtocolVersion it is false until the
+// host is first reached, so a gate on it fails closed.
+func (c *SandboxHostConnector) HasFeature(name string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.handshake.features[name]
+}
+
+func (c *SandboxHostConnector) dialOrSpawn(ctx context.Context) (sandboxhost.SandboxHostClient, *grpc.ClientConn, sandboxHostHandshake, error) {
 	if !sandboxHostSocketReachable(c.socketPath) {
 		if c.mode == SandboxHostModeExternal {
-			return nil, nil, 0, fmt.Errorf("sandbox-host socket %q is not reachable (mode %q refuses to spawn; the host must be started externally)", c.socketPath, c.mode)
+			return nil, nil, sandboxHostHandshake{}, fmt.Errorf("sandbox-host socket %q is not reachable (mode %q refuses to spawn; the host must be started externally)", c.socketPath, c.mode)
 		}
 		if err := spawnSandboxHost(c.socketPath, c.dataRoot); err != nil {
-			return nil, nil, 0, err
+			return nil, nil, sandboxHostHandshake{}, err
 		}
 		if err := waitSandboxHostSocket(ctx, c.socketPath); err != nil {
-			return nil, nil, 0, err
+			return nil, nil, sandboxHostHandshake{}, err
 		}
 	}
 	return dialSandboxHost(ctx, c.socketPath)
@@ -112,7 +121,7 @@ func (c *SandboxHostConnector) Close() error {
 	err := c.conn.Close()
 	c.conn = nil
 	c.client = nil
-	c.protocolVersion = 0
+	c.handshake = sandboxHostHandshake{}
 	return err
 }
 

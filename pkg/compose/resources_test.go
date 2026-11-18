@@ -150,6 +150,12 @@ agents:
 			t.Fatalf("%s: whole vCPUs rejected: %v", driver, err)
 		}
 	}
+	for _, driver := range []string{DriverBoxlite, DriverMicrosandbox} {
+		_, err := Normalize(mustParseCompose(t, compose(driver, "256")), NormalizeOptions{})
+		if err == nil || !strings.Contains(err.Error(), "at most 255 vCPUs") {
+			t.Fatalf("%s: Normalize error = %v, want the 255 vCPU bound at apply time", driver, err)
+		}
+	}
 	if _, err := Normalize(mustParseCompose(t, compose(DriverDocker, "1.5")), NormalizeOptions{}); err != nil {
 		t.Fatalf("docker: fractional cpus rejected: %v", err)
 	}

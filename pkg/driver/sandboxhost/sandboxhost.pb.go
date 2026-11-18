@@ -117,8 +117,13 @@ type HandshakeResponse struct {
 	// protocol_version is a monotonically increasing integer identifying the
 	// wire contract this host speaks.
 	ProtocolVersion int64 `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// features names optional capabilities this host implements on top of its
+	// protocol version. A daemon gates a feature on its presence rather than on
+	// a version bump, so a host can gain one without breaking an older daemon,
+	// which ignores the field. An older host leaves it empty.
+	Features      []string `protobuf:"bytes,2,rep,name=features,proto3" json:"features,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *HandshakeResponse) Reset() {
@@ -156,6 +161,13 @@ func (x *HandshakeResponse) GetProtocolVersion() int64 {
 		return x.ProtocolVersion
 	}
 	return 0
+}
+
+func (x *HandshakeResponse) GetFeatures() []string {
+	if x != nil {
+		return x.Features
+	}
+	return nil
 }
 
 type SandboxEnvVar struct {
@@ -837,9 +849,10 @@ type Sandbox struct {
 	VolumeMounts    []*SandboxVolumeMount  `protobuf:"bytes,4,rep,name=volume_mounts,json=volumeMounts,proto3" json:"volume_mounts,omitempty"`
 	RuntimeEnvItems []*SandboxEnvVar       `protobuf:"bytes,5,rep,name=runtime_env_items,json=runtimeEnvItems,proto3" json:"runtime_env_items,omitempty"`
 	NetworkPolicy   *NetworkPolicy         `protobuf:"bytes,6,opt,name=network_policy,json=networkPolicy,proto3" json:"network_policy,omitempty"`
-	// Declared CPU and memory ceiling. Absent means undeclared. Added in
-	// protocol version 3; the daemon refuses a declaring sandbox against an
-	// older host, which would silently drop the field.
+	// Declared CPU and memory ceiling. Absent means undeclared. Only a host that
+	// advertises the "resource_limits" handshake feature reads it; the daemon
+	// refuses a declaring sandbox against any other host, which would silently
+	// drop the field and size the VM from its own defaults.
 	ResourceLimits *ResourceLimits `protobuf:"bytes,7,opt,name=resource_limits,json=resourceLimits,proto3" json:"resource_limits,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -3426,9 +3439,10 @@ const file_sandboxhost_proto_rawDesc = "" +
 	"\x11sandboxhost.proto\x12\x0esandboxhost.v1\"'\n" +
 	"\rDriverRequest\x12\x16\n" +
 	"\x06driver\x18\x01 \x01(\tR\x06driver\"\x12\n" +
-	"\x10HandshakeRequest\">\n" +
+	"\x10HandshakeRequest\"Z\n" +
 	"\x11HandshakeResponse\x12)\n" +
-	"\x10protocol_version\x18\x01 \x01(\x03R\x0fprotocolVersion\"Q\n" +
+	"\x10protocol_version\x18\x01 \x01(\x03R\x0fprotocolVersion\x12\x1a\n" +
+	"\bfeatures\x18\x02 \x03(\tR\bfeatures\"Q\n" +
 	"\rSandboxEnvVar\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\x12\x16\n" +

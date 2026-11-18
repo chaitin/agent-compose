@@ -93,9 +93,10 @@ func removeStaleSandboxHostSocket(socketPath string) error {
 }
 
 // dialSandboxHost connects to a running sandbox-host and verifies the protocol
-// version, which it also returns. The returned conn owns the transport and must
-// be closed by the caller when the client is no longer needed.
-func dialSandboxHost(ctx context.Context, socketPath string) (sandboxhost.SandboxHostClient, *grpc.ClientConn, int64, error) {
+// version; it returns what the handshake reported. The returned conn owns the
+// transport and must be closed by the caller when the client is no longer
+// needed.
+func dialSandboxHost(ctx context.Context, socketPath string) (sandboxhost.SandboxHostClient, *grpc.ClientConn, sandboxHostHandshake, error) {
 	conn, err := grpc.NewClient(
 		"unix://"+socketPath,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -108,7 +109,7 @@ func dialSandboxHost(ctx context.Context, socketPath string) (sandboxhost.Sandbo
 		}),
 	)
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("create sandbox-host client: %w", err)
+		return nil, nil, sandboxHostHandshake{}, fmt.Errorf("create sandbox-host client: %w", err)
 	}
 	client := sandboxhost.NewSandboxHostClient(conn)
 	handshakeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -116,11 +117,11 @@ func dialSandboxHost(ctx context.Context, socketPath string) (sandboxhost.Sandbo
 	resp, err := client.Handshake(handshakeCtx, &sandboxhost.HandshakeRequest{})
 	if err != nil {
 		_ = conn.Close()
-		return nil, nil, 0, fmt.Errorf("sandbox-host handshake: %w", err)
+		return nil, nil, sandboxHostHandshake{}, fmt.Errorf("sandbox-host handshake: %w", err)
 	}
 	if !sandboxHostProtocolCompatible(resp.GetProtocolVersion()) {
 		_ = conn.Close()
-		return nil, nil, 0, fmt.Errorf("incompatible sandbox-host protocol version %d (daemon supports %d and %d)", resp.GetProtocolVersion(), sandboxHostProtocolVersion, sandboxHostProtocolVersion-1)
+		return nil, nil, sandboxHostHandshake{}, fmt.Errorf("incompatible sandbox-host protocol version %d (daemon supports %d and %d)", resp.GetProtocolVersion(), sandboxHostProtocolVersion, sandboxHostProtocolVersion-1)
 	}
-	return client, conn, resp.GetProtocolVersion(), nil
+	return client, conn, newSandboxHostHandshake(resp), nil
 }

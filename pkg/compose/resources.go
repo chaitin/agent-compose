@@ -35,6 +35,8 @@ const (
 	// only rejects values no driver could honor; there is no deployment
 	// ceiling on a declaration.
 	maxSandboxCPUMillis = 1024 * 1000
+	// maxMicroVMCPUMillis is the largest vCPU count the microVM drivers take.
+	maxMicroVMCPUMillis = 255 * 1000
 	// minSandboxMemoryMiB is the smallest memory ceiling accepted. A smaller
 	// sandbox cannot start the guest runtime, so the declaration is rejected
 	// rather than producing a sandbox that is OOM-killed while booting.
@@ -126,8 +128,14 @@ func validateSandboxResourcesForDriver(path, driver string, resources *Normalize
 	if resources == nil || resources.CPUMillis == 0 {
 		return nil
 	}
-	if (driver == DriverMicrosandbox || driver == DriverBoxlite) && resources.CPUMillis%1000 != 0 {
+	if driver != DriverMicrosandbox && driver != DriverBoxlite {
+		return nil
+	}
+	if resources.CPUMillis%1000 != 0 {
 		return &ValidationError{Path: path + ".cpus", Message: driver + " sizes its VM in whole vCPUs; declare an integer number of cpus"}
+	}
+	if resources.CPUMillis > maxMicroVMCPUMillis {
+		return &ValidationError{Path: path + ".cpus", Message: fmt.Sprintf("%s VMs have at most %d vCPUs", driver, maxMicroVMCPUMillis/1000)}
 	}
 	return nil
 }

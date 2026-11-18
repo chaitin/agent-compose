@@ -174,11 +174,14 @@ func AgentYAMLMap(agents []*agentcomposev2.AgentSpec) (map[string]any, []*agentc
 	return values, nil
 }
 
-// policyYAMLShape renders the agent policy declaration. The network block is
-// only added when it was declared, so a spec that does not use it renders
-// exactly as it did before the field existed.
+// policyYAMLShape renders the agent policy declaration. The network and
+// resources blocks are only added when they were declared, so a spec that uses
+// neither renders exactly as it did before the fields existed.
 func policyYAMLShape(policy *agentcomposev2.SandboxSpec) map[string]any {
 	shape := map[string]any{"stopped_runtime_policy": policy.GetStoppedRuntimePolicy()}
+	if resources := sandboxResourcesYAMLShape(policy.GetResources()); resources != nil {
+		shape["resources"] = resources
+	}
 	network := policy.GetNetwork()
 	if network == nil {
 		return shape

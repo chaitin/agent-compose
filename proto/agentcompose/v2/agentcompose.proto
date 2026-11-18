@@ -1069,6 +1069,23 @@ message SandboxSpec {
   // Default-deny is a policy that takes effect only because this message is
   // present; it is not an engine default (D3).
   SandboxNetworkSpec network = 2;
+  // Declared CPU and memory limits. Absent means undeclared, which keeps the
+  // driver's existing sizing: Docker and Kubernetes run unlimited, and the
+  // microVM drivers use the daemon's default VM size.
+  SandboxResourcesSpec resources = 3;
+}
+
+// SandboxResourcesSpec is the declared CPU and memory limit of one agent's
+// sandboxes, in the form the compose file authors it. The daemon normalizes it
+// again, so the canonical units and validation stay defined in one place.
+message SandboxResourcesSpec {
+  // CPU limit in cores. Docker and Kubernetes accept fractions down to a
+  // thousandth of a core; BoxLite and Microsandbox accept whole cores only.
+  // Absent leaves CPU undeclared.
+  optional double cpus = 1;
+  // Memory limit as a whole number with a binary unit, such as "512Mi" or
+  // "4Gi". Empty leaves memory undeclared.
+  string memory = 2;
 }
 
 // SandboxNetworkSpec is the declared outbound network policy for one agent's

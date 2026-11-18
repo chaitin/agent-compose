@@ -14,7 +14,7 @@ func k8sRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 			Preconditions: []string{
 				"a namespace LimitRange or ResourceQuota the declaration violates rejects the Pod",
 			},
-			Observed:        "the Pod container declares ResourceRequirements requests equal to limits for the cpu and memory a policy.resources declares, and none otherwise",
+			Observed:        "the Pod container declares ResourceRequirements requests equal to limits for the cpu and memory a policy.resources declares, and none otherwise; an existing Pod whose container resources differ from the declaration is refused rather than reused",
 			DefaultBehavior: "an undeclared resource limit is not applied to the Pod beyond what a namespace LimitRange defaults",
 		},
 	}

@@ -9,8 +9,6 @@ import (
 	containerapi "github.com/docker/docker/api/types/container"
 )
 
-const mib = int64(1024 * 1024)
-
 // applyDockerResourceLimits writes a declared limit into the container's
 // HostConfig. An undeclared limit leaves every resource field at its zero
 // value, which is Docker's "unlimited" and the driver's behavior before
@@ -30,6 +28,26 @@ func applyDockerResourceLimits(hostConfig *containerapi.HostConfig, limits *Sand
 		hostConfig.Memory = memory
 		hostConfig.MemorySwap = memory
 	}
+}
+
+// dockerContainerResourceLimits reads the limit a container actually carries.
+// A memory limit that host swap can stretch is not the declared ceiling, so it
+// reads as unlimited.
+func dockerContainerResourceLimits(info containerapi.InspectResponse) SandboxResourceLimits {
+	if info.ContainerJSONBase == nil || info.HostConfig == nil {
+		return SandboxResourceLimits{}
+	}
+	actual := SandboxResourceLimits{CPUMillis: info.HostConfig.NanoCPUs / 1_000_000}
+	if memory := info.HostConfig.Memory; memory > 0 && info.HostConfig.MemorySwap == memory && memory%mib == 0 {
+		actual.MemoryMiB = uint32(memory / mib)
+	}
+	return actual
+}
+
+// requireReusedDockerResourceLimits refuses to reuse a container whose limit
+// differs from the declaration (see requireReusedRuntimeResourceLimits).
+func requireReusedDockerResourceLimits(info containerapi.InspectResponse, limits *SandboxResourceLimits) error {
+	return requireReusedRuntimeResourceLimits("docker container "+info.ID, limits, dockerContainerResourceLimits(info))
 }
 
 // dockerResourceLimitsApplied reports whether the created container carries

@@ -3,9 +3,13 @@ package driver
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 )
+
+// mib is one MiB in bytes, the unit drivers that take a byte count need.
+const mib = int64(1024 * 1024)
 
 // SandboxResourceLimits is the driver-boundary form of an agent's
 // policy.resources declaration. A zero field is undeclared for that dimension.
@@ -114,4 +118,50 @@ func RequireSandboxResourceLimits(driver string, limits *SandboxResourceLimits) 
 		_, err = microVMSandboxResources(nil, limits)
 	}
 	return err
+}
+
+// requireReusedRuntimeResourceLimits refuses to reuse an existing runtime whose
+// size differs from a declared limit. A runtime keeps the size it was created
+// with, so reusing one created before the declaration existed or changed (an
+// upgrade, a retained runtime resumed, a declaration edited while the sandbox
+// runs) would run the sandbox without the limit it declares. The caller must
+// remove the sandbox so the next start creates the runtime with the
+// declaration; recreating it here would discard the runtime's writable state.
+//
+// Only declared dimensions are compared, and a zero actual value means the
+// runtime is unlimited in that dimension. runtime names the runtime in the
+// error, such as "docker container 3f2a...".
+func requireReusedRuntimeResourceLimits(runtime string, limits *SandboxResourceLimits, actual SandboxResourceLimits) error {
+	if !limits.Declared() {
+		return nil
+	}
+	var mismatched []string
+	if limits.CPUMillis > 0 && actual.CPUMillis != limits.CPUMillis {
+		mismatched = append(mismatched, fmt.Sprintf("cpus %s (declared %s)", describeCPUMillis(actual.CPUMillis), describeCPUMillis(limits.CPUMillis)))
+	}
+	if limits.MemoryMiB > 0 && actual.MemoryMiB != limits.MemoryMiB {
+		mismatched = append(mismatched, fmt.Sprintf("memory %s (declared %s)", describeMemoryMiB(actual.MemoryMiB), describeMemoryMiB(limits.MemoryMiB)))
+	}
+	if len(mismatched) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: existing %s was created with %s; remove the sandbox so its runtime is created again with the declared policy.resources", ErrSandboxResourceLimitsUnavailable, runtime, strings.Join(mismatched, ", "))
+}
+
+func describeCPUMillis(millis int64) string {
+	switch {
+	case millis <= 0:
+		return "unlimited"
+	case millis%1000 == 0:
+		return fmt.Sprintf("%d", millis/1000)
+	default:
+		return fmt.Sprintf("%d.%03d", millis/1000, millis%1000)
+	}
+}
+
+func describeMemoryMiB(memory uint32) string {
+	if memory == 0 {
+		return "unlimited"
+	}
+	return fmt.Sprintf("%dMi", memory)
 }
