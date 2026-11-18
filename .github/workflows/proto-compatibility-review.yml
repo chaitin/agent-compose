@@ -4,10 +4,13 @@ on:
   pull_request_review:
     types: [submitted, dismissed]
 
+# Review events from a fork only ever receive a read-only token, so this
+# workflow cannot rerun anything itself. It only filters the reviews that can
+# change the approval and waits for the in-flight Buf run; the follow-up
+# workflow in proto-compatibility-rerun.yml runs in the base repository through
+# workflow_run and performs the rerun.
 permissions:
-  actions: write
   contents: read
-  pull-requests: read
 
 # Share the required workflow's group so a review submitted while Buf is still
 # running waits for that run to finish before requesting a new attempt.
@@ -23,18 +26,10 @@ jobs:
       (github.event.action == 'dismissed' || github.event.review.state == 'approved' || github.event.review.state == 'changes_requested')
     runs-on: ubuntu-latest
     steps:
-      - name: Rerun compatibility check for current commit
+      - name: Request compatibility rerun for current commit
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          run_id=$(gh api \
-            "repos/$GH_REPO/actions/workflows/proto-compatibility.yml/runs?event=pull_request&head_sha=$PR_HEAD_SHA&per_page=20" \
-            --jq '.workflow_runs | sort_by(.created_at) | last | .id // empty')
-          if [[ -z $run_id ]]; then
-            echo "no Protobuf compatibility run found for PR #$PR_NUMBER at $PR_HEAD_SHA" >&2
-            exit 1
-          fi
-          gh api --method POST "repos/$GH_REPO/actions/runs/$run_id/rerun"
+          printf 'Approval changed on PR #%s at %s; proto-compatibility-rerun.yml reruns the compatibility check.\n' \
+            "$PR_NUMBER" "$PR_HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"

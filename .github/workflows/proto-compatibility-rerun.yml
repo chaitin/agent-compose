@@ -1,0 +1,46 @@
+name: Rerun Protobuf compatibility after approval
+
+# workflow_run always executes this file from the default branch with the base
+# repository's token, including for pull requests from forks, whose
+# pull_request_review runs only get a read-only token. It never checks out or
+# executes pull request code: it only reruns the existing compatibility run for
+# the reviewed commit.
+on:
+  workflow_run:
+    workflows: [Refresh Protobuf compatibility approval]
+    types: [completed]
+
+permissions:
+  actions: write
+
+concurrency:
+  group: proto-compatibility-rerun-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  rerun-proto-compatibility:
+    name: Rerun Protobuf compatibility
+    # A skipped approval job means the review could not change the approval.
+    if: >-
+      github.event.workflow_run.event == 'pull_request_review' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rerun compatibility check for reviewed commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          if [[ ! $PR_HEAD_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "unexpected reviewed commit: $PR_HEAD_SHA" >&2
+            exit 1
+          fi
+          run_id=$(gh api \
+            "repos/$GH_REPO/actions/workflows/proto-compatibility.yml/runs?event=pull_request&head_sha=$PR_HEAD_SHA&per_page=20" \
+            --jq '.workflow_runs | sort_by(.created_at) | last | .id // empty')
+          if [[ -z $run_id ]]; then
+            echo "no Protobuf compatibility run found at $PR_HEAD_SHA" >&2
+            exit 1
+          fi
+          gh api --method POST "repos/$GH_REPO/actions/runs/$run_id/rerun"
