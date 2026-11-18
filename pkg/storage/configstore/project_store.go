@@ -422,6 +422,9 @@ func (s *projectStore) CreateProjectRun(ctx context.Context, run ProjectRunRecor
 	if err != nil {
 		return ProjectRunRecord{}, err
 	}
+	if err := validateHistoryArtifactPaths(nil, run.LogsPath, run.ArtifactsDir); err != nil {
+		return ProjectRunRecord{}, err
+	}
 	now := time.Now().UTC()
 	run.CreatedAt = now
 	run.UpdatedAt = now
@@ -457,6 +460,9 @@ func (s *projectStore) CreateProjectRun(ctx context.Context, run ProjectRunRecor
 func (s *projectStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecord) (ProjectRunRecord, error) {
 	run, err := projects.NormalizeRunRecord(run)
 	if err != nil {
+		return ProjectRunRecord{}, err
+	}
+	if err := validateHistoryArtifactPaths(nil, run.LogsPath, run.ArtifactsDir); err != nil {
 		return ProjectRunRecord{}, err
 	}
 	now := time.Now().UTC()

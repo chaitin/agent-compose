@@ -64,13 +64,17 @@ type PreparedRun struct {
 }
 
 type RunExecutorDependencies struct {
-	Store                      RunStore
-	Engine                     SchedulerEngine
-	HostFactory                RunHostFactory
-	ArtifactsDir               func(schedulerID, runID string) string
-	WriteArtifact              func(dir, name, content string) error
-	EnterRun                   func(scheduler domain.Scheduler) bool
-	LeaveRun                   func(schedulerID string)
+	Store         RunStore
+	Engine        SchedulerEngine
+	HostFactory   RunHostFactory
+	ArtifactsDir  func(schedulerID, runID string) string
+	WriteArtifact func(dir, name, content string) error
+	EnterRun      func(scheduler domain.Scheduler) bool
+	LeaveRun      func(schedulerID string)
+	// BeginSkipRecord registers a refused entry that records a skipped run.
+	// It reports false while history removal holds the scheduler; otherwise
+	// removal waits until release, so a removed run cannot be rewritten.
+	BeginSkipRecord            func(schedulerID string) (release func(), ok bool)
 	AddSchedulerEvent          func(ctx context.Context, event SchedulerEventInput) error
 	UpdateTriggerEventDelivery func(ctx context.Context, run domain.SchedulerRunSummary)
 	Notify                     func(reason string)
@@ -82,6 +86,8 @@ type RunExecutor struct {
 }
 
 var ErrRunBusyForRetry = errors.New("scheduler is already running")
+
+const schedulerHistoryRemovingMessage = "scheduler run history removal in progress"
 
 func NewRunExecutor(deps RunExecutorDependencies) *RunExecutor {
 	return &RunExecutor{deps: deps}
@@ -131,6 +137,13 @@ func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (Prepa
 		if options.RetryWhenBusy {
 			return PreparedRun{}, ErrRunBusyForRetry
 		}
+		release, ok := e.beginSkipRecord(scheduler.Summary.ID)
+		if !ok {
+			// Not a concurrency skip: recording a skipped run, last error, or
+			// artifacts here would invent history and invalidate the removal.
+			return PreparedRun{}, domain.ResourceError(domain.ErrFailedPrecondition, "scheduler", scheduler.Summary.ID, schedulerHistoryRemovingMessage, nil)
+		}
+		defer release()
 		if err := os.MkdirAll(run.ArtifactsDir, 0o755); err != nil {
 			return PreparedRun{}, fmt.Errorf("create scheduler run artifacts dir: %w", err)
 		}
@@ -327,6 +340,13 @@ func (e *RunExecutor) enterRun(scheduler domain.Scheduler) bool {
 		return true
 	}
 	return e.deps.EnterRun(scheduler)
+}
+
+func (e *RunExecutor) beginSkipRecord(schedulerID string) (func(), bool) {
+	if e.deps.BeginSkipRecord == nil {
+		return func() {}, true
+	}
+	return e.deps.BeginSkipRecord(schedulerID)
 }
 
 func (e *RunExecutor) leaveRun(schedulerID string) {

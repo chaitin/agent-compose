@@ -269,5 +269,8 @@ func addSchedulerRunPruneDatabaseStats(target *SchedulerRunPruneStats, source Sc
 func (c *Controller) schedulerBusy(schedulerID string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.running[strings.TrimSpace(schedulerID)] > 0
+	schedulerID = strings.TrimSpace(schedulerID)
+	// Exact history removal and prune must not delete the same scheduler's
+	// rows and artifact directories concurrently.
+	return c.running[schedulerID] > 0 || c.skipRecording[schedulerID] > 0 || c.historyRemoving[schedulerID]
 }
