@@ -228,6 +228,11 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 		if err != nil {
 			return "", err
 		}
+		// A continuation turn references uploads for the first time here.
+		// Resolving the admitted opening turn again only extends expiry.
+		if err := c.resolveAgentInputUploads(ctx, run.ProjectID, normalized); err != nil {
+			return "", err
+		}
 		if err := agentinput.Validate(normalized, c.agentInputLimits()); err != nil {
 			return "", err
 		}

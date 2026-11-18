@@ -230,7 +230,7 @@ var rpcKindOverrides = map[string]struct {
 }
 
 var readVerbPrefixes = []string{"Get", "List", "Watch", "Inspect", "Validate", "Resolve", "BatchGet", "Download", "Follow"}
-var writeVerbPrefixes = []string{"Create", "Update", "Delete", "Remove", "Apply", "Patch", "Set", "Clear", "Prune", "Stop", "Start", "Run", "Invoke", "Pull", "Build", "Attach", "Exec", "Resume", "Abandon"}
+var writeVerbPrefixes = []string{"Create", "Update", "Delete", "Remove", "Apply", "Patch", "Set", "Clear", "Prune", "Stop", "Start", "Run", "Invoke", "Pull", "Build", "Attach", "Exec", "Resume", "Abandon", "Upload"}
 
 // TestRPCKindMatchesVerb is a second, independent classification check. It
 // cannot prove that a direction is semantically right, but it catches a

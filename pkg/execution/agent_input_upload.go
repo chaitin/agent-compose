@@ -3,6 +3,7 @@ package execution
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -18,6 +19,45 @@ import (
 // after the component check, the kernel keeps the file inside the workspace.
 // O_EXCL keeps the final name from overwriting or following an existing entry.
 func writeAgentInputUpload(workspaceRoot, relativePath string, data []byte) error {
+	return createAgentInputUpload(workspaceRoot, relativePath, func(handle *os.File) error {
+		_, err := handle.Write(data)
+		return err
+	})
+}
+
+// copyAgentInputUpload copies a staged upload into the workspace with the same
+// anchoring as writeAgentInputUpload. The copy is a new inode, so the agent can
+// change its file without touching the staged object other runs may share.
+// On Linux, io.Copy between files uses copy_file_range, which shares extents
+// on filesystems that support reflinks.
+//
+// The staged object was verified when it was uploaded and is read-only in a
+// daemon-owned directory; the copy checks the size, not the digest again.
+func copyAgentInputUpload(workspaceRoot, relativePath, stagedPath string, size int64) error {
+	source, err := os.Open(stagedPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("upload expired before it reached the workspace; upload it again")
+		}
+		return fmt.Errorf("open staged upload: %w", err)
+	}
+	defer func() { _ = source.Close() }()
+	return createAgentInputUpload(workspaceRoot, relativePath, func(handle *os.File) error {
+		copied, err := io.Copy(handle, source)
+		if err != nil {
+			return err
+		}
+		if copied != size {
+			return fmt.Errorf("staged upload is %d bytes, expected %d", copied, size)
+		}
+		return nil
+	})
+}
+
+// createAgentInputUpload creates relativePath under workspaceRoot through an
+// os.Root anchor and lets fill write its content. A failed fill removes the
+// partial file so the turn leaves nothing half-written behind.
+func createAgentInputUpload(workspaceRoot, relativePath string, fill func(*os.File) error) error {
 	if err := os.MkdirAll(workspaceRoot, 0o755); err != nil {
 		return fmt.Errorf("create sandbox workspace: %w", err)
 	}
@@ -37,11 +77,16 @@ func writeAgentInputUpload(workspaceRoot, relativePath string, data []byte) erro
 	if err != nil {
 		return err
 	}
-	if _, err := handle.Write(data); err != nil {
+	if err := fill(handle); err != nil {
 		_ = handle.Close()
+		_ = root.Remove(relativePath)
 		return err
 	}
-	return handle.Close()
+	if err := handle.Close(); err != nil {
+		_ = root.Remove(relativePath)
+		return err
+	}
+	return nil
 }
 
 // mkdirAgentInputDir creates every missing component under root and rejects an

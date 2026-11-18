@@ -26,6 +26,11 @@ type Limits struct {
 	// MaxFiles caps files, not text parts; a prompt or interleaved text does
 	// not consume the file budget.
 	MaxFiles uint32
+	// MaxUploadFileBytes and MaxUploadTurnBytes bound upload-sourced files.
+	// They are separate from the inline budget so a large staged file never
+	// crowds out request bytes. Zero means the upload source is unavailable.
+	MaxUploadFileBytes uint64
+	MaxUploadTurnBytes uint64
 }
 
 // DefaultLimits returns the limits a daemon applies when no configuration
@@ -62,7 +67,7 @@ func Validate(parts []Part, limits Limits) error {
 	if uint32(fileCount) > limits.MaxFiles {
 		return fmt.Errorf("%w: turn has %d files, limit is %d", ErrInvalid, fileCount, limits.MaxFiles)
 	}
-	var totalBytes uint64
+	var totalBytes, uploadBytes uint64
 	for index, part := range parts {
 		if part.File != nil {
 			if part.Text != "" {
@@ -72,7 +77,11 @@ func Validate(parts []Part, limits Limits) error {
 			if err != nil {
 				return err
 			}
-			totalBytes += fileBytes
+			if part.File.Source == SourceUpload {
+				uploadBytes += fileBytes
+			} else {
+				totalBytes += fileBytes
+			}
 			continue
 		}
 		if strings.TrimSpace(part.Text) == "" {
@@ -81,6 +90,9 @@ func Validate(parts []Part, limits Limits) error {
 	}
 	if limits.MaxTurnBytes > 0 && totalBytes > limits.MaxTurnBytes {
 		return fmt.Errorf("%w: turn files are %d bytes, limit is %d", ErrInvalid, totalBytes, limits.MaxTurnBytes)
+	}
+	if uploadBytes > limits.MaxUploadTurnBytes {
+		return fmt.Errorf("%w: turn upload files are %d bytes, limit is %d", ErrInvalid, uploadBytes, limits.MaxUploadTurnBytes)
 	}
 	return nil
 }
@@ -123,6 +135,21 @@ func validateFile(index int, file File, limits Limits) (uint64, error) {
 		// The daemon cannot stat the file when it does not share the sandbox
 		// filesystem. Execution enforces the limit wherever it can read it.
 		return 0, nil
+	case SourceUpload:
+		if strings.TrimSpace(file.UploadID) == "" {
+			return 0, fmt.Errorf("%w: part %d upload_id is required", ErrInvalid, index)
+		}
+		if limits.MaxUploadFileBytes == 0 {
+			return 0, fmt.Errorf("%w: part %d: upload input is unavailable on this daemon", ErrInvalid, index)
+		}
+		if file.UploadPath == "" || file.UploadSize <= 0 {
+			return 0, fmt.Errorf("%w: part %d upload %q was not resolved", ErrInvalid, index, file.UploadID)
+		}
+		size := uint64(file.UploadSize)
+		if size > limits.MaxUploadFileBytes {
+			return 0, fmt.Errorf("%w: part %d is %d bytes, upload limit is %d", ErrInvalid, index, size, limits.MaxUploadFileBytes)
+		}
+		return size, nil
 	default:
 		return 0, fmt.Errorf("%w: part %d file has no source", ErrInvalid, index)
 	}

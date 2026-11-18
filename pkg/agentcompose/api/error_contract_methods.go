@@ -52,6 +52,7 @@ var rpcKinds = map[string]rpcKind{
 	agentcomposev2connect.RunServiceAbandonRunCompletionProcedure: rpcWrite,
 	agentcomposev2connect.RunServiceListRunEventsProcedure:        rpcRead,
 	agentcomposev2connect.RunServiceListSandboxRunEventsProcedure: rpcRead,
+	agentcomposev2connect.RunServiceUploadRunInputProcedure:       rpcWrite, // stages content for a later run
 
 	// ExecService
 	agentcomposev2connect.ExecServiceExecProcedure:       rpcWrite, // executes a command that may mutate the sandbox

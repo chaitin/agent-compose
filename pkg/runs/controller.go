@@ -128,6 +128,7 @@ type Controller struct {
 	interactiveSessions *InteractiveSessionManager
 	recorder            *telemetry.Recorder
 	detachCache         *detachCapabilityCache
+	uploads             UploadResolver
 }
 
 type llmFacadeTokenDeleter interface {
@@ -161,6 +162,8 @@ type ControllerDependencies struct {
 	InteractiveSessions *InteractiveSessionManager
 	// Recorder is optional: a nil recorder keeps daemon telemetry disabled.
 	Recorder *telemetry.Recorder
+	// Uploads is optional: nil makes the upload input source unavailable.
+	Uploads UploadResolver
 }
 
 type SandboxRemoval interface {
@@ -195,6 +198,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		interactiveSessions: interactiveSessions,
 		recorder:            deps.Recorder,
 		detachCache:         &detachCapabilityCache{},
+		uploads:             deps.Uploads,
 	}
 }
 
@@ -267,7 +271,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		}
 	}
 	warnings := resolved.Warnings
-	input, inputWarnings, err := c.admitAgentInput(req)
+	input, inputWarnings, err := c.admitAgentInput(ctx, req)
 	if err != nil {
 		return StartedProjectRun{}, err
 	}

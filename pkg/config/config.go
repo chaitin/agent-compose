@@ -27,6 +27,13 @@ const (
 	DefaultAgentInputFileLimitBytes int64 = 10 << 20
 	DefaultAgentInputTurnLimitBytes int64 = 32 << 20
 	DefaultAgentInputFileLimit      int   = 20
+
+	// Upload-sourced files (UploadRunInput) have their own, larger budget so a
+	// large attachment never consumes the inline request budget.
+	DefaultAgentInputUploadFileLimitBytes  int64         = 100 << 20
+	DefaultAgentInputUploadTurnLimitBytes  int64         = 200 << 20
+	DefaultAgentInputUploadStoreLimitBytes int64         = 8 << 30
+	DefaultAgentInputUploadTTL             time.Duration = 15 * time.Minute
 )
 const DefaultAgentComposeSocketPath = "/var/run/agent-compose.sock"
 const DefaultAgentTimeout = 10 * time.Hour
@@ -82,20 +89,25 @@ type Config struct {
 	AgentInputFileLimitBytes   int64
 	AgentInputTurnLimitBytes   int64
 	AgentInputFileLimit        int
-	LLMAPIEndpoint             string
-	LLMAPIProtocol             string
-	LLMAPIKey                  string
-	LLMModel                   string
-	LLMTimeout                 time.Duration
-	LLMMaxOutputTokens         int
-	LLMUpstreamProbe           bool
-	LLMProbeTimeout            time.Duration
-	CodexRequestMaxRetries     uint64
-	CodexStreamMaxRetries      uint64
-	CodexStreamIdleTimeout     time.Duration
-	RuntimeBaseURL             string
-	AgentTimeout               time.Duration
-	SchedulerRunTimeout        time.Duration
+	// AgentInputUpload* configure the UploadRunInput staging area.
+	AgentInputUploadFileLimitBytes  int64
+	AgentInputUploadTurnLimitBytes  int64
+	AgentInputUploadStoreLimitBytes int64
+	AgentInputUploadTTL             time.Duration
+	LLMAPIEndpoint                  string
+	LLMAPIProtocol                  string
+	LLMAPIKey                       string
+	LLMModel                        string
+	LLMTimeout                      time.Duration
+	LLMMaxOutputTokens              int
+	LLMUpstreamProbe                bool
+	LLMProbeTimeout                 time.Duration
+	CodexRequestMaxRetries          uint64
+	CodexStreamMaxRetries           uint64
+	CodexStreamIdleTimeout          time.Duration
+	RuntimeBaseURL                  string
+	AgentTimeout                    time.Duration
+	SchedulerRunTimeout             time.Duration
 	// EventDeliveryScope bounds which Projects receive an event a Project
 	// published. Project content cannot change it.
 	EventDeliveryScope domain.EventDeliveryScope
@@ -451,110 +463,114 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 	guestPaths, sandboxTimeouts, httpLimits := sources.GuestPaths, sources.SandboxTimeouts, sources.HTTPLimits
 	return &Config{
 
-		AgentTelemetry:              sources.AgentTelemetry,
-		DbAddr:                      database.DbAddr,
-		DbName:                      database.DbName,
-		DbTimeout:                   database.DbTimeout,
-		SQLiteMaxOpenConns:          database.SQLiteMaxOpenConns,
-		DataRoot:                    normalized.DataRoot,
-		SandboxRoot:                 normalized.SandboxRoot,
-		SandboxRootExplicit:         sandbox.Explicit,
-		HttpListen:                  daemonHTTP.HttpListen,
-		DaemonAuthToken:             daemonHTTP.DaemonAuthToken,
-		AgentComposeSocket:          daemonHTTP.AgentComposeSocket,
-		AgentComposeHost:            daemonHTTP.AgentComposeHost,
-		SandboxHostSocket:           daemonHTTP.SandboxHostSocket,
-		SandboxHostMode:             daemonHTTP.SandboxHostMode,
-		WebhookBodyLimitBytes:       httpLimits.WebhookBodyLimitBytes,
-		WebhookQueueRulesJSON:       httpLimits.WebhookQueueRulesJSON,
-		WebhookQueueDefaultWorkers:  httpLimits.WebhookQueueDefaultWorkers,
-		WorkspaceUploadLimitBytes:   httpLimits.WorkspaceUploadLimitBytes,
-		AgentInputFileLimitBytes:    httpLimits.AgentInputFileLimitBytes,
-		AgentInputTurnLimitBytes:    httpLimits.AgentInputTurnLimitBytes,
-		AgentInputFileLimit:         httpLimits.AgentInputFileLimit,
-		LLMAPIEndpoint:              llm.LLMAPIEndpoint,
-		LLMAPIProtocol:              llm.LLMAPIProtocol,
-		LLMAPIKey:                   llm.LLMAPIKey,
-		LLMModel:                    llm.LLMModel,
-		LLMTimeout:                  llm.LLMTimeout,
-		LLMMaxOutputTokens:          llm.LLMMaxOutputTokens,
-		LLMUpstreamProbe:            llm.LLMUpstreamProbe,
-		LLMProbeTimeout:             llm.LLMProbeTimeout,
-		CodexRequestMaxRetries:      llm.CodexRequestMaxRetries,
-		CodexStreamMaxRetries:       llm.CodexStreamMaxRetries,
-		CodexStreamIdleTimeout:      llm.CodexStreamIdleTimeout,
-		RuntimeBaseURL:              llm.RuntimeBaseURL,
-		AgentTimeout:                timeouts.AgentTimeout,
-		SchedulerRunTimeout:         timeouts.SchedulerRunTimeout,
-		EventDeliveryScope:          sources.EventDelivery,
-		RuntimeDriver:               drivers.RuntimeDriver,
-		EgressUnenforceablePolicy:   sources.EgressEnforce,
-		GlobalNetworkPolicy:         sources.GlobalPolicy,
-		GlobalNetworkPolicyInfo:     sources.GlobalPolicyInfo,
-		EgressAuditLog:              sources.EgressAuditLog,
-		EgressL7TLS:                 sources.EgressL7TLS,
-		BoxliteHome:                 normalized.BoxliteHome,
-		BoxliteRuntimeDir:           normalized.BoxliteRuntimeDir,
-		DockerHome:                  normalized.DockerHome,
-		DockerHostSandboxRoot:       normalized.DockerHostSandboxRoot,
-		DockerSandboxNetwork:        drivers.DockerSandboxNetwork,
-		DockerSandboxNetworkStrict:  drivers.DockerSandboxNetworkStrict,
-		SandboxInitEnabled:          sources.SandboxInit.Enabled,
-		SandboxInitBinary:           sources.SandboxInit.Binary,
-		SandboxInitSocketDir:        sources.SandboxInit.SocketDir,
-		SandboxInitEgress:           string(sources.SandboxInit.Egress),
-		SandboxEgressProfile:        string(sources.SandboxInit.EgressProfile),
-		SandboxInitEgressAuditLog:   sources.SandboxInit.EgressAuditLog,
-		SandboxSupervisorEnabled:    sources.SandboxInit.Supervisor,
-		SandboxSupervisorBinary:     sources.SandboxInit.SupervisorBinary,
-		SandboxSupervisorUID:        sources.SandboxInit.SupervisorUID,
-		SandboxSupervisorGID:        sources.SandboxInit.SupervisorGID,
-		SandboxInitLandlock:         string(sources.SandboxInit.Landlock),
-		SandboxInitLandlockFallback: string(sources.SandboxInit.LandlockFallback),
-		SandboxInitWorkloadUID:      sources.SandboxInit.WorkloadUID,
-		SandboxInitWorkloadGID:      sources.SandboxInit.WorkloadGID,
-		DockerDefaultImage:          images.DockerDefaultImage,
-		MicrosandboxHome:            normalized.MicrosandboxHome,
-		MicrosandboxMSBPath:         normalized.MicrosandboxMSBPath,
-		MicrosandboxLibPath:         normalized.MicrosandboxLibPath,
-		MicrosandboxDefaultImage:    images.MicrosandboxDefaultImage,
-		MicrosandboxInsecure:        images.MicrosandboxInsecure,
-		K8sHome:                     normalized.K8sHome,
-		K8sKubeconfigPath:           drivers.K8sKubeconfigPath,
-		K8sNamespace:                drivers.K8sNamespace,
-		K8sDefaultImage:             images.K8sDefaultImage,
-		K8sRuntimeBaseURL:           drivers.K8sRuntimeBaseURL,
-		DefaultImage:                images.DefaultImage,
-		BoxRootfsPath:               normalized.BoxRootfsPath,
-		ImageRegistry:               images.ImageRegistry,
-		ImageStoreMode:              images.ImageStoreMode,
-		ImageCacheRoot:              normalized.ImageCacheRoot,
-		ImageInsecureRegistries:     images.ImageInsecureRegistries,
-		SandboxCPUs:                 resources.SandboxCPUs,
-		SandboxMemoryMiB:            resources.SandboxMemoryMiB,
-		SandboxDiskSizeGB:           resources.SandboxDiskSizeGB,
-		CacheTTL:                    resources.CacheTTL,
-		CleanupInterval:             cleanup.CleanupInterval,
-		WorkspaceCleanupTTL:         cleanup.WorkspaceCleanupTTL,
-		SandboxRetentionTTL:         cleanup.SandboxRetentionTTL,
-		SandboxArchiveRoot:          normalized.SandboxArchiveRoot,
-		ImageCacheCleanupTTL:        cleanup.ImageCacheCleanupTTL,
-		ImagePullTimeout:            timeouts.ImagePullTimeout,
-		GuestWorkspacePath:          guestPaths.GuestWorkspacePath,
-		GuestHomePath:               guestPaths.GuestHomePath,
-		GuestStateRoot:              guestPaths.GuestStateRoot,
-		GuestRuntimeRoot:            guestPaths.GuestRuntimeRoot,
-		GuestLogRoot:                guestPaths.GuestLogRoot,
-		GuestAbiManifestPath:        sources.GuestABI,
-		JupyterGuestPort:            sandboxTimeouts.JupyterGuestPort,
-		SandboxStartTimeout:         sandboxTimeouts.StartTimeout,
-		SandboxStopTimeout:          sandboxTimeouts.StopTimeout,
-		SandboxGracefulStopTimeout:  sandboxTimeouts.GracefulStopTimeout,
-		JupyterReadyTimeout:         sandboxTimeouts.JupyterReadyTimeout,
-		JupyterProxyBasePath:        sandboxTimeouts.JupyterProxyBase,
-		CapGRPCListen:               strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
-		CapGRPCTarget:               strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
-		Version:                     BuildVersion,
+		AgentTelemetry:                  sources.AgentTelemetry,
+		DbAddr:                          database.DbAddr,
+		DbName:                          database.DbName,
+		DbTimeout:                       database.DbTimeout,
+		SQLiteMaxOpenConns:              database.SQLiteMaxOpenConns,
+		DataRoot:                        normalized.DataRoot,
+		SandboxRoot:                     normalized.SandboxRoot,
+		SandboxRootExplicit:             sandbox.Explicit,
+		HttpListen:                      daemonHTTP.HttpListen,
+		DaemonAuthToken:                 daemonHTTP.DaemonAuthToken,
+		AgentComposeSocket:              daemonHTTP.AgentComposeSocket,
+		AgentComposeHost:                daemonHTTP.AgentComposeHost,
+		SandboxHostSocket:               daemonHTTP.SandboxHostSocket,
+		SandboxHostMode:                 daemonHTTP.SandboxHostMode,
+		WebhookBodyLimitBytes:           httpLimits.WebhookBodyLimitBytes,
+		WebhookQueueRulesJSON:           httpLimits.WebhookQueueRulesJSON,
+		WebhookQueueDefaultWorkers:      httpLimits.WebhookQueueDefaultWorkers,
+		WorkspaceUploadLimitBytes:       httpLimits.WorkspaceUploadLimitBytes,
+		AgentInputFileLimitBytes:        httpLimits.AgentInputFileLimitBytes,
+		AgentInputTurnLimitBytes:        httpLimits.AgentInputTurnLimitBytes,
+		AgentInputFileLimit:             httpLimits.AgentInputFileLimit,
+		AgentInputUploadFileLimitBytes:  httpLimits.AgentInputUploadFileLimitBytes,
+		AgentInputUploadTurnLimitBytes:  httpLimits.AgentInputUploadTurnLimitBytes,
+		AgentInputUploadStoreLimitBytes: httpLimits.AgentInputUploadStoreLimitBytes,
+		AgentInputUploadTTL:             httpLimits.AgentInputUploadTTL,
+		LLMAPIEndpoint:                  llm.LLMAPIEndpoint,
+		LLMAPIProtocol:                  llm.LLMAPIProtocol,
+		LLMAPIKey:                       llm.LLMAPIKey,
+		LLMModel:                        llm.LLMModel,
+		LLMTimeout:                      llm.LLMTimeout,
+		LLMMaxOutputTokens:              llm.LLMMaxOutputTokens,
+		LLMUpstreamProbe:                llm.LLMUpstreamProbe,
+		LLMProbeTimeout:                 llm.LLMProbeTimeout,
+		CodexRequestMaxRetries:          llm.CodexRequestMaxRetries,
+		CodexStreamMaxRetries:           llm.CodexStreamMaxRetries,
+		CodexStreamIdleTimeout:          llm.CodexStreamIdleTimeout,
+		RuntimeBaseURL:                  llm.RuntimeBaseURL,
+		AgentTimeout:                    timeouts.AgentTimeout,
+		SchedulerRunTimeout:             timeouts.SchedulerRunTimeout,
+		EventDeliveryScope:              sources.EventDelivery,
+		RuntimeDriver:                   drivers.RuntimeDriver,
+		EgressUnenforceablePolicy:       sources.EgressEnforce,
+		GlobalNetworkPolicy:             sources.GlobalPolicy,
+		GlobalNetworkPolicyInfo:         sources.GlobalPolicyInfo,
+		EgressAuditLog:                  sources.EgressAuditLog,
+		EgressL7TLS:                     sources.EgressL7TLS,
+		BoxliteHome:                     normalized.BoxliteHome,
+		BoxliteRuntimeDir:               normalized.BoxliteRuntimeDir,
+		DockerHome:                      normalized.DockerHome,
+		DockerHostSandboxRoot:           normalized.DockerHostSandboxRoot,
+		DockerSandboxNetwork:            drivers.DockerSandboxNetwork,
+		DockerSandboxNetworkStrict:      drivers.DockerSandboxNetworkStrict,
+		SandboxInitEnabled:              sources.SandboxInit.Enabled,
+		SandboxInitBinary:               sources.SandboxInit.Binary,
+		SandboxInitSocketDir:            sources.SandboxInit.SocketDir,
+		SandboxInitEgress:               string(sources.SandboxInit.Egress),
+		SandboxEgressProfile:            string(sources.SandboxInit.EgressProfile),
+		SandboxInitEgressAuditLog:       sources.SandboxInit.EgressAuditLog,
+		SandboxSupervisorEnabled:        sources.SandboxInit.Supervisor,
+		SandboxSupervisorBinary:         sources.SandboxInit.SupervisorBinary,
+		SandboxSupervisorUID:            sources.SandboxInit.SupervisorUID,
+		SandboxSupervisorGID:            sources.SandboxInit.SupervisorGID,
+		SandboxInitLandlock:             string(sources.SandboxInit.Landlock),
+		SandboxInitLandlockFallback:     string(sources.SandboxInit.LandlockFallback),
+		SandboxInitWorkloadUID:          sources.SandboxInit.WorkloadUID,
+		SandboxInitWorkloadGID:          sources.SandboxInit.WorkloadGID,
+		DockerDefaultImage:              images.DockerDefaultImage,
+		MicrosandboxHome:                normalized.MicrosandboxHome,
+		MicrosandboxMSBPath:             normalized.MicrosandboxMSBPath,
+		MicrosandboxLibPath:             normalized.MicrosandboxLibPath,
+		MicrosandboxDefaultImage:        images.MicrosandboxDefaultImage,
+		MicrosandboxInsecure:            images.MicrosandboxInsecure,
+		K8sHome:                         normalized.K8sHome,
+		K8sKubeconfigPath:               drivers.K8sKubeconfigPath,
+		K8sNamespace:                    drivers.K8sNamespace,
+		K8sDefaultImage:                 images.K8sDefaultImage,
+		K8sRuntimeBaseURL:               drivers.K8sRuntimeBaseURL,
+		DefaultImage:                    images.DefaultImage,
+		BoxRootfsPath:                   normalized.BoxRootfsPath,
+		ImageRegistry:                   images.ImageRegistry,
+		ImageStoreMode:                  images.ImageStoreMode,
+		ImageCacheRoot:                  normalized.ImageCacheRoot,
+		ImageInsecureRegistries:         images.ImageInsecureRegistries,
+		SandboxCPUs:                     resources.SandboxCPUs,
+		SandboxMemoryMiB:                resources.SandboxMemoryMiB,
+		SandboxDiskSizeGB:               resources.SandboxDiskSizeGB,
+		CacheTTL:                        resources.CacheTTL,
+		CleanupInterval:                 cleanup.CleanupInterval,
+		WorkspaceCleanupTTL:             cleanup.WorkspaceCleanupTTL,
+		SandboxRetentionTTL:             cleanup.SandboxRetentionTTL,
+		SandboxArchiveRoot:              normalized.SandboxArchiveRoot,
+		ImageCacheCleanupTTL:            cleanup.ImageCacheCleanupTTL,
+		ImagePullTimeout:                timeouts.ImagePullTimeout,
+		GuestWorkspacePath:              guestPaths.GuestWorkspacePath,
+		GuestHomePath:                   guestPaths.GuestHomePath,
+		GuestStateRoot:                  guestPaths.GuestStateRoot,
+		GuestRuntimeRoot:                guestPaths.GuestRuntimeRoot,
+		GuestLogRoot:                    guestPaths.GuestLogRoot,
+		GuestAbiManifestPath:            sources.GuestABI,
+		JupyterGuestPort:                sandboxTimeouts.JupyterGuestPort,
+		SandboxStartTimeout:             sandboxTimeouts.StartTimeout,
+		SandboxStopTimeout:              sandboxTimeouts.StopTimeout,
+		SandboxGracefulStopTimeout:      sandboxTimeouts.GracefulStopTimeout,
+		JupyterReadyTimeout:             sandboxTimeouts.JupyterReadyTimeout,
+		JupyterProxyBasePath:            sandboxTimeouts.JupyterProxyBase,
+		CapGRPCListen:                   strings.TrimSpace(os.Getenv("CAP_GRPC_LISTEN")),
+		CapGRPCTarget:                   strings.TrimSpace(os.Getenv("CAP_GRPC_TARGET")),
+		Version:                         BuildVersion,
 
 		MicrosandboxDNSRebindProtection: drivers.MicrosandboxDNSRebindProtection,
 	}
@@ -1387,13 +1403,17 @@ func loadSandboxTimeoutsConfig(logger *slog.Logger) (sandboxTimeoutsConfig, erro
 // httpLimitsConfig holds the webhook/workspace-upload body size and queue
 // worker limits.
 type httpLimitsConfig struct {
-	WebhookBodyLimitBytes      int64
-	WebhookQueueRulesJSON      string
-	WebhookQueueDefaultWorkers int
-	WorkspaceUploadLimitBytes  int64
-	AgentInputFileLimitBytes   int64
-	AgentInputTurnLimitBytes   int64
-	AgentInputFileLimit        int
+	WebhookBodyLimitBytes           int64
+	WebhookQueueRulesJSON           string
+	WebhookQueueDefaultWorkers      int
+	WorkspaceUploadLimitBytes       int64
+	AgentInputFileLimitBytes        int64
+	AgentInputTurnLimitBytes        int64
+	AgentInputFileLimit             int
+	AgentInputUploadFileLimitBytes  int64
+	AgentInputUploadTurnLimitBytes  int64
+	AgentInputUploadStoreLimitBytes int64
+	AgentInputUploadTTL             time.Duration
 }
 
 func loadHTTPLimitsConfig(logger *slog.Logger) httpLimitsConfig {
@@ -1426,14 +1446,31 @@ func loadHTTPLimitsConfig(logger *slog.Logger) httpLimitsConfig {
 		}
 	}
 	return httpLimitsConfig{
-		WebhookBodyLimitBytes:      webhookBodyLimitBytes,
-		WebhookQueueRulesJSON:      webhookQueueRulesJSON,
-		WebhookQueueDefaultWorkers: webhookQueueDefaultWorkers,
-		WorkspaceUploadLimitBytes:  workspaceUploadLimitBytes,
-		AgentInputFileLimitBytes:   positiveInt64Env(logger, "AGENT_INPUT_FILE_LIMIT_BYTES", DefaultAgentInputFileLimitBytes),
-		AgentInputTurnLimitBytes:   positiveInt64Env(logger, "AGENT_INPUT_TURN_LIMIT_BYTES", DefaultAgentInputTurnLimitBytes),
-		AgentInputFileLimit:        positiveIntEnv(logger, "AGENT_INPUT_FILE_LIMIT", DefaultAgentInputFileLimit),
+		WebhookBodyLimitBytes:           webhookBodyLimitBytes,
+		WebhookQueueRulesJSON:           webhookQueueRulesJSON,
+		WebhookQueueDefaultWorkers:      webhookQueueDefaultWorkers,
+		WorkspaceUploadLimitBytes:       workspaceUploadLimitBytes,
+		AgentInputFileLimitBytes:        positiveInt64Env(logger, "AGENT_INPUT_FILE_LIMIT_BYTES", DefaultAgentInputFileLimitBytes),
+		AgentInputTurnLimitBytes:        positiveInt64Env(logger, "AGENT_INPUT_TURN_LIMIT_BYTES", DefaultAgentInputTurnLimitBytes),
+		AgentInputFileLimit:             positiveIntEnv(logger, "AGENT_INPUT_FILE_LIMIT", DefaultAgentInputFileLimit),
+		AgentInputUploadFileLimitBytes:  positiveInt64Env(logger, "AGENT_INPUT_UPLOAD_FILE_LIMIT_BYTES", DefaultAgentInputUploadFileLimitBytes),
+		AgentInputUploadTurnLimitBytes:  positiveInt64Env(logger, "AGENT_INPUT_UPLOAD_TURN_LIMIT_BYTES", DefaultAgentInputUploadTurnLimitBytes),
+		AgentInputUploadStoreLimitBytes: positiveInt64Env(logger, "AGENT_INPUT_UPLOAD_STORE_LIMIT_BYTES", DefaultAgentInputUploadStoreLimitBytes),
+		AgentInputUploadTTL:             positiveDurationEnv(logger, "AGENT_INPUT_UPLOAD_TTL", DefaultAgentInputUploadTTL),
 	}
+}
+
+func positiveDurationEnv(logger *slog.Logger, name string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil || parsed <= 0 {
+		logger.Warn("failed to parse "+name, "value", raw, "error", err)
+		return fallback
+	}
+	return parsed
 }
 
 func positiveInt64Env(logger *slog.Logger, name string, fallback int64) int64 {

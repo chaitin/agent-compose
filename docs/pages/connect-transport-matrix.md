@@ -24,3 +24,16 @@ When a requested combination is unavailable, the daemon returns a Connect `CodeU
 `StartAgentRun(interactive=true)` starts the same detached prompt session without keeping the submission request open. Ordinary `StartAgentRun` calls remain non-interactive.
 
 Attachments are resumable only while the daemon process remains alive. After a daemon restart, persisted run events and logs remain readable, but runtime input/output handles cannot be reconstructed and attach fails closed. After a page refresh or channel switch, clients should read `ListRunEvents`/`FollowRunLogs` before subscribing to live attachment output.
+
+## Staged run input files
+
+`UploadRunInput` is a client-stream RPC: the client sends many frames and the daemon answers once, after the stream ends. It works over every transport in the matrix, including HTTP/1.1, because the daemon reads the whole request before it responds. Proxies must accept a request body as large as the upload and must not buffer it beyond their limits.
+
+Use it for files too large to send inline in `AgentInputFile.bytes`:
+
+1. Send `info` first with `project_id`, `size_bytes`, and the lowercase hex `sha256`, then the content in `chunk` frames of at most `EngineInputLimits.max_upload_chunk_bytes` bytes. The response carries an opaque `upload_id` and `expires_at`. If the project already holds the same content, the daemon answers right after `info` with `deduplicated` set; the client may stop sending.
+2. Reference the file from a run with `AgentInputFile{filename, upload{upload_id}}` in `RunAgentRequest.input` or `AttachHumanMessage.input`. The daemon copies it into the sandbox workspace under `.agent-compose/uploads/<run>/turn-<n>/` and names its path in the prompt, exactly like inline bytes.
+
+Limits come from `EngineInputLimits`: `max_upload_file_bytes` per file and `max_upload_turn_bytes` per turn, counted separately from the inline limits. Zero means the daemon cannot accept the upload source; K8s reports zero. An upload expires after `AGENT_INPUT_UPLOAD_TTL` (15 minutes by default); uploading the same content again or referencing it from a run extends it.
+
+Errors report `effect = NOT_APPLIED` when nothing was stored: `INVALID_ARGUMENT` for a malformed stream, a size or digest mismatch, or an oversized chunk; `NOT_FOUND` for an unknown project; `RESOURCE_EXHAUSTED` when the staging area, the project share, or the filesystem is full. A run whose opening turn references an unknown, expired, or other-project upload fails with `NOT_FOUND` and `NOT_APPLIED` before the run is created, so the client can upload again and retry with the same `client_request_id`. A continuation turn with such a reference is invalid input and cancels the interactive run, like any other invalid `AttachHumanMessage.input`.

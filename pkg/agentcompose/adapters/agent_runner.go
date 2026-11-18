@@ -82,20 +82,7 @@ type AgentRunRequest struct {
 
 // inputLimits reads the daemon-wide file limits for this run.
 func (r *AgentRunner) inputLimits() agentinput.Limits {
-	limits := agentinput.DefaultLimits()
-	if r.config == nil {
-		return limits
-	}
-	if r.config.AgentInputFileLimitBytes > 0 {
-		limits.MaxFileBytes = uint64(r.config.AgentInputFileLimitBytes)
-	}
-	if r.config.AgentInputTurnLimitBytes > 0 {
-		limits.MaxTurnBytes = uint64(r.config.AgentInputTurnLimitBytes)
-	}
-	if r.config.AgentInputFileLimit > 0 {
-		limits.MaxFiles = uint32(r.config.AgentInputFileLimit)
-	}
-	return limits
+	return r.config.AgentInputLimits()
 }
 
 // AgentRunDetach is the detached-execution part of an agent run.

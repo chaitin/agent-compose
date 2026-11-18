@@ -88,6 +88,11 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) ([]Res
 		if err != nil {
 			return nil, err
 		}
+		if part.File.Source == agentinput.SourceUpload {
+			// Admission bounded staged files by the separate upload budget.
+			files = append(files, file)
+			continue
+		}
 		totalBytes += file.SizeBytes
 		if limits.MaxTurnBytes > 0 && uint64(totalBytes) > limits.MaxTurnBytes {
 			return nil, fmt.Errorf("agent input turn files are %d bytes, limit is %d", totalBytes, limits.MaxTurnBytes)
@@ -149,6 +154,18 @@ func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (Resolved
 			MediaType: file.MediaType,
 			SizeBytes: size,
 		}, nil
+	case agentinput.SourceUpload:
+		if deps.writeGuestFile != nil {
+			// The guest writer takes one buffer; staging a large object in
+			// daemon memory is what the upload source exists to avoid.
+			return ResolvedFile{}, domain.ClassifyError(domain.ErrUnsupported,
+				fmt.Sprintf("agent input file %d: upload input is unsupported by this sandbox driver", deps.index), nil)
+		}
+		name := uniqueAgentInputName(deps.used, deps.index, agentinput.SafeFileName(file.Name, file.MediaType))
+		if err := copyAgentInputUpload(deps.workspaceRoot, filepath.Join(deps.uploadRel, name), file.UploadPath, file.UploadSize); err != nil {
+			return ResolvedFile{}, fmt.Errorf("copy agent input file %d: %w", deps.index, err)
+		}
+		return ResolvedFile{GuestPath: filepath.Join(deps.guestDir, name), Name: name, MediaType: file.MediaType, SizeBytes: file.UploadSize}, nil
 	default:
 		return ResolvedFile{}, fmt.Errorf("agent input file %d has no source", deps.index)
 	}

@@ -1,6 +1,7 @@
 package runs
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -23,7 +24,7 @@ func csvPart(t *testing.T) agentinput.Part {
 }
 
 func TestAdmitAgentInputSkipsTextOnlyRuns(t *testing.T) {
-	parts, warnings, err := inputController().admitAgentInput(RunAgentRequest{ProjectID: "project-1", AgentName: "worker", Prompt: "hello"})
+	parts, warnings, err := inputController().admitAgentInput(context.Background(), RunAgentRequest{ProjectID: "project-1", AgentName: "worker", Prompt: "hello"})
 	if err != nil {
 		t.Fatalf("admitAgentInput: %v", err)
 	}
@@ -33,7 +34,7 @@ func TestAdmitAgentInputSkipsTextOnlyRuns(t *testing.T) {
 }
 
 func TestAdmitAgentInputPrependsPromptToInput(t *testing.T) {
-	parts, warnings, err := inputController().admitAgentInput(RunAgentRequest{
+	parts, warnings, err := inputController().admitAgentInput(context.Background(), RunAgentRequest{
 		ProjectID: "project-1", AgentName: "worker", Prompt: "compare these", Input: []agentinput.Part{csvPart(t)},
 	})
 	if err != nil {
@@ -54,7 +55,7 @@ func TestAdmitAgentInputAcceptsAnyFileType(t *testing.T) {
 	file := agentinput.FilePart(agentinput.File{
 		Name: "bundle.zip", MediaType: "application/zip", Source: agentinput.SourceInline, Data: []byte("PK\x03\x04"),
 	})
-	parts, _, err := inputController().admitAgentInput(RunAgentRequest{
+	parts, _, err := inputController().admitAgentInput(context.Background(), RunAgentRequest{
 		ProjectID: "project-1", AgentName: "worker", Input: []agentinput.Part{agentinput.TextPart("look"), file},
 	})
 	if err != nil {
@@ -81,7 +82,7 @@ func TestAdmitAgentInputRejectsInvalidFiles(t *testing.T) {
 	}
 	for name, file := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, _, err := inputController().admitAgentInput(RunAgentRequest{
+			_, _, err := inputController().admitAgentInput(context.Background(), RunAgentRequest{
 				ProjectID: "project-1", AgentName: "worker", Prompt: "look", Input: []agentinput.Part{file},
 			})
 			if !errors.Is(err, ErrInvalidRequest) {
@@ -92,7 +93,7 @@ func TestAdmitAgentInputRejectsInvalidFiles(t *testing.T) {
 }
 
 func TestAdmitAgentInputRejectsCommandWithInput(t *testing.T) {
-	_, _, err := inputController().admitAgentInput(RunAgentRequest{
+	_, _, err := inputController().admitAgentInput(context.Background(), RunAgentRequest{
 		ProjectID: "project-1", AgentName: "worker", Command: "echo hi", Input: []agentinput.Part{agentinput.TextPart("x")},
 	})
 	if !errors.Is(err, ErrInvalidRequest) {
