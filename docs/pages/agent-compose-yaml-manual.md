@@ -1307,7 +1307,7 @@ A declaration the engine will not enforce is printed as `enforced  no:` with the
 ```yaml
 policy:
   resources:
-    cpus: 2          # cores; fractions down to 0.001 are allowed (0.5, 1.25)
+    cpus: 2          # cores; Docker and Kubernetes accept fractions down to 0.001 (0.5, 1.25)
     memory: 4Gi      # a whole number followed by Mi or Gi
 ```
 
@@ -1317,8 +1317,7 @@ Either field may be declared on its own; an empty `resources: {}` block is an er
 
 **A declaration is a hard requirement.** There is no best-effort switch: a sandbox whose limit cannot be applied is refused at start with a failed-precondition error, never started unconstrained. The refusals are:
 
-- the declaration exceeds the deployment ceiling `SANDBOX_MAX_CPUS` or `SANDBOX_MAX_MEMORY_MIB` (unset means no ceiling);
-- Microsandbox with fractional `cpus` (its VM size is a whole number of vCPUs; this is also rejected when the project is applied);
+- fractional `cpus` on BoxLite or Microsandbox (a VM is sized in whole vCPUs; this is also rejected when the project is applied);
 - a sandbox-host older than protocol version 3, which would drop the declaration;
 - a Docker daemon that accepted the container but discarded the limit (a host without the cgroup memory controller, for example rootless Docker without cgroup v2 delegation). The engine reads the limit back from the created container and removes it.
 
@@ -1328,7 +1327,7 @@ How each driver applies it:
 | --- | --- | --- |
 | Docker | `HostConfig.NanoCPUs`, `Memory`, `MemorySwap` | `MemorySwap` equals `Memory`, so the sandbox cannot spill into host swap. |
 | Kubernetes | container `resources.requests` = `resources.limits` | Guaranteed QoS for the declared dimensions; a namespace `LimitRange` or `ResourceQuota` that the values violate rejects the Pod. |
-| BoxLite | VM vCPUs and memory | Fractional `cpus` is passed through. |
+| BoxLite | VM vCPUs and memory | Whole `cpus` only. |
 | Microsandbox | VM vCPUs and memory | Whole `cpus` only. |
 
 On the microVM drivers the declared memory is the whole guest's memory, so the guest kernel and the agent runtime share it with the workload; leave headroom. On Docker and Kubernetes the limit also covers the in-sandbox agent runtime, so a workload that exhausts it is OOM-killed together with the runtime and the run fails.

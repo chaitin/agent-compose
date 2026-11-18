@@ -127,35 +127,31 @@ agents:
 	}
 }
 
-func TestPolicyResourcesRejectFractionalCPUsOnMicrosandbox(t *testing.T) {
-	spec := mustParseCompose(t, `
-name: resources-msb
+func TestPolicyResourcesRejectFractionalCPUsOnMicroVMs(t *testing.T) {
+	compose := func(driver, cpus string) string {
+		return `
+name: resources-microvm
 agents:
   worker:
     provider: codex
     driver:
-      microsandbox: {}
+      ` + driver + `: {}
     policy:
       resources:
-        cpus: 1.5
-`)
-	_, err := Normalize(spec, NormalizeOptions{})
-	if err == nil || !strings.Contains(err.Error(), "agents.worker.policy.resources.cpus") || !strings.Contains(err.Error(), "whole vCPUs") {
-		t.Fatalf("Normalize error = %v, want a whole-vCPU rejection naming the field", err)
+        cpus: ` + cpus + `
+`
 	}
-	whole := mustParseCompose(t, `
-name: resources-msb
-agents:
-  worker:
-    provider: codex
-    driver:
-      microsandbox: {}
-    policy:
-      resources:
-        cpus: 2
-`)
-	if _, err := Normalize(whole, NormalizeOptions{}); err != nil {
-		t.Fatalf("whole vCPUs on microsandbox rejected: %v", err)
+	for _, driver := range []string{DriverBoxlite, DriverMicrosandbox} {
+		_, err := Normalize(mustParseCompose(t, compose(driver, "1.5")), NormalizeOptions{})
+		if err == nil || !strings.Contains(err.Error(), "agents.worker.policy.resources.cpus") || !strings.Contains(err.Error(), "whole vCPUs") {
+			t.Fatalf("%s: Normalize error = %v, want a whole-vCPU rejection naming the field", driver, err)
+		}
+		if _, err := Normalize(mustParseCompose(t, compose(driver, "2")), NormalizeOptions{}); err != nil {
+			t.Fatalf("%s: whole vCPUs rejected: %v", driver, err)
+		}
+	}
+	if _, err := Normalize(mustParseCompose(t, compose(DriverDocker, "1.5")), NormalizeOptions{}); err != nil {
+		t.Fatalf("docker: fractional cpus rejected: %v", err)
 	}
 }
 

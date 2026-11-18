@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"net"
 	"net/url"
 	"os"
@@ -209,33 +208,27 @@ type Config struct {
 	SandboxInitLandlockFallback string
 	// SandboxInitWorkloadUID/GID optionally run workload processes as a
 	// non-root numeric identity. Zero keeps the historical root workload.
-	SandboxInitWorkloadUID   int
-	SandboxInitWorkloadGID   int
-	MicrosandboxHome         string
-	MicrosandboxMSBPath      string
-	MicrosandboxLibPath      string
-	MicrosandboxDefaultImage string
-	MicrosandboxInsecure     []string
-	K8sHome                  string
-	K8sKubeconfigPath        string
-	K8sNamespace             string
-	K8sDefaultImage          string
-	K8sRuntimeBaseURL        string
-	DefaultImage             string
-	BoxRootfsPath            string
-	ImageRegistry            string
-	ImageStoreMode           string
-	ImageCacheRoot           string
-	ImageInsecureRegistries  []string
-	SandboxCPUs              uint8
-	SandboxMemoryMiB         uint32
-	SandboxDiskSizeGB        int32
-	// SandboxMaxCPUMillis and SandboxMaxMemoryMiB are the deployment's ceiling
-	// on an agent's policy.resources declaration (SANDBOX_MAX_CPUS and
-	// SANDBOX_MAX_MEMORY_MIB). A sandbox declaring more is refused. Zero means
-	// no ceiling.
-	SandboxMaxCPUMillis        int64
-	SandboxMaxMemoryMiB        uint32
+	SandboxInitWorkloadUID     int
+	SandboxInitWorkloadGID     int
+	MicrosandboxHome           string
+	MicrosandboxMSBPath        string
+	MicrosandboxLibPath        string
+	MicrosandboxDefaultImage   string
+	MicrosandboxInsecure       []string
+	K8sHome                    string
+	K8sKubeconfigPath          string
+	K8sNamespace               string
+	K8sDefaultImage            string
+	K8sRuntimeBaseURL          string
+	DefaultImage               string
+	BoxRootfsPath              string
+	ImageRegistry              string
+	ImageStoreMode             string
+	ImageCacheRoot             string
+	ImageInsecureRegistries    []string
+	SandboxCPUs                uint8
+	SandboxMemoryMiB           uint32
+	SandboxDiskSizeGB          int32
 	CacheTTL                   time.Duration
 	CleanupInterval            time.Duration
 	WorkspaceCleanupTTL        time.Duration
@@ -540,8 +533,6 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		SandboxCPUs:                 resources.SandboxCPUs,
 		SandboxMemoryMiB:            resources.SandboxMemoryMiB,
 		SandboxDiskSizeGB:           resources.SandboxDiskSizeGB,
-		SandboxMaxCPUMillis:         resources.SandboxMaxCPUMillis,
-		SandboxMaxMemoryMiB:         resources.SandboxMaxMemoryMiB,
 		CacheTTL:                    resources.CacheTTL,
 		CleanupInterval:             cleanup.CleanupInterval,
 		WorkspaceCleanupTTL:         cleanup.WorkspaceCleanupTTL,
@@ -1233,27 +1224,13 @@ type sandboxResourceConfig struct {
 	SandboxCPUs       uint8
 	SandboxMemoryMiB  uint32
 	SandboxDiskSizeGB int32
-	// SandboxMaxCPUMillis and SandboxMaxMemoryMiB bound declared limits; zero
-	// is no ceiling.
-	SandboxMaxCPUMillis int64
-	SandboxMaxMemoryMiB uint32
-	CacheTTL            time.Duration
+	CacheTTL          time.Duration
 }
 
 func loadSandboxResourceConfig(logger *slog.Logger) (sandboxResourceConfig, error) {
 	sandboxCPUs := positiveUint8Env(logger, "SANDBOX_CPUS", DefaultSandboxCPUs)
 	sandboxMemoryMiB := positiveMemoryMiBEnv(logger, "SANDBOX_MEMORY_MIB", DefaultSandboxMemoryMiB)
 	sandboxDiskSizeGB := positiveDiskSizeGBEnv(logger, "SANDBOX_DISK_SIZE_GB", DefaultSandboxDiskSizeGB)
-	// The ceilings are a safety bound, so a malformed value fails startup
-	// instead of silently lifting the bound the way a defaulted size would.
-	maxCPUMillis, err := sandboxMaxCPUMillisEnv("SANDBOX_MAX_CPUS")
-	if err != nil {
-		return sandboxResourceConfig{}, err
-	}
-	maxMemoryMiB, err := sandboxMaxMemoryMiBEnv("SANDBOX_MAX_MEMORY_MIB")
-	if err != nil {
-		return sandboxResourceConfig{}, err
-	}
 	cacheTTL := 7 * 24 * time.Hour
 	cacheTTLRaw, err := envWithLegacy(logger, "CACHE_TTL", "BOX_CACHE_TTL")
 	if err != nil {
@@ -1270,40 +1247,11 @@ func loadSandboxResourceConfig(logger *slog.Logger) (sandboxResourceConfig, erro
 		cacheTTL = parsed
 	}
 	return sandboxResourceConfig{
-		SandboxCPUs:         sandboxCPUs,
-		SandboxMemoryMiB:    sandboxMemoryMiB,
-		SandboxDiskSizeGB:   sandboxDiskSizeGB,
-		SandboxMaxCPUMillis: maxCPUMillis,
-		SandboxMaxMemoryMiB: maxMemoryMiB,
-		CacheTTL:            cacheTTL,
+		SandboxCPUs:       sandboxCPUs,
+		SandboxMemoryMiB:  sandboxMemoryMiB,
+		SandboxDiskSizeGB: sandboxDiskSizeGB,
+		CacheTTL:          cacheTTL,
 	}, nil
-}
-
-// sandboxMaxCPUMillisEnv parses a CPU ceiling in cores, such as "8" or "0.5",
-// into thousandths of a core. Unset is no ceiling.
-func sandboxMaxCPUMillisEnv(name string) (int64, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return 0, nil
-	}
-	cores, err := strconv.ParseFloat(raw, 64)
-	if err != nil || math.IsNaN(cores) || math.IsInf(cores, 0) || cores <= 0 || cores > 1024 {
-		return 0, fmt.Errorf("%s must be a positive number of cores up to 1024, got %q", name, raw)
-	}
-	return int64(math.Round(cores * 1000)), nil
-}
-
-// sandboxMaxMemoryMiBEnv parses a memory ceiling in MiB. Unset is no ceiling.
-func sandboxMaxMemoryMiBEnv(name string) (uint32, error) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return 0, nil
-	}
-	parsed, err := strconv.ParseUint(raw, 10, 32)
-	if err != nil || parsed == 0 {
-		return 0, fmt.Errorf("%s must be a positive whole number of MiB, got %q", name, raw)
-	}
-	return uint32(parsed), nil
 }
 
 // cleanupConfigValues holds the automatic cleanup interval and each

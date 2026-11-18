@@ -13,25 +13,25 @@ import (
 func TestMicroVMSandboxResources(t *testing.T) {
 	config := &appconfig.Config{SandboxCPUs: 4, SandboxMemoryMiB: 4096, SandboxDiskSizeGB: 6}
 
-	undeclared, err := microVMSandboxResources(config, nil, true)
-	if err != nil || undeclared.CPUs != 4 || undeclared.CPUMillis != 4000 || undeclared.MemoryMiB != 4096 || undeclared.DiskSizeGB != 6 {
+	undeclared, err := microVMSandboxResources(config, nil)
+	if err != nil || undeclared.CPUs != 4 || undeclared.MemoryMiB != 4096 || undeclared.DiskSizeGB != 6 {
 		t.Fatalf("undeclared = %+v, %v; want the daemon defaults", undeclared, err)
 	}
 
-	memoryOnly, err := microVMSandboxResources(config, &SandboxResourceLimits{MemoryMiB: 1024}, true)
+	memoryOnly, err := microVMSandboxResources(config, &SandboxResourceLimits{MemoryMiB: 1024})
 	if err != nil || memoryOnly.CPUs != 4 || memoryOnly.MemoryMiB != 1024 {
 		t.Fatalf("memory only = %+v, %v; want default CPUs and declared memory", memoryOnly, err)
 	}
 
-	fractional, err := microVMSandboxResources(config, &SandboxResourceLimits{CPUMillis: 1500}, false)
-	if err != nil || fractional.CPUMillis != 1500 || fractional.CPUs != 2 {
-		t.Fatalf("fractional (boxlite) = %+v, %v; want exact millis and a rounded-up vCPU count", fractional, err)
+	whole, err := microVMSandboxResources(config, &SandboxResourceLimits{CPUMillis: 2000})
+	if err != nil || whole.CPUs != 2 || whole.MemoryMiB != 4096 {
+		t.Fatalf("cpus only = %+v, %v; want declared vCPUs and default memory", whole, err)
 	}
 
-	if _, err := microVMSandboxResources(config, &SandboxResourceLimits{CPUMillis: 1500}, true); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
-		t.Fatalf("fractional on a whole-vCPU SDK error = %v, want ErrSandboxResourceLimitsUnavailable", err)
+	if _, err := microVMSandboxResources(config, &SandboxResourceLimits{CPUMillis: 1500}); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
+		t.Fatalf("fractional error = %v, want ErrSandboxResourceLimitsUnavailable", err)
 	}
-	if _, err := microVMSandboxResources(config, &SandboxResourceLimits{CPUMillis: 256_000}, false); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
+	if _, err := microVMSandboxResources(config, &SandboxResourceLimits{CPUMillis: 256_000}); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
 		t.Fatalf("256 vCPUs error = %v, want ErrSandboxResourceLimitsUnavailable", err)
 	}
 }
@@ -49,11 +49,13 @@ func TestRequireSandboxResourceLimits(t *testing.T) {
 	if err := RequireSandboxResourceLimits("mystery", nil); err != nil {
 		t.Fatalf("undeclared limits on an unknown driver = %v, want nil (undeclared never blocks)", err)
 	}
-	if err := RequireSandboxResourceLimits(RuntimeDriverMicrosandbox, &SandboxResourceLimits{CPUMillis: 500}); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
-		t.Fatalf("fractional microsandbox error = %v, want the daemon-side refusal", err)
+	for _, driver := range []string{RuntimeDriverBoxlite, RuntimeDriverMicrosandbox} {
+		if err := RequireSandboxResourceLimits(driver, &SandboxResourceLimits{CPUMillis: 500}); !errors.Is(err, ErrSandboxResourceLimitsUnavailable) {
+			t.Fatalf("fractional %s error = %v, want the daemon-side refusal", driver, err)
+		}
 	}
-	if err := RequireSandboxResourceLimits(RuntimeDriverBoxlite, &SandboxResourceLimits{CPUMillis: 500}); err != nil {
-		t.Fatalf("fractional boxlite = %v, want accepted", err)
+	if err := RequireSandboxResourceLimits(RuntimeDriverDocker, &SandboxResourceLimits{CPUMillis: 500}); err != nil {
+		t.Fatalf("fractional docker = %v, want accepted", err)
 	}
 }
 

@@ -4,7 +4,7 @@ package driver
 // its C SDK options today.
 func boxliteRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 	return microVMRuntimeCapabilityFacts(RuntimeDriverBoxlite, microVMObserved{
-		ResourceLimits: "boxlite_options_set_cpus (fractional), boxlite_options_set_memory, and boxlite_options_set_disk_size_gb receive microVMSandboxResources (a declared policy.resources over the daemon defaults)",
+		ResourceLimits: "boxlite_options_set_cpus, boxlite_options_set_memory, and boxlite_options_set_disk_size_gb receive microVMSandboxResources (a declared policy.resources over the daemon defaults, whole vCPUs only)",
 		SecurityContext: securityContextObserved{
 			CapabilityDrop: "the bound C option surface has no capability-drop call",
 			ReadOnlyRootfs: "the bound C option surface has no read-only rootfs call",

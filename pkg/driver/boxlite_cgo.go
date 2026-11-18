@@ -1260,7 +1260,7 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	}
 	// Resolved before any FFI allocation so a declaration the VM cannot honor
 	// fails without leaking an options handle.
-	resources, err := microVMSandboxResources(r.config, sandbox.ResourceLimits, false)
+	resources, err := microVMSandboxResources(r.config, sandbox.ResourceLimits)
 	if err != nil {
 		return nil, err
 	}
@@ -1320,7 +1320,7 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	// BoxLite v0.13 widened the CPU option from int to double to support
 	// fractional CPUs, so a declared fraction such as 0.5 is passed exactly;
 	// the daemon-wide default is always a whole number.
-	C.boxlite_options_set_cpus(options, C.double(float64(resources.CPUMillis)/1000))
+	C.boxlite_options_set_cpus(options, C.double(resources.CPUs))
 	C.boxlite_options_set_memory(options, C.int(resources.MemoryMiB))
 	C.boxlite_options_set_disk_size_gb(options, C.int(resources.DiskSizeGB))
 

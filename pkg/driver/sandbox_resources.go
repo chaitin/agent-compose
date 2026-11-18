@@ -26,11 +26,7 @@ func (l *SandboxResourceLimits) Declared() bool {
 var ErrSandboxResourceLimitsUnavailable = errors.New("sandbox resource limits cannot be enforced")
 
 type sandboxResources struct {
-	// CPUs is the whole-vCPU count, the unit every microVM SDK accepts.
-	CPUs uint8
-	// CPUMillis is the exact CPU size in thousandths of a core. It equals
-	// CPUs*1000 unless the sandbox declared a fractional value.
-	CPUMillis  int64
+	CPUs       uint8
 	MemoryMiB  uint32
 	DiskSizeGB int32
 }
@@ -52,7 +48,6 @@ func configuredSandboxResources(config *appconfig.Config) sandboxResources {
 			resources.DiskSizeGB = config.SandboxDiskSizeGB
 		}
 	}
-	resources.CPUMillis = int64(resources.CPUs) * 1000
 	return resources
 }
 
@@ -61,24 +56,26 @@ func configuredSandboxResources(config *appconfig.Config) sandboxResources {
 // the whole guest's memory, so the guest kernel and runtime share the declared
 // amount with the workload.
 //
-// wholeCPUs requires the CPU declaration to be a whole number of vCPUs. It is
-// set for SDKs that only accept an integer; rounding up would hand the sandbox
-// more than it declared, and rounding down could make it unbootable.
-func microVMSandboxResources(config *appconfig.Config, limits *SandboxResourceLimits, wholeCPUs bool) (sandboxResources, error) {
+// A CPU declaration must be a whole number of vCPUs. Microsandbox only accepts
+// an integer. BoxLite accepts a fractional value, but it boots ceil(n) vCPUs
+// and caps them with a host cgroup cpu.max quota that it skips, logging only,
+// when the host has no delegated CPU controller. That would start the sandbox
+// with more CPU than it declared and nothing the daemon can observe, so a
+// fractional declaration is refused on every microVM driver.
+func microVMSandboxResources(config *appconfig.Config, limits *SandboxResourceLimits) (sandboxResources, error) {
 	resources := configuredSandboxResources(config)
 	if !limits.Declared() {
 		return resources, nil
 	}
 	if limits.CPUMillis > 0 {
-		vcpus := (limits.CPUMillis + 999) / 1000
-		if vcpus > 255 {
-			return sandboxResources{}, fmt.Errorf("%w: declared %d millicpus exceeds the 255 vCPU microVM maximum", ErrSandboxResourceLimitsUnavailable, limits.CPUMillis)
-		}
-		if wholeCPUs && limits.CPUMillis%1000 != 0 {
+		if limits.CPUMillis%1000 != 0 {
 			return sandboxResources{}, fmt.Errorf("%w: declared %d millicpus is not a whole number of vCPUs", ErrSandboxResourceLimitsUnavailable, limits.CPUMillis)
 		}
+		vcpus := limits.CPUMillis / 1000
+		if vcpus > 255 {
+			return sandboxResources{}, fmt.Errorf("%w: declared %d vCPUs exceeds the 255 vCPU microVM maximum", ErrSandboxResourceLimitsUnavailable, vcpus)
+		}
 		resources.CPUs = uint8(vcpus)
-		resources.CPUMillis = limits.CPUMillis
 	}
 	if limits.MemoryMiB > 0 {
 		resources.MemoryMiB = limits.MemoryMiB
@@ -113,10 +110,8 @@ func RequireSandboxResourceLimits(driver string, limits *SandboxResourceLimits) 
 	// so the daemon refuses the start before it reaches the host and the
 	// refusal keeps its classification across the RPC boundary.
 	switch resolveRuntimeDriver(driver) {
-	case RuntimeDriverBoxlite:
-		_, err = microVMSandboxResources(nil, limits, false)
-	case RuntimeDriverMicrosandbox:
-		_, err = microVMSandboxResources(nil, limits, true)
+	case RuntimeDriverBoxlite, RuntimeDriverMicrosandbox:
+		_, err = microVMSandboxResources(nil, limits)
 	}
 	return err
 }

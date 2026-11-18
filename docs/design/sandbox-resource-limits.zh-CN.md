@@ -20,13 +20,13 @@
 - 按 agent 声明 CPU 和内存上限，四个 driver 都真正生效。
 - 不声明时行为与之前逐字节一致，包括 spec hash。
 - 声明了但无法生效时必须失败，不能静默不受限地运行。
-- 运营方可以给声明设上限，防止项目申请过大的资源。
 
 非目标：
 
 - 磁盘配额：Docker 和 K8s 的机制差异大，另行设计。
 - request 与 limit 分离、CPU shares、PidsLimit。
 - 对已存在 runtime 的在线调整（`docker update` 等）。
+- 部署级或按租户的资源配额，原因见"声明优先于默认值"。
 - 在 v2 API 的 `SandboxSpec` proto 里暴露该字段：proto 在独立模块，需要单独发版。
 
 ## 声明
@@ -42,7 +42,7 @@ policy:
 
 规范化结果是 `{cpu_millis, memory_mib}`，带 `omitempty`，未声明时 canonical JSON 和 spec hash 不变。
 apply 阶段的校验：空块报错；`cpus` 必须 > 0，最多 1024 核，精度不超过 0.001；`memory` 范围是
-64Mi 到 1024Gi；Microsandbox 不接受小数 `cpus`。
+64Mi 到 1024Gi；BoxLite 和 Microsandbox 不接受小数 `cpus`。
 
 ## 硬性要求：为什么不提供 require 开关
 
@@ -59,7 +59,6 @@ apply 阶段的校验：空块报错；`cpus` 必须 > 0，最多 1024 核，精
 ```
 agent spec JSON ──ResolveResourceLimits──▶ driverSandboxResourceLimits.resolve
   (pkg/runs)                                 (pkg/agentcompose/adapters)
-                                             · SANDBOX_MAX_* 上限
                                              · driver.RequireSandboxResourceLimits
                                                （读能力矩阵的静态事实 + microVM 约束）
                                                         │
@@ -91,19 +90,35 @@ ResourceQuota 违规时由 API server 拒绝创建 Pod，错误照常返回。
 
 ### BoxLite / Microsandbox
 
-声明的维度覆盖 daemon 默认值，未声明的维度保持默认值。BoxLite v0.13 的 CPU 参数是 double，
-小数原样传入；Microsandbox 只接受整数 vCPU，小数直接拒绝而不是向上取整（向上取整等于给了比声明
-更多的 CPU）。VM 最多 255 vCPU。
+声明的维度覆盖 daemon 默认值，未声明的维度保持默认值。两者都只接受整数 vCPU，小数直接拒绝，
+VM 最多 255 vCPU。
+
+Microsandbox 的 SDK 只接受整数。BoxLite v0.13 的 `boxlite_options_set_cpus` 虽然是 double，
+但小数的实现是：guest 看到 ceil(n) 个 vCPU，再由宿主机 cgroup `cpu.max` 限额。jailer 开启时
+（默认）`cpu.max` 写失败只记一条 error 日志并继续启动（`vmm/controller/spawn.rs` 的
+`apply_cpu_quota`，注释写明是有意的 best-effort），也就是说没有 cgroup CPU 委派的宿主机会让
+`cpus: 0.5` 的 sandbox 拿到完整 1 个 vCPU，daemon 看不到任何信号，违背"声明即生效"。向上取整同理
+会给出比声明更多的 CPU，所以也不做。等 BoxLite 能把 quota 失败报出来，或我们能可靠回读 VM 的
+cgroup 后，再放开小数。
 
 VM driver 跑在 sandbox-host 里，`Sandbox` 经 gRPC 传递，因此 `sandboxhost.Sandbox` 新增
 `resource_limits` 字段，协议版本从 2 升到 3。旧 host 会丢掉未知字段、按自己的默认值启动 VM，
 所以 daemon 对声明了限制的 sandbox 检查协议版本，低于 3 直接拒绝（与 deny 规则的 v2 门禁同一模式）。
 按 N/N-1 兼容窗口，daemon 不再接受协议版本 1 的 host。
 
-## 部署上限
+## 声明优先于默认值
 
-`SANDBOX_MAX_CPUS`（核数，允许小数）和 `SANDBOX_MAX_MEMORY_MIB`。不设置表示没有上限；格式错误时
-daemon 启动失败，避免上限被静默取消。上限只约束声明，不约束 microVM 的默认值。
+`SANDBOX_CPUS` / `SANDBOX_MEMORY_MIB` 只是 microVM 未声明时的默认规格。声明了就以声明为准，
+可以比默认值大也可以比默认值小，只受 255 vCPU、1024Gi 这些硬性范围约束。不提供部署级上限：
+
+1. Docker 不声明时本来就不限制，项目在 Docker 上已经能吃满宿主机。只在 microVM 上拦住
+   "比默认值大"的声明，算不上真正的防护，反而让两类 driver 的规则不一致。
+2. 如果复用 `SANDBOX_*` 当上限，想让某个 agent 用更大的 VM 就得把全局默认调大，所有未声明的
+   agent 跟着变大。如果新增独立的 `SANDBOX_MAX_*`，它又约束不了默认值（默认 4096、上限 2048 时，
+   声明 4Gi 被拒，不声明反而拿到 4096），语义自相矛盾。
+3. K8s 有原生的 `ResourceQuota` / `LimitRange`，粒度比一个全局值细。
+
+当前部署是写 YAML 的人和运营方同一拨人。真有多租户需求时，再按项目或租户单独设计配额。
 
 ## 生效时机与已知限制
 

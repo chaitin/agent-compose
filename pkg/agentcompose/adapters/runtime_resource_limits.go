@@ -3,10 +3,8 @@ package adapters
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/chaitin/agent-compose/pkg/compose"
-	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -26,11 +24,12 @@ func WithSandboxResourceLimits(resolver SandboxResourceLimitsResolver) RuntimePr
 
 // driverSandboxResourceLimits turns an agent's declaration into the
 // driver-boundary limit. It is the single gate for the declaration: a declared
-// limit is a hard requirement, so a limit above the deployment's ceiling or on
-// a driver that does not enforce resource_limits refuses the start here,
-// before any runtime state exists. Its zero value is inert.
+// limit is a hard requirement, so a limit on a driver that does not enforce
+// resource_limits refuses the start here, before any runtime state exists. The
+// declaration wins over the microVM defaults (SANDBOX_CPUS, SANDBOX_MEMORY_MIB)
+// in both directions; there is no deployment ceiling on it. Its zero value is
+// inert.
 type driverSandboxResourceLimits struct {
-	config       *appconfig.Config
 	declarations SandboxResourceLimitsResolver
 	// driver is the runtime this gate's adapter drives. Each adapter is built
 	// for one driver, so the capability check never depends on a sandbox's
@@ -58,18 +57,6 @@ func (d driverSandboxResourceLimits) resolve(ctx context.Context, session *domai
 	if !limits.Declared() {
 		return nil, nil
 	}
-	if d.config != nil {
-		if ceiling := d.config.SandboxMaxCPUMillis; ceiling > 0 && limits.CPUMillis > ceiling {
-			return nil, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf(
-				"sandbox %s declares policy.resources.cpus %s, above the deployment ceiling SANDBOX_MAX_CPUS=%s",
-				session.Summary.ID, formatCPUMillis(limits.CPUMillis), formatCPUMillis(ceiling)), nil)
-		}
-		if ceiling := d.config.SandboxMaxMemoryMiB; ceiling > 0 && limits.MemoryMiB > ceiling {
-			return nil, domain.ClassifyError(domain.ErrFailedPrecondition, fmt.Sprintf(
-				"sandbox %s declares policy.resources.memory %dMi, above the deployment ceiling SANDBOX_MAX_MEMORY_MIB=%d",
-				session.Summary.ID, limits.MemoryMiB, ceiling), nil)
-		}
-	}
 	if err := driverpkg.RequireSandboxResourceLimits(d.driver, limits); err != nil {
 		return nil, classifyResourceLimitsError(err)
 	}
@@ -84,11 +71,4 @@ func classifyResourceLimitsError(err error) error {
 		return err
 	}
 	return domain.ClassifyError(domain.ErrFailedPrecondition, "declared sandbox resource limits cannot be enforced", err)
-}
-
-func formatCPUMillis(millis int64) string {
-	if millis%1000 == 0 {
-		return fmt.Sprintf("%d", millis/1000)
-	}
-	return fmt.Sprintf("%.3g", float64(millis)/1000)
 }

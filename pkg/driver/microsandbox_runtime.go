@@ -1355,7 +1355,7 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	}
 	// Microsandbox sizes its VM in whole vCPUs, so a fractional declaration
 	// is refused instead of rounded.
-	resources, err := microVMSandboxResources(r.config, session.ResourceLimits, true)
+	resources, err := microVMSandboxResources(r.config, session.ResourceLimits)
 	if err != nil {
 		return nil, err
 	}

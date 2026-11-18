@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/chaitin/agent-compose/pkg/compose"
-	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -34,40 +33,33 @@ func TestDriverSandboxResourceLimitsResolve(t *testing.T) {
 	})
 
 	t.Run("undeclared stays nil", func(t *testing.T) {
-		gate := driverSandboxResourceLimits{config: &appconfig.Config{}, declarations: resourceLimitsResolverStub{}}.forDriver(driverpkg.RuntimeDriverDocker)
+		gate := driverSandboxResourceLimits{declarations: resourceLimitsResolverStub{}}.forDriver(driverpkg.RuntimeDriverDocker)
 		got, err := gate.resolve(context.Background(), session)
 		if err != nil || got != nil {
 			t.Fatalf("resolve = %+v, %v; want nil", got, err)
 		}
 	})
 
-	t.Run("declared within the ceiling", func(t *testing.T) {
-		gate := driverSandboxResourceLimits{
-			config:       &appconfig.Config{SandboxMaxCPUMillis: 4000, SandboxMaxMemoryMiB: 8192},
-			declarations: resourceLimitsResolverStub{limits: declared},
-		}.forDriver(driverpkg.RuntimeDriverDocker)
+	t.Run("declared", func(t *testing.T) {
+		gate := driverSandboxResourceLimits{declarations: resourceLimitsResolverStub{limits: declared}}.forDriver(driverpkg.RuntimeDriverDocker)
 		got, err := gate.resolve(context.Background(), session)
 		if err != nil || got == nil || got.CPUMillis != 2000 || got.MemoryMiB != 4096 {
 			t.Fatalf("resolve = %+v, %v; want the declared limits", got, err)
 		}
 	})
 
-	for name, config := range map[string]*appconfig.Config{
-		"SANDBOX_MAX_CPUS":       {SandboxMaxCPUMillis: 1500},
-		"SANDBOX_MAX_MEMORY_MIB": {SandboxMaxMemoryMiB: 2048},
-	} {
-		t.Run("above "+name, func(t *testing.T) {
-			gate := driverSandboxResourceLimits{config: config, declarations: resourceLimitsResolverStub{limits: declared}}.forDriver(driverpkg.RuntimeDriverDocker)
-			_, err := gate.resolve(context.Background(), session)
-			if !errors.Is(err, domain.ErrFailedPrecondition) || !strings.Contains(err.Error(), name) {
-				t.Fatalf("resolve error = %v, want a failed precondition naming %s", err, name)
-			}
-		})
-	}
+	// The declaration wins over the microVM defaults in both directions.
+	t.Run("declared above the microVM defaults", func(t *testing.T) {
+		large := &compose.NormalizedSandboxResourcesSpec{CPUMillis: 16000, MemoryMiB: 65536}
+		gate := driverSandboxResourceLimits{declarations: resourceLimitsResolverStub{limits: large}}.forDriver(driverpkg.RuntimeDriverMicrosandbox)
+		got, err := gate.resolve(context.Background(), session)
+		if err != nil || got == nil || got.CPUMillis != 16000 || got.MemoryMiB != 65536 {
+			t.Fatalf("resolve = %+v, %v; want the declared limits", got, err)
+		}
+	})
 
 	t.Run("driver that cannot honor the declaration", func(t *testing.T) {
 		gate := driverSandboxResourceLimits{
-			config:       &appconfig.Config{},
 			declarations: resourceLimitsResolverStub{limits: &compose.NormalizedSandboxResourcesSpec{CPUMillis: 500}},
 		}.forDriver(driverpkg.RuntimeDriverMicrosandbox)
 		_, err := gate.resolve(context.Background(), session)
@@ -103,7 +95,6 @@ func TestEnsureSandboxCarriesDeclaredResourceLimits(t *testing.T) {
 		runtime:    runtime,
 		executions: newSandboxExecutions(),
 		resourceLimits: driverSandboxResourceLimits{
-			config:       networkPolicyTestConfig(),
 			declarations: resourceLimitsResolverStub{limits: &compose.NormalizedSandboxResourcesSpec{CPUMillis: 1000, MemoryMiB: 1024}},
 		}.forDriver(driverpkg.RuntimeDriverDocker),
 	}
@@ -115,12 +106,12 @@ func TestEnsureSandboxCarriesDeclaredResourceLimits(t *testing.T) {
 	}
 
 	refused := &capturingNetworkRuntime{}
-	config := networkPolicyTestConfig()
-	config.SandboxMaxMemoryMiB = 512
 	adapter.runtime = refused
-	adapter.resourceLimits.config = config
+	adapter.resourceLimits = driverSandboxResourceLimits{
+		declarations: resourceLimitsResolverStub{limits: &compose.NormalizedSandboxResourcesSpec{CPUMillis: 1500}},
+	}.forDriver(driverpkg.RuntimeDriverMicrosandbox)
 	if _, err := adapter.EnsureSandbox(context.Background(), networkPolicyTestSession(), domain.VMState{}, domain.ProxyState{}); !errors.Is(err, domain.ErrFailedPrecondition) {
-		t.Fatalf("EnsureSandbox above the ceiling error = %v, want a failed precondition", err)
+		t.Fatalf("EnsureSandbox with fractional microVM cpus error = %v, want a failed precondition", err)
 	}
 	if refused.sandbox != nil {
 		t.Fatal("a refused declaration still reached the driver")

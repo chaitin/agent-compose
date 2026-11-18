@@ -210,7 +210,6 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	executions := newSandboxExecutions()
 	networkPolicies := driverSandboxNetworkPolicy{config: config, declarations: networkDeclarations}
 	resourceLimits := provider.resourceLimits
-	resourceLimits.config = config
 	// The mediation decides with the same resolved declaration and engine
 	// endpoints as the driver-boundary policy, so both read one seam.
 	provider.egressProxy.networkPolicies = networkPolicies

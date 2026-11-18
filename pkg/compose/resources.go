@@ -31,9 +31,9 @@ type NormalizedSandboxResourcesSpec struct {
 }
 
 const (
-	// maxSandboxCPUMillis bounds a declaration to a plausible single host.
-	// The daemon's SANDBOX_MAX_CPUS ceiling is the deployment's real limit;
-	// this bound only rejects values no driver could honor.
+	// maxSandboxCPUMillis bounds a declaration to a plausible single host. It
+	// only rejects values no driver could honor; there is no deployment
+	// ceiling on a declaration.
 	maxSandboxCPUMillis = 1024 * 1000
 	// minSandboxMemoryMiB is the smallest memory ceiling accepted. A smaller
 	// sandbox cannot start the guest runtime, so the declaration is rejected
@@ -118,14 +118,16 @@ func parseSandboxMemoryMiB(value string) (uint32, error) {
 
 // validateSandboxResourcesForDriver rejects a declaration the agent's driver
 // can never honor, so the project fails at apply time rather than at the first
-// sandbox start. Microsandbox sizes its VM in whole vCPUs; rounding a
-// fractional declaration up would hand the sandbox more CPU than it declared.
+// sandbox start. The microVM drivers size the VM in whole vCPUs: Microsandbox
+// accepts only an integer, and BoxLite's fractional quota is best-effort (it
+// starts the VM with ceil(n) unthrottled vCPUs when the host cgroup write
+// fails), so a fractional declaration could run with more CPU than declared.
 func validateSandboxResourcesForDriver(path, driver string, resources *NormalizedSandboxResourcesSpec) error {
 	if resources == nil || resources.CPUMillis == 0 {
 		return nil
 	}
-	if driver == DriverMicrosandbox && resources.CPUMillis%1000 != 0 {
-		return &ValidationError{Path: path + ".cpus", Message: "microsandbox sizes its VM in whole vCPUs; declare an integer number of cpus"}
+	if (driver == DriverMicrosandbox || driver == DriverBoxlite) && resources.CPUMillis%1000 != 0 {
+		return &ValidationError{Path: path + ".cpus", Message: driver + " sizes its VM in whole vCPUs; declare an integer number of cpus"}
 	}
 	return nil
 }

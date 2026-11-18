@@ -1269,7 +1269,7 @@ Network policy
 ```yaml
 policy:
   resources:
-    cpus: 2          # 核数；允许小数，精度到 0.001（如 0.5、1.25）
+    cpus: 2          # 核数；Docker 和 Kubernetes 允许小数，精度到 0.001（如 0.5、1.25）
     memory: 4Gi      # 整数加 Mi 或 Gi 单位
 ```
 
@@ -1279,8 +1279,7 @@ policy:
 
 **声明即硬性要求。** 没有 best-effort 开关：限制无法生效的 sandbox 在启动时以 failed precondition 拒绝，绝不会不受限地跑起来。会被拒绝的情况：
 
-- 声明超过部署上限 `SANDBOX_MAX_CPUS` 或 `SANDBOX_MAX_MEMORY_MIB`（不设置表示没有上限）；
-- Microsandbox 声明了小数 `cpus`（它的 VM 只能按整数 vCPU 分配；apply 项目时也会直接报错）；
+- BoxLite 或 Microsandbox 声明了小数 `cpus`（VM 只能按整数 vCPU 分配；apply 项目时也会直接报错）；
 - sandbox-host 低于协议版本 3，它会丢掉这个声明；
 - Docker daemon 接受了容器但丢弃了限制（例如主机没有 cgroup memory 控制器，像未做 cgroup v2 委派的 rootless Docker）。引擎会从创建出的容器回读限制，不一致就删掉容器。
 
@@ -1290,7 +1289,7 @@ policy:
 | --- | --- | --- |
 | Docker | `HostConfig.NanoCPUs`、`Memory`、`MemorySwap` | `MemorySwap` 等于 `Memory`，sandbox 不能借用宿主机 swap。 |
 | Kubernetes | 容器 `resources.requests` = `resources.limits` | 声明的维度为 Guaranteed QoS；违反命名空间 `LimitRange` 或 `ResourceQuota` 的值会导致 Pod 被拒绝。 |
-| BoxLite | VM 的 vCPU 与内存 | 小数 `cpus` 原样传入。 |
+| BoxLite | VM 的 vCPU 与内存 | 只接受整数 `cpus`。 |
 | Microsandbox | VM 的 vCPU 与内存 | 只接受整数 `cpus`。 |
 
 在 microVM driver 上，声明的内存是整个 guest 的内存，guest 内核和 agent runtime 也要占用，需要留出余量。在 Docker 和 Kubernetes 上，限制同样覆盖 sandbox 内的 agent runtime，负载耗尽内存时会和 runtime 一起被 OOM kill，本次 run 失败。
