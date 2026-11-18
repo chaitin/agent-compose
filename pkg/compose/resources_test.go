@@ -21,6 +21,7 @@ func TestNormalizeSandboxResourcesSpec(t *testing.T) {
 		{name: "zero cpu", spec: &SandboxResourcesSpec{CPUs: cpus(0)}, wantErr: "resources.cpus"},
 		{name: "negative cpu", spec: &SandboxResourcesSpec{CPUs: cpus(-1)}, wantErr: "positive"},
 		{name: "cpu finer than millicore", spec: &SandboxResourcesSpec{CPUs: cpus(0.0005)}, wantErr: "thousandth"},
+		{name: "cpu rounds to zero", spec: &SandboxResourcesSpec{CPUs: cpus(1e-10)}, wantErr: "below a thousandth"},
 		{name: "cpu too large", spec: &SandboxResourcesSpec{CPUs: cpus(2048)}, wantErr: "exceeds"},
 		{name: "bare memory number", spec: &SandboxResourcesSpec{Memory: "4096"}, wantErr: "needs a binary unit"},
 		{name: "decimal memory unit", spec: &SandboxResourcesSpec{Memory: "4G"}, wantErr: "needs a binary unit"},

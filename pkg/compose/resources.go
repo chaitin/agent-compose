@@ -83,6 +83,12 @@ func sandboxCPUMillis(cpus float64) (int64, error) {
 	if math.Abs(scaled-millis) > 1e-6 {
 		return 0, fmt.Errorf("cpus %v is finer than a thousandth of a core", cpus)
 	}
+	// A value fine enough to round to zero millis would read as undeclared
+	// downstream (a zero field is "no limit"), silently dropping a declaration
+	// that is meant to be a hard requirement. Reject it instead.
+	if millis <= 0 {
+		return 0, fmt.Errorf("cpus %v is below a thousandth of a core", cpus)
+	}
 	if millis > maxSandboxCPUMillis {
 		return 0, fmt.Errorf("cpus %v exceeds %d cores", cpus, maxSandboxCPUMillis/1000)
 	}
