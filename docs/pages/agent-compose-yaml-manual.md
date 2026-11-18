@@ -1330,7 +1330,7 @@ How each driver applies it:
 | BoxLite | VM vCPUs and memory | Whole `cpus` only. |
 | Microsandbox | VM vCPUs and memory | Whole `cpus` only. |
 
-On the microVM drivers the declared memory is the whole guest's memory, so the guest kernel and the agent runtime share it with the workload; leave headroom. On Docker and Kubernetes the limit also covers the in-sandbox agent runtime, so a workload that exhausts it is OOM-killed together with the runtime and the run fails.
+On the microVM drivers the declared memory is the whole guest's memory, so the guest kernel and the agent runtime share it with the workload; leave headroom. On Docker and Kubernetes the limit covers every process in the sandbox, including the in-sandbox agent runtime. When the sandbox exceeds it, the kernel OOM killer kills a process inside it, usually the one using the most memory, but the choice is not guaranteed and can be the agent runtime. On Docker the rest of the sandbox normally keeps running, and the killed command fails with a signal exit (typically 137). On Kubernetes, a kubelet that groups OOM kills (cgroup v2) terminates the whole container. Either way the run reports an ordinary failure: an out-of-memory kill is not yet reported as a distinct reason.
 
 **When a declaration takes effect.** The declaration is read every time a sandbox's runtime is ensured, but a limit is applied only when a runtime is created. With the default `stopped_runtime_policy: remove` the next start creates a runtime with the new limit; a retained runtime that is only resumed keeps the limit it was created with.
 

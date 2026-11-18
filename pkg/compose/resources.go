@@ -12,9 +12,9 @@ import (
 // at least one of them: an empty block would read as a constraint while
 // constraining nothing.
 type SandboxResourcesSpec struct {
-	// CPUs is the CPU ceiling in cores. Fractions are allowed down to a
-	// thousandth of a core (0.5, 1.25), except on Microsandbox, whose VM size is
-	// a whole number of vCPUs.
+	// CPUs is the CPU ceiling in cores. Docker and Kubernetes accept fractions
+	// down to a thousandth of a core (0.5, 1.25); BoxLite and Microsandbox size
+	// the VM in whole vCPUs and accept only an integer.
 	CPUs *float64 `yaml:"cpus,omitempty" json:"cpus,omitempty"`
 	// Memory is the memory ceiling as a binary quantity with a unit, such as
 	// "512Mi" or "4Gi". A bare number is rejected because "4096" does not say

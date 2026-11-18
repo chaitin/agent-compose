@@ -1292,7 +1292,7 @@ policy:
 | BoxLite | VM 的 vCPU 与内存 | 只接受整数 `cpus`。 |
 | Microsandbox | VM 的 vCPU 与内存 | 只接受整数 `cpus`。 |
 
-在 microVM driver 上，声明的内存是整个 guest 的内存，guest 内核和 agent runtime 也要占用，需要留出余量。在 Docker 和 Kubernetes 上，限制同样覆盖 sandbox 内的 agent runtime，负载耗尽内存时会和 runtime 一起被 OOM kill，本次 run 失败。
+在 microVM driver 上，声明的内存是整个 guest 的内存，guest 内核和 agent runtime 也要占用，需要留出余量。在 Docker 和 Kubernetes 上，限制覆盖 sandbox 内的所有进程，包括 agent runtime。超出限制时，内核的 OOM killer 会在 sandbox 里杀掉一个进程，通常是占内存最多的那个，但不保证，也可能是 agent runtime。Docker 上 sandbox 的其余部分一般会继续运行，被杀的命令以信号退出（通常是 137）；Kubernetes 上，如果 kubelet 开启了整组 OOM（cgroup v2），整个容器会被终止。两种情况下 run 都只显示为普通失败，目前不会单独标出是内存不足。
 
 **声明何时生效。** 每次 ensure sandbox 的 runtime 时都会重新读取声明，但限制只在创建 runtime 时应用。默认的 `stopped_runtime_policy: remove` 下，下一次启动会以新限制创建 runtime；`retain` 后仅被 resume 的 runtime 保持它创建时的限制。
 

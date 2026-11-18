@@ -125,7 +125,11 @@ VM driver 跑在 sandbox-host 里，`Sandbox` 经 gRPC 传递，因此 `sandboxh
 - 每次 ensure 都会重新读取声明，但只在创建 runtime 时应用。`stopped_runtime_policy: retain` 的
   runtime 被 resume 时保持创建时的限制。
 - microVM 的内存是整个 guest 的内存，guest 内核和 runtime 也会占用。
-- Docker 和 K8s 的限制同样覆盖 sandbox 内的 agent runtime，OOM 时 runtime 会一起被杀。目前不会把
-  OOMKilled 映射成单独的失败原因，这是后续工作。
+- Docker 和 K8s 的限制覆盖 sandbox 内所有进程，包括 agent runtime。超限时内核 OOM killer 按
+  oom_score 在 cgroup 里挑一个进程杀掉，通常是占内存最多的，但也可能是 agent runtime。Docker 默认
+  不设 `memory.oom.group`，所以一般只有该进程被 SIGKILL，命令以 137 退出，容器继续运行；K8s 的
+  kubelet 在 cgroup v2 上开启整组 OOM 时整个容器被终止。run 只记录退出码和错误文本，目前看不出是
+  OOM。后续工作：读 sandbox cgroup 的 `memory.events` 中 `oom_kill` 计数，在命令前后比较，把 OOM
+  写进错误文本；独立的失败原因字段需要改 v2 API proto，另行发版。
 - BoxLite 的 cgo 路径只能在带 KVM 和 libboxlite 的环境里编译和冒烟，单元测试覆盖的是共享的
   `microVMSandboxResources`。

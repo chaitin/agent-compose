@@ -1317,9 +1317,11 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	C.boxlite_options_set_auto_remove(options, 0)
 	C.boxlite_options_set_detach(options, 1)
 	C.boxlite_options_set_network_enabled(options)
-	// BoxLite v0.13 widened the CPU option from int to double to support
-	// fractional CPUs, so a declared fraction such as 0.5 is passed exactly;
-	// the daemon-wide default is always a whole number.
+	// The CPU option is a double since BoxLite v0.13, but the daemon passes
+	// whole vCPUs only: microVMSandboxResources refuses a fractional
+	// declaration before it gets here, because BoxLite enforces a fraction
+	// with a best-effort host cgroup quota it skips when the CPU controller is
+	// not delegated.
 	C.boxlite_options_set_cpus(options, C.double(resources.CPUs))
 	C.boxlite_options_set_memory(options, C.int(resources.MemoryMiB))
 	C.boxlite_options_set_disk_size_gb(options, C.int(resources.DiskSizeGB))
