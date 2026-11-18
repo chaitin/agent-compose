@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -259,4 +261,152 @@ func (*closingRuntimeInteraction) Recv() (driverpkg.RuntimeOutputFrame, error) {
 
 func (*closingRuntimeInteraction) Wait() (driverpkg.RuntimeResult, error) {
 	return driverpkg.RuntimeResult{}, errors.New("unused")
+}
+
+func TestPromptAttachHumanMessageMaterializesFiles(t *testing.T) {
+	interaction := newObservedRuntimeInteraction()
+	pump := promptInputPump{
+		Input: &promptWrapperInput{interaction: interaction},
+		Materialize: func(text string, parts []agentinput.Part) (string, error) {
+			if text != "look" || len(parts) != 1 || parts[0].File == nil {
+				t.Fatalf("materialize(%q, %+v)", text, parts)
+			}
+			return "look\n\nAttached files:\n- /workspace/a.csv", nil
+		},
+	}
+	parts := []agentinput.Part{
+		agentinput.FilePart(agentinput.File{Name: "a.csv", Source: agentinput.SourceInline, Data: []byte("a,b\n")}),
+	}
+	if !forwardPromptHumanMessage(context.Background(), pump, "look", parts, "f-1") {
+		t.Fatal("forwardPromptHumanMessage returned false")
+	}
+	frame := receiveRuntimeInputFrame(t, interaction.sent)
+	assertPromptRuntimeFrame(t, frame, "human_message", "look\n\nAttached files:\n- /workspace/a.csv")
+}
+
+func TestPromptAttachHumanMessageMaterializeFailureCancels(t *testing.T) {
+	interaction := newObservedRuntimeInteraction()
+	pump := promptInputPump{
+		Input: &promptWrapperInput{interaction: interaction},
+		Materialize: func(string, []agentinput.Part) (string, error) {
+			return "", errors.New("too large")
+		},
+	}
+	parts := []agentinput.Part{
+		agentinput.FilePart(agentinput.File{Name: "a.csv", Source: agentinput.SourceInline, Data: []byte("a,b\n")}),
+	}
+	if forwardPromptHumanMessage(context.Background(), pump, "look", parts, "f-2") {
+		t.Fatal("forwardPromptHumanMessage returned true, want cancellation")
+	}
+	frame := receiveRuntimeInputFrame(t, interaction.sent)
+	var payload struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal(frame.Data, &payload); err != nil {
+		t.Fatalf("decode frame: %v", err)
+	}
+	if payload.Type != "cancel" {
+		t.Fatalf("frame type = %q, want cancel", payload.Type)
+	}
+}
+
+func TestAttachInitialMessageDoesNotDuplicateStoredText(t *testing.T) {
+	parts := []agentinput.Part{
+		agentinput.TextPart("already merged"),
+		agentinput.FilePart(agentinput.File{Name: "a.csv", Source: agentinput.SourceInline, Data: []byte("a")}),
+	}
+	got, err := attachInitialMessage("prompt", parts, func(text string, got []agentinput.Part) (string, error) {
+		if text != "" {
+			t.Fatalf("materialize prefix = %q, want empty", text)
+		}
+		if len(got) != 2 {
+			t.Fatalf("parts = %d, want 2", len(got))
+		}
+		return "merged", nil
+	})
+	if err != nil || got != "merged" {
+		t.Fatalf("got = %q, err = %v", got, err)
+	}
+}
+
+func TestAttachInitialMessagePrefixesPromptWithoutTextParts(t *testing.T) {
+	parts := []agentinput.Part{
+		agentinput.FilePart(agentinput.File{Name: "a.csv", Source: agentinput.SourceInline, Data: []byte("a")}),
+	}
+	got, err := attachInitialMessage("look", parts, func(text string, got []agentinput.Part) (string, error) {
+		if text != "look" {
+			t.Fatalf("materialize prefix = %q, want look", text)
+		}
+		return "look\n\nAttached files", nil
+	})
+	if err != nil || got != "look\n\nAttached files" {
+		t.Fatalf("got = %q, err = %v", got, err)
+	}
+}
+
+func TestAttachInitialMessageWithoutPartsIsPrompt(t *testing.T) {
+	got, err := attachInitialMessage("plain", nil, func(string, []agentinput.Part) (string, error) {
+		t.Fatal("materialize called without parts")
+		return "", nil
+	})
+	if err != nil || got != "plain" {
+		t.Fatalf("got = %q, err = %v", got, err)
+	}
+}
+
+// The start frame may carry prompt and input together. The attach path must
+// execute the admitted request, where Normalize has already prepended the
+// prompt, instead of the raw start frame that would drop it.
+func TestPromptAttachStartFrameMergesPromptWithInput(t *testing.T) {
+	controller, configDB, runtime := newTestRunAttachController(t, []driverpkg.RuntimeOutputFrame{
+		{Type: driverpkg.RuntimeOutputStarted},
+		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":0,"type":"started","provider":"claude","sessionId":"thread-1"}` + "\n")},
+		{Type: driverpkg.RuntimeOutputStdout, Data: []byte(`{"v":1,"seq":1,"type":"result","provider":"claude","sessionId":"thread-1","stopReason":"eof","finalText":"done\n","transcript":"done\n"}` + "\n")},
+		{Type: driverpkg.RuntimeOutputResult, Result: &driverpkg.RuntimeResult{OperationID: "run-attach", ExitCode: 0, Success: true}},
+	})
+	configDB.revision.SpecJSON = `{"agents":[{"name":"worker","provider":"claude"}]}`
+	received := false
+	receive := func() (RunAttachInput, error) {
+		if received {
+			return RunAttachInput{}, io.EOF
+		}
+		received = true
+		return RunAttachInput{
+			Kind: RunAttachInputStart,
+			Mode: RunAttachModePrompt,
+			Request: RunAgentRequest{
+				ProjectID: "project-1",
+				AgentName: "worker",
+				Prompt:    "A",
+				Input: []agentinput.Part{
+					agentinput.TextPart("B"),
+					agentinput.FilePart(agentinput.File{Name: "a.csv", Source: agentinput.SourceInline, Data: []byte("a,b\n")}),
+				},
+			},
+		}, nil
+	}
+	if err := controller.RunProjectCommandAttach(context.Background(), receive, func(RunAttachOutput) error { return nil }); err != nil {
+		t.Fatalf("RunProjectCommandAttach: %v", err)
+	}
+	if runtime.interaction == nil || len(runtime.interaction.sent) < 2 {
+		t.Fatalf("runtime sent frames = %#v, want start and human message", runtime.interaction)
+	}
+	var frame struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(runtime.interaction.sent[1].Data, &frame); err != nil {
+		t.Fatalf("decode human frame: %v", err)
+	}
+	if frame.Type != "human_message" {
+		t.Fatalf("frame type = %q, want human_message", frame.Type)
+	}
+	if !strings.HasPrefix(frame.Message, "A\n\nB") {
+		t.Fatalf("human message %q does not start with the merged prompt", frame.Message)
+	}
+	for _, want := range []string{"Attached files", ".agent-compose/uploads/", "a.csv"} {
+		if !strings.Contains(frame.Message, want) {
+			t.Fatalf("human message %q does not contain %q", frame.Message, want)
+		}
+	}
 }

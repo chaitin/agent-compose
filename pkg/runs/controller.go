@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/chaitin/agent-compose/internal/projects"
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
@@ -198,9 +199,12 @@ func NewController(deps ControllerDependencies) *Controller {
 }
 
 type RunAgentRequest struct {
-	ProjectID                string
-	AgentName                string
-	Prompt                   string
+	ProjectID string
+	AgentName string
+	Prompt    string
+	// Input is the ordered multimodal turn. Empty means the prompt alone is
+	// the turn, which is the pre-vNext behavior.
+	Input                    []agentinput.Part
 	Command                  string
 	Source                   string
 	SchedulerID              string
@@ -231,6 +235,9 @@ type StartedProjectRun struct {
 	Run      domain.ProjectRunRecord
 	Execute  func(context.Context, *StreamSink) (domain.ProjectRunRecord, error, error)
 	Warnings []string
+	// AdmittedRequest is the request after trigger resolution and input
+	// admission. Prompt is the text projection of Input when Input is set.
+	AdmittedRequest RunAgentRequest
 }
 
 func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (StartedProjectRun, error) {
@@ -260,6 +267,15 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		}
 	}
 	warnings := resolved.Warnings
+	input, inputWarnings, err := c.admitAgentInput(req)
+	if err != nil {
+		return StartedProjectRun{}, err
+	}
+	if len(input) > 0 {
+		req.Input = input
+		req.Prompt = agentinput.Text(input)
+	}
+	warnings = append(warnings, inputWarnings...)
 	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
 	run, err := coordinator.BeginRun(ctx, StartRequest{
 		ProjectID:       req.ProjectID,
@@ -279,8 +295,9 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 	}
 	run = withRunWarnings(run, warnings)
 	return StartedProjectRun{
-		Run:      run,
-		Warnings: warnings,
+		Run:             run,
+		Warnings:        warnings,
+		AdmittedRequest: req,
 		Execute: func(execCtx context.Context, stream *StreamSink) (domain.ProjectRunRecord, error, error) {
 			// Async runs execute from the daemon root context. Restore only the
 			// request metadata they need instead of retaining the transport context.
@@ -330,7 +347,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	if mode == RunAttachModeUnspecified && commandText != "" {
 		mode = RunAttachModeCommand
 	}
-	if mode == RunAttachModeUnspecified && strings.TrimSpace(req.Prompt) != "" {
+	if mode == RunAttachModeUnspecified && (strings.TrimSpace(req.Prompt) != "" || len(req.Input) > 0) {
 		mode = RunAttachModePrompt
 	}
 	if mode != RunAttachModeCommand && mode != RunAttachModePrompt {
@@ -339,7 +356,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	if mode == RunAttachModeCommand && commandText == "" {
 		return fmt.Errorf("%w: run attach command is required", ErrInvalidRequest)
 	}
-	if mode == RunAttachModePrompt && strings.TrimSpace(req.Prompt) == "" {
+	if mode == RunAttachModePrompt && strings.TrimSpace(req.Prompt) == "" && len(req.Input) == 0 {
 		return fmt.Errorf("%w: run attach prompt is required", ErrInvalidRequest)
 	}
 	started, err := c.StartProjectRun(ctx, req)
@@ -379,7 +396,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	}
 	run, execErr, err := c.executeStartedProjectRunAttach(ctx, startedRunAttachContext{
 		Run:      started.Run,
-		Request:  req,
+		Request:  started.AdmittedRequest,
 		Warnings: started.Warnings,
 		Start:    first,
 		Mode:     mode,
@@ -753,6 +770,7 @@ func (c *Controller) completeProjectRunAgent(runCtx, prepCtx context.Context, sa
 		Model:             agentConfig.Model,
 		RunID:             run.RunID,
 		Message:           req.Prompt,
+		Input:             req.Input,
 		OutputSchemaJSON:  req.OutputSchemaJSON,
 		Stream: projectRunAgentExecutionStream(sandboxed.TransitionCtx, agentExecutionStreamRequest{
 			Coordinator: sandboxed.Coordinator,

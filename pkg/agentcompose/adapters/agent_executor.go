@@ -143,6 +143,7 @@ func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain
 		Model:             model,
 		RunID:             request.RunID,
 		Message:           message,
+		Input:             request.Input,
 		OutputSchemaJSON:  request.OutputSchemaJSON,
 		Detach:            detach,
 	}, run.writeChunk)

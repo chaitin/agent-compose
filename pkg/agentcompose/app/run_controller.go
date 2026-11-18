@@ -276,6 +276,7 @@ func runAttachInputFromProto(request *agentcomposev2.AttachAgentRunRequest) runs
 	case *agentcomposev2.AttachAgentRunRequest_HumanMessage:
 		input.Kind = runs.RunAttachInputHumanMessage
 		input.Text = frame.HumanMessage.GetText()
+		input.Parts = api.AgentInputPartsFromProto(frame.HumanMessage.GetInput())
 	}
 	return input
 }
@@ -285,6 +286,7 @@ func runAgentRequestFromProto(msg *agentcomposev2.RunAgentRequest) runs.RunAgent
 		ProjectID:        msg.GetProjectId(),
 		AgentName:        msg.GetAgentName(),
 		Prompt:           msg.GetPrompt(),
+		Input:            api.AgentInputPartsFromProto(msg.GetInput()),
 		Command:          msg.GetCommand(),
 		Source:           api.ProjectRunSourceFromProto(msg.GetSource()),
 		SchedulerID:      msg.GetSchedulerId(),

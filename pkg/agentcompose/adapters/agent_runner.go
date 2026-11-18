@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/compose"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -71,10 +72,30 @@ type AgentRunRequest struct {
 	Model             string
 	RunID             string
 	Message           string
-	OutputSchemaJSON  string
+	// Input is the ordered multimodal turn. Empty keeps Message as the turn.
+	Input            []agentinput.Part
+	OutputSchemaJSON string
 	// Detach runs the agent behind the guest supervisor; nil keeps the
 	// direct exec.
 	Detach *AgentRunDetach
+}
+
+// inputLimits reads the daemon-wide file limits for this run.
+func (r *AgentRunner) inputLimits() agentinput.Limits {
+	limits := agentinput.DefaultLimits()
+	if r.config == nil {
+		return limits
+	}
+	if r.config.AgentInputFileLimitBytes > 0 {
+		limits.MaxFileBytes = uint64(r.config.AgentInputFileLimitBytes)
+	}
+	if r.config.AgentInputTurnLimitBytes > 0 {
+		limits.MaxTurnBytes = uint64(r.config.AgentInputTurnLimitBytes)
+	}
+	if r.config.AgentInputFileLimit > 0 {
+		limits.MaxFiles = uint32(r.config.AgentInputFileLimit)
+	}
+	return limits
 }
 
 // AgentRunDetach is the detached-execution part of an agent run.
@@ -108,6 +129,18 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 		return domain.ExecResult{}, domain.AgentRunResult{}, err
 	}
 	guestFileWriter := r.guestFileWriterFor(session)
+	files, err := execution.WriteAgentInputFiles(ctx, execution.AgentInputFileRequest{
+		Config: r.config, Sandbox: session, RunID: runID, Input: req.Input,
+		Limits:         r.inputLimits(),
+		WriteGuestFile: guestFileWriter,
+	})
+	if err != nil {
+		return domain.ExecResult{}, domain.AgentRunResult{}, err
+	}
+	// Files are written into the workspace before the prompt so the prompt can
+	// name their sandbox paths. Every provider receives the same text; no
+	// provider-specific attachment path exists.
+	message = execution.AppendFileReferences(message, files)
 	promptPath, err := execution.WriteAgentPromptFile(ctx, execution.AgentPromptFileRequest{
 		Config: r.config, Sandbox: session, Agent: agent, Message: message, WriteGuestFile: guestFileWriter,
 	})

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -32,6 +33,9 @@ type preparedPromptInteraction struct {
 	ManagedEnv         map[string]string
 	VMState            domain.VMState
 	InteractionRuntime InteractionRuntime
+	// GuestFileWriter is non-nil for drivers without a shared filesystem
+	// (K8s) and is reused for every turn's input files.
+	GuestFileWriter execution.GuestFileWriterFunc
 }
 
 // promptAttachProviders lists the providers whose guest runner can drive the
@@ -126,6 +130,7 @@ func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx
 		Env:                env,
 		ManagedEnv:         managedEnv,
 		VMState:            vmState,
+		GuestFileWriter:    guestFileWriter,
 		InteractionRuntime: interactionRuntime,
 	}, nil
 }
@@ -217,7 +222,33 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 	inputCtx, cancelInput := context.WithCancel(ctx)
 	defer cancelInput()
 	turnReady := make(chan struct{}, 1)
-	if prompt := strings.TrimSpace(runCtx.Request.Prompt); prompt != "" {
+	turn := 0
+	materialize := func(text string, parts []agentinput.Part) (string, error) {
+		normalized, _, err := agentinput.Normalize(text, parts)
+		if err != nil {
+			return "", err
+		}
+		if err := agentinput.Validate(normalized, c.agentInputLimits()); err != nil {
+			return "", err
+		}
+		files, err := execution.WriteAgentInputFiles(ctx, execution.AgentInputFileRequest{
+			Config: c.config, Sandbox: sandbox, RunID: run.RunID, Turn: turn, Input: normalized,
+			Limits:         c.agentInputLimits(),
+			WriteGuestFile: prepared.GuestFileWriter,
+		})
+		if err != nil {
+			return "", err
+		}
+		turn++
+		return execution.AppendFileReferences(agentinput.Text(normalized), files), nil
+	}
+	initialMessage, err := attachInitialMessage(runCtx.Request.Prompt, runCtx.Request.Input, materialize)
+	if err != nil {
+		transition.ExitCode = 1
+		transition.Error = fmt.Sprintf("agent execution failed: %v", err)
+		return transition, err
+	}
+	if prompt := strings.TrimSpace(initialMessage); prompt != "" {
 		session.beginInitialPromptTurn()
 		if err := input.HumanMessage(prompt); err != nil {
 			transition.ExitCode = 1
@@ -228,7 +259,7 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 		session.enablePromptTurns()
 		releasePromptTurn(turnReady)
 	}
-	go pumpRunPromptAttachInput(inputCtx, receive, promptInputPump{Input: input, TurnReady: turnReady, OnHumanMessage: projector.AppendHumanMessageFrame})
+	go pumpRunPromptAttachInput(inputCtx, receive, promptInputPump{Input: input, TurnReady: turnReady, Materialize: materialize, OnHumanMessage: projector.AppendHumanMessageFrame})
 	return receivePromptInteractionFrames(run, sandbox, transition, promptInteractionReceiveState{Interaction: interaction, Projector: projector, TurnReady: turnReady, Session: session}, send)
 }
 
@@ -439,11 +470,30 @@ func (w *promptWrapperInput) send(frame map[string]any) error {
 	return w.interaction.Send(driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputStdin, Data: data})
 }
 
+// attachInitialMessage materializes the opening turn's files. parts normally
+// come from the admitted request, where Normalize has already merged a
+// non-empty prompt into the first text part, so the opening turn must not
+// prepend it again. If the parts carry no text at all, the prompt is still
+// prepended as a fallback. A text-only request bypasses materialization.
+func attachInitialMessage(prompt string, parts []agentinput.Part, materialize func(string, []agentinput.Part) (string, error)) (string, error) {
+	if len(parts) == 0 {
+		return prompt, nil
+	}
+	text := ""
+	if strings.TrimSpace(agentinput.Text(parts)) == "" {
+		text = prompt
+	}
+	return materialize(text, parts)
+}
+
 // promptInputPump groups the wrapper input stream, the gate that releases a
 // turn, and the callback notified of each forwarded human message.
 type promptInputPump struct {
-	Input          *promptWrapperInput
-	TurnReady      <-chan struct{}
+	Input     *promptWrapperInput
+	TurnReady <-chan struct{}
+	// Materialize turns a human message with files into the text the guest
+	// receives. nil means the message has no files.
+	Materialize    func(string, []agentinput.Part) (string, error)
 	OnHumanMessage func(string, string) error
 }
 
@@ -457,11 +507,11 @@ func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, pu
 		}
 		switch req.Kind {
 		case RunAttachInputHumanMessage:
-			if !forwardPromptHumanMessage(ctx, pump, req.Text, req.ClientFrameID) {
+			if !forwardPromptHumanMessage(ctx, pump, req.Text, req.Parts, req.ClientFrameID) {
 				return
 			}
 		case RunAttachInputStdin:
-			if !forwardPromptHumanMessage(ctx, pump, string(req.Data), req.ClientFrameID) {
+			if !forwardPromptHumanMessage(ctx, pump, string(req.Data), nil, req.ClientFrameID) {
 				return
 			}
 		case RunAttachInputStdinEOF:
@@ -477,13 +527,25 @@ func pumpRunPromptAttachInput(ctx context.Context, receive RunAttachReceiver, pu
 	}
 }
 
-func forwardPromptHumanMessage(ctx context.Context, pump promptInputPump, text, clientFrameID string) bool {
+func forwardPromptHumanMessage(ctx context.Context, pump promptInputPump, text string, parts []agentinput.Part, clientFrameID string) bool {
 	if pump.TurnReady != nil {
 		select {
 		case <-ctx.Done():
 			return false
 		case <-pump.TurnReady:
 		}
+	}
+	if len(parts) > 0 {
+		if pump.Materialize == nil {
+			_ = pump.Input.Cancel("human message input is unsupported")
+			return false
+		}
+		materialized, err := pump.Materialize(text, parts)
+		if err != nil {
+			_ = pump.Input.Cancel("invalid human message input: " + err.Error())
+			return false
+		}
+		text = materialized
 	}
 	if pump.OnHumanMessage != nil {
 		if err := pump.OnHumanMessage(text, clientFrameID); err != nil {

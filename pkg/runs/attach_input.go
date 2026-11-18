@@ -1,5 +1,7 @@
 package runs
 
+import "github.com/chaitin/agent-compose/pkg/agentinput"
+
 type RunAttachInputKind string
 
 const (
@@ -42,7 +44,10 @@ type RunAttachInput struct {
 	Signal           string
 	Reason           string
 	Text             string
-	ClientFrameID    string
+	// Parts is the ordered text/file input of a human message. Empty keeps
+	// Text as the whole message.
+	Parts         []agentinput.Part
+	ClientFrameID string
 }
 
 type RunAttachReceiver func() (RunAttachInput, error)

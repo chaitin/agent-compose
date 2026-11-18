@@ -7,7 +7,9 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/capmatrix"
+	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 )
 
@@ -16,11 +18,13 @@ import (
 // startup, so this handler never probes a driver.
 type EngineCapabilitiesV2Handler struct {
 	snapshot capmatrix.Snapshot
+	config   *appconfig.Config
 }
 
-// NewEngineCapabilitiesV2Handler injects the startup capability snapshot.
-func NewEngineCapabilitiesV2Handler(snapshot capmatrix.Snapshot) *EngineCapabilitiesV2Handler {
-	return &EngineCapabilitiesV2Handler{snapshot: snapshot}
+// NewEngineCapabilitiesV2Handler injects the startup capability snapshot and
+// the daemon configuration that supplies the input limits.
+func NewEngineCapabilitiesV2Handler(snapshot capmatrix.Snapshot, config *appconfig.Config) *EngineCapabilitiesV2Handler {
+	return &EngineCapabilitiesV2Handler{snapshot: snapshot, config: config}
 }
 
 // GetCapabilities returns the frozen matrix. The snapshot is re-validated
@@ -35,6 +39,7 @@ func (h *EngineCapabilitiesV2Handler) GetCapabilities(_ context.Context, _ *conn
 		CompiledDriversNote: capmatrix.CompiledDriversSemantics,
 		CapturedAt:          timestamppb.New(h.snapshot.CapturedAt()),
 		Observations:        engineObservedCapabilitiesV2(h.snapshot.Observations()),
+		InputLimits:         engineInputLimitsV2(h.config),
 	}
 	for _, declaration := range h.snapshot.Drivers() {
 		driver := &agentcomposev2.EngineDriverCapabilities{Driver: declaration.Driver}
@@ -74,4 +79,24 @@ func engineProviderCapabilitiesV2(declaration capmatrix.ProviderCapabilities) *a
 		})
 	}
 	return entry
+}
+
+func engineInputLimitsV2(config *appconfig.Config) *agentcomposev2.EngineInputLimits {
+	limits := agentinput.DefaultLimits()
+	if config != nil {
+		if config.AgentInputFileLimitBytes > 0 {
+			limits.MaxFileBytes = uint64(config.AgentInputFileLimitBytes)
+		}
+		if config.AgentInputTurnLimitBytes > 0 {
+			limits.MaxTurnBytes = uint64(config.AgentInputTurnLimitBytes)
+		}
+		if config.AgentInputFileLimit > 0 {
+			limits.MaxFiles = uint32(config.AgentInputFileLimit)
+		}
+	}
+	return &agentcomposev2.EngineInputLimits{
+		MaxFileBytes: limits.MaxFileBytes,
+		MaxTurnBytes: limits.MaxTurnBytes,
+		MaxFiles:     limits.MaxFiles,
+	}
 }

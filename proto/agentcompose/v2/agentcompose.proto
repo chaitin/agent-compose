@@ -1313,6 +1313,19 @@ message RunAgentRequest {
   string payload_json = 16;
   // Optional user-defined key/value labels attached to the run at start time.
   map<string, string> labels = 17;
+
+  // Ordered text and file input. A non-empty prompt is prepended as the first
+  // text part, so an existing caller can keep sending prompt and add files
+  // without changing what the model reads first. When input is empty the
+  // prompt alone is the turn. Files are materialized inside the sandbox
+  // workspace and their paths are appended to the prompt; no provider-specific
+  // multimodal handling is involved, and any file type is accepted up to the
+  // configured limits.
+  //
+  // The start frame of interactive prompt attach (AttachAgentRun, or
+  // StartAgentRun with interactive=true) accepts the same parts and applies the
+  // same prompt merge; later human turns use AttachHumanMessage.input.
+  repeated AgentInputPart input = 18;
 }
 
 message RunAgentResponse {
@@ -1867,6 +1880,10 @@ message AttachSignal {
 message AttachHumanMessage {
   string text = 1;
   map<string, string> metadata = 2;
+  // Ordered text and file input for this human turn. Files are materialized
+  // inside the sandbox workspace and their paths are appended to the message,
+  // exactly like RunAgentRequest.input.
+  repeated AgentInputPart input = 3;
 }
 
 message AttachCancel {
@@ -2826,6 +2843,84 @@ message GetEngineCapabilitiesResponse {
   // system probe plus any measured process facts frozen with it. Source on each
   // entry is "measured" or "simulated", never "declared".
   repeated EngineObservedCapability observations = 6;
+  // Daemon-wide input limits. Absent means this daemon predates multimodal
+  // input and a client must not send AgentInputPart media.
+  EngineInputLimits input_limits = 7;
+}
+
+// AgentInputPart is one ordered piece of one human turn.
+//
+// Text and files share one ordered array. Files are provider-neutral: the
+// daemon materializes each one inside the sandbox workspace and appends its
+// path to the prompt, so any harness can read it with its own tools. No
+// provider-specific multimodal handling is involved.
+message AgentInputPart {
+  oneof part {
+    // Plain text. An empty string is invalid; omit the part instead.
+    string text = 1;
+
+    // One file. Exactly one source must be set.
+    AgentInputFile file = 2;
+  }
+}
+
+message AgentInputFile {
+  // Required. Display name and, after sanitizing, the materialized file name.
+  // Never an absolute path.
+  string filename = 1;
+
+  // Optional IANA media type for display and tooling. It never gates
+  // acceptance: every type is accepted up to the daemon limits.
+  string media_type = 2;
+
+  oneof source {
+    // Bytes supplied by the caller. The daemon writes them under the sandbox
+    // workspace before the turn starts.
+    AgentInputFileBytes bytes = 3;
+
+    // A file that already exists inside the sandbox workspace.
+    AgentInputFileWorkspacePath workspace_path = 4;
+  }
+
+  // Field 5 is reserved for a future upload-reference source (for example an
+  // upload_id returned by a streaming upload RPC). Reserving it now keeps the
+  // layout stable when that source is implemented.
+  reserved 5;
+}
+
+message AgentInputFileBytes {
+  // Raw bytes; JSON transports encode them as base64.
+  bytes data = 1;
+
+  // Optional content digest. When set, the server verifies it and rejects a
+  // mismatch with INVALID_ARGUMENT.
+  string sha256 = 2;
+}
+
+message AgentInputFileWorkspacePath {
+  // Workspace-relative, slash-separated path with the same grammar as
+  // SandboxWorkspaceEntry.path. Absolute paths, ".." escapes, NUL bytes, and
+  // components that are symlinks are rejected.
+  string path = 1;
+
+  // Optional content digest. When the daemon shares the sandbox filesystem it
+  // verifies the file and rejects a mismatch with INVALID_ARGUMENT. Drivers
+  // without shared storage (K8s) cannot read the file before the turn, so they
+  // treat it as informational instead.
+  string sha256 = 2;
+}
+
+// EngineInputLimits are daemon-wide admission limits. They come from
+// AGENT_INPUT_* configuration and are reported so a client can validate
+// before sending a request that would be rejected.
+message EngineInputLimits {
+  // Maximum bytes for one AgentInputFile.
+  uint64 max_file_bytes = 1;
+  // Maximum total file bytes in one turn.
+  uint64 max_turn_bytes = 2;
+  // Maximum number of files in one turn. Text parts are not counted, so a
+  // prompt or interleaved text does not consume the file budget.
+  uint32 max_files = 3;
 }
 
 enum RunHistoryKind {

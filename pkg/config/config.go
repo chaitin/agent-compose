@@ -20,6 +20,14 @@ import (
 )
 
 const DefaultWorkspaceUploadLimitBytes int64 = 1 << 30
+
+// Default agent input limits. They are daemon-wide and overridable through
+// AGENT_INPUT_* environment variables.
+const (
+	DefaultAgentInputFileLimitBytes int64 = 10 << 20
+	DefaultAgentInputTurnLimitBytes int64 = 32 << 20
+	DefaultAgentInputFileLimit      int   = 20
+)
 const DefaultAgentComposeSocketPath = "/var/run/agent-compose.sock"
 const DefaultAgentTimeout = 10 * time.Hour
 
@@ -71,6 +79,9 @@ type Config struct {
 	WebhookQueueRulesJSON      string
 	WebhookQueueDefaultWorkers int
 	WorkspaceUploadLimitBytes  int64
+	AgentInputFileLimitBytes   int64
+	AgentInputTurnLimitBytes   int64
+	AgentInputFileLimit        int
 	LLMAPIEndpoint             string
 	LLMAPIProtocol             string
 	LLMAPIKey                  string
@@ -458,6 +469,9 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		WebhookQueueRulesJSON:       httpLimits.WebhookQueueRulesJSON,
 		WebhookQueueDefaultWorkers:  httpLimits.WebhookQueueDefaultWorkers,
 		WorkspaceUploadLimitBytes:   httpLimits.WorkspaceUploadLimitBytes,
+		AgentInputFileLimitBytes:    httpLimits.AgentInputFileLimitBytes,
+		AgentInputTurnLimitBytes:    httpLimits.AgentInputTurnLimitBytes,
+		AgentInputFileLimit:         httpLimits.AgentInputFileLimit,
 		LLMAPIEndpoint:              llm.LLMAPIEndpoint,
 		LLMAPIProtocol:              llm.LLMAPIProtocol,
 		LLMAPIKey:                   llm.LLMAPIKey,
@@ -1377,6 +1391,9 @@ type httpLimitsConfig struct {
 	WebhookQueueRulesJSON      string
 	WebhookQueueDefaultWorkers int
 	WorkspaceUploadLimitBytes  int64
+	AgentInputFileLimitBytes   int64
+	AgentInputTurnLimitBytes   int64
+	AgentInputFileLimit        int
 }
 
 func loadHTTPLimitsConfig(logger *slog.Logger) httpLimitsConfig {
@@ -1413,7 +1430,36 @@ func loadHTTPLimitsConfig(logger *slog.Logger) httpLimitsConfig {
 		WebhookQueueRulesJSON:      webhookQueueRulesJSON,
 		WebhookQueueDefaultWorkers: webhookQueueDefaultWorkers,
 		WorkspaceUploadLimitBytes:  workspaceUploadLimitBytes,
+		AgentInputFileLimitBytes:   positiveInt64Env(logger, "AGENT_INPUT_FILE_LIMIT_BYTES", DefaultAgentInputFileLimitBytes),
+		AgentInputTurnLimitBytes:   positiveInt64Env(logger, "AGENT_INPUT_TURN_LIMIT_BYTES", DefaultAgentInputTurnLimitBytes),
+		AgentInputFileLimit:        positiveIntEnv(logger, "AGENT_INPUT_FILE_LIMIT", DefaultAgentInputFileLimit),
 	}
+}
+
+func positiveInt64Env(logger *slog.Logger, name string, fallback int64) int64 {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	var parsed int64
+	if _, err := fmt.Sscanf(raw, "%d", &parsed); err != nil || parsed <= 0 {
+		logger.Warn("failed to parse "+name, "value", raw, "error", err)
+		return fallback
+	}
+	return parsed
+}
+
+func positiveIntEnv(logger *slog.Logger, name string, fallback int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	var parsed int
+	if _, err := fmt.Sscanf(raw, "%d", &parsed); err != nil || parsed <= 0 {
+		logger.Warn("failed to parse "+name, "value", raw, "error", err)
+		return fallback
+	}
+	return parsed
 }
 
 // configPathsToNormalize bundles the filesystem paths NewConfig resolves to

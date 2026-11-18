@@ -187,7 +187,7 @@ func RegisterRoutes(di do.Injector) {
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewCapabilityServiceHandler(api.NewCapabilityV2Handler(do.MustInvoke[capabilities.Provider](di), capabilityRuntimeConfig{config: do.MustInvoke[*appconfig.Config](di)}), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
-	path, handler = agentcomposev2connect.NewEngineServiceHandler(api.NewEngineCapabilitiesV2Handler(do.MustInvoke[capmatrix.Snapshot](di)), handlerOptions...)
+	path, handler = agentcomposev2connect.NewEngineServiceHandler(api.NewEngineCapabilitiesV2Handler(do.MustInvoke[capmatrix.Snapshot](di), do.MustInvoke[*appconfig.Config](di)), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewLLMServiceHandler(api.NewLLMHandler(do.MustInvoke[*adapters.LLMClient](di), do.MustInvoke[*configstore.ConfigStore](di)).WithUpstreamProbe(do.MustInvoke[*adapters.LLMUpstreamProber](di)), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
