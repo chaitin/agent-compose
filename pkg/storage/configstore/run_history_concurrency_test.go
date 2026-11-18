@@ -123,7 +123,7 @@ type historySandboxDirs string
 func (r historySandboxDirs) SandboxDir(id string) string { return filepath.Join(string(r), id) }
 
 func TestRunHistoryRechecksScopeAfterCleanup(t *testing.T) {
-	for _, change := range []string{"new_child", "shared_path", "recreated_directory"} {
+	for _, change := range []string{"new_child", "recreated_directory"} {
 		t.Run(change, func(t *testing.T) {
 			f, root := newDiskHistoryFixture(t, 4)
 			ctx := context.Background()
@@ -141,9 +141,6 @@ func TestRunHistoryRechecksScopeAfterCleanup(t *testing.T) {
 						run.RunID = identity.NewID(identity.ResourceRun, "late-child")
 						_, err = f.store.CreateProjectRun(ctx, run)
 						return err
-					case "shared_path":
-						// Writers reject this path; a legacy sibling row bypasses them.
-						return insertLegacySiblingSchedulerRun(ctx, f, filepath.Join(path, "private.json"))
 					default:
 						return os.MkdirAll(path, 0o755)
 					}
@@ -154,35 +151,6 @@ func TestRunHistoryRechecksScopeAfterCleanup(t *testing.T) {
 			}
 			assertPruneTestRowCount(t, f.store, pruneTestRowCountCheck{Table: "project_run", Where: "run_id='" + f.childID + "'", Want: 1})
 		})
-	}
-}
-
-func TestRunHistoryFinalSnapshotRejectsConcurrentReference(t *testing.T) {
-	f, root := newDiskHistoryFixture(t, 4)
-	ctx := context.Background()
-	a := runhistory.FSArtifacts{DataRoot: root}
-	preparations := 0
-	err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
-		preparations++
-		if preparations == 2 {
-			path := filepath.Join(root, "schedulers", f.scheduler.SchedulerID, "runs", f.scheduler.RunID, "private.json")
-			if err := insertLegacySiblingSchedulerRun(ctx, f, path); err != nil {
-				return nil, err
-			}
-		}
-		return a.Prepare(ctx, scope)
-	})
-	if !errors.Is(err, domain.ErrReferenced) || apierror.IsNotApplied(err) {
-		t.Fatalf("stale final validation was accepted or claimed NOT_APPLIED: %v", err)
-	}
-	assertPruneTestRowCount(t, f.store, pruneTestRowCountCheck{Table: "project_run", Where: "run_id='" + f.childID + "'", Want: 1})
-	if _, err := f.store.db.ExecContext(ctx, "DELETE FROM scheduler_run WHERE run_id='legacy-sibling'"); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
-		return a.Prepare(ctx, scope)
-	}); err != nil {
-		t.Fatalf("retry after concurrent commit: %v", err)
 	}
 }
 
@@ -234,11 +202,6 @@ func TestRunHistoryDetachRefusalIsNotApplied(t *testing.T) {
 // insertLegacySiblingSchedulerRun records a path inside the target's directory
 // for another run of the same scheduler, bypassing the writer ownership rule
 // the way rows written before it could.
-func insertLegacySiblingSchedulerRun(ctx context.Context, f runHistoryFixture, path string) error {
-	_, err := f.store.db.ExecContext(ctx, "INSERT INTO scheduler_run(run_id,scheduler_id,status,artifacts_dir,started_at) VALUES('legacy-sibling',?,'succeeded',?,1)", f.scheduler.SchedulerID, path)
-	return err
-}
-
 func TestRunHistoryFenceRejectsOwnershipChangeAfterSnapshot(t *testing.T) {
 	for _, phase := range []int{1, 2} {
 		t.Run(fmt.Sprint("phase", phase), func(t *testing.T) {

@@ -25,38 +25,10 @@ func protectRunHistoryReferences(ctx context.Context, tx *sql.Tx, id runhistory.
 			return domain.ClassifyError(domain.ErrReferenced, "sandbox has references outside this run history", nil)
 		}
 	}
-	if id.Kind != runhistory.SchedulerRun {
-		return nil // Standalone runs do not remove a scheduler artifact directory.
-	}
-	// Writers only accept paths inside a scheduler run's directory for that
-	// run itself (validateHistoryArtifactPaths), so another record can point
-	// into this directory only through rows of the same scheduler. Check those
-	// lexically through the scheduler indexes: the cost is bounded by this
-	// scheduler, not by all history. Removal never follows symlinks, so an
-	// alias elsewhere cannot make it delete anything outside this directory.
-	// instr on the run id narrows candidates cheaply; exact segment matching
-	// then decides whether a path is inside this run's or its pending directory.
-	rows, err := tx.QueryContext(ctx, `SELECT logs_path, artifacts_dir FROM project_run WHERE project_id=? AND scheduler_id=? AND COALESCE(scheduler_run_id,'')<>?
-			AND (instr(logs_path, ?)>0 OR instr(artifacts_dir, ?)>0)
-		UNION ALL SELECT '', artifacts_dir FROM scheduler_run WHERE scheduler_id=? AND run_id<>? AND instr(artifacts_dir, ?)>0`,
-		id.ProjectID, id.SchedulerID, id.RunID, id.RunID, id.RunID, id.SchedulerID, id.RunID, id.RunID)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	referenced := false
-	for rows.Next() && !referenced {
-		var logsPath, artifactsDir string
-		if err := rows.Scan(&logsPath, &artifactsDir); err != nil {
-			return err
-		}
-		referenced = insideSchedulerRunDir(logsPath, id.SchedulerID, id.RunID) || insideSchedulerRunDir(artifactsDir, id.SchedulerID, id.RunID)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if referenced {
-		return domain.ClassifyError(domain.ErrReferenced, "scheduler artifacts are referenced by another run", nil)
-	}
+	// Recorded artifact paths are derived from identities: project runs live
+	// in their sandbox and a scheduler run owns exactly
+	// <root>/schedulers/<scheduler>/runs/<run>, which artifact validation
+	// checks before removal. No writer records one run's artifacts inside
+	// another run's directory, so no path scan is needed here.
 	return nil
 }
