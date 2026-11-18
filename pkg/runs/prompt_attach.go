@@ -33,6 +33,9 @@ type preparedPromptInteraction struct {
 	ManagedEnv         map[string]string
 	VMState            domain.VMState
 	InteractionRuntime InteractionRuntime
+	// GuestFileWriter is non-nil for drivers without a shared filesystem
+	// (K8s) and is reused for every turn's input files.
+	GuestFileWriter execution.GuestFileWriterFunc
 }
 
 // promptAttachProviders lists the providers whose guest runner can drive the
@@ -127,6 +130,7 @@ func (c *Controller) preparePromptInteractionRuntime(ctx context.Context, runCtx
 		Env:                env,
 		ManagedEnv:         managedEnv,
 		VMState:            vmState,
+		GuestFileWriter:    guestFileWriter,
 		InteractionRuntime: interactionRuntime,
 	}, nil
 }
@@ -229,7 +233,8 @@ func (c *Controller) runPromptInteractionSession(ctx context.Context, runCtx int
 		}
 		files, err := execution.WriteAgentInputFiles(ctx, execution.AgentInputFileRequest{
 			Config: c.config, Sandbox: sandbox, RunID: run.RunID, Turn: turn, Input: normalized,
-			Limits: c.agentInputLimits(),
+			Limits:         c.agentInputLimits(),
+			WriteGuestFile: prepared.GuestFileWriter,
 		})
 		if err != nil {
 			return "", err

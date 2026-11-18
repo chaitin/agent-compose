@@ -32,14 +32,6 @@ func TestWriteAgentInputFilesWritesIntoWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(workspace, "reports", "q3.pdf"), []byte("%PDF-1.7"), 0o644); err != nil {
 		t.Fatalf("write report: %v", err)
 	}
-	var pushed map[string][]byte
-	writer := func(_ context.Context, guestPath string, content []byte) error {
-		if pushed == nil {
-			pushed = make(map[string][]byte)
-		}
-		pushed[guestPath] = append([]byte(nil), content...)
-		return nil
-	}
 	input := []agentinput.Part{
 		agentinput.TextPart("compare"),
 		agentinput.FilePart(agentinput.File{Name: "data.csv", MediaType: "text/csv", Source: agentinput.SourceInline, Data: []byte("a,b\n1,2\n")}),
@@ -47,8 +39,7 @@ func TestWriteAgentInputFilesWritesIntoWorkspace(t *testing.T) {
 	}
 	files, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
 		Config: config, Sandbox: session, RunID: "run-1", Input: input,
-		Limits:         agentinput.Limits{MaxFileBytes: 1 << 20},
-		WriteGuestFile: writer,
+		Limits: agentinput.Limits{MaxFileBytes: 1 << 20},
 	})
 	if err != nil {
 		t.Fatalf("WriteAgentInputFiles: %v", err)
@@ -64,9 +55,6 @@ func TestWriteAgentInputFilesWritesIntoWorkspace(t *testing.T) {
 	if data, err := os.ReadFile(hostInline); err != nil || string(data) != "a,b\n1,2\n" {
 		t.Fatalf("inline file in workspace = %q, %v", data, err)
 	}
-	if string(pushed[wantInline]) != "a,b\n1,2\n" {
-		t.Errorf("inline file was not pushed to the guest")
-	}
 	if files[1].GuestPath != "/workspace/reports/q3.pdf" || files[1].Name != "q3.pdf" {
 		t.Errorf("workspace file = %+v", files[1])
 	}
@@ -76,6 +64,69 @@ func TestWriteAgentInputFilesWritesIntoWorkspace(t *testing.T) {
 		if !strings.Contains(message, want) {
 			t.Errorf("prompt %q does not contain %q", message, want)
 		}
+	}
+}
+
+func TestWriteAgentInputFilesPushesInlineFileToGuest(t *testing.T) {
+	session, config, workspace := inputSandbox(t)
+	var pushed map[string][]byte
+	writer := func(_ context.Context, guestPath string, content []byte) error {
+		if pushed == nil {
+			pushed = make(map[string][]byte)
+		}
+		pushed[guestPath] = append([]byte(nil), content...)
+		return nil
+	}
+	files, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+		Config: config, Sandbox: session, RunID: "run-guest",
+		Input: []agentinput.Part{
+			agentinput.TextPart("read"),
+			agentinput.FilePart(agentinput.File{Name: "data.csv", Source: agentinput.SourceInline, Data: []byte("a,b\n")}),
+		},
+		Limits:         agentinput.Limits{MaxFileBytes: 1024},
+		WriteGuestFile: writer,
+	})
+	if err != nil {
+		t.Fatalf("WriteAgentInputFiles: %v", err)
+	}
+	wantGuest := "/workspace/.agent-compose/uploads/run-guest/turn-0/data.csv"
+	if len(files) != 1 || files[0].GuestPath != wantGuest {
+		t.Fatalf("files = %+v, want %s", files, wantGuest)
+	}
+	if string(pushed[wantGuest]) != "a,b\n" {
+		t.Errorf("pushed content = %q, want the inline bytes", pushed[wantGuest])
+	}
+	if _, err := os.Stat(filepath.Join(workspace, ".agent-compose", "uploads", "run-guest", "turn-0", "data.csv")); err != nil {
+		t.Errorf("daemon-side bookkeeping copy missing: %v", err)
+	}
+}
+
+func TestWriteAgentInputFilesSkipsWorkspaceChecksWithoutSharedFilesystem(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: workspace}}
+	config := &appconfig.Config{GuestStateRoot: "/sandbox/state", GuestWorkspacePath: "/workspace"}
+	writer := func(_ context.Context, _ string, _ []byte) error { return nil }
+	// The first inline file creates a daemon-local workspace root. That must not
+	// make the daemon treat the pod's workspace reference as locally readable.
+	files, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+		Config: config, Sandbox: session, RunID: "run-k8s",
+		Input: []agentinput.Part{
+			agentinput.TextPart("read"),
+			agentinput.FilePart(agentinput.File{Name: "new.csv", Source: agentinput.SourceInline, Data: []byte("a,b\n")}),
+			agentinput.FilePart(agentinput.File{Name: "pod-only.csv", Source: agentinput.SourceWorkspacePath, WorkspacePath: "pod-only.csv"}),
+		},
+		Limits:         agentinput.Limits{MaxFileBytes: 1024},
+		WriteGuestFile: writer,
+	})
+	if err != nil {
+		t.Fatalf("WriteAgentInputFiles: %v", err)
+	}
+	if len(files) != 2 || files[1].GuestPath != "/workspace/pod-only.csv" {
+		t.Fatalf("files = %+v, want the pod path returned unchecked", files)
+	}
+	if _, err := os.Stat(workspace); err != nil {
+		t.Fatalf("inline upload did not create the daemon-side bookkeeping root: %v", err)
 	}
 }
 
@@ -187,5 +238,28 @@ func TestWriteAgentInputFilesNumbersTurnDirectories(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workspace, ".agent-compose", "uploads", "run-7", "turn-2", "a.csv")); err != nil {
 		t.Fatalf("turn-2 file missing: %v", err)
+	}
+}
+
+func TestWriteAgentInputFilesRejectsSymlinkedUploadParent(t *testing.T) {
+	session, config, workspace := inputSandbox(t)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(workspace, ".agent-compose")); err != nil {
+		t.Fatalf("symlink upload parent: %v", err)
+	}
+	_, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+		Config: config, Sandbox: session, RunID: "run-symlink",
+		Input:  []agentinput.Part{agentinput.TextPart("read"), agentinput.FilePart(agentinput.File{Name: "data.csv", Source: agentinput.SourceInline, Data: []byte("a,b\n")})},
+		Limits: agentinput.Limits{MaxFileBytes: 1024},
+	})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("err = %v, want a symlinked-directory error", err)
+	}
+	entries, readErr := os.ReadDir(outside)
+	if readErr != nil {
+		t.Fatalf("read outside directory: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("upload escaped the workspace and wrote %v", entries)
 	}
 }

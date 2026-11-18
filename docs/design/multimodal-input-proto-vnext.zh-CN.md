@@ -161,12 +161,12 @@ runtime、guest ABI、provider 适配层都不参与文件处理。
 - 只接受 workspace 相对路径，拒绝绝对路径、`..` 逃逸、NUL、超长路径；
 - 文件名经过严格清洗，不参与路径解析，重名由 `-<index>` 消解；
 - 上传目录固定在 `.agent-compose/uploads/`，不覆盖 workspace 内已有文件（重名只影响本次上传目录）；
-- `bytes` 可选 sha256 校验；共享文件系统上，`workspace_path` 的每个分量由 daemon `lstat` 检查，拒绝符号链接、缺失文件与非普通文件（K8s 见 §7）；上传文件以 `O_EXCL` 写入，不跟随 workspace 中预置的符号链接；
+- `bytes` 可选 sha256 校验；共享文件系统上，`workspace_path` 的每个分量由 daemon `lstat` 检查，拒绝符号链接、缺失文件与非普通文件（K8s 见 §7）；上传目录以 workspace 根为锚逐段创建，已存在的符号链接一律拒绝，文件以 `O_EXCL` 写入，不跟随 workspace 中预置的符号链接；
 - 不把类型当安全边界：任意类型都可能包含主动内容，但文件只交给 sandbox 内的 agent 工具，不进入控制面解析。
 
 ## 7. 已知限制
 
-- **K8s 上的 workspace 路径**：daemon 读不到 Pod 内文件，`workspace_path` 来源不预检存在性、符号链接与大小；文件不存在或不可读时由 harness 在读取时报错。内联 `bytes` 始终在 daemon 侧校验。需要严格上限的调用方应使用 `bytes`。
+- **K8s 上的 workspace 路径**：daemon 读不到 Pod 内文件，`workspace_path` 来源不预检存在性、符号链接与大小；文件不存在或不可读时由 harness 在读取时报错。是否需要 daemon 侧预检由驱动的共享文件系统能力决定（非 K8s 驱动传 nil `GuestFileWriter`，K8s 传非 nil），与 daemon 本地 workspace 目录是否存在无关。内联 `bytes` 始终在 daemon 侧校验。需要严格上限的调用方应使用 `bytes`。
 - **模型是否"看懂"文件**：取决于 harness 的工具与上游模型；本接口只保证文件可访问、路径已给出。
 - **交互式 attach 的实时文件流**：服务端与单测已支持 `AttachHumanMessage.input`；本轮用同 sandbox 连续 run 做了多轮实测，attach 的实时 h2c 客户端未纳入本次自动化（不影响同一物化逻辑）。
 - **不持久化文件描述**：`RunDetail` 只记录文本投影，不记录附件列表；后续 PR 再补。

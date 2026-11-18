@@ -50,9 +50,13 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) ([]Res
 	appconfig.ApplyDefaultGuestPaths(req.Config)
 	segment := runStateSegment(runID)
 	turnDir := fmt.Sprintf("turn-%d", req.Turn)
-	hostDir := filepath.Join(session.Summary.WorkspacePath, ".agent-compose", "uploads", segment, turnDir)
-	guestRel := filepath.Join(".agent-compose", "uploads", segment, turnDir)
-	guestDir := filepath.Join(req.Config.GuestWorkspacePath, guestRel)
+	uploadRel := filepath.Join(".agent-compose", "uploads", segment, turnDir)
+	guestDir := filepath.Join(req.Config.GuestWorkspacePath, uploadRel)
+	// A nil writer is the established marker for a driver that shares the
+	// sandbox filesystem (docker/boxlite/microsandbox). A non-nil writer means
+	// only the guest can see the workspace (K8s), so a daemon-local path must
+	// not be mistaken for the pod's file.
+	workspaceShared := writeGuestFile == nil
 	limits := req.Limits
 	if limits.MaxFileBytes == 0 {
 		limits.MaxFileBytes = agentinput.DefaultMaxFileBytes
@@ -65,15 +69,17 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) ([]Res
 			continue
 		}
 		file, err := writeAgentInputFile(ctx, agentInputFileDeps{
-			config:         req.Config,
-			session:        session,
-			hostDir:        hostDir,
-			guestDir:       guestDir,
-			index:          index,
-			file:           *part.File,
-			limits:         limits,
-			used:           used,
-			writeGuestFile: writeGuestFile,
+			config:          req.Config,
+			session:         session,
+			workspaceRoot:   session.Summary.WorkspacePath,
+			uploadRel:       uploadRel,
+			guestDir:        guestDir,
+			workspaceShared: workspaceShared,
+			index:           index,
+			file:            *part.File,
+			limits:          limits,
+			used:            used,
+			writeGuestFile:  writeGuestFile,
 		})
 		if err != nil {
 			return nil, err
@@ -84,15 +90,17 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) ([]Res
 }
 
 type agentInputFileDeps struct {
-	config         *appconfig.Config
-	session        *domain.Sandbox
-	hostDir        string
-	guestDir       string
-	index          int
-	file           agentinput.File
-	limits         agentinput.Limits
-	used           map[string]struct{}
-	writeGuestFile GuestFileWriterFunc
+	config          *appconfig.Config
+	session         *domain.Sandbox
+	workspaceRoot   string
+	uploadRel       string
+	guestDir        string
+	workspaceShared bool
+	index           int
+	file            agentinput.File
+	limits          agentinput.Limits
+	used            map[string]struct{}
+	writeGuestFile  GuestFileWriterFunc
 }
 
 func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (ResolvedFile, error) {
@@ -100,22 +108,8 @@ func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (Resolved
 	switch file.Source {
 	case agentinput.SourceInline:
 		name := uniqueAgentInputName(deps.used, deps.index, agentinput.SafeFileName(file.Name, file.MediaType))
-		if err := os.MkdirAll(deps.hostDir, 0o755); err != nil {
-			return ResolvedFile{}, fmt.Errorf("create agent input dir: %w", err)
-		}
-		hostPath := filepath.Join(deps.hostDir, name)
-		// O_EXCL refuses an existing path, including a symlink an earlier agent
-		// could have planted in the workspace, so the write never follows one.
-		handle, err := os.OpenFile(hostPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
+		if err := writeAgentInputUpload(deps.workspaceRoot, filepath.Join(deps.uploadRel, name), file.Data); err != nil {
 			return ResolvedFile{}, fmt.Errorf("write agent input file %d: %w", deps.index, err)
-		}
-		if _, err := handle.Write(file.Data); err != nil {
-			_ = handle.Close()
-			return ResolvedFile{}, fmt.Errorf("write agent input file %d: %w", deps.index, err)
-		}
-		if err := handle.Close(); err != nil {
-			return ResolvedFile{}, fmt.Errorf("close agent input file %d: %w", deps.index, err)
 		}
 		guestPath := filepath.Join(deps.guestDir, name)
 		if deps.writeGuestFile != nil {
@@ -129,7 +123,7 @@ func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (Resolved
 		if err != nil {
 			return ResolvedFile{}, fmt.Errorf("agent input file %d: %w", deps.index, err)
 		}
-		size, err := checkWorkspaceFile(deps.session, cleaned)
+		size, err := checkWorkspaceFile(deps.session, cleaned, deps.workspaceShared)
 		if err != nil {
 			return ResolvedFile{}, fmt.Errorf("agent input file %d: %w", deps.index, err)
 		}
@@ -151,12 +145,17 @@ func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (Resolved
 // with lstat, rejecting symlinks and missing files; a symlink could otherwise
 // expose daemon-owned state to the agent.
 //
-// K8s does not share the filesystem: the workspace root is absent, so the
-// reference is returned unchecked and the harness fails if it cannot read it.
-func checkWorkspaceFile(session *domain.Sandbox, relative string) (int64, error) {
+// K8s does not share the filesystem: a daemon-local workspace path is not the
+// pod's workspace, so the reference is returned unchecked and the harness fails
+// if it cannot read it. workspaceShared comes from the caller's driver
+// capability, never from whether a local directory happens to exist.
+func checkWorkspaceFile(session *domain.Sandbox, relative string, workspaceShared bool) (int64, error) {
+	if !workspaceShared {
+		return 0, nil
+	}
 	root := session.Summary.WorkspacePath
 	if _, err := os.Stat(root); err != nil {
-		return 0, nil
+		return 0, fmt.Errorf("workspace file %q is not readable", relative)
 	}
 	current := root
 	segments := strings.Split(relative, "/")
