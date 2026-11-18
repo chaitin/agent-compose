@@ -34,6 +34,12 @@ type Sandbox struct {
 	// from the compose declaration. A nil policy means the sandbox declared no
 	// network policy, which keeps today's unrestricted behavior (D3).
 	NetworkPolicy *SandboxNetworkPolicy `json:"network_policy,omitempty"`
+	// ResourceLimits is the CPU and memory ceiling the agent declared in
+	// policy.resources. A nil value is undeclared: microVM drivers keep the
+	// daemon-wide sizing and Docker and Kubernetes apply no limit. A declared
+	// value is a hard requirement; a driver that cannot apply it must fail
+	// the create rather than start the sandbox unconstrained.
+	ResourceLimits *SandboxResourceLimits `json:"resource_limits,omitempty"`
 	// ProxyEnv, when set, is invoked by a driver at the moment it builds the
 	// environment of a runtime it is creating, and never when it reuses one.
 	//

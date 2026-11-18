@@ -29,6 +29,11 @@ const (
 	mechanismSDKNetworkPolicy        = "sdk_network_policy"
 	mechanismDockerCapabilityDrop    = "docker_capability_drop"
 	mechanismK8sCapabilityDrop       = "k8s_capability_drop"
+	// mechanismDockerHostConfigResources and mechanismK8sContainerResources
+	// apply a declared policy.resources limit. They are enforced only for a
+	// sandbox that declares one; DefaultBehavior states the undeclared case.
+	mechanismDockerHostConfigResources = "docker_host_config_resources"
+	mechanismK8sContainerResources     = "k8s_container_resources"
 	// mechanismRuntimeLLMFacadeToken is the engine-wide mechanism that replaces
 	// a declared LLM provider credential with a run-scoped facade token before
 	// the guest can read it. It lives in pkg/llms, not in a driver, so every

@@ -85,6 +85,9 @@ volumes:
 policies:
   locked-down:
     stopped_runtime_policy: retain
+    resources:
+      cpus: 2
+      memory: 4Gi
     network:
       default: deny-all
       allow:
@@ -1065,7 +1068,7 @@ workspace:
 
 ### `policy`：运行时策略声明
 
-`policy` 集中声明该 Agent 的 sandbox 在运行时的行为：已停止 runtime 的生命周期，以及出网策略。后续新增的运行时策略应继续放进这个块，而不是新增顶层 agent 字段。
+`policy` 集中声明该 Agent 的 sandbox 在运行时的行为：已停止 runtime 的生命周期、出网策略，以及 CPU 和内存上限。后续新增的运行时策略应继续放进这个块，而不是新增顶层 agent 字段。
 
 Agent 可以内联声明这个块，也可以按名称引用项目级 `policies` 条目：
 
@@ -1258,6 +1261,41 @@ Network policy
 - 在没有可达代理、且当前声明具有限制性的 sandbox 上，未执行的报告（或 `EGRESS_UNENFORCEABLE_POLICY=refuse` 的拒绝）会在下一次启动时生效。
 
 `stopped_runtime_policy` 的时机不同：它在 sandbox 创建时被快照到 sandbox 上，因此修改它只影响新建的 sandbox。
+
+### `policy.resources`：CPU 与内存限制
+
+`resources` 为该 Agent 创建的每个 sandbox 设置 CPU 和内存上限：
+
+```yaml
+policy:
+  resources:
+    cpus: 2          # 核数；允许小数，精度到 0.001（如 0.5、1.25）
+    memory: 4Gi      # 整数加 Mi 或 Gi 单位
+```
+
+两个字段可以只写一个；空的 `resources: {}` 会报错。`memory` 必须带二进制单位：裸数字 `4096` 或十进制的 `4G` 都会被拒绝，因为看不出它的含义。允许范围是 64Mi 到 1024Gi。
+
+**不声明则保持现有行为。** 不写 `resources` 时，Docker 和 Kubernetes 的 sandbox 不加任何限制，BoxLite 和 Microsandbox 的 VM 使用 daemon 级的 `SANDBOX_CPUS` / `SANDBOX_MEMORY_MIB`（默认 4 核、4096 MiB）。声明的字段只替换它自己那一维，没声明的那一维保持原行为。
+
+**声明即硬性要求。** 没有 best-effort 开关：限制无法生效的 sandbox 在启动时以 failed precondition 拒绝，绝不会不受限地跑起来。会被拒绝的情况：
+
+- 声明超过部署上限 `SANDBOX_MAX_CPUS` 或 `SANDBOX_MAX_MEMORY_MIB`（不设置表示没有上限）；
+- Microsandbox 声明了小数 `cpus`（它的 VM 只能按整数 vCPU 分配；apply 项目时也会直接报错）；
+- sandbox-host 低于协议版本 3，它会丢掉这个声明；
+- Docker daemon 接受了容器但丢弃了限制（例如主机没有 cgroup memory 控制器，像未做 cgroup v2 委派的 rootless Docker）。引擎会从创建出的容器回读限制，不一致就删掉容器。
+
+各 driver 的落地方式：
+
+| Driver | 机制 | 说明 |
+| --- | --- | --- |
+| Docker | `HostConfig.NanoCPUs`、`Memory`、`MemorySwap` | `MemorySwap` 等于 `Memory`，sandbox 不能借用宿主机 swap。 |
+| Kubernetes | 容器 `resources.requests` = `resources.limits` | 声明的维度为 Guaranteed QoS；违反命名空间 `LimitRange` 或 `ResourceQuota` 的值会导致 Pod 被拒绝。 |
+| BoxLite | VM 的 vCPU 与内存 | 小数 `cpus` 原样传入。 |
+| Microsandbox | VM 的 vCPU 与内存 | 只接受整数 `cpus`。 |
+
+在 microVM driver 上，声明的内存是整个 guest 的内存，guest 内核和 agent runtime 也要占用，需要留出余量。在 Docker 和 Kubernetes 上，限制同样覆盖 sandbox 内的 agent runtime，负载耗尽内存时会和 runtime 一起被 OOM kill，本次 run 失败。
+
+**声明何时生效。** 每次 ensure sandbox 的 runtime 时都会重新读取声明，但限制只在创建 runtime 时应用。默认的 `stopped_runtime_policy: remove` 下，下一次启动会以新限制创建 runtime；`retain` 后仅被 resume 的 runtime 保持它创建时的限制。
 
 ### `scheduler`
 

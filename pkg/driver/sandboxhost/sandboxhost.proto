@@ -145,6 +145,17 @@ message Sandbox {
   repeated SandboxVolumeMount volume_mounts = 4;
   repeated SandboxEnvVar runtime_env_items = 5;
   NetworkPolicy network_policy = 6;
+  // Declared CPU and memory ceiling. Absent means undeclared. Added in
+  // protocol version 3; the daemon refuses a declaring sandbox against an
+  // older host, which would silently drop the field.
+  ResourceLimits resource_limits = 7;
+}
+
+// ResourceLimits mirrors driver.SandboxResourceLimits. A zero field is
+// undeclared for that dimension.
+message ResourceLimits {
+  int64 cpu_millis = 1;
+  uint32 memory_mib = 2;
 }
 
 message VMState {

@@ -509,6 +509,7 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 					WorkingDir:      r.config.GuestWorkspacePath,
 					Env:             k8sEnvVars(env),
 					VolumeMounts:    volumeMounts,
+					Resources:       k8sResourceRequirements(sandbox.ResourceLimits),
 					// A sandbox is untrusted code. NET_RAW is what lets it open
 					// raw sockets, ARP-spoof a shared network and capture traffic
 					// between the control plane and the engine; the agent runtime

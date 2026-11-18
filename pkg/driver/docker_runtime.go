@@ -1116,6 +1116,7 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 		Labels:       labels,
 	}
 	hostConfig := dockerSandboxHostConfig(mounts, portBindings, networkMode)
+	applyDockerResourceLimits(hostConfig, sandbox.ResourceLimits)
 	if initEnabled {
 		useInit := false
 		hostConfig.Init = &useInit
@@ -1136,6 +1137,9 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 		return containerapi.InspectResponse{}, false, nil, fmt.Errorf("inspect docker container %s: %w", createResp.ID, err)
 	}
 	if err := r.validateCreatedDockerWorkspaceMounts(ctx, dockerClient, sandbox, containerInfo, mounts); err != nil {
+		return containerapi.InspectResponse{}, false, nil, err
+	}
+	if err := validateCreatedDockerResourceLimits(ctx, dockerClient, sandbox, containerInfo, createResp.Warnings); err != nil {
 		return containerapi.InspectResponse{}, false, nil, err
 	}
 	return containerInfo, true, supervisorLaunch, nil

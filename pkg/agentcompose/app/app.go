@@ -454,6 +454,7 @@ func NewRuntimeProvider(di do.Injector) (adapters.RuntimeProvider, error) {
 		targets,
 		adapters.WithRuntimeRecorder(do.MustInvoke[*telemetry.Recorder](di)),
 		adapters.WithSandboxEgressProxy(*do.MustInvoke[*adapters.SandboxEgressProxy](di)),
+		adapters.WithSandboxResourceLimits(targets),
 	)
 }
 

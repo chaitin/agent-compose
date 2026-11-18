@@ -37,11 +37,22 @@ func TestDockerCapabilitiesMatchHostConfig(t *testing.T) {
 	facts := capabilityFactsForTest(t, RuntimeDriverDocker)
 	hostConfig := dockerSandboxHostConfig(nil, nil, "default")
 
+	// Undeclared: no resource field is set, which is Docker's "unlimited".
+	applyDockerResourceLimits(hostConfig, nil)
 	if hostConfig.Memory != 0 || hostConfig.MemorySwap != 0 || hostConfig.NanoCPUs != 0 || hostConfig.CPUShares != 0 || hostConfig.PidsLimit != nil {
-		t.Fatalf("HostConfig now sets resource limits %+v; the resource_limits declaration is stale", hostConfig)
+		t.Fatalf("undeclared HostConfig sets resource limits %+v; an undeclared limit must not be applied", hostConfig)
 	}
-	if resources := capabilityDimensionForTest(t, facts, dimensionResourceLimits); resources.Enforced || resources.Mechanism != reasonNotConfigured {
-		t.Fatalf("resource_limits declaration = %+v, want not_configured", resources)
+	if resources := capabilityDimensionForTest(t, facts, dimensionResourceLimits); !resources.Enforced || resources.Mechanism != mechanismDockerHostConfigResources {
+		t.Fatalf("resource_limits declaration = %+v, want enforced via %q", resources, mechanismDockerHostConfigResources)
+	}
+	// Declared: exactly the fields the declaration names in Observed.
+	limited := dockerSandboxHostConfig(nil, nil, "default")
+	applyDockerResourceLimits(limited, &SandboxResourceLimits{CPUMillis: 500, MemoryMiB: 1024})
+	if limited.NanoCPUs != 500_000_000 || limited.Memory != 1024*mib || limited.MemorySwap != limited.Memory {
+		t.Fatalf("declared HostConfig = NanoCPUs %d Memory %d MemorySwap %d, want 0.5 cpu and 1Gi without swap", limited.NanoCPUs, limited.Memory, limited.MemorySwap)
+	}
+	if limited.CPUShares != 0 || limited.PidsLimit != nil {
+		t.Fatalf("declared HostConfig sets CpuShares %d / PidsLimit %v; the resource_limits observed text says they stay unset", limited.CPUShares, limited.PidsLimit)
 	}
 
 	if len(hostConfig.CapDrop) != 1 || hostConfig.CapDrop[0] != "NET_RAW" || len(hostConfig.CapAdd) != 0 || len(hostConfig.SecurityOpt) != 0 {

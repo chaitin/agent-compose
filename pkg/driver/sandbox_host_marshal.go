@@ -199,6 +199,9 @@ func marshalSandbox(s *Sandbox) *sandboxhost.Sandbox {
 		Workspace:     marshalSandboxWorkspace(s.Workspace),
 		NetworkPolicy: marshalNetworkPolicy(s.NetworkPolicy),
 	}
+	if s.ResourceLimits.Declared() {
+		out.ResourceLimits = &sandboxhost.ResourceLimits{CpuMillis: s.ResourceLimits.CPUMillis, MemoryMib: s.ResourceLimits.MemoryMiB}
+	}
 	for _, item := range s.EnvItems {
 		out.EnvItems = append(out.EnvItems, marshalSandboxEnvVar(item))
 	}
@@ -219,6 +222,9 @@ func unmarshalSandbox(s *sandboxhost.Sandbox) *Sandbox {
 		Summary:       unmarshalSandboxSummary(s.GetSummary()),
 		Workspace:     unmarshalSandboxWorkspace(s.GetWorkspace()),
 		NetworkPolicy: unmarshalNetworkPolicy(s.GetNetworkPolicy()),
+	}
+	if limits := s.GetResourceLimits(); limits != nil && (limits.GetCpuMillis() > 0 || limits.GetMemoryMib() > 0) {
+		out.ResourceLimits = &SandboxResourceLimits{CPUMillis: limits.GetCpuMillis(), MemoryMiB: limits.GetMemoryMib()}
 	}
 	for _, item := range s.GetEnvItems() {
 		out.EnvItems = append(out.EnvItems, unmarshalSandboxEnvVar(item))

@@ -1353,7 +1353,12 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	if err != nil {
 		return nil, err
 	}
-	resources := configuredSandboxResources(r.config)
+	// Microsandbox sizes its VM in whole vCPUs, so a fractional declaration
+	// is refused instead of rounded.
+	resources, err := microVMSandboxResources(r.config, session.ResourceLimits, true)
+	if err != nil {
+		return nil, err
+	}
 	options := []microsandbox.SandboxOption{
 		microsandbox.WithImageDisk(rootfsDisk.Path, "ext4"),
 		microsandbox.WithWorkdir("/"),

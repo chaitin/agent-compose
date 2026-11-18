@@ -49,6 +49,16 @@ func requireDenyProtocolVersion(version int64, policy *SandboxNetworkPolicy) err
 	return nil
 }
 
+// requireResourceLimitsProtocolVersion fails closed when a sandbox declares a
+// resource limit and the sandbox-host predates the wire field: the host would
+// drop the declaration and size the VM from its own defaults.
+func requireResourceLimitsProtocolVersion(version int64, limits *SandboxResourceLimits) error {
+	if limits.Declared() && version < sandboxHostResourceLimitsProtocolVersion {
+		return fmt.Errorf("%w: sandbox declares policy.resources but the sandbox-host speaks protocol %d (resource limits require %d); upgrade the sandbox-host", ErrSandboxResourceLimitsUnavailable, version, sandboxHostResourceLimitsProtocolVersion)
+	}
+	return nil
+}
+
 // ErrRuntimeCapabilityUnsupported reports that the sandbox-host runtime does not
 // implement an optional capability (stats, liveness, guest signals, or process
 // tree termination). It is distinct from ErrRuntimeInteractionUnsupported, which
@@ -121,6 +131,9 @@ func (r *remoteSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandb
 		return SandboxVMInfo{}, err
 	}
 	if err := requireDenyProtocolVersion(r.version(), sandbox.NetworkPolicy); err != nil {
+		return SandboxVMInfo{}, err
+	}
+	if err := requireResourceLimitsProtocolVersion(r.version(), sandbox.ResourceLimits); err != nil {
 		return SandboxVMInfo{}, err
 	}
 	needs, err := client.NeedsCreate(ctx, &sandboxhost.SandboxRequest{

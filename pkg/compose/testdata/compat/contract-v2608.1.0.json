@@ -338,6 +338,21 @@
       "optional": true
     },
     {
+      "path": "agents.*.policy.resources",
+      "go_type": "optional\u003cmapping\u003ccompose.SandboxResourcesSpec\u003e\u003e",
+      "optional": true
+    },
+    {
+      "path": "agents.*.policy.resources.cpus",
+      "go_type": "optional\u003cfloat64\u003e",
+      "optional": true
+    },
+    {
+      "path": "agents.*.policy.resources.memory",
+      "go_type": "string",
+      "optional": true
+    },
+    {
       "path": "agents.*.policy.stopped_runtime_policy",
       "go_type": "string",
       "optional": true
@@ -435,6 +450,21 @@
     {
       "path": "agents.*.sandbox.network.deny[].ports",
       "go_type": "sequence\u003cint\u003e",
+      "optional": true
+    },
+    {
+      "path": "agents.*.sandbox.resources",
+      "go_type": "optional\u003cmapping\u003ccompose.SandboxResourcesSpec\u003e\u003e",
+      "optional": true
+    },
+    {
+      "path": "agents.*.sandbox.resources.cpus",
+      "go_type": "optional\u003cfloat64\u003e",
+      "optional": true
+    },
+    {
+      "path": "agents.*.sandbox.resources.memory",
+      "go_type": "string",
       "optional": true
     },
     {
@@ -860,6 +890,21 @@
     {
       "path": "policies.*.network.deny[].ports",
       "go_type": "sequence\u003cint\u003e",
+      "optional": true
+    },
+    {
+      "path": "policies.*.resources",
+      "go_type": "optional\u003cmapping\u003ccompose.SandboxResourcesSpec\u003e\u003e",
+      "optional": true
+    },
+    {
+      "path": "policies.*.resources.cpus",
+      "go_type": "optional\u003cfloat64\u003e",
+      "optional": true
+    },
+    {
+      "path": "policies.*.resources.memory",
+      "go_type": "string",
       "optional": true
     },
     {

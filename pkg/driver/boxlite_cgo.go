@@ -1258,6 +1258,12 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	if err != nil {
 		return nil, err
 	}
+	// Resolved before any FFI allocation so a declaration the VM cannot honor
+	// fails without leaking an options handle.
+	resources, err := microVMSandboxResources(r.config, sandbox.ResourceLimits, false)
+	if err != nil {
+		return nil, err
+	}
 	imageRef := resolveSandboxGuestImage(vmState.Image, sandbox.Summary.GuestImage, r.config.DefaultImage)
 	imagePullTimeout := r.config.ImagePullTimeout
 	if imagePullTimeout <= 0 {
@@ -1311,11 +1317,10 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	C.boxlite_options_set_auto_remove(options, 0)
 	C.boxlite_options_set_detach(options, 1)
 	C.boxlite_options_set_network_enabled(options)
-	resources := configuredSandboxResources(r.config)
 	// BoxLite v0.13 widened the CPU option from int to double to support
-	// fractional CPUs. configuredSandboxResources still resolves whole CPUs,
-	// so the value is widened rather than truncated.
-	C.boxlite_options_set_cpus(options, C.double(resources.CPUs))
+	// fractional CPUs, so a declared fraction such as 0.5 is passed exactly;
+	// the daemon-wide default is always a whole number.
+	C.boxlite_options_set_cpus(options, C.double(float64(resources.CPUMillis)/1000))
 	C.boxlite_options_set_memory(options, C.int(resources.MemoryMiB))
 	C.boxlite_options_set_disk_size_gb(options, C.int(resources.DiskSizeGB))
 

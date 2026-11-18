@@ -24,7 +24,7 @@ func microVMRuntimeCapabilityFacts(driver string, observed microVMObserved) Runt
 			Enforced:        true,
 			Mechanism:       mechanismSDKSandboxOptions,
 			Observed:        observed.ResourceLimits,
-			DefaultBehavior: "the daemon-wide default of 4 CPUs, 4096 MiB memory, and 6 GiB disk applies when no explicit sandbox resource is configured",
+			DefaultBehavior: "a declared policy.resources sizes the VM; otherwise the daemon-wide SANDBOX_CPUS and SANDBOX_MEMORY_MIB (default 4 CPUs and 4096 MiB) apply, and SANDBOX_DISK_SIZE_GB (default 6 GiB) always sizes the disk",
 		},
 	}
 	// The microVM SDKs expose no per-dimension capability-drop, read-only

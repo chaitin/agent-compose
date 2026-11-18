@@ -22,13 +22,21 @@ import (
 // A host that predates it silently drops deny entries, so the daemon fails
 // closed (rather than applying a policy without its denials) when a sandbox
 // declares deny rules against an N-1 host.
-const sandboxHostProtocolVersion = 2
+//
+// Version 3 added Sandbox.resource_limits so a declared policy.resources
+// reaches the VM driver. A host that predates it would size the VM from its
+// own defaults, so the daemon refuses a declaring sandbox against an N-1 host.
+const sandboxHostProtocolVersion = 3
 
 // sandboxHostDenyProtocolVersion is the first protocol version whose wire
 // NetworkPolicy carries deny entries. A daemon driving a host below it refuses
 // a deny-declaring sandbox instead of letting the host silently ignore the
 // refusal.
 const sandboxHostDenyProtocolVersion = 2
+
+// sandboxHostResourceLimitsProtocolVersion is the first protocol version whose
+// wire Sandbox carries resource_limits.
+const sandboxHostResourceLimitsProtocolVersion = 3
 
 // sandboxHostMaxMsgSize is the gRPC message ceiling shared by the daemon and
 // the sandbox-host. gRPC defaults to 4 MiB, which the accumulated ExecResult
