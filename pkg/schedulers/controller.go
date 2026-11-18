@@ -92,6 +92,8 @@ type Controller struct {
 	mu              sync.RWMutex
 	schedulers      map[string]domain.Scheduler
 	running         map[string]int
+	historyRemoving map[string]bool
+	skipRecording   map[string]int
 	runExecutor     *RunExecutor
 	invocations     *InvocationExecutor
 	schedulerRuns   *SchedulerRunSupervisor
@@ -145,6 +147,7 @@ func (c *Controller) init() {
 			WriteArtifact:              c.WriteRunArtifact,
 			EnterRun:                   c.EnterRun,
 			LeaveRun:                   c.LeaveRun,
+			BeginSkipRecord:            c.BeginSkipRecord,
 			AddSchedulerEvent:          c.AddSchedulerEvent,
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,
@@ -153,11 +156,12 @@ func (c *Controller) init() {
 	}
 	if c.invocations == nil {
 		c.invocations = NewInvocationExecutor(InvocationExecutorDependencies{
-			Engine:      c.deps.Engine,
-			HostFactory: c.deps.HostFactory,
-			EnterRun:    c.EnterRun,
-			LeaveRun:    c.LeaveRun,
-			NewID:       c.deps.NewID,
+			Engine:          c.deps.Engine,
+			HostFactory:     c.deps.HostFactory,
+			EnterRun:        c.EnterRun,
+			LeaveRun:        c.LeaveRun,
+			HistoryRemoving: c.HistoryRemoving,
+			NewID:           c.deps.NewID,
 		})
 	}
 	if c.schedulerRuns == nil {
@@ -453,7 +457,7 @@ func (c *Controller) EnterRun(scheduler domain.Scheduler) bool {
 	policy := NormalizeConcurrencyPolicy(scheduler.Summary.ConcurrencyPolicy)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if policy != domain.SchedulerConcurrencyPolicyParallel && c.running[schedulerID] > 0 {
+	if c.historyRemoving[schedulerID] || (policy != domain.SchedulerConcurrencyPolicyParallel && c.running[schedulerID] > 0) {
 		return false
 	}
 	c.running[schedulerID]++

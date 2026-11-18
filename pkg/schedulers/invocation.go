@@ -22,8 +22,10 @@ type InvocationExecutorDependencies struct {
 	Engine      SchedulerEngine
 	HostFactory RunHostFactory
 	EnterRun    func(scheduler domain.Scheduler) bool
-	LeaveRun    func(schedulerID string)
-	NewID       func() string
+	// HistoryRemoving distinguishes a refused entry from a running scheduler.
+	HistoryRemoving func(schedulerID string) bool
+	LeaveRun        func(schedulerID string)
+	NewID           func() string
 }
 
 type InvocationExecutor struct {
@@ -43,7 +45,11 @@ func (e *InvocationExecutor) Invoke(ctx context.Context, scheduler domain.Schedu
 		return InvocationResult{}, fmt.Errorf("scheduler invocation runtime is unavailable")
 	}
 	if e.deps.EnterRun != nil && !e.deps.EnterRun(scheduler) {
-		return InvocationResult{}, domain.ResourceError(domain.ErrFailedPrecondition, "scheduler", scheduler.Summary.ID, "scheduler is already running", nil)
+		message := "scheduler is already running"
+		if e.deps.HistoryRemoving != nil && e.deps.HistoryRemoving(scheduler.Summary.ID) {
+			message = schedulerHistoryRemovingMessage
+		}
+		return InvocationResult{}, domain.ResourceError(domain.ErrFailedPrecondition, "scheduler", scheduler.Summary.ID, message, nil)
 	}
 	if e.deps.LeaveRun != nil {
 		defer e.deps.LeaveRun(scheduler.Summary.ID)
