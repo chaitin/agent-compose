@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runhistory"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -80,7 +81,7 @@ func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity
 		}
 		scope.Runs = append(scope.Runs, run)
 		if run.SandboxID != "" {
-			scope.SandboxIDs = append(scope.SandboxIDs, run.SandboxID)
+			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(run.SandboxID))
 		}
 	}
 	err = rows.Err()
@@ -120,7 +121,7 @@ func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity
 			if err := links.Scan(&sandboxID); err != nil {
 				return scope, err
 			}
-			scope.SandboxIDs = append(scope.SandboxIDs, sandboxID)
+			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(sandboxID))
 		}
 		err = links.Err()
 		_ = links.Close()
@@ -134,4 +135,13 @@ func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity
 	slices.Sort(scope.SandboxIDs)
 	scope.SandboxIDs = slices.Compact(scope.SandboxIDs)
 	return scope, nil
+}
+
+// canonicalSandboxID folds the legacy "sha256:" form so directory, archive,
+// and reference checks all see the identity the sandbox store uses on disk.
+func canonicalSandboxID(id string) string {
+	if hash, err := identity.Hash(id); err == nil {
+		return hash
+	}
+	return id
 }

@@ -272,5 +272,5 @@ func (c *Controller) schedulerBusy(schedulerID string) bool {
 	schedulerID = strings.TrimSpace(schedulerID)
 	// Exact history removal and prune must not delete the same scheduler's
 	// rows and artifact directories concurrently.
-	return c.running[schedulerID] > 0 || c.historyRemoving[schedulerID]
+	return c.running[schedulerID] > 0 || c.skipRecording[schedulerID] > 0 || c.historyRemoving[schedulerID]
 }

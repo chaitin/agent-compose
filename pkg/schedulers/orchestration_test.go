@@ -514,7 +514,7 @@ func TestRunExecutorDoesNotRecordSkipDuringHistoryRemoval(t *testing.T) {
 		ArtifactsDir:    func(schedulerID, runID string) string { return filepath.Join(artifactsRoot, schedulerID, runID) },
 		WriteArtifact:   func(string, string, string) error { t.Error("artifact written during history removal"); return nil },
 		EnterRun:        func(domain.Scheduler) bool { return false },
-		HistoryRemoving: func(string) bool { return true },
+		BeginSkipRecord: func(string) (func(), bool) { return nil, false },
 		AddSchedulerEvent: func(_ context.Context, event schedulers.SchedulerEventInput) error {
 			events = append(events, event.EventType)
 			return nil
@@ -534,5 +534,46 @@ func TestRunExecutorDoesNotRecordSkipDuringHistoryRemoval(t *testing.T) {
 	}
 	if _, err := executor.Run(ctx, schedulers.RunTriggerRequest{Scheduler: scheduler, PayloadJSON: `{}`, Source: "webhook", Options: schedulers.RunOptions{RetryWhenBusy: true}}); !errors.Is(err, schedulers.ErrRunBusyForRetry) {
 		t.Fatalf("webhook delivery should retry later: %v", err)
+	}
+}
+
+func TestRunExecutorHoldsSkipRecordUntilLastWrite(t *testing.T) {
+	ctx := context.Background()
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-1", Enabled: true}}
+	store := &runStoreFake{}
+	artifactsRoot := t.TempDir()
+	held, released := false, 0
+	var writes []string
+	requireHeld := func(what string) {
+		if !held {
+			t.Errorf("%s written after the skip record was released", what)
+		}
+	}
+	executor := schedulers.NewRunExecutor(schedulers.RunExecutorDependencies{
+		Store:        store,
+		ArtifactsDir: func(schedulerID, runID string) string { return filepath.Join(artifactsRoot, schedulerID, runID) },
+		WriteArtifact: func(_, name, _ string) error {
+			requireHeld(name)
+			writes = append(writes, name)
+			return nil
+		},
+		EnterRun: func(domain.Scheduler) bool { return false },
+		BeginSkipRecord: func(string) (func(), bool) {
+			held = true
+			return func() { held = false; released++ }, true
+		},
+		AddSchedulerEvent: func(_ context.Context, event schedulers.SchedulerEventInput) error {
+			requireHeld(event.EventType)
+			return nil
+		},
+		UpdateTriggerEventDelivery: func(context.Context, domain.SchedulerRunSummary) { requireHeld("delivery") },
+		Notify:                     func(string) {},
+	})
+	run, err := executor.Run(ctx, schedulers.RunTriggerRequest{Scheduler: scheduler, PayloadJSON: `{}`, Source: "cron"})
+	if err != nil || run.Status != domain.SchedulerRunStatusSkipped {
+		t.Fatalf("run=%+v err=%v", run, err)
+	}
+	if released != 1 || len(writes) != 2 || writes[1] != "error.txt" {
+		t.Fatalf("released=%d writes=%v", released, writes)
 	}
 }

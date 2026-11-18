@@ -24,9 +24,12 @@ func (a FSArtifacts) Prepare(ctx context.Context, scope Scope) (PreparedArtifact
 		return p, nil
 	}
 	run := scope.SchedulerRun
+	// The data root always exists for a running daemon; a missing one means a
+	// misconfigured or unmounted root, where absence proves nothing. Missing
+	// directories below it are ordinary and mean there is nothing to remove.
 	root, err := os.OpenRoot(a.DataRoot)
 	if errors.Is(err, os.ErrNotExist) {
-		return p, nil
+		return nil, artifactPrecondition("scheduler data root is unavailable", err)
 	}
 	if err != nil {
 		return nil, err

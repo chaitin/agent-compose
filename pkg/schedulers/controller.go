@@ -93,6 +93,7 @@ type Controller struct {
 	schedulers      map[string]domain.Scheduler
 	running         map[string]int
 	historyRemoving map[string]bool
+	skipRecording   map[string]int
 	runExecutor     *RunExecutor
 	invocations     *InvocationExecutor
 	schedulerRuns   *SchedulerRunSupervisor
@@ -146,7 +147,7 @@ func (c *Controller) init() {
 			WriteArtifact:              c.WriteRunArtifact,
 			EnterRun:                   c.EnterRun,
 			LeaveRun:                   c.LeaveRun,
-			HistoryRemoving:            c.HistoryRemoving,
+			BeginSkipRecord:            c.BeginSkipRecord,
 			AddSchedulerEvent:          c.AddSchedulerEvent,
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,

@@ -123,7 +123,7 @@ func TestRunHistorySchedulerDeletesOnlyExactRelationsAndChildren(t *testing.T) {
 }
 
 func TestRunHistoryRejectsUnsafeScopeBeforeArtifacts(t *testing.T) {
-	for _, name := range []string{"running", "child_running", "completion_pending", "wrong_project", "wrong_scheduler", "wrong_kind", "child_alone", "shared_sandbox", "shared_link", "binding"} {
+	for _, name := range []string{"running", "child_running", "completion_pending", "wrong_project", "wrong_scheduler", "wrong_kind", "child_alone", "shared_sandbox", "shared_link", "legacy_shared_link", "binding"} {
 		t.Run(name, func(t *testing.T) {
 			f := newRunHistoryFixture(t, nil)
 			id := f.scheduler
@@ -156,6 +156,11 @@ func TestRunHistoryRejectsUnsafeScopeBeforeArtifacts(t *testing.T) {
 			case "shared_link":
 				exec("UPDATE project_run SET sandbox_id='shared' WHERE run_id=?", f.childID)
 				exec("INSERT INTO event_sandbox_link(event_id,sandbox_id,relation,scheduler_id,scheduler_run_id,created_at) VALUES('shared-event','shared','used',?,'other-run',1)", id.SchedulerID)
+			case "legacy_shared_link":
+				// The same sandbox recorded in its legacy "sha256:" form elsewhere.
+				sandboxID := identity.NewID(identity.ResourceSandbox, "legacy")
+				exec("UPDATE project_run SET sandbox_id=? WHERE run_id=?", sandboxID, f.childID)
+				exec("INSERT INTO event_sandbox_link(event_id,sandbox_id,relation,scheduler_id,scheduler_run_id,created_at) VALUES('legacy-event',?,'used',?,'other-run',1)", "sha256:"+sandboxID, id.SchedulerID)
 			case "binding":
 				exec("UPDATE project_run SET sandbox_id='shared' WHERE run_id=?", f.childID)
 				exec("INSERT INTO scheduler_sandbox_binding(scheduler_id,trigger_id,sandbox_id,sandbox_config_hash,created_at,updated_at) VALUES(?,'trigger','shared','hash',1,1)", id.SchedulerID)
@@ -337,4 +342,25 @@ func (p *historyTestArtifacts) VerifyRemoved(ctx context.Context) error {
 		return p.PreparedArtifacts.VerifyRemoved(ctx)
 	}
 	return nil
+}
+
+func TestRunHistoryScopeCanonicalizesLegacySandboxIDs(t *testing.T) {
+	f := newRunHistoryFixture(t, nil)
+	ctx := context.Background()
+	sandboxID := identity.NewID(identity.ResourceSandbox, "legacy")
+	if _, err := f.store.db.ExecContext(ctx, "INSERT INTO event_sandbox_link(event_id,sandbox_id,relation,scheduler_id,scheduler_run_id,created_at) VALUES('legacy-event',?,'used',?,?,1)", "sha256:"+sandboxID, f.scheduler.SchedulerID, f.scheduler.RunID); err != nil {
+		t.Fatal(err)
+	}
+	// Archive and dated-directory checks join the id into paths, so a legacy
+	// form would look for a directory the sandbox store never creates.
+	var seen []string
+	if err := f.store.RemoveRunHistory(ctx, f.scheduler, func(scope runhistory.Scope) (runhistory.PreparedArtifacts, error) {
+		seen = scope.SandboxIDs
+		return &historyTestArtifacts{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 1 || seen[0] != sandboxID {
+		t.Fatalf("sandbox ids = %v, want [%s]", seen, sandboxID)
+	}
 }

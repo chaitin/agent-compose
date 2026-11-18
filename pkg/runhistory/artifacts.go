@@ -93,6 +93,11 @@ func requireAbsent(path string) error {
 }
 
 func (a FSArtifacts) verifyRunArtifactAbsent(sandboxID, recorded string) error {
+	// The sandbox store names directories by the canonical id; history rows
+	// written before identity unification may carry the "sha256:" form.
+	if hash, err := identity.Hash(sandboxID); err == nil {
+		sandboxID = hash
+	}
 	path, err := filepath.Abs(recorded)
 	if err != nil {
 		return err

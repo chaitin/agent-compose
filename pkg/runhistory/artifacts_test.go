@@ -121,3 +121,17 @@ func TestRunHistoryArtifactsSuccessIsIdempotent(t *testing.T) {
 		t.Fatal("neighbor removed:", err)
 	}
 }
+
+func TestRunHistoryArtifactsRejectMissingDataRoot(t *testing.T) {
+	schedulerID := identity.NewID(identity.ResourceScheduler, "missing-root")
+	runID := identity.NewID(identity.ResourceRun, "missing-root")
+	scope := Scope{SchedulerRun: &domain.SchedulerRunSummary{ID: runID, SchedulerID: schedulerID}}
+	// A missing data root is a misconfiguration, not proof that artifacts are gone.
+	a := FSArtifacts{DataRoot: filepath.Join(t.TempDir(), "unmounted")}
+	if p, err := a.Prepare(context.Background(), scope); !errors.Is(err, domain.ErrFailedPrecondition) {
+		if p != nil {
+			_ = p.Close()
+		}
+		t.Fatalf("missing data root accepted: %v", err)
+	}
+}

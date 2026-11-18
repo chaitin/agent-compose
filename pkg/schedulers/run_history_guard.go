@@ -16,7 +16,7 @@ func (c *Controller) WithIdleScheduler(ctx context.Context, schedulerID string, 
 		c.mu.Unlock()
 		return apierror.NotApplied(err)
 	}
-	if c.running[schedulerID] > 0 || c.historyRemoving[schedulerID] {
+	if c.running[schedulerID] > 0 || c.skipRecording[schedulerID] > 0 || c.historyRemoving[schedulerID] {
 		c.mu.Unlock()
 		return apierror.NotApplied(domain.ClassifyError(domain.ErrFailedPrecondition, "scheduler still has active execution, completion work, or history removal", nil))
 	}
@@ -41,4 +41,28 @@ func (c *Controller) HistoryRemoving(schedulerID string) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.historyRemoving[strings.TrimSpace(schedulerID)]
+}
+
+// BeginSkipRecord registers the recording of a skipped run, which writes rows
+// and artifacts outside the running count. Removal refuses while it is held.
+func (c *Controller) BeginSkipRecord(schedulerID string) (func(), bool) {
+	schedulerID = strings.TrimSpace(schedulerID)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.historyRemoving[schedulerID] {
+		return nil, false
+	}
+	if c.skipRecording == nil {
+		c.skipRecording = make(map[string]int)
+	}
+	c.skipRecording[schedulerID]++
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.skipRecording[schedulerID] <= 1 {
+			delete(c.skipRecording, schedulerID)
+			return
+		}
+		c.skipRecording[schedulerID]--
+	}, true
 }

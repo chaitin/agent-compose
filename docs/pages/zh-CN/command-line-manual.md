@@ -453,8 +453,8 @@ agent-compose scheduler inspect <scheduler-or-trigger-or-run-ref> [--scheduler <
 - `scheduler prune` 清理外层 trigger run 历史及其直属 scheduler event、event delivery/link 和规范 run artifacts。默认匹配当前 project 中全部 `succeeded`、`failed`、`canceled`、`skipped` 终态 trigger run；可用 `--scheduler`、`--trigger`、`--status`、`--older-than` 缩小范围。命令默认只 dry-run，只有 `--force` 才真正删除。running run、Invocation、内层 agent run、topic event、sandbox、scheduler state 和 sticky binding 都会保留。历史 Trigger ID 与 `runs`/`logs` 使用相同的“当前定义优先”解析规则。
 - daemon 启动时会先把上一次进程中断后遗留的外层 `running` trigger run 收敛为 `failed`，并记录 daemon-interrupted scheduler event；之后它才能按普通终态历史参与 prune。
 - 启动对账的每个阶段使用独立的 30 秒预算，并响应 daemon 取消。中断的 Scheduler Run 无法恢复时，启动会在 Scheduler 和事件派发开始前失败；应处理日志中的存储或超时错误后重启，避免无执行归属的 Run 持续占用调度名额。
-- 控制面另提供 `ProjectService.RemoveRunHistory`，以完整 Project/Run 身份精确删除终态历史及其专属材料；它不是新的 CLI 子命令。必须先删除关联沙箱；仍有沙箱材料、审计归档、运行/收尾或共享引用时拒绝。材料清理失败可用同一身份重试，不能将任意 `NotFound` 当作成功。它不改变 `scheduler prune` 的批量范围与保留规则。
-- 精确历史删除先将 Scheduler 材料原子改名至同级保留目录 `.history-removing-<run_id>`，再递归清理。目录扫描和递归清理不持有数据库写锁，递归清理也不占用数据库连接。并发数据库提交可能使校验过期，需要以同一身份重试；清理和最终校验成功前始终保留历史，daemon 重启后也能继续重试。
+- 控制面另提供 `ProjectService.RemoveRunHistory`，以完整 Project/Run 身份精确删除终态历史及其专属材料；它不是新的 CLI 子命令。必须先删除关联沙箱；仍有沙箱材料、审计归档、运行/收尾或共享引用时拒绝。共用同一沙箱（包括默认 sticky 沙箱策略）的 Run 历史目前无法通过该接口删除。材料清理失败可用同一身份重试，不能将任意 `NotFound` 当作成功。它不改变 `scheduler prune` 的批量范围与保留规则。
+- 精确历史删除先将 Scheduler 材料原子改名至同级保留目录 `.history-removing-<run_id>`，再递归清理。目录扫描和递归清理不持有数据库写锁，递归清理也不占用数据库连接。同一历史的范围被并发修改时需要以同一身份重试，无关的数据库提交不受影响；清理和最终校验成功前始终保留历史，daemon 重启后也能继续重试。
 - `scheduler inspect` 只接受一个 scheduler 名称/ID、trigger 名称/ID 或外层 trigger run ID。多个 scheduler 存在相同 trigger reference 时，使用 `--scheduler <scheduler-ref>` 消歧；旧双位置参数形式不再支持。
 - 当前 `scheduler runs` 和 `scheduler logs` 会收齐 unary cursor pages 后一次性渲染；streaming/follow 能力留到单独修改中实现。
 
