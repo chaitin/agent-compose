@@ -20,6 +20,7 @@ func runPromptAttachWorkflow(t *testing.T) {
 		fn   func(*testing.T)
 	}{
 		{"start-frame", TestPromptAttachStartFrameNamesPublishedSkills},
+		{"start-frame-input-merge", TestPromptAttachStartFrameMergesPromptWithInput},
 		{"input-close-error", TestAttachInputPumpsCloseRuntimeInputOnReceiveError},
 		{"input-waits-turn", TestPromptAttachInputWaitsForCompletedTurnBeforeForwardingQueuedMessages},
 		{"input-cancel", TestPromptAttachInputCancellationUnblocksTurnWait},
