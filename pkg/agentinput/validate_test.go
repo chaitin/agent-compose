@@ -82,7 +82,7 @@ func TestValidateChecksDigest(t *testing.T) {
 	}
 }
 
-func TestValidateTurnBytesAndCount(t *testing.T) {
+func TestValidateTurnBytes(t *testing.T) {
 	limits := Limits{MaxFileBytes: 100, MaxTurnBytes: 10, MaxFiles: 10}
 	parts := []Part{
 		TextPart("a"),
@@ -92,12 +92,25 @@ func TestValidateTurnBytesAndCount(t *testing.T) {
 	if err := Validate(parts, limits); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("err = %v, want a turn-size error", err)
 	}
-	many := []Part{TextPart("a")}
-	for i := 0; i < 3; i++ {
-		many = append(many, FilePart(File{Name: "a.bin", Source: SourceInline, Data: []byte("1")}))
+}
+
+// max_files counts files, not text parts: a prompt and interleaved text must
+// not consume the per-turn file budget.
+func TestValidateCountsFilesNotTextParts(t *testing.T) {
+	limits := Limits{MaxFileBytes: 100, MaxTurnBytes: 100, MaxFiles: 2}
+	parts := []Part{TextPart("read")}
+	for i := 0; i < 2; i++ {
+		parts = append(parts,
+			TextPart("next"),
+			FilePart(File{Name: "a.bin", Source: SourceInline, Data: []byte("1")}),
+		)
 	}
-	if err := Validate(many, Limits{MaxFileBytes: 100, MaxTurnBytes: 100, MaxFiles: 2}); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("err = %v, want a count error", err)
+	if err := Validate(parts, limits); err != nil {
+		t.Fatalf("two files with text parts: %v", err)
+	}
+	parts = append(parts, FilePart(File{Name: "b.bin", Source: SourceInline, Data: []byte("1")}))
+	if err := Validate(parts, limits); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("err = %v, want a file-count error", err)
 	}
 }
 

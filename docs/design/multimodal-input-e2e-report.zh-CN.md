@@ -1,6 +1,6 @@
 # 任意文件输入接口 E2E 测试矩阵（provider-neutral 版）
 
-- 日期：2026-11-16
+- 日期：2026-11-16（2026-11-18 修订：attach start 帧已支持 `input`，A10 改为单测结论）
 - 分支：`feat/sandbox-multimodal-input`
 - 镜像：`agent-compose:local`、`agent-compose-guest:local`（均由本分支源码构建）
 - 上游：`http://10.2.68.223:38080`，`chat_completions`，模型 `grok-4.6`
@@ -28,7 +28,7 @@
 | A7 | 非法 workspace 路径（`../`） | ✅ 拒绝 | `workspace path "../etc/passwd" escapes the workspace` |
 | A8 | sha256 不匹配 | ✅ 拒绝 | `part 1 sha256 does not match its bytes` |
 | A9 | `command` + `input` | ✅ 拒绝 | `input cannot be combined with command` |
-| A10 | 交互式启动带 `input` | ✅ 拒绝 | `unimplemented: multimodal input is not supported for interactive attach yet` |
+| A10 | 交互式启动带 `input` | ✅ 支持（单测） | 启动帧走 `Normalize` 合并 `prompt`/`input`，文件写入 `turn-0`；本轮未重跑 h2c attach 实测 |
 | A11 | 幂等键重放 | ✅ | 同一 `clientRequestId` 返回原 runId |
 
 ## B. 文件类型与访问方式
@@ -67,7 +67,7 @@
 
 - **K8s 的 workspace 路径**：daemon 读不到 Pod 内文件，`workspacePath` 不做存在性/符号链接/大小预检；内联 `bytes` 始终校验。需要严格上限时使用 `bytes`。
 - **模型是否理解文件**：取决于 harness 工具与上游模型；接口只保证可访问、路径已给出。
-- **续轮 `AttachHumanMessage.input`**：不在本 PR；同一 sandbox 的后续 run 已可访问既有路径。
+- **续轮 `AttachHumanMessage.input`**：已支持（单测覆盖 start/human 帧）；本轮 E2E 未重跑 h2c attach，同一 sandbox 的后续 run 仍可访问既有路径。
 - **`RunDetail` 不含附件描述**：仅文本投影；后续 PR 补。
 
 ## E. 复现要点

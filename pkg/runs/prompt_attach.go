@@ -470,12 +470,11 @@ func (w *promptWrapperInput) send(frame map[string]any) error {
 	return w.interaction.Send(driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputStdin, Data: data})
 }
 
-// promptInputPump groups the wrapper input stream, the gate that releases a
-// turn, and the callback notified of each forwarded human message.
-// attachInitialMessage materializes the opening turn's files. Admission may
-// have stored the normalized parts (prompt already prepended) or the raw parts,
-// so the prompt is only prefixed when the parts carry no text of their own; the
-// opening turn must never duplicate it.
+// attachInitialMessage materializes the opening turn's files. parts normally
+// come from the admitted request, where Normalize has already merged a
+// non-empty prompt into the first text part, so the opening turn must not
+// prepend it again. If the parts carry no text at all, the prompt is still
+// prepended as a fallback. A text-only request bypasses materialization.
 func attachInitialMessage(prompt string, parts []agentinput.Part, materialize func(string, []agentinput.Part) (string, error)) (string, error) {
 	if len(parts) == 0 {
 		return prompt, nil
@@ -487,6 +486,8 @@ func attachInitialMessage(prompt string, parts []agentinput.Part, materialize fu
 	return materialize(text, parts)
 }
 
+// promptInputPump groups the wrapper input stream, the gate that releases a
+// turn, and the callback notified of each forwarded human message.
 type promptInputPump struct {
 	Input     *promptWrapperInput
 	TurnReady <-chan struct{}

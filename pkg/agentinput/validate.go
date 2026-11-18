@@ -23,7 +23,9 @@ const (
 type Limits struct {
 	MaxFileBytes uint64
 	MaxTurnBytes uint64
-	MaxFiles     uint32
+	// MaxFiles caps files, not text parts; a prompt or interleaved text does
+	// not consume the file budget.
+	MaxFiles uint32
 }
 
 // DefaultLimits returns the limits a daemon applies when no configuration
@@ -51,8 +53,14 @@ func Validate(parts []Part, limits Limits) error {
 	if limits.MaxFiles == 0 {
 		limits.MaxFiles = DefaultMaxFiles
 	}
-	if uint32(len(parts)) > limits.MaxFiles {
-		return fmt.Errorf("%w: turn has %d parts, limit is %d", ErrInvalid, len(parts), limits.MaxFiles)
+	fileCount := 0
+	for _, part := range parts {
+		if part.File != nil {
+			fileCount++
+		}
+	}
+	if uint32(fileCount) > limits.MaxFiles {
+		return fmt.Errorf("%w: turn has %d files, limit is %d", ErrInvalid, fileCount, limits.MaxFiles)
 	}
 	var totalBytes uint64
 	for index, part := range parts {

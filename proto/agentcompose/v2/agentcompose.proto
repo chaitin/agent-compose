@@ -1320,9 +1320,9 @@ message RunAgentRequest {
   // multimodal handling is involved, and any file type is accepted up to the
   // configured limits.
   //
-  // Interactive prompt attach (AttachAgentRun, or StartAgentRun with
-  // interactive=true) does not accept input yet: its start frame returns
-  // UNIMPLEMENTED when input is non-empty, rather than dropping the parts.
+  // The start frame of interactive prompt attach (AttachAgentRun, or
+  // StartAgentRun with interactive=true) accepts the same parts and applies the
+  // same prompt merge; later human turns use AttachHumanMessage.input.
   repeated AgentInputPart input = 18;
 }
 
@@ -2879,6 +2879,11 @@ message AgentInputFile {
     // A file that already exists inside the sandbox workspace.
     AgentInputFileWorkspacePath workspace_path = 4;
   }
+
+  // Field 5 is reserved for a future upload-reference source (for example an
+  // upload_id returned by a streaming upload RPC). Reserving it now keeps the
+  // layout stable when that source is implemented.
+  reserved 5;
 }
 
 message AgentInputFileBytes {
@@ -2911,6 +2916,7 @@ message EngineInputLimits {
   uint64 max_file_bytes = 1;
   // Maximum total file bytes in one turn.
   uint64 max_turn_bytes = 2;
-  // Maximum number of AgentInputPart entries in one turn.
+  // Maximum number of files in one turn. Text parts are not counted, so a
+  // prompt or interleaved text does not consume the file budget.
   uint32 max_files = 3;
 }

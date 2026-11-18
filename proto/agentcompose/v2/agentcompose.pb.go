@@ -8435,9 +8435,9 @@ type RunAgentRequest struct {
 	// multimodal handling is involved, and any file type is accepted up to the
 	// configured limits.
 	//
-	// Interactive prompt attach (AttachAgentRun, or StartAgentRun with
-	// interactive=true) does not accept input yet: its start frame returns
-	// UNIMPLEMENTED when input is non-empty, rather than dropping the parts.
+	// The start frame of interactive prompt attach (AttachAgentRun, or
+	// StartAgentRun with interactive=true) accepts the same parts and applies the
+	// same prompt merge; later human turns use AttachHumanMessage.input.
 	Input         []*AgentInputPart `protobuf:"bytes,18,rep,name=input,proto3" json:"input,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -22398,7 +22398,8 @@ type EngineInputLimits struct {
 	MaxFileBytes uint64 `protobuf:"varint,1,opt,name=max_file_bytes,json=maxFileBytes,proto3" json:"max_file_bytes,omitempty"`
 	// Maximum total file bytes in one turn.
 	MaxTurnBytes uint64 `protobuf:"varint,2,opt,name=max_turn_bytes,json=maxTurnBytes,proto3" json:"max_turn_bytes,omitempty"`
-	// Maximum number of AgentInputPart entries in one turn.
+	// Maximum number of files in one turn. Text parts are not counted, so a
+	// prompt or interleaved text does not consume the file budget.
 	MaxFiles      uint32 `protobuf:"varint,3,opt,name=max_files,json=maxFiles,proto3" json:"max_files,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -24221,14 +24222,14 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x0eAgentInputPart\x12\x14\n" +
 	"\x04text\x18\x01 \x01(\tH\x00R\x04text\x125\n" +
 	"\x04file\x18\x02 \x01(\v2\x1f.agentcompose.v2.AgentInputFileH\x00R\x04fileB\x06\n" +
-	"\x04part\"\xea\x01\n" +
+	"\x04part\"\xf0\x01\n" +
 	"\x0eAgentInputFile\x12\x1a\n" +
 	"\bfilename\x18\x01 \x01(\tR\bfilename\x12\x1d\n" +
 	"\n" +
 	"media_type\x18\x02 \x01(\tR\tmediaType\x12<\n" +
 	"\x05bytes\x18\x03 \x01(\v2$.agentcompose.v2.AgentInputFileBytesH\x00R\x05bytes\x12U\n" +
 	"\x0eworkspace_path\x18\x04 \x01(\v2,.agentcompose.v2.AgentInputFileWorkspacePathH\x00R\rworkspacePathB\b\n" +
-	"\x06source\"A\n" +
+	"\x06sourceJ\x04\b\x05\x10\x06\"A\n" +
 	"\x13AgentInputFileBytes\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x16\n" +
 	"\x06sha256\x18\x02 \x01(\tR\x06sha256\"I\n" +

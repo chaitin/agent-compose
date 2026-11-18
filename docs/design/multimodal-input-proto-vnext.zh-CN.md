@@ -10,7 +10,7 @@
 1. **接口只表达"一段文本 + 若干文件"**，不表达图片、PDF、音频等具体模态。任何文件类型都接受，类型只作为可选元数据。
 2. **实现不与任何 provider 耦合**：daemon 把文件写进 sandbox 的 workspace（harness 的工作目录），并把 sandbox 内路径追加到提示词。harness 用自己已有的文件工具读取，codex/claude/opencode/pi/dsh 走完全相同的路径。
 3. **文件在本轮与后续追问都可用**：文件落在 workspace 的 `.agent-compose/uploads/<run-id>/turn-0/` 下，不随 run 结束删除；同一 sandbox 的后续 run 仍能访问。
-4. **限制集中可配**：`AGENT_INPUT_FILE_LIMIT_BYTES`（默认 10 MiB）、`AGENT_INPUT_TURN_LIMIT_BYTES`（默认 32 MiB）、`AGENT_INPUT_FILE_LIMIT`（默认 20），未配置时使用默认值。
+4. **限制集中可配**：`AGENT_INPUT_FILE_LIMIT_BYTES`（默认 10 MiB）、`AGENT_INPUT_TURN_LIMIT_BYTES`（默认 32 MiB）、`AGENT_INPUT_FILE_LIMIT`（默认 20 个文件），未配置时使用默认值；`AGENT_INPUT_FILE_LIMIT` 只统计文件，不统计文本段。
 5. **不新增 RPC**：`RunAgent` / `StartAgentRun` / `StreamAgentRun` / `AttachAgentRun` 共用 `RunAgentRequest`；只在 `RunAgentRequest` 上追加 `input`。
 6. **runtime 不需要改动**：不传 `--content-file`、不构造 provider content block；guest 镜像保持原样即可（K8s 通过既有 `GuestFileWriter` 把文件推进 Pod 的 workspace）。
 
@@ -51,6 +51,8 @@ message AgentInputFile {
     AgentInputFileBytes bytes = 3;
     AgentInputFileWorkspacePath workspace_path = 4;
   }
+  // Field 5 is reserved for a future upload-reference source.
+  reserved 5;
 }
 
 message AgentInputFileBytes {
@@ -99,6 +101,8 @@ message GetEngineCapabilitiesResponse {
 ```
 
 `EngineProviderCapabilities` 不新增任何字段：文件输入与 provider 无关。
+
+`AgentInputFile` 的字段 5 已 `reserved`，预留给后续“先上传后引用”的来源（例如流式上传返回的 `upload_id`）。本次不实现，发版后补充该来源时不需要改动现有字段布局。
 
 ## 3. 语义
 
@@ -152,7 +156,7 @@ runtime、guest ABI、provider 适配层都不参与文件处理。
 | --- | --- | --- |
 | `AGENT_INPUT_FILE_LIMIT_BYTES` | 10 MiB | 单个文件上限 |
 | `AGENT_INPUT_TURN_LIMIT_BYTES` | 32 MiB | 单轮全部文件总字节 |
-| `AGENT_INPUT_FILE_LIMIT` | 20 | 单轮 part 数上限 |
+| `AGENT_INPUT_FILE_LIMIT` | 20 | 单轮文件数上限（文本段不计入） |
 
 非法或非正数配置会记录 warning 并回退默认值。`GetEngineCapabilities.input_limits` 返回实际生效值，调用方可据此预校验。
 
@@ -276,4 +280,4 @@ Attached files (read them with your file tools):
 | `workspacePath` 逃逸根 | `invalid_argument` |
 | `sha256` 不匹配 | `invalid_argument` |
 | `command` + `input` | `invalid_argument` |
-| 交互式启动带 `input` | `unimplemented`（后续 PR） |
+| 交互式启动带 `input` | 正常：`prompt` 前置，文件写入 `turn-0` |

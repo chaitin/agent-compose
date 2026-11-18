@@ -235,6 +235,9 @@ type StartedProjectRun struct {
 	Run      domain.ProjectRunRecord
 	Execute  func(context.Context, *StreamSink) (domain.ProjectRunRecord, error, error)
 	Warnings []string
+	// AdmittedRequest is the request after trigger resolution and input
+	// admission. Prompt is the text projection of Input when Input is set.
+	AdmittedRequest RunAgentRequest
 }
 
 func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (StartedProjectRun, error) {
@@ -292,8 +295,9 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 	}
 	run = withRunWarnings(run, warnings)
 	return StartedProjectRun{
-		Run:      run,
-		Warnings: warnings,
+		Run:             run,
+		Warnings:        warnings,
+		AdmittedRequest: req,
 		Execute: func(execCtx context.Context, stream *StreamSink) (domain.ProjectRunRecord, error, error) {
 			// Async runs execute from the daemon root context. Restore only the
 			// request metadata they need instead of retaining the transport context.
@@ -392,7 +396,7 @@ func (c *Controller) RunProjectCommandAttachRegistered(ctx, inputCtx context.Con
 	}
 	run, execErr, err := c.executeStartedProjectRunAttach(ctx, startedRunAttachContext{
 		Run:      started.Run,
-		Request:  req,
+		Request:  started.AdmittedRequest,
 		Warnings: started.Warnings,
 		Start:    first,
 		Mode:     mode,
