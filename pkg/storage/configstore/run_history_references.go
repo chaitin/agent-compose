@@ -25,10 +25,8 @@ func protectRunHistoryReferences(ctx context.Context, tx *sql.Tx, id runhistory.
 			return domain.ClassifyError(domain.ErrReferenced, "sandbox has references outside this run history", nil)
 		}
 	}
-	// Recorded artifact paths are derived from identities: project runs live
-	// in their sandbox and a scheduler run owns exactly
-	// <root>/schedulers/<scheduler>/runs/<run>, which artifact validation
-	// checks before removal. No writer records one run's artifacts inside
-	// another run's directory, so no path scan is needed here.
+	// No other record can point into the scheduler run directory: every
+	// history writer rejects paths inside another scheduler run's directory
+	// (validateHistoryArtifactPaths), so no path scan is needed here.
 	return nil
 }

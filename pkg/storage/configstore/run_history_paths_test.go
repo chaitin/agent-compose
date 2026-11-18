@@ -99,3 +99,41 @@ func TestRunHistoryWritersRejectReservedPaths(t *testing.T) {
 		t.Fatalf("rejected writes changed history: %+v, %v", stored, err)
 	}
 }
+
+func TestRunHistoryWritersRejectPathsInsideAnotherSchedulerRun(t *testing.T) {
+	f := newRunHistoryFixture(t, nil)
+	ctx := context.Background()
+	target := filepath.Join(t.TempDir(), "schedulers", f.scheduler.SchedulerID, "runs", f.scheduler.RunID)
+	run, err := f.store.GetProjectRun(ctx, f.standalone.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{target, filepath.Join(target, "private.json")} {
+		run.LogsPath = path
+		if _, err := f.store.UpdateProjectRun(ctx, run); !errors.Is(err, domain.ErrInvalidArgument) {
+			t.Fatalf("project run may not record a path in a scheduler run: %q, %v", path, err)
+		}
+	}
+	other := domain.SchedulerRunSummary{ID: identity.NewID(identity.ResourceRun, "other", f.scheduler.ProjectID), SchedulerID: f.scheduler.SchedulerID, Status: domain.SchedulerRunStatusSucceeded}
+	other.ArtifactsDir = target
+	if err := f.store.CreateSchedulerRun(ctx, other); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("scheduler run may not record another run's directory: %v", err)
+	}
+	other.ArtifactsDir = filepath.Join(filepath.Dir(target), other.ID)
+	if err := f.store.CreateSchedulerRun(ctx, other); err != nil {
+		t.Fatalf("scheduler run rejected its own directory: %v", err)
+	}
+}
+
+func TestRunHistoryWritersRejectReservedPathForAnyRunID(t *testing.T) {
+	f := newRunHistoryFixture(t, nil)
+	ctx := context.Background()
+	run, err := f.store.GetProjectRun(ctx, f.standalone.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.LogsPath = filepath.Join(t.TempDir(), "schedulers", f.scheduler.SchedulerID, "runs", ".history-removing-3f2b8c1e-6a4d-4e8b-9c2a-1d5e7f9a0b3c", "out.txt")
+	if _, err := f.store.UpdateProjectRun(ctx, run); !errors.Is(err, domain.ErrInvalidArgument) {
+		t.Fatalf("reserved cleanup name accepted: %v", err)
+	}
+}

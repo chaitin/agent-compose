@@ -339,7 +339,7 @@ func (s *schedulerStore) SetSchedulerTriggerNextFireAt(ctx context.Context, sche
 }
 
 func (s *schedulerStore) CreateSchedulerRun(ctx context.Context, run domain.SchedulerRunSummary) error {
-	if err := validateHistoryArtifactPaths(run.ArtifactsDir); err != nil {
+	if err := validateHistoryArtifactPaths(&schedulerRunOwner{SchedulerID: run.SchedulerID, RunID: run.ID}, run.ArtifactsDir); err != nil {
 		return err
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_run(
@@ -367,7 +367,7 @@ func (s *schedulerStore) CreateSchedulerRun(ctx context.Context, run domain.Sche
 }
 
 func (s *schedulerStore) UpdateSchedulerRun(ctx context.Context, run domain.SchedulerRunSummary) error {
-	if err := validateHistoryArtifactPaths(run.ArtifactsDir); err != nil {
+	if err := validateHistoryArtifactPaths(&schedulerRunOwner{SchedulerID: run.SchedulerID, RunID: run.ID}, run.ArtifactsDir); err != nil {
 		return err
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE scheduler_run SET

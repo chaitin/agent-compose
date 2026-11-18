@@ -47,9 +47,9 @@ is `InvalidArgument`.
   同一身份重试。比对只涉及本历史的行，数据库其他位置的并发提交不会使请求失败。
 - 材料路径由身份推导：Scheduler Run 的目录固定为
   `schedulers/<scheduler_id>/runs/<run_id>`，Project Run 的路径位于其沙箱目录，
-  不存在把一个 Run 的材料写进另一个 Run 目录的写入路径。删除前只校验记录的
-  目录等于规范路径、子 Run 路径位于各自且已删除的沙箱内，不扫描其他记录的
-  路径。删除只操作固定父目录下的目标目录且不跟随符号链接。
+  所有历史写入都拒绝指向其他 Scheduler Run 目录的路径，该归属由写入保证。
+  删除前只校验记录的目录等于规范路径、子 Run 路径位于各自且已删除的沙箱内，
+  不扫描其他记录的路径。删除只操作固定父目录下的目标目录且不跟随符号链接。
 - Scheduler 专属目录先原子改名到同级保留名称 `.history-removing-<run_id>`，
   再在数据库事务和连接之外递归清理。该目录不是运行材料入口；同一完整身份
   在重启后仍能定位它。递归清理成功并重新校验范围、引用及材料缺失后才删历史。
@@ -57,7 +57,7 @@ is `InvalidArgument`.
   `NOT_APPLIED`，隔离开始后的错误为 `UNKNOWN`。
   若隔离目录和重新出现的原目录并存，先完成已有隔离目录清理并保留历史，下一次
   同身份重试再校验、隔离原目录。Project Run 和 Scheduler Run 的材料路径写入
-  均拒绝引用 `schedulers/<scheduler_id>/runs/.history-removing-<run_id>` 结构的
+  均拒绝引用 `schedulers/<scheduler_id>/runs/.history-removing-*` 结构的
   保留目录；其他位置的同前缀普通目录不受限制。
 - 日期扫描、文件准备和递归清理均不占用数据库连接。原子改名、删行和级联
   删除仍受 SQLite 单写者限制，写锁内只有按索引的范围查询，不覆盖全表扫描和
