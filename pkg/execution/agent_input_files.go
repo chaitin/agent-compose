@@ -2,7 +2,10 @@ package execution
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +67,7 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) ([]Res
 
 	files := make([]ResolvedFile, 0, len(req.Input))
 	used := make(map[string]struct{}, len(req.Input))
+	var totalBytes int64
 	for index, part := range req.Input {
 		if part.File == nil {
 			continue
@@ -83,6 +87,10 @@ func WriteAgentInputFiles(ctx context.Context, req AgentInputFileRequest) ([]Res
 		})
 		if err != nil {
 			return nil, err
+		}
+		totalBytes += file.SizeBytes
+		if limits.MaxTurnBytes > 0 && uint64(totalBytes) > limits.MaxTurnBytes {
+			return nil, fmt.Errorf("agent input turn files are %d bytes, limit is %d", totalBytes, limits.MaxTurnBytes)
 		}
 		files = append(files, file)
 	}
@@ -130,10 +138,16 @@ func writeAgentInputFile(ctx context.Context, deps agentInputFileDeps) (Resolved
 		if deps.limits.MaxFileBytes > 0 && uint64(size) > deps.limits.MaxFileBytes {
 			return ResolvedFile{}, fmt.Errorf("agent input file %d is %d bytes, limit is %d", deps.index, size, deps.limits.MaxFileBytes)
 		}
+		if file.SHA256 != "" && deps.workspaceShared {
+			if err := verifyWorkspaceFileDigest(deps.workspaceRoot, cleaned, file.SHA256); err != nil {
+				return ResolvedFile{}, fmt.Errorf("agent input file %d: %w", deps.index, err)
+			}
+		}
 		return ResolvedFile{
 			GuestPath: filepath.Join(deps.config.GuestWorkspacePath, cleaned),
 			Name:      filepath.Base(cleaned),
 			MediaType: file.MediaType,
+			SizeBytes: size,
 		}, nil
 	default:
 		return ResolvedFile{}, fmt.Errorf("agent input file %d has no source", deps.index)
@@ -235,4 +249,29 @@ func AppendFileReferences(message string, files []ResolvedFile) string {
 		}
 	}
 	return builder.String()
+}
+
+// verifyWorkspaceFileDigest hashes a workspace reference through an os.Root
+// anchor, so a component swapped for an escaping symlink after the lstat walk
+// still cannot read outside the workspace.
+func verifyWorkspaceFileDigest(workspaceRoot, relative, expected string) error {
+	root, err := os.OpenRoot(workspaceRoot)
+	if err != nil {
+		return fmt.Errorf("open sandbox workspace: %w", err)
+	}
+	// The anchor only scopes the read; the file handle reports its own errors.
+	defer func() { _ = root.Close() }()
+	handle, err := root.Open(relative)
+	if err != nil {
+		return fmt.Errorf("workspace file %q is not readable", relative)
+	}
+	defer func() { _ = handle.Close() }()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, handle); err != nil {
+		return fmt.Errorf("read workspace file %q: %w", relative, err)
+	}
+	if hex.EncodeToString(digest.Sum(nil)) != expected {
+		return fmt.Errorf("workspace file %q sha256 does not match", relative)
+	}
+	return nil
 }

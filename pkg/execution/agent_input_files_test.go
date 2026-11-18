@@ -2,6 +2,8 @@ package execution
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,7 +116,7 @@ func TestWriteAgentInputFilesSkipsWorkspaceChecksWithoutSharedFilesystem(t *test
 		Input: []agentinput.Part{
 			agentinput.TextPart("read"),
 			agentinput.FilePart(agentinput.File{Name: "new.csv", Source: agentinput.SourceInline, Data: []byte("a,b\n")}),
-			agentinput.FilePart(agentinput.File{Name: "pod-only.csv", Source: agentinput.SourceWorkspacePath, WorkspacePath: "pod-only.csv"}),
+			agentinput.FilePart(agentinput.File{Name: "pod-only.csv", Source: agentinput.SourceWorkspacePath, WorkspacePath: "pod-only.csv", SHA256: strings.Repeat("0", 64)}),
 		},
 		Limits:         agentinput.Limits{MaxFileBytes: 1024},
 		WriteGuestFile: writer,
@@ -261,5 +263,65 @@ func TestWriteAgentInputFilesRejectsSymlinkedUploadParent(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("upload escaped the workspace and wrote %v", entries)
+	}
+}
+
+func TestWriteAgentInputFilesVerifiesWorkspaceDigest(t *testing.T) {
+	session, config, workspace := inputSandbox(t)
+	data := []byte("a,b\n1,2\n")
+	if err := os.WriteFile(filepath.Join(workspace, "data.csv"), data, 0o644); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
+	cases := []struct {
+		name    string
+		sha256  string
+		wantErr bool
+	}{
+		{name: "matching digest", sha256: digest},
+		{name: "mismatched digest", sha256: strings.Repeat("0", 64), wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+				Config: config, Sandbox: session, RunID: "run-digest",
+				Input: []agentinput.Part{
+					agentinput.TextPart("read"),
+					agentinput.FilePart(agentinput.File{Name: "data.csv", Source: agentinput.SourceWorkspacePath, WorkspacePath: "data.csv", SHA256: tc.sha256}),
+				},
+				Limits: agentinput.Limits{MaxFileBytes: 1024, MaxTurnBytes: 1024},
+			})
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "sha256 does not match") {
+					t.Fatalf("err = %v, want a sha256 mismatch", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("WriteAgentInputFiles: %v", err)
+			}
+		})
+	}
+}
+
+func TestWriteAgentInputFilesEnforcesTurnLimitAcrossWorkspaceFiles(t *testing.T) {
+	session, config, workspace := inputSandbox(t)
+	for _, name := range []string{"a.csv", "b.csv"} {
+		if err := os.WriteFile(filepath.Join(workspace, name), []byte("123456"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	_, err := WriteAgentInputFiles(context.Background(), AgentInputFileRequest{
+		Config: config, Sandbox: session, RunID: "run-turn-limit",
+		Input: []agentinput.Part{
+			agentinput.TextPart("read both"),
+			agentinput.FilePart(agentinput.File{Name: "a.csv", Source: agentinput.SourceWorkspacePath, WorkspacePath: "a.csv"}),
+			agentinput.FilePart(agentinput.File{Name: "b.csv", Source: agentinput.SourceWorkspacePath, WorkspacePath: "b.csv"}),
+		},
+		Limits: agentinput.Limits{MaxFileBytes: 10, MaxTurnBytes: 10},
+	})
+	if err == nil || !strings.Contains(err.Error(), "turn files are 12 bytes, limit is 10") {
+		t.Fatalf("err = %v, want a turn-size error", err)
 	}
 }

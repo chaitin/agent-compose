@@ -22336,8 +22336,10 @@ type AgentInputFileWorkspacePath struct {
 	// SandboxWorkspaceEntry.path. Absolute paths, ".." escapes, NUL bytes, and
 	// components that are symlinks are rejected.
 	Path string `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	// Optional content digest. The daemon verifies it when it shares the sandbox
-	// filesystem; otherwise the guest runtime verifies it before the turn starts.
+	// Optional content digest. When the daemon shares the sandbox filesystem it
+	// verifies the file and rejects a mismatch with INVALID_ARGUMENT. Drivers
+	// without shared storage (K8s) cannot read the file before the turn, so they
+	// treat it as informational instead.
 	Sha256        string `protobuf:"bytes,2,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

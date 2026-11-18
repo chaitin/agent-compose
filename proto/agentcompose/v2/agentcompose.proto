@@ -2896,8 +2896,10 @@ message AgentInputFileWorkspacePath {
   // components that are symlinks are rejected.
   string path = 1;
 
-  // Optional content digest. The daemon verifies it when it shares the sandbox
-  // filesystem; otherwise the guest runtime verifies it before the turn starts.
+  // Optional content digest. When the daemon shares the sandbox filesystem it
+  // verifies the file and rejects a mismatch with INVALID_ARGUMENT. Drivers
+  // without shared storage (K8s) cannot read the file before the turn, so they
+  // treat it as informational instead.
   string sha256 = 2;
 }
 
