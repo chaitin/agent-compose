@@ -1132,17 +1132,29 @@ func (r *dockerRuntime) getOrCreateContainer(ctx context.Context, dockerClient *
 	if err != nil {
 		return containerapi.InspectResponse{}, false, nil, fmt.Errorf("create docker container for sandbox %s: %w", sandbox.Summary.ID, err)
 	}
-	containerInfo, err := dockerClient.ContainerInspect(ctx, createResp.ID)
+	containerInfo, err := r.inspectCreatedDockerContainer(ctx, dockerClient, sandbox, createResp, mounts)
 	if err != nil {
-		return containerapi.InspectResponse{}, false, nil, fmt.Errorf("inspect docker container %s: %w", createResp.ID, err)
-	}
-	if err := r.validateCreatedDockerWorkspaceMounts(ctx, dockerClient, sandbox, containerInfo, mounts); err != nil {
-		return containerapi.InspectResponse{}, false, nil, err
-	}
-	if err := validateCreatedDockerResourceLimits(ctx, dockerClient, sandbox, containerInfo, createResp.Warnings); err != nil {
 		return containerapi.InspectResponse{}, false, nil, err
 	}
 	return containerInfo, true, supervisorLaunch, nil
+}
+
+// inspectCreatedDockerContainer reads back what the Docker daemon actually
+// stored for a just-created container and checks it against the request: the
+// workspace mounts and the declared resource limits. A failed check removes
+// the container.
+func (r *dockerRuntime) inspectCreatedDockerContainer(ctx context.Context, dockerClient *client.Client, sandbox *Sandbox, createResp containerapi.CreateResponse, mounts []mountapi.Mount) (containerapi.InspectResponse, error) {
+	containerInfo, err := dockerClient.ContainerInspect(ctx, createResp.ID)
+	if err != nil {
+		return containerapi.InspectResponse{}, fmt.Errorf("inspect docker container %s: %w", createResp.ID, err)
+	}
+	if err := r.validateCreatedDockerWorkspaceMounts(ctx, dockerClient, sandbox, containerInfo, mounts); err != nil {
+		return containerapi.InspectResponse{}, err
+	}
+	if err := validateCreatedDockerResourceLimits(ctx, dockerClient, sandbox, containerInfo, createResp.Warnings); err != nil {
+		return containerapi.InspectResponse{}, err
+	}
+	return containerInfo, nil
 }
 
 func (r *dockerRuntime) validateLegacyDockerRecreate(sandbox *Sandbox, vmState VMState) error {
