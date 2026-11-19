@@ -285,26 +285,19 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		ClientRequestID: req.ClientRequestID,
 		Labels:          req.Labels,
 	}
-	// A retry with the same idempotency key must return the run the first
-	// attempt created even when an upload its input references has expired.
-	// A run that still needs executing (PENDING) is admitted again so its
-	// input can be resolved; only then does BeginRun reuse it.
-	var existingRun domain.ProjectRunRecord
-	var existingFound bool
-	if hasUploadInput(req.Input) {
-		existing, found, lookupErr := coordinator.ExistingRun(ctx, startRequest)
-		if lookupErr != nil {
-			// The daemon cannot tell whether this idempotency key already
-			// created a run, so returning a retryable failure would hide it.
-			return StartedProjectRun{}, lookupErr
-		}
-		if found {
-			existingRun, existingFound = existing, true
-			if existing.Status != domain.ProjectRunStatusPending {
-				run := withRunWarnings(existing, warnings)
-				return c.startedProjectRun(coordinator, run, req, warnings, requestMetadata), nil
-			}
-		}
+	// Idempotency comes before admission: a retry must return the run the first
+	// attempt created even when its input (a staged upload, for example) can no
+	// longer be resolved. A PENDING run still needs its input admitted before it
+	// can execute.
+	existingRun, existingFound, err := coordinator.ExistingRun(ctx, startRequest)
+	if err != nil {
+		// The daemon cannot tell whether this idempotency key already created a
+		// run, so returning a retryable failure would hide it.
+		return StartedProjectRun{}, err
+	}
+	if existingFound && existingRun.Status != domain.ProjectRunStatusPending {
+		run := withRunWarnings(existingRun, warnings)
+		return c.startedProjectRun(coordinator, run, req, warnings, requestMetadata), nil
 	}
 	input, inputWarnings, err := c.admitAgentInput(ctx, req)
 	if err != nil {
@@ -347,17 +340,6 @@ func (c *Controller) startedProjectRun(coordinator *Coordinator, run domain.Proj
 			}, stream)
 		},
 	}
-}
-
-// hasUploadInput reports whether admitting the turn requires resolving a staged
-// upload, the only input step whose validity can expire between attempts.
-func hasUploadInput(parts []agentinput.Part) bool {
-	for _, part := range parts {
-		if part.File != nil && part.File.Source == agentinput.SourceUpload {
-			return true
-		}
-	}
-	return false
 }
 
 func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, stream *StreamSink) (domain.ProjectRunRecord, error, error) {

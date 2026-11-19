@@ -202,6 +202,31 @@ func TestStartProjectRunSurfacesLookupFailure(t *testing.T) {
 	}
 }
 
+func TestStartProjectRunRetryReturnsExistingRunWithoutUploads(t *testing.T) {
+	runID, err := projects.StableProjectRunID("project-1", "worker", string(NormalizeSource("")), "retry-text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &startRunStore{
+		agent: domain.ProjectAgentRecord{ProjectID: "project-1", AgentName: "worker"},
+		existing: map[string]domain.ProjectRunRecord{
+			runID: {RunID: runID, ProjectID: "project-1", AgentName: "worker", Status: domain.ProjectRunStatusSucceeded},
+		},
+	}
+	controller := &Controller{config: &appconfig.Config{}, configDB: store}
+	req := RunAgentRequest{ProjectID: "project-1", AgentName: "worker", Prompt: "hello", ClientRequestID: "retry-text"}
+	started, err := controller.StartProjectRun(context.Background(), req)
+	if err != nil {
+		t.Fatalf("idempotent retry: %v", err)
+	}
+	if started.Run.RunID != runID {
+		t.Fatalf("run = %s, want the existing %s", started.Run.RunID, runID)
+	}
+	if len(store.created) != 0 {
+		t.Fatalf("retry created runs = %v, want none", store.created)
+	}
+}
+
 // TestStartProjectRunRejectsUnresolvableUploadBeforePersisting pins the run
 // entry path: a missing or cross-project upload fails admission with NOT_FOUND
 // and NOT_APPLIED before BeginRun, so no run record is persisted. An expired
