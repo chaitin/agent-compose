@@ -198,11 +198,13 @@ message EngineInputLimits {
 ### 4.3 容量
 
 - 稳态占用约为"上传速率 × 对象存活时间"。TTL 缩短到 15 分钟后，占用主要来自正在上传和等待物化的对象，量级为"并发轮次 × 单轮上限"。
-- daemon 级总容量上限 `AGENT_INPUT_UPLOAD_STORE_LIMIT_BYTES`，默认 8 GiB（按 20 个并发轮次 × 200 MiB，再留一倍余量）。
-- 磁盘水位：`DATA_ROOT` 所在文件系统剩余空间低于 10% 时拒绝上传，避免固定上限在小盘机器上写满磁盘。
-- 单 project 上限默认为总容量的 1/4，防止一个 project 占满全局配额。
+- **硬约束**（daemon 精确保证，逐块检查）：
+  - daemon 级总容量上限 `AGENT_INPUT_UPLOAD_STORE_LIMIT_BYTES`，默认 8 GiB；`reserved` 覆盖在途、`used` 覆盖已提交，两者之和不会超过它；
+  - 单 project 上限为总容量的 1/4，防止一个 project 占满全局配额；
+  - 单对象上限见 §3.1。
+- **软约束**：`Begin` 时读一次 `DATA_ROOT` 所在文件系统的剩余空间，不足 10% 时拒绝开始新上传。这是准入提示而不是持续不变量——并发准入、其他进程写入和文件系统延迟分配都可能让水位短时低于 10%。daemon 自身的磁盘保护是上面的全局预算；小盘机器上应把 `AGENT_INPUT_UPLOAD_STORE_LIMIT_BYTES` 配到"磁盘容量 - 10%"以下。
 - 以上任一超限都返回 `RESOURCE_EXHAUSTED`（reason `STORAGE_UNAVAILABLE`，effect `NOT_APPLIED`），不做淘汰（淘汰可能删掉调用方马上要引用的对象）。statfs 读不到时只按字节预算判断，不阻塞上传。
-- 配额按**已收到的字节**记账：`Begin` 只检查声明大小能否放得下，不预占；每收到一个 chunk 才计入 `reserved`/项目份额。因此声明了大小却迟迟不发数据的连接不会占用容量，容量不足可能在上传中途以 `RESOURCE_EXHAUSTED` 结束（文件被删除，nothing referenceable）。
+- 配额按**已收到的字节**记账：`Begin` 只检查声明大小能否放得下，不预占；每收到一个 chunk 才计入 `reserved`/项目份额。因此声明了大小却迟迟不发数据的连接不会占用容量，容量不足可能在上传中途以 `RESOURCE_EXHAUSTED` 结束（文件被删除，nothing referenceable）。并发上传无法共同突破上面的字节预算。
 - 后续可作为一种 cache 类型接入 `CacheService`（List / Prune），v1 不做。
 
 ## 5. 物化

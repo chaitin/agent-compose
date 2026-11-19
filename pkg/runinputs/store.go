@@ -18,10 +18,7 @@
 //
 // Locking: the mutex guards only the in-memory index and byte accounting. All
 // file work (create, rename, metadata writes, removal, statfs, directory scans)
-// runs outside it. spaceMu additionally orders the free-space guard with write
-// confirmations, so a statfs snapshot never predates a write that pending no
-// longer counts; it is separate so a slow statfs cannot block index operations
-// such as Resolve. An object leaves the index before its files are removed, so
+// runs outside it. An object leaves the index before its files are removed, so
 // a crash in between leaves residue that Open and Collect remove.
 package runinputs
 
@@ -32,7 +29,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -105,15 +101,6 @@ type Store struct {
 	used     int64
 	reserved int64
 	project  map[string]int64 // used + reserved per project
-
-	// spaceMu serializes the free-space guard with confirmations, so a statfs
-	// snapshot cannot predate a write that pending no longer counts. It is
-	// separate from mu so statfs does not block index operations.
-	spaceMu sync.Mutex
-	// pending is the part of reserved whose bytes have not reached the file
-	// yet. The free-space guard subtracts it because a statfs taken while an
-	// upload is in flight does not see bytes that were charged but not written.
-	pending atomic.Int64
 }
 
 type digestKey struct {
@@ -212,12 +199,12 @@ func (s *Store) Begin(projectID string, size int64, digest string) (*Upload, *Ob
 // admitLocked rejects an upload whose declared size provably cannot fit. It
 // does not reserve the bytes: the caller charges them as they arrive, so the
 // check is advisory under concurrency and the per-chunk reserve is binding.
+// The free-space floor is an admission hint, not a continuous invariant: other
+// processes and concurrent admissions can still take it below the floor, and
+// the store's byte budget is the hard limit.
 func (s *Store) admitLocked(projectID string, size int64, free, total uint64, spaceErr error) error {
-	if s.used+s.reserved+size > s.opts.MaxStoreBytes {
-		return fmt.Errorf("%w: staging %d more bytes would exceed %d", ErrExhausted, size, s.opts.MaxStoreBytes)
-	}
-	if limit := s.opts.MaxStoreBytes / projectShareDivisor; s.project[projectID]+size > limit {
-		return fmt.Errorf("%w: project would exceed its %d byte share", ErrExhausted, limit)
+	if err := s.budgetsLocked(projectID, size); err != nil {
+		return err
 	}
 	if spaceErr != nil {
 		// The byte budgets still bound the store; a filesystem that cannot
@@ -225,9 +212,19 @@ func (s *Store) admitLocked(projectID string, size int64, free, total uint64, sp
 		s.opts.Logger.Warn("cannot read run input staging filesystem space", "error", spaceErr)
 		return nil
 	}
-	// Pending bytes were charged but may not be visible in this statfs snapshot.
-	if float64(free)-float64(s.pending.Load())-float64(size) < float64(total)*minFreeRatio {
+	if float64(free)-float64(size) < float64(total)*minFreeRatio {
 		return fmt.Errorf("%w: filesystem free space is below %.0f%%", ErrExhausted, minFreeRatio*100)
+	}
+	return nil
+}
+
+// budgetsLocked checks the daemon's exact limits. The caller holds the lock.
+func (s *Store) budgetsLocked(projectID string, size int64) error {
+	if s.used+s.reserved+size > s.opts.MaxStoreBytes {
+		return fmt.Errorf("%w: staging %d more bytes would exceed %d", ErrExhausted, size, s.opts.MaxStoreBytes)
+	}
+	if limit := s.opts.MaxStoreBytes / projectShareDivisor; s.project[projectID]+size > limit {
+		return fmt.Errorf("%w: project would exceed its %d byte share", ErrExhausted, limit)
 	}
 	return nil
 }
@@ -294,58 +291,31 @@ func (s *Store) commit(object Object) (Object, bool) {
 
 // reserve charges bytes that have arrived to an upload in progress. Begin only
 // checks the declared size, so capacity tracks what is actually stored rather
-// than what a client promised. The free-space guard is repeated here because
-// concurrent uploads can all pass the Begin check before any of them writes.
+// than what a client promised, and concurrent uploads cannot jointly exceed the
+// byte budgets.
 func (s *Store) reserve(projectID string, size int64) error {
 	if size <= 0 {
 		return nil
 	}
-	// spaceMu serializes the statfs snapshot with confirmations; mu is taken
-	// only after the snapshot so a slow statfs never blocks the index.
-	s.spaceMu.Lock()
-	defer s.spaceMu.Unlock()
-	free, total, spaceErr := s.opts.FreeSpace(s.opts.Root)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.used+s.reserved+size > s.opts.MaxStoreBytes {
-		return fmt.Errorf("%w: staging %d more bytes would exceed %d", ErrExhausted, size, s.opts.MaxStoreBytes)
-	}
-	if limit := s.opts.MaxStoreBytes / projectShareDivisor; s.project[projectID]+size > limit {
-		return fmt.Errorf("%w: project would exceed its %d byte share", ErrExhausted, limit)
-	}
-	if spaceErr == nil && float64(free)-float64(s.pending.Load())-float64(size) < float64(total)*minFreeRatio {
-		return fmt.Errorf("%w: filesystem free space is below %.0f%%", ErrExhausted, minFreeRatio*100)
+	if err := s.budgetsLocked(projectID, size); err != nil {
+		return err
 	}
 	s.reserved += size
 	s.project[projectID] += size
-	s.pending.Add(size)
 	return nil
 }
 
-// confirm records that reserved bytes reached the file. A finished write is
-// visible to statfs, so only pending bytes are subtracted from free space.
-func (s *Store) confirm(size int64) {
+// release gives back a charge taken by reserve.
+func (s *Store) release(projectID string, size int64) {
 	if size <= 0 {
 		return
 	}
-	s.spaceMu.Lock()
-	s.pending.Add(-size)
-	s.spaceMu.Unlock()
-}
-
-// release gives back a charge taken by reserve. charged is the total the store
-// charged and pending is the part that never reached the file.
-func (s *Store) release(projectID string, charged, pending int64) {
-	if charged <= 0 && pending <= 0 {
-		return
-	}
-	s.spaceMu.Lock()
-	defer s.spaceMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.reserved -= charged
-	s.pending.Add(-pending)
-	s.releaseProjectLocked(projectID, charged)
+	s.reserved -= size
+	s.releaseProjectLocked(projectID, size)
+	s.mu.Unlock()
 }
 
 // persist writes the entry's in-memory expiry to its metadata file without

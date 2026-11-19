@@ -36,4 +36,4 @@
 
 限制来自 `EngineInputLimits`：单文件 `max_upload_file_bytes`、单轮 `max_upload_turn_bytes`，与内联限制分开计算。值为 0 表示该 daemon 不支持 upload 来源，K8s 上报告为 0。上传对象在 `AGENT_INPUT_UPLOAD_TTL`（默认 15 分钟）后过期；再次上传相同内容或被 Run 引用都会延长有效期。
 
-未写入任何内容的失败带 `effect = NOT_APPLIED`：流格式错误、大小或摘要不符、单帧超过 `max_upload_chunk_bytes` 返回 `INVALID_ARGUMENT`；单帧超过 daemon 的消息大小上限、暂存区 / 项目份额 / 文件系统空间不足返回 `RESOURCE_EXHAUSTED`；项目不存在返回 `NOT_FOUND`。Run 的首轮引用了不存在、已过期或属于其他项目的上传时，在创建 Run 之前以 `NOT_FOUND`、`NOT_APPLIED` 失败，客户端可以重新上传后用同一个 `client_request_id` 重试。续轮中出现这样的引用属于非法输入，与其他非法的 `AttachHumanMessage.input` 一样会取消该交互 Run。
+未写入任何内容的失败带 `effect = NOT_APPLIED`：流格式错误、大小或摘要不符、单帧超过 `max_upload_chunk_bytes` 返回 `INVALID_ARGUMENT`；单帧超过 daemon 的消息大小上限、暂存区或项目份额已满、准入时文件系统低于剩余空间水位返回 `RESOURCE_EXHAUSTED`；项目不存在返回 `NOT_FOUND`。Run 的首轮引用了不存在、已过期或属于其他项目的上传时，在创建 Run 之前以 `NOT_FOUND`、`NOT_APPLIED` 失败，客户端可以重新上传后用同一个 `client_request_id` 重试。续轮中出现这样的引用属于非法输入，与其他非法的 `AttachHumanMessage.input` 一样会取消该交互 Run。
