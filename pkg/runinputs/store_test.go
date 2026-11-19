@@ -356,6 +356,48 @@ func TestReserveAccountsForUnwrittenBytes(t *testing.T) {
 	}
 }
 
+func TestSlowStatfsDoesNotBlockIndexOperations(t *testing.T) {
+	store := openTestStore(t, t.TempDir(), newClock())
+	object, _ := upload(t, store, "proj-1", []byte("content"))
+
+	entered := make(chan struct{})
+	unblock := make(chan struct{})
+	var once sync.Once
+	store.opts.FreeSpace = func(string) (uint64, uint64, error) {
+		once.Do(func() { close(entered) })
+		<-unblock
+		return 1 << 40, 1 << 40, nil
+	}
+
+	reserved := make(chan error, 1)
+	go func() { reserved <- store.reserve("proj-2", 1) }()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("reserve never reached statfs")
+	}
+
+	// Resolve takes only the index lock; a statfs in flight must not hold it.
+	resolved := make(chan error, 1)
+	go func() {
+		_, err := store.Resolve("proj-1", object.UploadID)
+		resolved <- err
+	}()
+	select {
+	case err := <-resolved:
+		if err != nil {
+			t.Fatalf("Resolve during statfs: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Resolve blocked behind statfs")
+	}
+
+	close(unblock)
+	if err := <-reserved; err != nil {
+		t.Fatalf("reserve = %v", err)
+	}
+}
+
 func TestBeginRejectsLowFreeSpace(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), newClock())
 	store.opts.FreeSpace = func(string) (uint64, uint64, error) { return 100 << 10, 1 << 20, nil }
