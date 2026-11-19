@@ -38,9 +38,11 @@ var closeCallBound = 10 * time.Second
 // time; a [Conversation.Send] issued while an earlier Reply is still streaming
 // returns [ErrBusy].
 type Conversation struct {
-	agent  *Agent
-	id     string
-	labels map[string]string
+	openingRequestID string
+	openingInput     []*agentcomposev2.AgentInputPart
+	agent            *Agent
+	id               string
+	labels           map[string]string
 
 	mu     sync.Mutex
 	stream *attachStream
@@ -441,9 +443,11 @@ func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 		}
 		labels[conversationLabel] = c.id
 		start.Request = &agentcomposev2.RunAgentRequest{
-			ProjectId: c.agent.projectID,
-			AgentName: c.agent.name,
-			Prompt:    prompt,
+			ProjectId:       c.agent.projectID,
+			AgentName:       c.agent.name,
+			Prompt:          prompt,
+			ClientRequestId: cmp.Or(c.openingRequestID, newFrameID()),
+			Input:           c.openingInput,
 			// One run serves every turn of an open session, so the
 			// environment already outlives a turn without being pinned:
 			// stopping it when the run itself ends is enough. Keeping it
