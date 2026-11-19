@@ -965,6 +965,8 @@ agent-compose llm provider rm <id>
 | `--enabled` | provider 是否启用；默认 `true`。 |
 | `--auth <mode>` | 凭据呈现方式覆盖：`x-api-key`、`bearer` 或 `protocol-default`；`protocol-default` 清除该项。 |
 
+使用 `chat_completions` 上游时，运行时将 system 和 developer 指令按原顺序合并为开头的一条 system 消息，用户、助手和工具消息保持原来的会话顺序。这适配了拒绝在会话中途接收 system 消息的聊天模板。Responses 和 Anthropic 上游继续使用各自的指令格式。
+
 ## `status`：检查 daemon 状态
 
 检查当前选择的 daemon 状态和版本。

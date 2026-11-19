@@ -140,6 +140,8 @@ func normalizeRuntimeRawRoleItems(payload map[string]json.RawMessage, field stri
 			changed = true
 		}
 	}
+	items, prefixChanged := rawChatInstructionPrefix(items)
+	changed = changed || prefixChanged
 	if !changed {
 		return false
 	}
@@ -206,15 +208,7 @@ func normalizeRuntimeRequestForUpstream(req *protocolbridge.LLMRequest, upstream
 	if req == nil || upstreamProtocol != protocolbridge.ProtocolOpenAIChat {
 		return req
 	}
-	var changed bool
-	prompt := make([]protocolbridge.Message, len(req.Prompt))
-	copy(prompt, req.Prompt)
-	for i := range prompt {
-		if prompt[i].Role == protocolbridge.RoleDeveloper {
-			prompt[i].Role = protocolbridge.RoleSystem
-			changed = true
-		}
-	}
+	prompt, changed := chatInstructionPrefix(req.Prompt)
 	if !changed {
 		return req
 	}

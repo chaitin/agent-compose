@@ -987,6 +987,12 @@ Options:
 | `--enabled` | Whether the provider is enabled; defaults to `true`. |
 | `--auth <mode>` | Credential presentation override: `x-api-key`, `bearer`, or `protocol-default`; `protocol-default` clears the override. |
 
+For a `chat_completions` upstream, runtime system and developer instructions are
+combined into one initial system message, preserving their order. User,
+assistant, and tool messages retain their conversation order. This supports
+chat templates that reject system messages after the conversation has started.
+Responses and Anthropic upstreams retain their own instruction formats.
+
 ## `status`: Query Daemon Status
 
 Check the selected daemon status and version.
