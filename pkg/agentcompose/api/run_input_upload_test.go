@@ -41,7 +41,7 @@ func newUploadClient(t *testing.T) (agentcomposev2connect.RunServiceClient, *run
 	}
 	handler := NewRunHandler(nil, uploadProjectRunStore{}).WithRunInputUploads(store)
 	mux := http.NewServeMux()
-	path, serviceHandler := agentcomposev2connect.NewRunServiceHandler(handler, ErrorContractHandlerOptions()...)
+	path, serviceHandler := agentcomposev2connect.NewRunServiceHandler(handler, UploadRunInputHandlerOptions()...)
 	mux.Handle(path, serviceHandler)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -101,7 +101,9 @@ func TestUploadRunInputStagesAndDeduplicates(t *testing.T) {
 		t.Fatalf("resolve = %+v, %v", object, err)
 	}
 
-	again, err := sendUpload(t, client, infoFrame("project-1", data))
+	// A client that already has the content may still pipeline chunks; the
+	// daemon answers after info and the response must still arrive intact.
+	again, err := sendUpload(t, client, infoFrame("project-1", data), chunkFrame(data[:5]), chunkFrame(data[5:]))
 	if err != nil {
 		t.Fatalf("dedup upload: %v", err)
 	}
@@ -134,6 +136,15 @@ func TestUploadRunInputRejectsBadStreams(t *testing.T) {
 			requireUploadError(t, err, test.code, apierror.EffectNotApplied)
 		})
 	}
+}
+
+func TestUploadRunInputRejectsOversizedFrameAtTheTransport(t *testing.T) {
+	client, _ := newUploadClient(t)
+	// Larger than the per-message read limit, so Connect rejects the frame
+	// before the handler can see it. Nothing is staged either way.
+	frame := make([]byte, MaxRunInputUploadMessageBytes+1)
+	_, err := sendUpload(t, client, infoFrame("project-1", frame), chunkFrame(frame))
+	requireUploadError(t, err, connect.CodeResourceExhausted, apierror.EffectNotApplied)
 }
 
 func TestUploadRunInputReportsExhaustedStore(t *testing.T) {

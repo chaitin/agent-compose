@@ -1,7 +1,6 @@
 package runinputs
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -11,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 )
 
 type metadata struct {
@@ -133,6 +134,13 @@ func (s *Store) removeResidue(live map[string]struct{}) {
 			}
 			s.removePath(filepath.Join(dir, name))
 		}
+		// A project directory empties once its last object is collected. Remove
+		// it only after it has aged, so an upload that is between MkdirAll and
+		// its first write is never pulled out from under itself. Best effort:
+		// the directory is non-empty whenever an upload is in flight.
+		if info, err := os.Stat(dir); err == nil && now.Sub(info.ModTime()) >= staleResidueAge {
+			_ = os.Remove(dir)
+		}
 	}
 }
 
@@ -188,13 +196,5 @@ func validSegment(value string) bool {
 }
 
 func isSHA256(value string) bool {
-	if len(value) != sha256.Size*2 {
-		return false
-	}
-	for _, r := range value {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
+	return agentinput.IsSHA256(value)
 }

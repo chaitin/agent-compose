@@ -20,7 +20,10 @@ type Upload struct {
 	file      *os.File
 	hash      hash.Hash
 	written   int64
-	done      bool
+	// reserved is the part of written that the store has charged to this
+	// upload. Commit moves it into usage and Abort releases it.
+	reserved int64
+	done     bool
 }
 
 func (s *Store) createUpload(projectID string, size int64, digest string) (*Upload, error) {
@@ -35,19 +38,26 @@ func (s *Store) createUpload(projectID string, size int64, digest string) (*Uplo
 	return &Upload{store: s, projectID: projectID, size: size, digest: digest, file: temp, hash: sha256.New()}, nil
 }
 
-// Write appends a chunk. Bytes beyond the declared size are rejected.
+// Write appends a chunk. Bytes beyond the declared size are rejected, and each
+// chunk is charged to the store as it arrives.
 func (u *Upload) Write(chunk []byte) error {
 	if u.done {
 		return fmt.Errorf("%w: upload is finished", ErrInvalid)
 	}
-	if u.written+int64(len(chunk)) > u.size {
+	size := int64(len(chunk))
+	if u.written+size > u.size {
 		return fmt.Errorf("%w: upload exceeds its declared %d bytes", ErrInvalid, u.size)
 	}
+	if err := u.store.reserve(u.projectID, size); err != nil {
+		return err
+	}
 	if _, err := u.file.Write(chunk); err != nil {
+		u.store.release(u.projectID, size)
 		return fmt.Errorf("write run input upload: %w", err)
 	}
 	u.hash.Write(chunk)
-	u.written += int64(len(chunk))
+	u.written += size
+	u.reserved += size
 	return nil
 }
 
@@ -93,16 +103,18 @@ func (u *Upload) Commit() (Object, bool, error) {
 		s.removePath(object.Path)
 		return Object{}, false, fmt.Errorf("publish run input upload: %w", err)
 	}
-	// The deferred Abort releases the reservation; commit moves the bytes
-	// into usage first, so the accounting never dips below the stored total.
+	// The deferred Abort releases what is left of the reservation; commit
+	// moves the charged bytes into usage first, so the accounting never dips
+	// below the stored total.
 	indexed, deduplicated := s.commit(object)
+	u.reserved = 0 // commit published these bytes or released them as a duplicate.
 	if deduplicated {
 		s.removeAll(objectFiles(object.Path))
 	}
 	return indexed, deduplicated, nil
 }
 
-// Abort discards an unfinished upload and releases its reservation. It is
+// Abort discards an unfinished upload and releases what it charged. It is
 // safe to call more than once and after Commit.
 func (u *Upload) Abort() {
 	if u.done {
@@ -112,5 +124,8 @@ func (u *Upload) Abort() {
 	name := u.file.Name()
 	_ = u.file.Close()
 	u.store.removePath(name)
-	u.store.release(u.projectID, u.size)
+	if u.reserved > 0 {
+		u.store.release(u.projectID, u.reserved)
+		u.reserved = 0
+	}
 }

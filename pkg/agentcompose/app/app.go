@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,7 +144,19 @@ func RegisterRoutes(di do.Injector) {
 		runHandler.WithRunInputUploads(uploads)
 	}
 	path, handler = agentcomposev2connect.NewRunServiceHandler(runHandler, handlerOptions...)
-	app.Any(path+"*", echo.WrapHandler(handler))
+	// UploadRunInput decodes each frame before the handler can enforce its
+	// 256 KiB chunk limit. Serve that one procedure from a handler instance
+	// with a per-message read limit; Connect otherwise allows any message size.
+	routeHandlers := handler
+	_, uploadHandler := agentcomposev2connect.NewRunServiceHandler(runHandler, api.UploadRunInputHandlerOptions()...)
+	runServiceHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == agentcomposev2connect.RunServiceUploadRunInputProcedure {
+			uploadHandler.ServeHTTP(w, r)
+			return
+		}
+		routeHandlers.ServeHTTP(w, r)
+	})
+	app.Any(path+"*", echo.WrapHandler(runServiceHandler))
 	execHandler := api.NewExecHandler(api.ExecHandlerDeps{
 		Config:   do.MustInvoke[*appconfig.Config](di),
 		Store:    do.MustInvoke[*sandboxstore.Store](di),

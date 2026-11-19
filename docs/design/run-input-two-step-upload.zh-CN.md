@@ -113,7 +113,7 @@ message UploadRunInputResponse {
 - **校验**：收齐后核对大小和 sha256；不符返回 `InvalidArgument`，不留下可引用的对象。超过声明大小的字节立即拒绝。
 - **不带文件名**：对象只代表内容，文件名在引用时由 `AgentInputFile.filename` 给出。
 - **`upload_id` 不透明**：不等于 sha256，调用方不能从 ID 推测内容，也便于以后换存储布局。
-- **限制**：单个对象上限 `AGENT_INPUT_UPLOAD_FILE_LIMIT_BYTES`（默认 100 MiB）；容量见 §4.3。
+- **限制**：单个对象上限 `AGENT_INPUT_UPLOAD_FILE_LIMIT_BYTES`（默认 100 MiB）；容量见 §4.3。每帧在传输层限制在略高于 256 KiB 的大小（`max_upload_chunk_bytes` 加 envelope 开销），避免 daemon 在检查前把超大帧读进内存。
 
 ### 3.2 引用：`AgentInputFile.upload = 5`
 
@@ -141,6 +141,7 @@ message AgentInputFileUpload {
 - 准入（Run 创建前）：`upload_id` 存在、属于同一 project、未过期；否则 `NotFound` / `InvalidArgument`，effect 为 `NOT_APPLIED`。
 - 限制：`upload` 来源的单文件上限用 `AGENT_INPUT_UPLOAD_FILE_LIMIT_BYTES`；单轮总量新增 `AGENT_INPUT_UPLOAD_TURN_LIMIT_BYTES`（默认 200 MiB），与内联字节的 32 MiB 分开计算，避免大附件挤占内联预算。文件个数仍受 `AGENT_INPUT_FILE_LIMIT` 约束。
 - 交互续轮 `AttachHumanMessage.input` 同样可用 `upload` 来源，在该轮物化前解析；引用无效时与其他非法续轮输入一样取消交互 Run。
+- 已知限制：daemon 重启后由 `reattachInteractiveRun` 恢复的会话没有重建文件物化流程，续轮带文件（包括 `upload` 来源）会被当作非法输入取消。这与内联文件来源的既有行为一致；若需要支持，应在恢复路径补上 `Materialize`。
 
 ### 3.3 能力声明
 
@@ -191,8 +192,8 @@ message EngineInputLimits {
 
 - **TTL**：默认 15 分钟，可配置（`AGENT_INPUT_UPLOAD_TTL`）。对象只需要存活到物化完成：ADP 是"发送时上传"，上传完成到 Run 准入是秒级，准入到物化是 sandbox resume 加 workspace 准备的时间。物化之后文件已在 workspace 内，#852 保证同一 sandbox 后续轮次可直接访问，后续轮次不必再引用同一个 `upload_id`，因此不需要为跨轮复用保留对象。去重命中和被 Run 准入都会把 `expires_at` 刷新为 `max(expires_at, now + TTL)`。
 - **不做 lease**：上传和使用之间的间隔远小于 TTL，准入时续期即可覆盖物化窗口。极端情况下（sandbox 准备超过 TTL）对象在物化前被回收，物化返回明确的"上传对象已过期"错误，Run 失败、不启动 agent；调用方重新上传并用新的 `client_request_id` 重试。这个失败是显式的，不会产生歧义状态，不值得为它引入引用计数。
-- **回收**：daemon 启动时清理一次；之后作为一条策略挂在现有的 cleanup runner 上（`CLEANUP_INTERVAL`，默认 1 小时），回收已过期的对象，以及超过 1 小时的 `.upload-*` 临时文件和无元数据的内容文件。容量记账不依赖这个周期：每次准入新上传前先把已过期对象从记账中剔除并删除。
-- **删除 project**：删除对应目录与元数据行。
+- **回收**：daemon 启动时清理一次；之后作为一条策略挂在现有的 cleanup runner 上（`CLEANUP_INTERVAL`，默认 1 小时），回收已过期的对象，以及超过 1 小时的 `.upload-*` 临时文件和无元数据的内容文件。对象被回收后留下的空项目目录同样在老化后由 cleanup 删除。容量记账不依赖这个周期：每次准入新上传前先把已过期对象从记账中剔除并删除。
+- **删除 project**：暂存对象按 TTL 过期，空的项目目录由 cleanup 在老化后删除；v1 不在删除 project 时同步清理暂存区（后续如需可接入 project 删除流程）。
 
 ### 4.3 容量
 
@@ -201,6 +202,7 @@ message EngineInputLimits {
 - 磁盘水位：`DATA_ROOT` 所在文件系统剩余空间低于 10% 时拒绝上传，避免固定上限在小盘机器上写满磁盘。
 - 单 project 上限默认为总容量的 1/4，防止一个 project 占满全局配额。
 - 以上任一超限都返回 `RESOURCE_EXHAUSTED`（reason `STORAGE_UNAVAILABLE`，effect `NOT_APPLIED`），不做淘汰（淘汰可能删掉调用方马上要引用的对象）。statfs 读不到时只按字节预算判断，不阻塞上传。
+- 配额按**已收到的字节**记账：`Begin` 只检查声明大小能否放得下，不预占；每收到一个 chunk 才计入 `reserved`/项目份额。因此声明了大小却迟迟不发数据的连接不会占用容量，容量不足可能在上传中途以 `RESOURCE_EXHAUSTED` 结束（文件被删除，nothing referenceable）。
 - 后续可作为一种 cache 类型接入 `CacheService`（List / Prune），v1 不做。
 
 ## 5. 物化

@@ -275,6 +275,46 @@ func TestBeginEnforcesCapacity(t *testing.T) {
 	}
 }
 
+func TestUploadChargesCapacityAsBytesArrive(t *testing.T) {
+	clock := newClock()
+	store := openTestStore(t, t.TempDir(), clock)
+	block := make([]byte, 1<<10)
+
+	// The project share is a quarter of the 8 KiB store. All three uploads are
+	// admitted together because Begin checks the declared size but charges
+	// nothing yet.
+	pending := make([]*Upload, 0, 3)
+	for index := range 3 {
+		block[0] = byte(index)
+		upload, existing, err := store.Begin("proj-1", int64(len(block)), digestOf(block))
+		if err != nil || existing != nil {
+			t.Fatalf("Begin %d = %v existing=%v", index, err, existing)
+		}
+		pending = append(pending, upload)
+	}
+	if store.reserved != 0 || store.project["proj-1"] != 0 {
+		t.Fatalf("Begin charged bytes that were not received: reserved=%d project=%v", store.reserved, store.project)
+	}
+
+	// The first two chunks fill the project share; the third is rejected when
+	// its bytes arrive, not when it was declared.
+	for index, upload := range pending {
+		err := upload.Write(block)
+		if index < 2 && err != nil {
+			t.Fatalf("write %d = %v", index, err)
+		}
+		if index == 2 && !errors.Is(err, ErrExhausted) {
+			t.Fatalf("write over the project share = %v, want ErrExhausted", err)
+		}
+	}
+	for _, upload := range pending {
+		upload.Abort()
+	}
+	if store.used != 0 || store.reserved != 0 || len(store.project) != 0 {
+		t.Fatalf("accounting leaked: used=%d reserved=%d project=%v", store.used, store.reserved, store.project)
+	}
+}
+
 func TestBeginRejectsLowFreeSpace(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), newClock())
 	store.opts.FreeSpace = func(string) (uint64, uint64, error) { return 100 << 10, 1 << 20, nil }
@@ -373,6 +413,13 @@ func TestCollectRemovesExpiredAndStaleResidueOnly(t *testing.T) {
 	if err := os.Chtimes(stale, old, old); err != nil {
 		t.Fatal(err)
 	}
+	emptyProject := filepath.Join(root, "proj-empty")
+	if err := os.MkdirAll(emptyProject, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(emptyProject, old, old); err != nil {
+		t.Fatal(err)
+	}
 
 	clock.Advance(16 * time.Minute)
 	if removed := store.Collect(); removed != 1 {
@@ -386,6 +433,9 @@ func TestCollectRemovesExpiredAndStaleResidueOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(inFlight.file.Name()); err != nil {
 		t.Fatalf("in-flight upload was collected: %v", err)
+	}
+	if _, err := os.Stat(emptyProject); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("aged empty project directory survived collection: %v", err)
 	}
 }
 
