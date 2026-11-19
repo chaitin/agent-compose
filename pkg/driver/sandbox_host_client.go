@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -21,13 +22,20 @@ type remoteSandboxRuntime struct {
 	driver     string
 	clientFunc func(context.Context) (sandboxhost.SandboxHostClient, error)
 	version    func() int64
+	hasFeature func(string) bool
 }
 
-func newRemoteSandboxRuntime(driver string, clientFunc func(context.Context) (sandboxhost.SandboxHostClient, error), version func() int64) *remoteSandboxRuntime {
+// newRemoteSandboxRuntime proxies driver through clientFunc. A nil version or
+// hasFeature reports what this build's own host speaks, which is what an
+// in-process test host negotiates.
+func newRemoteSandboxRuntime(driver string, clientFunc func(context.Context) (sandboxhost.SandboxHostClient, error), version func() int64, hasFeature func(string) bool) *remoteSandboxRuntime {
 	if version == nil {
 		version = func() int64 { return sandboxHostProtocolVersion }
 	}
-	return &remoteSandboxRuntime{driver: resolveRuntimeDriver(driver), clientFunc: clientFunc, version: version}
+	if hasFeature == nil {
+		hasFeature = func(name string) bool { return slices.Contains(sandboxHostFeatures, name) }
+	}
+	return &remoteSandboxRuntime{driver: resolveRuntimeDriver(driver), clientFunc: clientFunc, version: version, hasFeature: hasFeature}
 }
 
 // NewRemoteSandboxRuntime returns a SandboxRuntime that proxies the named VM
@@ -35,7 +43,7 @@ func newRemoteSandboxRuntime(driver string, clientFunc func(context.Context) (sa
 // SandboxRuntime surface plus the optional Stats, IsSandboxAlive,
 // SignalGuestRuntime, TerminateProcessTree, and RuntimeInteractor interfaces.
 func NewRemoteSandboxRuntime(driver string, connector *SandboxHostConnector) SandboxRuntime {
-	return newRemoteSandboxRuntime(driver, connector.Client, connector.ProtocolVersion)
+	return newRemoteSandboxRuntime(driver, connector.Client, connector.ProtocolVersion, connector.HasFeature)
 }
 
 // requireDenyProtocolVersion fails closed when a sandbox declares deny entries
@@ -45,6 +53,17 @@ func NewRemoteSandboxRuntime(driver string, connector *SandboxHostConnector) San
 func requireDenyProtocolVersion(version int64, policy *SandboxNetworkPolicy) error {
 	if policy != nil && len(policy.Deny) > 0 && version < sandboxHostDenyProtocolVersion {
 		return fmt.Errorf("sandbox declares deny rules but the sandbox-host speaks protocol %d (deny requires %d): %w", version, sandboxHostDenyProtocolVersion, ErrSandboxNetworkEnforcementUnavailable)
+	}
+	return nil
+}
+
+// requireResourceLimitsFeature fails closed when a sandbox declares a resource
+// limit and the sandbox-host did not advertise that it reads the wire field:
+// such a host would drop the declaration and size the VM from its own
+// defaults.
+func requireResourceLimitsFeature(hasFeature bool, limits *SandboxResourceLimits) error {
+	if limits.Declared() && !hasFeature {
+		return fmt.Errorf("%w: sandbox declares policy.resources but the sandbox-host does not advertise the %q feature; upgrade the sandbox-host", ErrSandboxResourceLimitsUnavailable, sandboxHostFeatureResourceLimits)
 	}
 	return nil
 }
@@ -70,6 +89,9 @@ func fromGRPCError(err error) error {
 	case codes.NotFound:
 		return fmt.Errorf("%w: %s", ErrGuestRuntimeGone, status.Convert(err).Message())
 	case codes.FailedPrecondition:
+		if sandboxHostStatusReason(err) == sandboxHostReasonResourceLimitsUnavailable {
+			return fmt.Errorf("%w: %s", ErrSandboxResourceLimitsUnavailable, status.Convert(err).Message())
+		}
 		return fmt.Errorf("%w: %s", ErrGuestRuntimeNotReady, status.Convert(err).Message())
 	case codes.Aborted:
 		return fmt.Errorf("%w: %s", ErrExecTerminationUnconfirmed, status.Convert(err).Message())
@@ -121,6 +143,9 @@ func (r *remoteSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandb
 		return SandboxVMInfo{}, err
 	}
 	if err := requireDenyProtocolVersion(r.version(), sandbox.NetworkPolicy); err != nil {
+		return SandboxVMInfo{}, err
+	}
+	if err := requireResourceLimitsFeature(r.hasFeature(sandboxHostFeatureResourceLimits), sandbox.ResourceLimits); err != nil {
 		return SandboxVMInfo{}, err
 	}
 	needs, err := client.NeedsCreate(ctx, &sandboxhost.SandboxRequest{

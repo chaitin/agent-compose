@@ -86,6 +86,9 @@ volumes:
 policies:
   locked-down:
     stopped_runtime_policy: retain
+    resources:
+      cpus: 2
+      memory: 4Gi
     network:
       default: deny-all
       allow:
@@ -580,7 +583,7 @@ agents:
 | `skills` | list | Empty | Skill sources projected into the agent runtime. |
 | `volumes` | list | Empty | Volume and bind mounts. |
 | `workspace` | object | None | Explicitly selects a project `workspaces` entry or defines an inline workspace. |
-| `policy` | object | Remove stopped runtime | Declared runtime policies: the stopped-runtime lifecycle and the outbound network policy. |
+| `policy` | object | Remove stopped runtime | Declared runtime policies: the stopped-runtime lifecycle, the outbound network policy, and the CPU and memory limit (`resources`). |
 | `sandbox` | object | — | Deprecated spelling of `policy`. Still accepted; declaring both is an error. |
 | `scheduler` | object | None | Automatic trigger configuration. |
 | `jupyter` | object | Disabled | Default Jupyter behavior for agent runs. |
@@ -1098,7 +1101,7 @@ Inline workspaces accept the same `mode` and `read_only` fields as top-level def
 
 ### `policy`: declared runtime policies
 
-`policy` groups everything this agent declares about how its sandboxes behave at runtime: the stopped-runtime lifecycle and the outbound network policy. Later runtime policies belong in this same block rather than in new top-level agent keys.
+`policy` groups everything this agent declares about how its sandboxes behave at runtime: the stopped-runtime lifecycle, the outbound network policy, and the CPU and memory ceiling. Later runtime policies belong in this same block rather than in new top-level agent keys.
 
 An agent either declares that block inline or selects a project `policies` entry by name:
 
@@ -1296,6 +1299,41 @@ A declaration the engine will not enforce is printed as `enforced  no:` with the
 - On a sandbox with no reachable proxy and a current restricting declaration, the unenforced report (or the `EGRESS_UNENFORCEABLE_POLICY=refuse` refusal) applies at the next start.
 
 `stopped_runtime_policy` does not share this timing: it is snapshotted onto the sandbox when the sandbox is created, so editing it affects only new sandboxes.
+
+### `policy.resources`: CPU and memory limits
+
+`resources` caps the CPU and memory of every sandbox this agent creates:
+
+```yaml
+policy:
+  resources:
+    cpus: 2          # cores; Docker and Kubernetes accept fractions down to 0.001 (0.5, 1.25)
+    memory: 4Gi      # a whole number followed by Mi or Gi
+```
+
+Either field may be declared on its own; an empty `resources: {}` block is an error. `memory` requires a binary unit: a bare `4096` or a decimal `4G` is rejected because it does not say what it means. The accepted range is 64Mi to 1024Gi. `agent-compose config` prints the normalized form, `cpu_millis` (thousandths of a core) and `memory_mib`; that is the canonical spec, not something to paste back under `resources`, which only accepts `cpus` and `memory`.
+
+**Undeclared keeps today's behavior.** Without `resources`, Docker and Kubernetes sandboxes run without any limit, and BoxLite and Microsandbox VMs use the daemon-wide `SANDBOX_CPUS` / `SANDBOX_MEMORY_MIB` (default 4 CPUs and 4096 MiB). A declared field replaces only its own dimension; an undeclared one keeps that behavior.
+
+**A declaration is a hard requirement.** There is no best-effort switch: a sandbox whose limit cannot be applied is refused at start with a failed-precondition error, never started unconstrained. The refusals are:
+
+- fractional `cpus`, or more than 255, on BoxLite or Microsandbox (a VM is sized in whole vCPUs, at most 255; this is also rejected when the project is applied);
+- a sandbox-host from a release without resource-limit support, which would drop the declaration (it does not advertise the `resource_limits` handshake feature; upgrade the sandbox-host);
+- an existing runtime whose limits differ from the declaration (see "When a declaration takes effect" below);
+- a Docker daemon that accepted the container but discarded the limit (a host without the cgroup memory controller, for example rootless Docker without cgroup v2 delegation). The engine reads the limit back from the created container and removes it.
+
+How each driver applies it:
+
+| Driver | Mechanism | Notes |
+| --- | --- | --- |
+| Docker | `HostConfig.NanoCPUs`, `Memory`, `MemorySwap` | `MemorySwap` equals `Memory`, so the sandbox cannot spill into host swap. |
+| Kubernetes | container `resources.requests` = `resources.limits` | QoS is per Pod: Guaranteed when both `cpus` and `memory` are declared, Burstable when only one is. A namespace `LimitRange` or `ResourceQuota` that the values violate rejects the Pod. |
+| BoxLite | VM vCPUs and memory | Whole `cpus` only. |
+| Microsandbox | VM vCPUs and memory | Whole `cpus` only. |
+
+On the microVM drivers the declared memory is the whole guest's memory, so the guest kernel and the agent runtime share it with the workload; leave headroom. On Docker and Kubernetes the limit covers every process in the sandbox, including the in-sandbox agent runtime. When the sandbox exceeds it, the kernel OOM killer kills a process inside it, usually the one using the most memory, but the choice is not guaranteed and can be the agent runtime. On Docker the rest of the sandbox normally keeps running, and the killed command fails with a signal exit (typically 137). On Kubernetes, a kubelet that groups OOM kills (cgroup v2) terminates the whole container. Either way the run reports an ordinary failure: an out-of-memory kill is not yet reported as a distinct reason.
+
+**When a declaration takes effect.** The declaration is read every time a sandbox's runtime is ensured, but a limit is applied only when a runtime is created: a running container, Pod, or VM cannot change its limit. With the default `stopped_runtime_policy: remove` the next start creates a runtime with the current declaration. When the start would reuse an existing runtime instead (a retained runtime being resumed, a runtime still running, or one created before the declaration was added or changed), the engine reads the runtime's limits back, and a runtime whose declared dimensions differ is refused with a failed-precondition error naming the runtime and both values. It is not recreated automatically, because that would discard the runtime's writable state; remove the sandbox, and the next start creates the runtime with the declaration. Removing a declaration never refuses a runtime: an undeclared dimension is not compared.
 
 ### `scheduler`
 

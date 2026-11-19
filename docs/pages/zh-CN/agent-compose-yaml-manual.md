@@ -85,6 +85,9 @@ volumes:
 policies:
   locked-down:
     stopped_runtime_policy: retain
+    resources:
+      cpus: 2
+      memory: 4Gi
     network:
       default: deny-all
       allow:
@@ -578,7 +581,7 @@ agents:
 | `skills` | list | 空 | 注入 Agent 的 Skill 来源。 |
 | `volumes` | list | 空 | Volume 或 bind mount 列表。 |
 | `workspace` | object | 无 | 显式引用一个顶层 `workspaces` 条目，或定义 Agent 内联 Workspace。 |
-| `policy` | object | 删除已停止 runtime | 运行时策略声明：已停止 runtime 的生命周期与出网策略。 |
+| `policy` | object | 删除已停止 runtime | 运行时策略声明：已停止 runtime 的生命周期、出网策略，以及 CPU 和内存限制（`resources`）。 |
 | `sandbox` | object | — | `policy` 的弃用拼写。仍然可用；同时声明两者会报错。 |
 | `scheduler` | object | 无 | 自动触发 Agent 的 Scheduler。 |
 | `jupyter` | object | disabled | Agent run 的 Jupyter 默认配置。 |
@@ -1065,7 +1068,7 @@ workspace:
 
 ### `policy`：运行时策略声明
 
-`policy` 集中声明该 Agent 的 sandbox 在运行时的行为：已停止 runtime 的生命周期，以及出网策略。后续新增的运行时策略应继续放进这个块，而不是新增顶层 agent 字段。
+`policy` 集中声明该 Agent 的 sandbox 在运行时的行为：已停止 runtime 的生命周期、出网策略，以及 CPU 和内存上限。后续新增的运行时策略应继续放进这个块，而不是新增顶层 agent 字段。
 
 Agent 可以内联声明这个块，也可以按名称引用项目级 `policies` 条目：
 
@@ -1258,6 +1261,41 @@ Network policy
 - 在没有可达代理、且当前声明具有限制性的 sandbox 上，未执行的报告（或 `EGRESS_UNENFORCEABLE_POLICY=refuse` 的拒绝）会在下一次启动时生效。
 
 `stopped_runtime_policy` 的时机不同：它在 sandbox 创建时被快照到 sandbox 上，因此修改它只影响新建的 sandbox。
+
+### `policy.resources`：CPU 与内存限制
+
+`resources` 为该 Agent 创建的每个 sandbox 设置 CPU 和内存上限：
+
+```yaml
+policy:
+  resources:
+    cpus: 2          # 核数；Docker 和 Kubernetes 允许小数，精度到 0.001（如 0.5、1.25）
+    memory: 4Gi      # 整数加 Mi 或 Gi 单位
+```
+
+两个字段可以只写一个；空的 `resources: {}` 会报错。`memory` 必须带二进制单位：裸数字 `4096` 或十进制的 `4G` 都会被拒绝，因为看不出它的含义。允许范围是 64Mi 到 1024Gi。`agent-compose config` 输出的是规范化形式 `cpu_millis`（千分之一核）和 `memory_mib`；这是 canonical spec，不能原样贴回 `resources`，`resources` 只接受 `cpus` 和 `memory`。
+
+**不声明则保持现有行为。** 不写 `resources` 时，Docker 和 Kubernetes 的 sandbox 不加任何限制，BoxLite 和 Microsandbox 的 VM 使用 daemon 级的 `SANDBOX_CPUS` / `SANDBOX_MEMORY_MIB`（默认 4 核、4096 MiB）。声明的字段只替换它自己那一维，没声明的那一维保持原行为。
+
+**声明即硬性要求。** 没有 best-effort 开关：限制无法生效的 sandbox 在启动时以 failed precondition 拒绝，绝不会不受限地跑起来。会被拒绝的情况：
+
+- BoxLite 或 Microsandbox 声明了小数 `cpus`，或超过 255（VM 只能按整数 vCPU 分配，最多 255 个；apply 项目时也会直接报错）；
+- sandbox-host 来自不支持资源限制的旧版本，它会丢掉这个声明（握手时不会声明 `resource_limits` 能力；需要升级 sandbox-host）；
+- 已有 runtime 的限制与声明不一致（见下文"声明何时生效"）；
+- Docker daemon 接受了容器但丢弃了限制（例如主机没有 cgroup memory 控制器，像未做 cgroup v2 委派的 rootless Docker）。引擎会从创建出的容器回读限制，不一致就删掉容器。
+
+各 driver 的落地方式：
+
+| Driver | 机制 | 说明 |
+| --- | --- | --- |
+| Docker | `HostConfig.NanoCPUs`、`Memory`、`MemorySwap` | `MemorySwap` 等于 `Memory`，sandbox 不能借用宿主机 swap。 |
+| Kubernetes | 容器 `resources.requests` = `resources.limits` | QoS 按 Pod 计算：`cpus` 和 `memory` 都声明时为 Guaranteed，只声明一项时为 Burstable。违反命名空间 `LimitRange` 或 `ResourceQuota` 的值会导致 Pod 被拒绝。 |
+| BoxLite | VM 的 vCPU 与内存 | 只接受整数 `cpus`。 |
+| Microsandbox | VM 的 vCPU 与内存 | 只接受整数 `cpus`。 |
+
+在 microVM driver 上，声明的内存是整个 guest 的内存，guest 内核和 agent runtime 也要占用，需要留出余量。在 Docker 和 Kubernetes 上，限制覆盖 sandbox 内的所有进程，包括 agent runtime。超出限制时，内核的 OOM killer 会在 sandbox 里杀掉一个进程，通常是占内存最多的那个，但不保证，也可能是 agent runtime。Docker 上 sandbox 的其余部分一般会继续运行，被杀的命令以信号退出（通常是 137）；Kubernetes 上，如果 kubelet 开启了整组 OOM（cgroup v2），整个容器会被终止。两种情况下 run 都只显示为普通失败，目前不会单独标出是内存不足。
+
+**声明何时生效。** 每次 ensure sandbox 的 runtime 时都会重新读取声明，但限制只在创建 runtime 时应用：运行中的容器、Pod 或 VM 不能改限制。默认的 `stopped_runtime_policy: remove` 下，下一次启动会按当前声明创建 runtime。如果这次启动会复用已有 runtime（`retain` 后 resume、runtime 仍在运行，或 runtime 创建于声明新增或修改之前），引擎会回读它的限制；已声明维度不一致时以 failed precondition 拒绝启动，错误里写明 runtime 和两边的值。引擎不会自动重建，因为那会丢掉 runtime 的可写状态；删除 sandbox 后，下一次启动会按声明创建 runtime。删掉声明不会导致拒绝：未声明的维度不做比较。
 
 ### `scheduler`
 

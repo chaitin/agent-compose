@@ -9,10 +9,14 @@ package driver
 func dockerRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 	dimensions := []RuntimeCapabilityDimensionFacts{
 		{
-			Dimension:       dimensionResourceLimits,
-			Mechanism:       reasonNotConfigured,
-			Observed:        "dockerSandboxHostConfig sets no Memory, MemorySwap, NanoCPUs, CpuShares, or PidsLimit",
-			DefaultBehavior: "an undeclared resource limit is not applied to the sandbox container",
+			Dimension: dimensionResourceLimits,
+			Enforced:  true,
+			Mechanism: mechanismDockerHostConfigResources,
+			Preconditions: []string{
+				"the Docker daemon has the cgroup memory and cpu controllers; rootless Docker needs cgroup v2 delegation",
+			},
+			Observed:        "applyDockerResourceLimits writes a declared policy.resources into HostConfig NanoCPUs, Memory, and MemorySwap (equal to Memory, so no swap); the created container is inspected and removed when the Docker daemon discarded a limit, and an existing container whose limits differ from the declaration is refused rather than reused; CpuShares and PidsLimit stay unset",
+			DefaultBehavior: "an undeclared resource limit is not applied to the sandbox container; a declared one that cannot be applied fails the create",
 		},
 	}
 	dimensions = append(dimensions, securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{

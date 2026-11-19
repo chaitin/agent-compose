@@ -558,6 +558,10 @@ func cloneNormalizedSandboxSpec(value *NormalizedSandboxSpec) *NormalizedSandbox
 		network.Deny = cloneNormalizedNetworkDeny(value.Network.Deny)
 		cloned.Network = &network
 	}
+	if value.Resources != nil {
+		resources := *value.Resources
+		cloned.Resources = &resources
+	}
 	return &cloned
 }
 

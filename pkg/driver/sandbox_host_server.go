@@ -22,6 +22,10 @@ import (
 // A host that predates it silently drops deny entries, so the daemon fails
 // closed (rather than applying a policy without its denials) when a sandbox
 // declares deny rules against an N-1 host.
+//
+// A capability that an older peer can simply ignore is advertised as a
+// handshake feature instead of a version bump (see sandboxHostFeatures), so a
+// host gaining it stays compatible with an older daemon.
 const sandboxHostProtocolVersion = 2
 
 // sandboxHostDenyProtocolVersion is the first protocol version whose wire
@@ -29,6 +33,28 @@ const sandboxHostProtocolVersion = 2
 // a deny-declaring sandbox instead of letting the host silently ignore the
 // refusal.
 const sandboxHostDenyProtocolVersion = 2
+
+// sandboxHostFeatureResourceLimits is advertised by a host that reads
+// Sandbox.resource_limits and sizes the VM from it. A host without it would
+// drop a declared limit, so the daemon refuses a declaring sandbox against it.
+const sandboxHostFeatureResourceLimits = "resource_limits"
+
+// sandboxHostFeatures is what this host advertises in its handshake.
+var sandboxHostFeatures = []string{sandboxHostFeatureResourceLimits}
+
+// sandboxHostHandshake is what the daemon learned from a host's handshake.
+type sandboxHostHandshake struct {
+	version  int64
+	features map[string]bool
+}
+
+func newSandboxHostHandshake(resp *sandboxhost.HandshakeResponse) sandboxHostHandshake {
+	handshake := sandboxHostHandshake{version: resp.GetProtocolVersion(), features: map[string]bool{}}
+	for _, feature := range resp.GetFeatures() {
+		handshake.features[feature] = true
+	}
+	return handshake
+}
 
 // sandboxHostMaxMsgSize is the gRPC message ceiling shared by the daemon and
 // the sandbox-host. gRPC defaults to 4 MiB, which the accumulated ExecResult
@@ -94,7 +120,8 @@ func (s *sandboxHostServer) runtimeForDriver(driver string) (SandboxRuntime, err
 // sentinel-backed errors are preserved with dedicated codes so the daemon can
 // reconstruct them via fromGRPCError: interaction-unsupported rides
 // Unimplemented, guest-runtime-gone rides NotFound, guest-runtime-not-ready
-// rides FailedPrecondition, exec-termination-unconfirmed rides Aborted; context
+// rides FailedPrecondition, resource-limits-unavailable rides FailedPrecondition
+// with an ErrorInfo reason, exec-termination-unconfirmed rides Aborted; context
 // cancellation and deadline expiry keep their gRPC codes; everything else rides
 // Internal with its message.
 func sandboxHostStatus(err error) error {
@@ -102,6 +129,8 @@ func sandboxHostStatus(err error) error {
 		return nil
 	}
 	switch {
+	case errors.Is(err, ErrSandboxResourceLimitsUnavailable):
+		return sandboxHostResourceLimitsStatus(err)
 	case errors.Is(err, ErrRuntimeInteractionUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrGuestRuntimeGone):
@@ -120,7 +149,7 @@ func sandboxHostStatus(err error) error {
 }
 
 func (s *sandboxHostServer) Handshake(context.Context, *sandboxhost.HandshakeRequest) (*sandboxhost.HandshakeResponse, error) {
-	return &sandboxhost.HandshakeResponse{ProtocolVersion: sandboxHostProtocolVersion}, nil
+	return &sandboxhost.HandshakeResponse{ProtocolVersion: sandboxHostProtocolVersion, Features: append([]string(nil), sandboxHostFeatures...)}, nil
 }
 
 func (s *sandboxHostServer) NeedsCreate(ctx context.Context, req *sandboxhost.SandboxRequest) (*sandboxhost.NeedsCreateResponse, error) {

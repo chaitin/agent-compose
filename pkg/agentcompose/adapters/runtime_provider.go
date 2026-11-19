@@ -88,6 +88,9 @@ type runtimeProvider struct {
 	// forward proxy. Its zero value is inert: no credential store, no sandbox
 	// loader, no mediation, and the unenforced-declaration gate still applies.
 	egressProxy SandboxEgressProxy
+	// resourceLimits is shared by every driver adapter; options fill in its
+	// resolver before the adapters are built.
+	resourceLimits driverSandboxResourceLimits
 }
 
 type driverRuntimeAdapter struct {
@@ -99,6 +102,10 @@ type driverRuntimeAdapter struct {
 	// adapter built without a resolver resolves no declaration and leaves
 	// NetworkPolicy nil (D3).
 	networkPolicies driverSandboxNetworkPolicy
+	// resourceLimits derives the declared CPU and memory ceiling and refuses a
+	// declaration the deployment or driver cannot honor. Its zero value is
+	// inert, leaving ResourceLimits nil.
+	resourceLimits driverSandboxResourceLimits
 	// egressProxy, when available, routes a declaring sandbox's HTTP traffic
 	// through the engine's own forward proxy and marks the driver-boundary
 	// policy as mediated, so the driver reports enforcement instead of warning
@@ -202,16 +209,17 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 	}
 	executions := newSandboxExecutions()
 	networkPolicies := driverSandboxNetworkPolicy{config: config, declarations: networkDeclarations}
+	resourceLimits := provider.resourceLimits
 	// The mediation decides with the same resolved declaration and engine
 	// endpoints as the driver-boundary policy, so both read one seam.
 	provider.egressProxy.networkPolicies = networkPolicies
 	auditLog, _ := driverpkg.SandboxInitEgressAuditLogPath(config)
 	provider.runtimes = map[string]SandboxRuntime{
-		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
-		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
-		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
+		driverpkg.RuntimeDriverBoxlite:      driverRuntimeAdapter{runtime: boxliteRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, resourceLimits: resourceLimits.forDriver(driverpkg.RuntimeDriverBoxlite), egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
+		driverpkg.RuntimeDriverDocker:       driverRuntimeAdapter{runtime: dockerRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, resourceLimits: resourceLimits.forDriver(driverpkg.RuntimeDriverDocker), egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
+		driverpkg.RuntimeDriverMicrosandbox: driverRuntimeAdapter{runtime: microsandboxRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, resourceLimits: resourceLimits.forDriver(driverpkg.RuntimeDriverMicrosandbox), egressProxy: provider.egressProxy, sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog},
 		driverpkg.RuntimeDriverK8s: guestFileRuntimeAdapter{driverRuntimeAdapter{
-			runtime: k8sRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, egressProxy: provider.egressProxy,
+			runtime: k8sRuntime, executions: executions, recorder: provider.recorder, networkPolicies: networkPolicies, resourceLimits: resourceLimits.forDriver(driverpkg.RuntimeDriverK8s), egressProxy: provider.egressProxy,
 			sandboxInitEgress: config.SandboxInitEgress, sandboxInitAuditLog: auditLog,
 		}},
 	}
@@ -293,6 +301,16 @@ func (r driverRuntimeAdapter) driverSandbox(ctx context.Context, session *domain
 	policy, effective, err := r.networkPolicies.resolve(ctx, session)
 	if err != nil {
 		return nil, domain.SandboxEgressPolicy{}, err
+	}
+	// The declared resource limit rides the same seam as the network policy,
+	// so every path that can make a driver create a runtime carries it, and a
+	// declaration the deployment cannot honor refuses the start here.
+	if driverSandbox != nil {
+		limits, limitsErr := r.resourceLimits.resolve(ctx, session)
+		if limitsErr != nil {
+			return nil, domain.SandboxEgressPolicy{}, limitsErr
+		}
+		driverSandbox.ResourceLimits = limits
 	}
 	// The unified strict profile mediates every sandbox, including one that
 	// declared no policy, because the Docker workload has no interface and the
@@ -384,6 +402,7 @@ func (r driverRuntimeAdapter) EnsureSandbox(ctx context.Context, session *domain
 		return domain.SandboxVMInfo{}, err
 	}
 	info, err := r.runtime.EnsureSandbox(ctx, driverSandbox, execution.ToDriverVMState(vmState), execution.ToDriverProxyState(proxyState))
+	err = classifyResourceLimitsError(err)
 	r.recorder.RecordSandboxCreate(ctx, runtimeDriverName(session, vmState.Driver), time.Since(startedAt), err)
 	endSpan(err)
 	if err != nil {

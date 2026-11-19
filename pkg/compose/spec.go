@@ -125,6 +125,13 @@ type SandboxSpec struct {
 	// unrestricted outbound access. Default-deny is a policy that takes effect
 	// only because this block was declared; it is not an engine default (D3).
 	Network *SandboxNetworkSpec `yaml:"network,omitempty" json:"network,omitempty"`
+	// Resources declares the CPU and memory ceiling of this agent's sandboxes.
+	// A nil Resources is undeclared: microVM drivers keep the daemon-wide
+	// SANDBOX_CPUS/SANDBOX_MEMORY_MIB sizing and Docker and Kubernetes apply no
+	// limit, exactly as before the block existed. A declared block is a hard
+	// requirement: a sandbox whose driver cannot apply it is refused, never
+	// started unconstrained.
+	Resources *SandboxResourcesSpec `yaml:"resources,omitempty" json:"resources,omitempty"`
 }
 
 // SandboxNetworkSpec declares the outbound network policy for one agent's
@@ -655,6 +662,14 @@ func validatePolicyDefinition(node *yaml.Node, path string) error {
 	return validateMapping(node, path, map[string]nodeValidator{
 		"stopped_runtime_policy": validateScalar,
 		"network":                validateSandboxNetwork,
+		"resources":              validateSandboxResources,
+	})
+}
+
+func validateSandboxResources(node *yaml.Node, path string) error {
+	return validateMapping(node, path, map[string]nodeValidator{
+		"cpus":   validateScalar,
+		"memory": validateScalar,
 	})
 }
 

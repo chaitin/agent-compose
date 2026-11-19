@@ -284,6 +284,11 @@ func (r *k8sRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox, vmStat
 			ok = false
 		}
 	}
+	if ok {
+		if err := requireReusedK8sPodResourceLimits(pod, sandbox.ResourceLimits); err != nil {
+			return SandboxVMInfo{}, err
+		}
+	}
 	created := false
 	if !ok {
 		pod, err = r.createPod(ctx, clientset, sandbox, vmState, effective)
@@ -509,6 +514,7 @@ func (r *k8sRuntime) createPod(ctx context.Context, clientset kubernetes.Interfa
 					WorkingDir:      r.config.GuestWorkspacePath,
 					Env:             k8sEnvVars(env),
 					VolumeMounts:    volumeMounts,
+					Resources:       k8sResourceRequirements(sandbox.ResourceLimits),
 					// A sandbox is untrusted code. NET_RAW is what lets it open
 					// raw sockets, ARP-spoof a shared network and capture traffic
 					// between the control plane and the engine; the agent runtime

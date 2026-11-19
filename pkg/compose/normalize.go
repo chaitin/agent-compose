@@ -85,6 +85,10 @@ type NormalizedSandboxSpec struct {
 	// omitempty tag is what keeps an undeclared sandbox byte-identical in
 	// canonical JSON, and therefore in the spec hash.
 	Network *NormalizedSandboxNetworkSpec `yaml:"network,omitempty" json:"network,omitempty"`
+	// Resources is nil when the sandbox declared no resource limit. Like
+	// Network, omitempty keeps an undeclared sandbox's canonical JSON and spec
+	// hash unchanged.
+	Resources *NormalizedSandboxResourcesSpec `yaml:"resources,omitempty" json:"resources,omitempty"`
 }
 
 // NormalizedSandboxNetworkSpec is the validated declaration. Default is always
@@ -410,6 +414,11 @@ func normalizeAgent(name string, agent AgentSpec, options NormalizeOptions, proj
 			Message: "k8s does not support retain because stopping a Pod deletes it; use remove and sandbox_policy=sticky when the Pod must stay running",
 		}
 	}
+	if policy != nil && driver != nil {
+		if err := validateSandboxResourcesForDriver(joinPath("agents", name)+"."+policyKey+".resources", driver.Name, policy.Resources); err != nil {
+			return NormalizedAgentSpec{}, err
+		}
+	}
 	capsetIDs := normalizeStringList(agent.CapsetIDs)
 	if err := validateAgentCapsetReferences(joinPath("agents", name)+".capset_ids", capsetIDs, project.OctoBusServers); err != nil {
 		return NormalizedAgentSpec{}, err
@@ -527,7 +536,11 @@ func normalizeSandboxSpec(path string, sandbox *SandboxSpec) (*NormalizedSandbox
 	if err != nil {
 		return nil, err
 	}
-	return &NormalizedSandboxSpec{StoppedRuntimePolicy: policy, Network: network}, nil
+	resources, err := NormalizeSandboxResourcesSpec(path+".resources", sandbox.Resources)
+	if err != nil {
+		return nil, err
+	}
+	return &NormalizedSandboxSpec{StoppedRuntimePolicy: policy, Network: network, Resources: resources}, nil
 }
 
 func normalizeProjectWorkspaces(values map[string]WorkspaceSpec, options NormalizeOptions) (map[string]WorkspaceSpec, error) {

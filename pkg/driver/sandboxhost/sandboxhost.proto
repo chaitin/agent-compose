@@ -61,6 +61,11 @@ message HandshakeResponse {
   // protocol_version is a monotonically increasing integer identifying the
   // wire contract this host speaks.
   int64 protocol_version = 1;
+  // features names optional capabilities this host implements on top of its
+  // protocol version. A daemon gates a feature on its presence rather than on
+  // a version bump, so a host can gain one without breaking an older daemon,
+  // which ignores the field. An older host leaves it empty.
+  repeated string features = 2;
 }
 
 // ---------- core types (mirror pkg/driver) ----------
@@ -145,6 +150,18 @@ message Sandbox {
   repeated SandboxVolumeMount volume_mounts = 4;
   repeated SandboxEnvVar runtime_env_items = 5;
   NetworkPolicy network_policy = 6;
+  // Declared CPU and memory ceiling. Absent means undeclared. Only a host that
+  // advertises the "resource_limits" handshake feature reads it; the daemon
+  // refuses a declaring sandbox against any other host, which would silently
+  // drop the field and size the VM from its own defaults.
+  ResourceLimits resource_limits = 7;
+}
+
+// ResourceLimits mirrors driver.SandboxResourceLimits. A zero field is
+// undeclared for that dimension.
+message ResourceLimits {
+  int64 cpu_millis = 1;
+  uint32 memory_mib = 2;
 }
 
 message VMState {

@@ -562,6 +562,9 @@ func TestSandboxHostHandshake(t *testing.T) {
 	if resp.GetProtocolVersion() != sandboxHostProtocolVersion {
 		t.Fatalf("protocol version = %d, want %d", resp.GetProtocolVersion(), sandboxHostProtocolVersion)
 	}
+	if !connector.HasFeature(sandboxHostFeatureResourceLimits) {
+		t.Fatalf("connector features after handshake do not include %q (host sent %v)", sandboxHostFeatureResourceLimits, resp.GetFeatures())
+	}
 }
 
 func envVarsEqual(a, b []SandboxEnvVar) bool {

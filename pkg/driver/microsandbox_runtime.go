@@ -1231,7 +1231,14 @@ func (r *microsandboxRuntime) getOrCreateSandbox(ctx context.Context, session *S
 			}
 			return sandbox, true, true, err
 		}
+		if err := requireReusedMicrosandboxResourceLimits(handle, session.ResourceLimits); err != nil {
+			r.releaseSandboxHandle(name, sandbox)
+			return nil, false, false, err
+		}
 		return sandbox, false, false, nil
+	}
+	if err := requireReusedMicrosandboxResourceLimits(handle, session.ResourceLimits); err != nil {
+		return nil, false, false, err
 	}
 	sandbox, err := handle.Start(ctx)
 	if err == nil {
@@ -1353,7 +1360,12 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	if err != nil {
 		return nil, err
 	}
-	resources := configuredSandboxResources(r.config)
+	// Microsandbox sizes its VM in whole vCPUs, so a fractional declaration
+	// is refused instead of rounded.
+	resources, err := microVMSandboxResources(r.config, session.ResourceLimits)
+	if err != nil {
+		return nil, err
+	}
 	options := []microsandbox.SandboxOption{
 		microsandbox.WithImageDisk(rootfsDisk.Path, "ext4"),
 		microsandbox.WithWorkdir("/"),

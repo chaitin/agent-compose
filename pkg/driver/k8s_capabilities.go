@@ -8,10 +8,14 @@ package driver
 func k8sRuntimeCapabilityFacts() RuntimeCapabilityFacts {
 	dimensions := []RuntimeCapabilityDimensionFacts{
 		{
-			Dimension:       dimensionResourceLimits,
-			Mechanism:       reasonNotConfigured,
-			Observed:        "the Pod container declares no ResourceRequirements requests or limits",
-			DefaultBehavior: "an undeclared resource limit is not applied to the Pod",
+			Dimension: dimensionResourceLimits,
+			Enforced:  true,
+			Mechanism: mechanismK8sContainerResources,
+			Preconditions: []string{
+				"a namespace LimitRange or ResourceQuota the declaration violates rejects the Pod",
+			},
+			Observed:        "the Pod container declares ResourceRequirements requests equal to limits for the cpu and memory a policy.resources declares, and none otherwise; an existing Pod whose container resources differ from the declaration is refused rather than reused",
+			DefaultBehavior: "an undeclared resource limit is not applied to the Pod beyond what a namespace LimitRange defaults",
 		},
 	}
 	dimensions = append(dimensions, securityContextFacts(uniformSecurityContextReasons(reasonNotConfigured), securityContextObserved{

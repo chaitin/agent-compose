@@ -30,11 +30,38 @@ func TestK8sCapabilitiesMatchPodSpec(t *testing.T) {
 	}
 	container := pod.Spec.Containers[0]
 
+	// Undeclared: the Pod keeps no requests or limits.
 	if container.Resources.Limits != nil || container.Resources.Requests != nil {
-		t.Fatalf("pod container now declares resources %+v; the resource_limits declaration is stale", container.Resources)
+		t.Fatalf("undeclared pod container declares resources %+v; an undeclared limit must not be applied", container.Resources)
 	}
-	if resources := capabilityDimensionForTest(t, facts, dimensionResourceLimits); resources.Enforced {
-		t.Fatalf("resource_limits declaration = %+v, want not enforced", resources)
+	if resources := capabilityDimensionForTest(t, facts, dimensionResourceLimits); !resources.Enforced || resources.Mechanism != mechanismK8sContainerResources {
+		t.Fatalf("resource_limits declaration = %+v, want enforced via %q", resources, mechanismK8sContainerResources)
+	}
+	// Declared: requests equal limits for exactly the declared dimensions.
+	limited := testSandbox(t, "sandbox-capabilities-limited")
+	limited.ResourceLimits = &SandboxResourceLimits{CPUMillis: 1500, MemoryMiB: 2048}
+	limitedPod, err := runtime.createPod(context.Background(), clientset, limited, VMState{}, ProxyState{})
+	if err != nil {
+		t.Fatalf("createPod(limited) error = %v", err)
+	}
+	limitedResources := limitedPod.Spec.Containers[0].Resources
+	if got := limitedResources.Limits.Cpu().MilliValue(); got != 1500 {
+		t.Fatalf("cpu limit = %dm, want 1500m", got)
+	}
+	if got := limitedResources.Limits.Memory().Value(); got != 2048*mib {
+		t.Fatalf("memory limit = %d, want %d", got, 2048*mib)
+	}
+	if !limitedResources.Requests.Cpu().Equal(*limitedResources.Limits.Cpu()) || !limitedResources.Requests.Memory().Equal(*limitedResources.Limits.Memory()) {
+		t.Fatalf("requests %+v differ from limits %+v; requests must equal limits", limitedResources.Requests, limitedResources.Limits)
+	}
+	memoryOnly := testSandbox(t, "sandbox-capabilities-memory-only")
+	memoryOnly.ResourceLimits = &SandboxResourceLimits{MemoryMiB: 512}
+	memoryOnlyPod, err := runtime.createPod(context.Background(), clientset, memoryOnly, VMState{}, ProxyState{})
+	if err != nil {
+		t.Fatalf("createPod(memory only) error = %v", err)
+	}
+	if _, ok := memoryOnlyPod.Spec.Containers[0].Resources.Limits["cpu"]; ok {
+		t.Fatalf("memory-only declaration set a cpu limit: %+v", memoryOnlyPod.Spec.Containers[0].Resources)
 	}
 
 	if pod.Spec.SecurityContext != nil {

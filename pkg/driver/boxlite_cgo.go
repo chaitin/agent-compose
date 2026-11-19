@@ -187,9 +187,12 @@ type cgoBoxHandle struct {
 }
 
 type cgoBoxInfo struct {
-	ID    string `json:"id"`
-	Name  string `json:"name,omitempty"`
-	State struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// CPUs and MemoryMiB are the size the box was created with.
+	CPUs      float64 `json:"cpus,omitempty"`
+	MemoryMiB int     `json:"memory_mib,omitempty"`
+	State     struct {
 		Status  string `json:"status"`
 		Running bool   `json:"running"`
 	} `json:"state"`
@@ -966,6 +969,10 @@ func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox
 						return nil, false, err
 					}
 				} else {
+					if err := requireReusedRuntimeResourceLimits("boxlite box "+existingID, sandbox.ResourceLimits, boxliteBoxResourceLimits(info.CPUs, info.MemoryMiB)); err != nil {
+						box.free()
+						return nil, false, err
+					}
 					if !info.State.Running {
 						if err := r.startBox(ctx, box); err != nil {
 							box.free()
@@ -975,6 +982,12 @@ func (r *cgoSandboxRuntime) getOrCreateBox(ctx context.Context, sandbox *Sandbox
 					return box, false, nil
 				}
 			} else {
+				// The box's size is unknown, so a declaring sandbox cannot
+				// tell whether it would run with the declared limit.
+				if sandbox.ResourceLimits.Declared() {
+					box.free()
+					return nil, false, fmt.Errorf("%w: read the size of existing boxlite box %s: %w", ErrSandboxResourceLimitsUnavailable, existingID, infoErr)
+				}
 				return box, false, nil
 			}
 		}
@@ -1042,7 +1055,7 @@ func cStringOrEmpty(value *C.char) string {
 // metadata struct. BoxLite v0.10 extended CBoxInfo with fields this runtime does
 // not read yet, so the conversion stays explicit about what is used.
 func cgoBoxInfoFromC(raw *C.struct_CBoxInfo) cgoBoxInfo {
-	info := cgoBoxInfo{ID: cStringOrEmpty(raw.id), Name: cStringOrEmpty(raw.name)}
+	info := cgoBoxInfo{ID: cStringOrEmpty(raw.id), Name: cStringOrEmpty(raw.name), CPUs: float64(raw.cpus), MemoryMiB: int(raw.memory_mib)}
 	info.State.Status = cStringOrEmpty(raw.status)
 	info.State.Running = raw.running != 0
 	return info
@@ -1258,6 +1271,12 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	if err != nil {
 		return nil, err
 	}
+	// Resolved before any FFI allocation so a declaration the VM cannot honor
+	// fails without leaking an options handle.
+	resources, err := microVMSandboxResources(r.config, sandbox.ResourceLimits)
+	if err != nil {
+		return nil, err
+	}
 	imageRef := resolveSandboxGuestImage(vmState.Image, sandbox.Summary.GuestImage, r.config.DefaultImage)
 	imagePullTimeout := r.config.ImagePullTimeout
 	if imagePullTimeout <= 0 {
@@ -1311,10 +1330,11 @@ func (r *cgoSandboxRuntime) buildBoxOptions(ctx context.Context, sandbox *Sandbo
 	C.boxlite_options_set_auto_remove(options, 0)
 	C.boxlite_options_set_detach(options, 1)
 	C.boxlite_options_set_network_enabled(options)
-	resources := configuredSandboxResources(r.config)
-	// BoxLite v0.13 widened the CPU option from int to double to support
-	// fractional CPUs. configuredSandboxResources still resolves whole CPUs,
-	// so the value is widened rather than truncated.
+	// The CPU option is a double since BoxLite v0.13, but the daemon passes
+	// whole vCPUs only: microVMSandboxResources refuses a fractional
+	// declaration before it gets here, because BoxLite enforces a fraction
+	// with a best-effort host cgroup quota it skips when the CPU controller is
+	// not delegated.
 	C.boxlite_options_set_cpus(options, C.double(resources.CPUs))
 	C.boxlite_options_set_memory(options, C.int(resources.MemoryMiB))
 	C.boxlite_options_set_disk_size_gb(options, C.int(resources.DiskSizeGB))

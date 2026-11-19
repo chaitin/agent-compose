@@ -20,11 +20,14 @@ type microVMObserved struct {
 func microVMRuntimeCapabilityFacts(driver string, observed microVMObserved) RuntimeCapabilityFacts {
 	dimensions := []RuntimeCapabilityDimensionFacts{
 		{
-			Dimension:       dimensionResourceLimits,
-			Enforced:        true,
-			Mechanism:       mechanismSDKSandboxOptions,
-			Observed:        observed.ResourceLimits,
-			DefaultBehavior: "the daemon-wide default of 4 CPUs, 4096 MiB memory, and 6 GiB disk applies when no explicit sandbox resource is configured",
+			Dimension: dimensionResourceLimits,
+			Enforced:  true,
+			Mechanism: mechanismSDKSandboxOptions,
+			Preconditions: []string{
+				"the sandbox-host advertises the resource_limits handshake feature; a host without it is refused for a sandbox that declares policy.resources",
+			},
+			Observed:        observed.ResourceLimits + "; an existing VM whose size differs from the declaration is refused rather than reused",
+			DefaultBehavior: "a declared policy.resources sizes the VM; otherwise the daemon-wide SANDBOX_CPUS and SANDBOX_MEMORY_MIB (default 4 CPUs and 4096 MiB) apply, and SANDBOX_DISK_SIZE_GB (default 6 GiB) always sizes the disk",
 		},
 	}
 	// The microVM SDKs expose no per-dimension capability-drop, read-only
