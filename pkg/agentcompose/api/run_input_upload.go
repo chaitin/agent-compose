@@ -21,10 +21,12 @@ import (
 const MaxRunInputUploadChunkBytes = 256 << 10
 
 // MaxRunInputUploadMessageBytes is the per-message read limit for
-// UploadRunInput: the chunk limit plus envelope and info-field overhead. Connect
-// decodes a whole message before the handler sees it, so without this limit an
-// oversized frame would be buffered in memory before the chunk check rejects it.
-const MaxRunInputUploadMessageBytes = MaxRunInputUploadChunkBytes + 4<<10
+// UploadRunInput. The limit is measured on the encoded message, and the Connect
+// JSON codec base64-encodes bytes (4/3 inflation), so it allows twice the chunk
+// size. Connect decodes a whole message before the handler sees it, so without
+// this limit an oversized frame would be buffered in memory before the chunk
+// check rejects it.
+const MaxRunInputUploadMessageBytes = 2 * MaxRunInputUploadChunkBytes
 
 // UploadRunInputHandlerOptions is the handler option set for the RunService
 // instance that serves UploadRunInput. The shared error contract still applies;

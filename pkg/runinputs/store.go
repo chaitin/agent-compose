@@ -280,11 +280,14 @@ func (s *Store) commit(object Object) (Object, bool) {
 
 // reserve charges bytes that have arrived to an upload in progress. Begin only
 // checks the declared size, so capacity tracks what is actually stored rather
-// than what a client promised.
+// than what a client promised. The free-space guard is repeated here because
+// concurrent uploads can all pass the Begin check before any of them writes.
 func (s *Store) reserve(projectID string, size int64) error {
 	if size <= 0 {
 		return nil
 	}
+	// statfs is file-system work, so it runs before taking the lock.
+	free, total, spaceErr := s.opts.FreeSpace(s.opts.Root)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.used+s.reserved+size > s.opts.MaxStoreBytes {
@@ -292,6 +295,9 @@ func (s *Store) reserve(projectID string, size int64) error {
 	}
 	if limit := s.opts.MaxStoreBytes / projectShareDivisor; s.project[projectID]+size > limit {
 		return fmt.Errorf("%w: project would exceed its %d byte share", ErrExhausted, limit)
+	}
+	if spaceErr == nil && float64(free)-float64(size) < float64(total)*minFreeRatio {
+		return fmt.Errorf("%w: filesystem free space is below %.0f%%", ErrExhausted, minFreeRatio*100)
 	}
 	s.reserved += size
 	s.project[projectID] += size

@@ -165,6 +165,46 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 	return created, nil
 }
 
+// ExistingRun returns the run a request's idempotency key already created. It
+// resolves only the project and agent the run ID depends on, so a retry can be
+// recognized without resolving the request input again.
+func (c *Coordinator) ExistingRun(ctx context.Context, req StartRequest) (domain.ProjectRunRecord, bool, error) {
+	if c == nil || c.store == nil {
+		return domain.ProjectRunRecord{}, false, fmt.Errorf("config store is required")
+	}
+	if c.stableRunID == nil {
+		return domain.ProjectRunRecord{}, false, fmt.Errorf("stable run id function is required")
+	}
+	req.ProjectID = strings.TrimSpace(req.ProjectID)
+	req.AgentName = strings.TrimSpace(req.AgentName)
+	req.ClientRequestID = strings.TrimSpace(req.ClientRequestID)
+	if req.ProjectID == "" || req.AgentName == "" || req.ClientRequestID == "" {
+		return domain.ProjectRunRecord{}, false, nil
+	}
+	project, err := c.store.GetProject(ctx, req.ProjectID)
+	if err != nil {
+		return domain.ProjectRunRecord{}, false, err
+	}
+	projectAgent, err := c.store.GetProjectAgent(ctx, project.ID, req.AgentName)
+	if err != nil {
+		return domain.ProjectRunRecord{}, false, err
+	}
+	runID, err := c.stableRunID(project.ID, projectAgent.AgentName, NormalizeSource(req.Source), req.ClientRequestID)
+	if err != nil {
+		return domain.ProjectRunRecord{}, false, err
+	}
+	run, err := c.store.GetProjectRun(ctx, runID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
+			return domain.ProjectRunRecord{}, false, nil
+		}
+		return domain.ProjectRunRecord{}, false, err
+	}
+	return run, true, nil
+}
+
+// BindSandbox attaches a sandbox to a run and records whether this request
+// created it.
 func (c *Coordinator) BindSandbox(ctx context.Context, runID, sandboxID string, created bool) (domain.ProjectRunRecord, error) {
 	current, err := c.store.GetProjectRun(ctx, strings.TrimSpace(runID))
 	if err != nil {

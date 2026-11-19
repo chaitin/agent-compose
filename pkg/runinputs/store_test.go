@@ -315,6 +315,24 @@ func TestUploadChargesCapacityAsBytesArrive(t *testing.T) {
 	}
 }
 
+func TestUploadWriteRechecksFreeSpace(t *testing.T) {
+	store := openTestStore(t, t.TempDir(), newClock())
+	free := uint64(1 << 20)
+	store.opts.FreeSpace = func(string) (uint64, uint64, error) { return free, 1 << 20, nil }
+	pending, _, err := store.Begin("proj-1", 4, digestOf([]byte("data")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pending.Abort()
+
+	// The filesystem filled up after Begin admitted the upload; the chunk that
+	// arrives now must not go below the free-space floor.
+	free = 0
+	if err := pending.Write([]byte("data")); !errors.Is(err, ErrExhausted) {
+		t.Fatalf("write with no free space = %v, want ErrExhausted", err)
+	}
+}
+
 func TestBeginRejectsLowFreeSpace(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), newClock())
 	store.opts.FreeSpace = func(string) (uint64, uint64, error) { return 100 << 10, 1 << 20, nil }

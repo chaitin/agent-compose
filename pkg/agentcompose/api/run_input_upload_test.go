@@ -32,6 +32,12 @@ func (uploadProjectRunStore) GetProject(_ context.Context, id string) (domain.Pr
 
 func newUploadClient(t *testing.T) (agentcomposev2connect.RunServiceClient, *runinputs.Store) {
 	t.Helper()
+	server, store := newUploadServer(t)
+	return agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL), store
+}
+
+func newUploadServer(t *testing.T) (*httptest.Server, *runinputs.Store) {
+	t.Helper()
 	store, err := runinputs.Open(runinputs.Options{
 		Root: t.TempDir(), MaxObjectBytes: 1 << 20, MaxStoreBytes: 8 << 20, TTL: 15 * time.Minute,
 		FreeSpace: func(string) (uint64, uint64, error) { return 1 << 40, 1 << 40, nil },
@@ -45,7 +51,7 @@ func newUploadClient(t *testing.T) (agentcomposev2connect.RunServiceClient, *run
 	mux.Handle(path, serviceHandler)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	return agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL), store
+	return server, store
 }
 
 func sendUpload(t *testing.T, client agentcomposev2connect.RunServiceClient, frames ...*agentcomposev2.UploadRunInputRequest) (*agentcomposev2.UploadRunInputResponse, error) {
@@ -135,6 +141,21 @@ func TestUploadRunInputRejectsBadStreams(t *testing.T) {
 			_, err := sendUpload(t, client, test.frames...)
 			requireUploadError(t, err, test.code, apierror.EffectNotApplied)
 		})
+	}
+}
+
+func TestUploadRunInputAcceptsMaxChunkOverJSON(t *testing.T) {
+	// The Connect JSON codec base64-encodes bytes, so a full chunk is larger on
+	// the wire than the chunk limit. The transport read limit must allow it.
+	server, _ := newUploadServer(t)
+	client := agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL, connect.WithProtoJSON())
+	data := make([]byte, MaxRunInputUploadChunkBytes)
+	response, err := sendUpload(t, client, infoFrame("project-1", data), chunkFrame(data))
+	if err != nil {
+		t.Fatalf("JSON upload of one full chunk: %v", err)
+	}
+	if response.GetUploadId() == "" || response.GetDeduplicated() {
+		t.Fatalf("response = %+v", response)
 	}
 }
 

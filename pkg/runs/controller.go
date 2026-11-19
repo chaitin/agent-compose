@@ -271,17 +271,8 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		}
 	}
 	warnings := resolved.Warnings
-	input, inputWarnings, err := c.admitAgentInput(ctx, req)
-	if err != nil {
-		return StartedProjectRun{}, err
-	}
-	if len(input) > 0 {
-		req.Input = input
-		req.Prompt = agentinput.Text(input)
-	}
-	warnings = append(warnings, inputWarnings...)
 	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
-	run, err := coordinator.BeginRun(ctx, StartRequest{
+	startRequest := StartRequest{
 		ProjectID:       req.ProjectID,
 		AgentName:       req.AgentName,
 		Source:          req.Source,
@@ -293,11 +284,47 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		CleanupPolicy:   CleanupPolicyFromProto(req.CleanupPolicy),
 		ClientRequestID: req.ClientRequestID,
 		Labels:          req.Labels,
-	})
+	}
+	// A retry with the same idempotency key must return the run the first
+	// attempt created even when an upload its input references has expired.
+	// A run that still needs executing (PENDING) is admitted again so its
+	// input can be resolved; only then does BeginRun reuse it.
+	var existingRun domain.ProjectRunRecord
+	var existingFound bool
+	if hasUploadInput(req.Input) {
+		if existing, found, lookupErr := coordinator.ExistingRun(ctx, startRequest); lookupErr == nil && found {
+			existingRun, existingFound = existing, true
+			if existing.Status != domain.ProjectRunStatusPending {
+				run := withRunWarnings(existing, warnings)
+				return c.startedProjectRun(coordinator, run, req, warnings, requestMetadata), nil
+			}
+		}
+	}
+	input, inputWarnings, err := c.admitAgentInput(ctx, req)
+	if err != nil {
+		if existingFound && errors.Is(err, errUploadUnavailable) {
+			run := withRunWarnings(existingRun, warnings)
+			return c.startedProjectRun(coordinator, run, req, warnings, requestMetadata), nil
+		}
+		return StartedProjectRun{}, err
+	}
+	if len(input) > 0 {
+		req.Input = input
+		req.Prompt = agentinput.Text(input)
+	}
+	warnings = append(warnings, inputWarnings...)
+	startRequest.Prompt = req.Prompt
+	run, err := coordinator.BeginRun(ctx, startRequest)
 	if err != nil {
 		return StartedProjectRun{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	run = withRunWarnings(run, warnings)
+	return c.startedProjectRun(coordinator, run, req, warnings, requestMetadata), nil
+}
+
+// startedProjectRun builds the result shared by a fresh run and an idempotent
+// retry whose input can no longer be resolved.
+func (c *Controller) startedProjectRun(coordinator *Coordinator, run domain.ProjectRunRecord, req RunAgentRequest, warnings []string, requestMetadata domain.RequestMetadata) StartedProjectRun {
 	return StartedProjectRun{
 		Run:             run,
 		Warnings:        warnings,
@@ -313,7 +340,18 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 				Warnings:    warnings,
 			}, stream)
 		},
-	}, nil
+	}
+}
+
+// hasUploadInput reports whether admitting the turn requires resolving a staged
+// upload, the only input step whose validity can expire between attempts.
+func hasUploadInput(parts []agentinput.Part) bool {
+	for _, part := range parts {
+		if part.File != nil && part.File.Source == agentinput.SourceUpload {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, stream *StreamSink) (domain.ProjectRunRecord, error, error) {

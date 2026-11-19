@@ -113,7 +113,7 @@ message UploadRunInputResponse {
 - **校验**：收齐后核对大小和 sha256；不符返回 `InvalidArgument`，不留下可引用的对象。超过声明大小的字节立即拒绝。
 - **不带文件名**：对象只代表内容，文件名在引用时由 `AgentInputFile.filename` 给出。
 - **`upload_id` 不透明**：不等于 sha256，调用方不能从 ID 推测内容，也便于以后换存储布局。
-- **限制**：单个对象上限 `AGENT_INPUT_UPLOAD_FILE_LIMIT_BYTES`（默认 100 MiB）；容量见 §4.3。每帧在传输层限制在略高于 256 KiB 的大小（`max_upload_chunk_bytes` 加 envelope 开销），避免 daemon 在检查前把超大帧读进内存。
+- **限制**：单个对象上限 `AGENT_INPUT_UPLOAD_FILE_LIMIT_BYTES`（默认 100 MiB）；容量见 §4.3。每帧在传输层限制在 `2 × max_upload_chunk_bytes`（覆盖 Connect JSON 编码的 base64 膨胀），避免 daemon 在检查前把超大帧读进内存。
 
 ### 3.2 引用：`AgentInputFile.upload = 5`
 
@@ -261,7 +261,7 @@ message EngineInputLimits {
 
 - **契约**：新 RPC 的帧顺序（`info` 必须第一帧、只出现一次）、`AgentInputFile.upload = 5` 字段号。
 - **暂存区**：大小/摘要不符不留可引用对象；超出声明大小立即拒绝；去重命中立即返回并刷新 TTL；崩溃残留由 GC 回收；超过容量、项目份额或磁盘水位返回 `RESOURCE_EXHAUSTED`；并发上传相同内容只留一份。
-- **准入**：引用不存在、跨 project、已过期时 Run 不创建、sandbox 不启动；`upload` 总量超限被拒绝且不占用内联预算。
+- **准入**：引用不存在、跨 project、已过期时 Run 不创建、sandbox 不启动；`upload` 总量超限被拒绝且不占用内联预算；同一 `client_request_id` 的重试在上传过期后仍返回第一次创建的 Run。
 - **物化**：对象在准入后、物化前被回收时，Run 以"上传对象已过期"失败且不启动 agent；复制后大小不符时删除半成品；agent 修改 workspace 文件不影响暂存原件；与内联文件混合时命名去重一致；交互续轮 `AttachHumanMessage.input` 可用 `upload` 来源。
 - **K8s**：有 guest writer 时 `upload` 来源返回 `ErrUnsupported`；默认 driver 为 K8s 时 `EngineInputLimits` 上传上限为 0。
 - **e2e**：真实 Docker sandbox 上，首轮与复用 sandbox 的后续轮次都能读到 50 MiB 级别的上传文件；改造 `test:e2e:docker-run-input`。
