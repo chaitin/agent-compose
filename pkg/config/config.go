@@ -30,8 +30,8 @@ const (
 
 	// Upload-sourced files (UploadRunInput) have their own, larger budget so a
 	// large attachment never consumes the inline request budget. The TTL must
-	// cover sandbox preparation (default SANDBOX_START_TIMEOUT 30m plus
-	// IMAGE_PULL_TIMEOUT 10m): a run whose reference expires before
+	// cover sandbox preparation (the default SANDBOX_START_TIMEOUT is 30m and
+	// the image pull runs inside it): a run whose reference expires before
 	// materialization fails before the agent starts.
 	DefaultAgentInputUploadFileLimitBytes  int64         = 100 << 20
 	DefaultAgentInputUploadTurnLimitBytes  int64         = 200 << 20

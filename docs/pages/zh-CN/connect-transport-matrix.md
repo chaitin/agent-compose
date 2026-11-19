@@ -34,7 +34,7 @@
 1. 首帧发送 `info`，包含 `project_id`、`size_bytes` 和小写十六进制 `sha256`；之后用 `chunk` 帧按顺序发送内容，每帧不超过 `EngineInputLimits.max_upload_chunk_bytes`。响应返回不透明的 `upload_id` 和 `expires_at`。如果该项目已有相同内容，daemon 在收到 `info` 后立即回复并设置 `deduplicated`，客户端应停止发送并读取响应。
 2. 在 `RunAgentRequest.input` 或 `AttachHumanMessage.input` 中用 `AgentInputFile{filename, upload{upload_id}}` 引用该文件。daemon 把它复制到 sandbox workspace 的 `.agent-compose/uploads/<run>/turn-<n>/` 下，并在提示词中写明路径，与内联字节的处理完全一致。
 
-限制来自 `EngineInputLimits`：单文件 `max_upload_file_bytes`、单轮 `max_upload_turn_bytes`，与内联限制分开计算。值为 0 表示该 daemon 不支持 upload 来源，K8s 上报告为 0。上传对象在 `AGENT_INPUT_UPLOAD_TTL`（默认 1 小时，覆盖默认的 sandbox 启动与镜像拉取预算）后过期；再次上传相同内容或被 Run 引用都会延长有效期。如果 sandbox 准备仍然超过 TTL，Run 会在 agent 启动前失败，客户端需要重新上传并用新的 `client_request_id` 重试。
+限制来自 `EngineInputLimits`：单文件 `max_upload_file_bytes`、单轮 `max_upload_turn_bytes`，与内联限制分开计算。值为 0 表示该 daemon 不支持 upload 来源，K8s 上报告为 0。上传对象在 `AGENT_INPUT_UPLOAD_TTL`（默认 1 小时，是默认 30 分钟 sandbox 启动预算的两倍，镜像拉取包含在该预算内）后过期；再次上传相同内容或被 Run 引用都会延长有效期。如果 sandbox 准备仍然超过 TTL，Run 会在 agent 启动前失败，客户端需要重新上传并用新的 `client_request_id` 重试。
 
 upload 来源要求 driver 与 daemon 共享 sandbox workspace（Docker 和 microVM driver 满足；K8s 不满足）。`EngineInputLimits` 描述的是 daemon 默认 driver 的能力，因此混用 driver 的部署可能接受一个最终无法物化的 run 引用；该 Run 会在 agent 启动前显式失败。
 
