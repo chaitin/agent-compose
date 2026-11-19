@@ -19,11 +19,6 @@ type UploadResolver interface {
 	Resolve(projectID, uploadID string) (runinputs.Object, error)
 }
 
-// errUploadUnavailable marks an admission failure caused by an upload that no
-// longer resolves. It is distinct from other invalid input because a retry with
-// the same idempotency key must still return the run the first attempt created.
-var errUploadUnavailable = errors.New("run input upload is unavailable")
-
 // admitAgentInput normalizes and admits a text/file turn before the run record
 // exists, so a rejected request never leaves a half-created run behind.
 //
@@ -76,8 +71,8 @@ func (c *Controller) resolveAgentInputUploads(ctx context.Context, projectID str
 		object, err := c.uploads.Resolve(project.ID, file.UploadID)
 		if err != nil {
 			if errors.Is(err, runinputs.ErrNotFound) {
-				return fmt.Errorf("%w: %w", errUploadUnavailable, apierror.NotApplied(domain.ResourceError(domain.ErrNotFound, "run input upload", file.UploadID,
-					fmt.Sprintf("part %d: %v", index, err), err)))
+				return apierror.NotApplied(domain.ResourceError(domain.ErrNotFound, "run input upload", file.UploadID,
+					fmt.Sprintf("part %d: %v", index, err), err))
 			}
 			return fmt.Errorf("resolve upload for part %d: %w", index, err)
 		}

@@ -395,7 +395,7 @@ func TestOpenReloadsObjectsAndRemovesResidue(t *testing.T) {
 	}
 }
 
-func TestCollectRemovesExpiredAndStaleResidueOnly(t *testing.T) {
+func TestCollectRemovesExpiredObjectsAndAgedEmptyDirs(t *testing.T) {
 	root := t.TempDir()
 	clock := newClock()
 	store := openTestStore(t, root, clock)
@@ -405,12 +405,9 @@ func TestCollectRemovesExpiredAndStaleResidueOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer inFlight.Abort()
-	stale := filepath.Join(root, "proj-1", tempPrefix+"stale")
-	if err := os.WriteFile(stale, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	old := clock.Now().Add(-2 * time.Hour)
-	if err := os.Chtimes(stale, old, old); err != nil {
+	// Runtime cleanup must never touch an in-progress temp file, however old.
+	if err := os.Chtimes(inFlight.file.Name(), old, old); err != nil {
 		t.Fatal(err)
 	}
 	emptyProject := filepath.Join(root, "proj-empty")
@@ -427,9 +424,6 @@ func TestCollectRemovesExpiredAndStaleResidueOnly(t *testing.T) {
 	}
 	if _, err := os.Stat(object.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("expired content survived collection")
-	}
-	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("stale temp file survived collection")
 	}
 	if _, err := os.Stat(inFlight.file.Name()); err != nil {
 		t.Fatalf("in-flight upload was collected: %v", err)

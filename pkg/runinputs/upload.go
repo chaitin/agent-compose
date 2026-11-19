@@ -45,6 +45,9 @@ func (u *Upload) Write(chunk []byte) error {
 		return fmt.Errorf("%w: upload is finished", ErrInvalid)
 	}
 	size := int64(len(chunk))
+	if size == 0 {
+		return fmt.Errorf("%w: chunk is empty", ErrInvalid)
+	}
 	if u.written+size > u.size {
 		return fmt.Errorf("%w: upload exceeds its declared %d bytes", ErrInvalid, u.size)
 	}

@@ -136,42 +136,64 @@ func (s *startRunStore) CreateProjectRunWithEvents(_ context.Context, run domain
 	return run, nil
 }
 
-func TestStartProjectRunRetryReturnsExistingRunWhenUploadExpired(t *testing.T) {
+func TestStartProjectRunRetryWithExpiredUpload(t *testing.T) {
 	runID, err := projects.StableProjectRunID("project-1", "worker", string(NormalizeSource("")), "retry-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, status := range []string{domain.ProjectRunStatusSucceeded, domain.ProjectRunStatusPending} {
-		t.Run(status, func(t *testing.T) {
-			store := &startRunStore{
-				agent: domain.ProjectAgentRecord{ProjectID: "project-1", AgentName: "worker"},
-				existing: map[string]domain.ProjectRunRecord{
-					runID: {RunID: runID, ProjectID: "project-1", AgentName: "worker", Status: status},
-				},
-			}
-			controller := &Controller{
-				config: &appconfig.Config{
-					AgentInputUploadFileLimitBytes: 1 << 20,
-					AgentInputUploadTurnLimitBytes: 2 << 20,
-				},
-				configDB: store,
-				// The upload the first attempt referenced has since expired.
-				uploads: fakeUploads{},
-			}
-			req := uploadRequest("up-expired")
-			req.ClientRequestID = "retry-1"
-			started, err := controller.StartProjectRun(context.Background(), req)
-			if err != nil {
-				t.Fatalf("idempotent retry: %v", err)
-			}
-			if started.Run.RunID != runID {
-				t.Fatalf("run = %s, want the existing %s", started.Run.RunID, runID)
-			}
-			if len(store.created) != 0 {
-				t.Fatalf("retry created runs = %v, want none", store.created)
-			}
-		})
+	newController := func(status string) (*Controller, *startRunStore) {
+		store := &startRunStore{
+			agent: domain.ProjectAgentRecord{ProjectID: "project-1", AgentName: "worker"},
+			existing: map[string]domain.ProjectRunRecord{
+				runID: {RunID: runID, ProjectID: "project-1", AgentName: "worker", Status: status},
+			},
+		}
+		controller := &Controller{
+			config: &appconfig.Config{
+				AgentInputUploadFileLimitBytes: 1 << 20,
+				AgentInputUploadTurnLimitBytes: 2 << 20,
+			},
+			configDB: store,
+			// The upload the first attempt referenced has since expired.
+			uploads: fakeUploads{},
+		}
+		return controller, store
 	}
+
+	t.Run("finished run is returned", func(t *testing.T) {
+		controller, store := newController(domain.ProjectRunStatusSucceeded)
+		req := uploadRequest("up-expired")
+		req.ClientRequestID = "retry-1"
+		started, err := controller.StartProjectRun(context.Background(), req)
+		if err != nil {
+			t.Fatalf("idempotent retry: %v", err)
+		}
+		if started.Run.RunID != runID {
+			t.Fatalf("run = %s, want the existing %s", started.Run.RunID, runID)
+		}
+		if len(store.created) != 0 {
+			t.Fatalf("retry created runs = %v, want none", store.created)
+		}
+	})
+
+	t.Run("pending run reports not applied", func(t *testing.T) {
+		controller, store := newController(domain.ProjectRunStatusPending)
+		req := uploadRequest("up-expired")
+		req.ClientRequestID = "retry-1"
+		started, err := controller.StartProjectRun(context.Background(), req)
+		if !errors.Is(err, domain.ErrNotFound) || errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("err = %v, want NOT_FOUND without the invalid-request sentinel", err)
+		}
+		if !apierror.IsNotApplied(err) {
+			t.Fatalf("err = %v, want NOT_APPLIED so the client can re-upload and retry", err)
+		}
+		if started.Run.RunID != "" {
+			t.Fatalf("run = %+v, want none: a PENDING run cannot execute without its input", started.Run)
+		}
+		if len(store.created) != 0 {
+			t.Fatalf("retry created runs = %v, want none", store.created)
+		}
+	})
 }
 
 func TestStartProjectRunSurfacesLookupFailure(t *testing.T) {

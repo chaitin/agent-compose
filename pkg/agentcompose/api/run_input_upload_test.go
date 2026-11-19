@@ -129,6 +129,7 @@ func TestUploadRunInputRejectsBadStreams(t *testing.T) {
 	}{
 		"no frames":       {nil, connect.CodeInvalidArgument},
 		"chunk first":     {[]*agentcomposev2.UploadRunInputRequest{chunkFrame(data)}, connect.CodeInvalidArgument},
+		"empty chunk":     {[]*agentcomposev2.UploadRunInputRequest{infoFrame("project-1", data), chunkFrame(nil)}, connect.CodeInvalidArgument},
 		"duplicate info":  {[]*agentcomposev2.UploadRunInputRequest{infoFrame("project-1", data), infoFrame("project-1", data)}, connect.CodeInvalidArgument},
 		"short upload":    {[]*agentcomposev2.UploadRunInputRequest{infoFrame("project-1", data), chunkFrame(data[:2])}, connect.CodeInvalidArgument},
 		"digest mismatch": {[]*agentcomposev2.UploadRunInputRequest{infoFrame("project-1", []byte("PAYLOAD")), chunkFrame(data)}, connect.CodeInvalidArgument},

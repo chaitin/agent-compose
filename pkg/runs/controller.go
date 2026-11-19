@@ -301,10 +301,9 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 	}
 	input, inputWarnings, err := c.admitAgentInput(ctx, req)
 	if err != nil {
-		if existingFound && errors.Is(err, errUploadUnavailable) {
-			run := withRunWarnings(existingRun, warnings)
-			return c.startedProjectRun(coordinator, run, req, warnings, requestMetadata), nil
-		}
+		// A PENDING run cannot execute without its input, so returning it would
+		// hand the client a run that is bound to fail. NOT_APPLIED lets it
+		// upload again and retry with the same idempotency key.
 		return StartedProjectRun{}, err
 	}
 	if len(input) > 0 {

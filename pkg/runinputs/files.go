@@ -106,7 +106,8 @@ func (s *Store) loadMetadata(dir, projectID, name string) (*entry, bool) {
 
 // removeResidue removes files that belong to no live object and are older
 // than staleResidueAge. live is a snapshot of the index; an object committed
-// after it has fresh files, which the age check keeps.
+// after it has fresh files, which the age check keeps. In-progress temp files
+// are never touched: load removes crash residue before the daemon serves.
 func (s *Store) removeResidue(live map[string]struct{}) {
 	projects, err := os.ReadDir(s.opts.Root)
 	if err != nil {
@@ -125,6 +126,12 @@ func (s *Store) removeResidue(live map[string]struct{}) {
 		}
 		for _, item := range entries {
 			name := item.Name()
+			if strings.HasPrefix(name, tempPrefix) {
+				// An upload in progress owns its temp file. Crash residue is
+				// removed by load before the daemon serves, so runtime cleanup
+				// must never delete one of these.
+				continue
+			}
 			if _, ok := live[strings.TrimSuffix(name, metadataSuffix)]; ok {
 				continue
 			}
