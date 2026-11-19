@@ -333,6 +333,29 @@ func TestUploadWriteRechecksFreeSpace(t *testing.T) {
 	}
 }
 
+func TestReserveAccountsForUnwrittenBytes(t *testing.T) {
+	clock := newClock()
+	store, err := Open(Options{
+		Root: t.TempDir(), MaxObjectBytes: 1 << 20, MaxStoreBytes: 1 << 20, TTL: time.Minute,
+		Now:       clock.Now,
+		FreeSpace: func(string) (uint64, uint64, error) { return 300 << 10, 1 << 20, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The floor is 10% of 1 MiB. Three 60 KiB charges leave 120 KiB; the fourth
+	// would drop below the floor even though every check sees the same statfs
+	// snapshot, because pending charges are subtracted.
+	for index := range 3 {
+		if err := store.reserve("proj-1", 60<<10); err != nil {
+			t.Fatalf("reserve %d = %v", index, err)
+		}
+	}
+	if err := store.reserve("proj-1", 60<<10); !errors.Is(err, ErrExhausted) {
+		t.Fatalf("reserve past the floor = %v, want ErrExhausted", err)
+	}
+}
+
 func TestBeginRejectsLowFreeSpace(t *testing.T) {
 	store := openTestStore(t, t.TempDir(), newClock())
 	store.opts.FreeSpace = func(string) (uint64, uint64, error) { return 100 << 10, 1 << 20, nil }

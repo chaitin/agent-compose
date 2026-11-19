@@ -21,8 +21,10 @@ type Upload struct {
 	hash      hash.Hash
 	written   int64
 	// reserved is the part of written that the store has charged to this
-	// upload. Commit moves it into usage and Abort releases it.
+	// upload. pending is the charged part that has not reached the file yet.
+	// Commit moves the charge into usage and Abort releases it.
 	reserved int64
+	pending  int64
 	done     bool
 }
 
@@ -51,10 +53,14 @@ func (u *Upload) Write(chunk []byte) error {
 	if err := u.store.reserve(u.projectID, size); err != nil {
 		return err
 	}
+	u.pending += size
 	if _, err := u.file.Write(chunk); err != nil {
-		u.store.release(u.projectID, size)
+		u.store.release(u.projectID, size, size)
+		u.pending -= size
 		return fmt.Errorf("write run input upload: %w", err)
 	}
+	u.store.confirm(size)
+	u.pending -= size
 	u.hash.Write(chunk)
 	u.written += size
 	u.reserved += size
@@ -108,6 +114,7 @@ func (u *Upload) Commit() (Object, bool, error) {
 	// below the stored total.
 	indexed, deduplicated := s.commit(object)
 	u.reserved = 0 // commit published these bytes or released them as a duplicate.
+	u.pending = 0
 	if deduplicated {
 		s.removeAll(objectFiles(object.Path))
 	}
@@ -124,8 +131,9 @@ func (u *Upload) Abort() {
 	name := u.file.Name()
 	_ = u.file.Close()
 	u.store.removePath(name)
-	if u.reserved > 0 {
-		u.store.release(u.projectID, u.reserved)
+	if u.reserved > 0 || u.pending > 0 {
+		u.store.release(u.projectID, u.reserved, u.pending)
 		u.reserved = 0
+		u.pending = 0
 	}
 }

@@ -98,9 +98,10 @@ func TestAdmitAgentInputAppliesUploadFileLimit(t *testing.T) {
 // only after admission, so a rejected upload must leave created empty.
 type startRunStore struct {
 	ControllerStore
-	created  map[string]domain.ProjectRunRecord
-	agent    domain.ProjectAgentRecord
-	existing map[string]domain.ProjectRunRecord
+	created   map[string]domain.ProjectRunRecord
+	agent     domain.ProjectAgentRecord
+	existing  map[string]domain.ProjectRunRecord
+	getRunErr error
 }
 
 func (s *startRunStore) GetProjectAgent(_ context.Context, projectID, name string) (domain.ProjectAgentRecord, error) {
@@ -111,6 +112,9 @@ func (s *startRunStore) GetProjectAgent(_ context.Context, projectID, name strin
 }
 
 func (s *startRunStore) GetProjectRun(_ context.Context, runID string) (domain.ProjectRunRecord, error) {
+	if s.getRunErr != nil {
+		return domain.ProjectRunRecord{}, s.getRunErr
+	}
 	if run, ok := s.existing[runID]; ok {
 		return run, nil
 	}
@@ -167,6 +171,34 @@ func TestStartProjectRunRetryReturnsExistingRunWhenUploadExpired(t *testing.T) {
 				t.Fatalf("retry created runs = %v, want none", store.created)
 			}
 		})
+	}
+}
+
+func TestStartProjectRunSurfacesLookupFailure(t *testing.T) {
+	lookupErr := errors.New("config store is unavailable")
+	store := &startRunStore{
+		agent:     domain.ProjectAgentRecord{ProjectID: "project-1", AgentName: "worker"},
+		getRunErr: lookupErr,
+	}
+	controller := &Controller{
+		config: &appconfig.Config{
+			AgentInputUploadFileLimitBytes: 1 << 20,
+			AgentInputUploadTurnLimitBytes: 2 << 20,
+		},
+		configDB: store,
+		uploads:  fakeUploads{},
+	}
+	req := uploadRequest("up-1")
+	req.ClientRequestID = "retry-1"
+	_, err := controller.StartProjectRun(context.Background(), req)
+	if !errors.Is(err, lookupErr) {
+		t.Fatalf("err = %v, want the lookup failure to surface", err)
+	}
+	if apierror.IsNotApplied(err) {
+		t.Fatalf("err = %v, want no NOT_APPLIED retry hint when the lookup failed", err)
+	}
+	if len(store.created) != 0 {
+		t.Fatalf("created runs = %v, want none", store.created)
 	}
 }
 

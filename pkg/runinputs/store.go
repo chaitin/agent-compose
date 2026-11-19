@@ -100,7 +100,11 @@ type Store struct {
 	byDigest map[digestKey]string
 	used     int64
 	reserved int64
-	project  map[string]int64 // used + reserved per project
+	// pending is the part of reserved whose bytes have not reached the file
+	// yet. The free-space guard subtracts it because a statfs taken while an
+	// upload is in flight does not see bytes that were charged but not written.
+	pending int64
+	project map[string]int64 // used + reserved per project
 }
 
 type digestKey struct {
@@ -212,7 +216,8 @@ func (s *Store) admitLocked(projectID string, size int64, free, total uint64, sp
 		s.opts.Logger.Warn("cannot read run input staging filesystem space", "error", spaceErr)
 		return nil
 	}
-	if float64(free)-float64(size) < float64(total)*minFreeRatio {
+	// Pending bytes were charged but may not be visible in this statfs snapshot.
+	if float64(free)-float64(s.pending)-float64(size) < float64(total)*minFreeRatio {
 		return fmt.Errorf("%w: filesystem free space is below %.0f%%", ErrExhausted, minFreeRatio*100)
 	}
 	return nil
@@ -286,29 +291,47 @@ func (s *Store) reserve(projectID string, size int64) error {
 	if size <= 0 {
 		return nil
 	}
-	// statfs is file-system work, so it runs before taking the lock.
-	free, total, spaceErr := s.opts.FreeSpace(s.opts.Root)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// statfs runs under the lock so concurrent reservations are checked against
+	// one another instead of a snapshot they all read before charging.
+	free, total, spaceErr := s.opts.FreeSpace(s.opts.Root)
 	if s.used+s.reserved+size > s.opts.MaxStoreBytes {
 		return fmt.Errorf("%w: staging %d more bytes would exceed %d", ErrExhausted, size, s.opts.MaxStoreBytes)
 	}
 	if limit := s.opts.MaxStoreBytes / projectShareDivisor; s.project[projectID]+size > limit {
 		return fmt.Errorf("%w: project would exceed its %d byte share", ErrExhausted, limit)
 	}
-	if spaceErr == nil && float64(free)-float64(size) < float64(total)*minFreeRatio {
+	if spaceErr == nil && float64(free)-float64(s.pending)-float64(size) < float64(total)*minFreeRatio {
 		return fmt.Errorf("%w: filesystem free space is below %.0f%%", ErrExhausted, minFreeRatio*100)
 	}
 	s.reserved += size
+	s.pending += size
 	s.project[projectID] += size
 	return nil
 }
 
-// release returns a reservation taken by Begin.
-func (s *Store) release(projectID string, size int64) {
+// confirm records that reserved bytes reached the file. A finished write is
+// visible to statfs, so only pending bytes are subtracted from free space.
+func (s *Store) confirm(size int64) {
+	if size <= 0 {
+		return
+	}
 	s.mu.Lock()
-	s.reserved -= size
-	s.releaseProjectLocked(projectID, size)
+	s.pending -= size
+	s.mu.Unlock()
+}
+
+// release gives back a charge taken by reserve. charged is the total the store
+// charged and pending is the part that never reached the file.
+func (s *Store) release(projectID string, charged, pending int64) {
+	if charged <= 0 && pending <= 0 {
+		return
+	}
+	s.mu.Lock()
+	s.reserved -= charged
+	s.pending -= pending
+	s.releaseProjectLocked(projectID, charged)
 	s.mu.Unlock()
 }
 

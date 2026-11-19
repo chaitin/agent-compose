@@ -292,7 +292,13 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 	var existingRun domain.ProjectRunRecord
 	var existingFound bool
 	if hasUploadInput(req.Input) {
-		if existing, found, lookupErr := coordinator.ExistingRun(ctx, startRequest); lookupErr == nil && found {
+		existing, found, lookupErr := coordinator.ExistingRun(ctx, startRequest)
+		if lookupErr != nil {
+			// The daemon cannot tell whether this idempotency key already
+			// created a run, so returning a retryable failure would hide it.
+			return StartedProjectRun{}, lookupErr
+		}
+		if found {
 			existingRun, existingFound = existing, true
 			if existing.Status != domain.ProjectRunStatusPending {
 				run := withRunWarnings(existing, warnings)
