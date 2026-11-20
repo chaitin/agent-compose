@@ -23,7 +23,7 @@
 
 `StartAgentRun(interactive=true)` 可直接启动相同的 detached prompt session，而无需保持提交请求。普通 `StartAgentRun` 调用仍是非交互任务。
 
-只有 daemon 进程仍存活时才能恢复 attachment。daemon 重启后，已持久化的 run events 和 logs 仍可读取，但 runtime 输入/输出句柄无法重建，此时 attach 会明确失败。页面刷新或 IM/Web 切换后，客户端应先通过 `ListRunEvents`/`FollowRunLogs` 恢复历史，再订阅 attachment 实时输出。
+只有 daemon 进程仍存活时才能恢复 attachment。daemon 重启后，已持久化的 run events 和 logs 仍可读取，但 runtime 输入/输出句柄无法重建，此时 attach 会明确失败。页面刷新或 IM/Web 切换后，客户端应先通过 `ListRunMessages`（对话）和 `FollowRunLogs`（run 日志；传 `structured` 拿结构化条目，用 `start_seq` 续读）恢复历史，再订阅 attachment 实时输出。
 
 ## 预先上传的 Run 输入文件
 

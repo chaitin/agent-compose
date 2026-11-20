@@ -80,12 +80,10 @@ func (c *Controller) ReattachDetachedRun(ctx context.Context, run domain.Project
 		if !visible {
 			return
 		}
-		offset, err := appendProjectRunLogChunk(logsPath, filtered)
-		if err != nil {
+		if err := appendRunOutput(c.runLogs, run, logsPath, filtered); err != nil {
 			sendErr = err
 			return
 		}
-		c.publishRunLogChunk(run.RunID, filtered, offset)
 	}
 
 	env := execution.BuildSandboxExecEnv(runCtx, c.config, sandbox, c.config.GuestHomePath)

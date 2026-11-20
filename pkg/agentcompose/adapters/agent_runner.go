@@ -190,6 +190,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 		SkillNames: skillNames,
 	})
 	spec.Env["AGENT_COMPOSE_RUN_ID"] = runID
+	spec.Env[execution.AgentEventsEnv] = "1"
 	spec.Env["AGENT_COMPOSE_PROJECT_ID"] = ""
 	if agentDef != nil {
 		spec.Env["AGENT_COMPOSE_PROJECT_ID"] = agentDef.ProjectID

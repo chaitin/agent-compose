@@ -15,6 +15,7 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
@@ -209,6 +210,10 @@ type agentCellRun struct {
 	cellMu   sync.Mutex
 	cell     domain.NotebookCell
 	streamed execution.ExecStreamAccumulator
+	stdout   execution.AgentStdoutSplitter
+	// transcript rebuilds the text transcript from agent events; nil until
+	// the runtime reports one (an older runtime mirrors text to stderr).
+	transcript *runlog.Merger
 
 	streamErrMu sync.Mutex
 	streamErr   error
@@ -233,6 +238,74 @@ func (r *agentCellRun) deferredStreamErr() error {
 }
 
 func (r *agentCellRun) writeChunk(chunk domain.ExecChunk) {
+	chunk, events := r.stdout.Split(chunk)
+	r.writeAgentEvents(events)
+	r.writeVisibleChunk(chunk)
+}
+
+// flushChunks emits a held partial stdout line and the transcript text
+// still held for coalescing once the exec has ended.
+func (r *agentCellRun) flushChunks() {
+	if rest := r.stdout.Flush(); rest != "" {
+		r.writeVisibleChunk(domain.ExecChunk{Text: rest, Stream: domain.StdioStdout})
+	}
+	if r.transcript != nil {
+		r.writeTranscript(r.transcript.FlushText())
+	}
+}
+
+// writeAgentEvents forwards the runtime's agent events and rebuilds from them
+// the text transcript the runtime no longer mirrors to stderr, so the cell
+// output, and the run output derived from it, read as they did before.
+func (r *agentCellRun) writeAgentEvents(events [][]byte) {
+	if len(events) == 0 {
+		return
+	}
+	if r.transcript == nil {
+		r.transcript = runlog.NewMerger(0)
+	}
+	r.cellMu.Lock()
+	cellID := r.cell.ID
+	r.cellMu.Unlock()
+	for _, event := range events {
+		if pending, err := r.transcript.Event(event); err == nil {
+			r.writeTranscript(pending)
+		}
+		if r.stream.OnAgentEvent == nil {
+			continue
+		}
+		if err := r.stream.OnAgentEvent(cellID, event); err != nil {
+			r.setStreamErr(err)
+			return
+		}
+	}
+}
+
+// mergeStreamed combines the exec's aggregated result with what was streamed.
+// The aggregate normally wins; once the transcript was rebuilt from agent
+// events, only the streamed side carries it, so the streamed side wins.
+func (r *agentCellRun) mergeStreamed(execResult domain.ExecResult, exitCode int, success bool) domain.ExecResult {
+	r.cellMu.Lock()
+	streamed := r.streamed.Result(exitCode, success)
+	r.cellMu.Unlock()
+	if r.transcript == nil {
+		return execution.MergeExecResults(execResult, streamed)
+	}
+	merged := execution.MergeExecResults(streamed, execResult)
+	merged.ExitCode = execution.FirstNonZeroInt(execResult.ExitCode, exitCode)
+	merged.Success = execResult.Success || success
+	return merged
+}
+
+func (r *agentCellRun) writeTranscript(pending []runlog.Pending) {
+	for _, p := range pending {
+		if text := runlog.Render(p.Entry); text != "" {
+			r.writeVisibleChunk(domain.ExecChunk{Text: text, Stream: domain.StdioStderr, Transcript: true})
+		}
+	}
+}
+
+func (r *agentCellRun) writeVisibleChunk(chunk domain.ExecChunk) {
 	filtered, visible := execution.FilterAgentStreamChunk(chunk)
 	if !visible {
 		return
@@ -265,6 +338,7 @@ func (r *agentCellRun) writeChunk(chunk domain.ExecChunk) {
 // finish turns the agent exec outcome into the finished cell. A disconnected
 // detached run is not finished: the cell stays running for the next daemon.
 func (r *agentCellRun) finish(execResult domain.ExecResult, result domain.AgentRunResult, err error) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error) {
+	r.flushChunks()
 	if errors.Is(err, runs.ErrRunDisconnected) {
 		r.cellMu.Lock()
 		cell := r.cell
@@ -280,9 +354,9 @@ func (r *agentCellRun) finish(execResult domain.ExecResult, result domain.AgentR
 	return r.succeed(execResult, result)
 }
 
-func (r *agentCellRun) resumeInfo(agent, threadID string) *domain.AgentResumeInfo {
-	return execution.CollectAgentResumeInfo(r.ctx, execution.AgentResumeInfoRequest{
-		Config: r.e.config, Sandbox: r.session, Agent: agent, ThreadID: threadID, ManifestPath: filepath.Join(r.hostCellDir, "agent-thread.json"), ReadGuestFile: r.e.runner.guestFileReaderFor(r.session),
+func (r *agentCellRun) threadID(agent, threadID string) string {
+	return execution.ResolveAgentThreadID(r.ctx, execution.AgentThreadIDRequest{
+		Config: r.e.config, Sandbox: r.session, Agent: agent, ThreadID: threadID, ReadGuestFile: r.e.runner.guestFileReaderFor(r.session),
 	})
 }
 
@@ -295,7 +369,7 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 		CreatedAt: time.Now().UTC(),
 		Message:   fmt.Sprintf("%s run failed: %v", r.agent, finalErr),
 	}
-	execResult = execution.MergeExecResults(execResult, r.streamed.Result(execution.FirstNonZeroInt(execResult.ExitCode, 1), false))
+	execResult = r.mergeStreamed(execResult, execution.FirstNonZeroInt(execResult.ExitCode, 1), false)
 	execResult.ExitCode = execution.FirstNonZeroInt(execResult.ExitCode, 1)
 	execResult.Success = false
 	if strings.TrimSpace(execResult.Output) == "" {
@@ -307,14 +381,7 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 	r.cellMu.Lock()
 	cellAgent := firstNonEmpty(result.Agent, r.cell.Agent, r.agent)
 	r.cellMu.Unlock()
-	resumeInfo := r.resumeInfo(cellAgent, result.ThreadID)
-	if err := execution.WriteAgentThreadArtifact(filepath.Join(r.hostCellDir, "agent-thread.json"), resumeInfo); err != nil {
-		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
-	}
-	agentThreadID := strings.TrimSpace(result.ThreadID)
-	if resumeInfo != nil && agentThreadID == "" {
-		agentThreadID = resumeInfo.ThreadID
-	}
+	agentThreadID := r.threadID(cellAgent, result.ThreadID)
 	r.cellMu.Lock()
 	r.cell.Stdout = execResult.Stdout
 	r.cell.Stderr = execResult.Stderr
@@ -325,7 +392,6 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 	r.cell.Agent = cellAgent
 	r.cell.AgentThreadID = agentThreadID
 	r.cell.StopReason = result.StopReason
-	r.cell.AgentResume = resumeInfo
 	failedCell := r.cell
 	r.cellMu.Unlock()
 	if addErr := e.store.AddCell(ctx, session, failedCell); addErr != nil {
@@ -345,7 +411,7 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 
 func (r *agentCellRun) succeed(execResult domain.ExecResult, result domain.AgentRunResult) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error) {
 	e, session, ctx := r.e, r.session, r.ctx
-	execResult = execution.MergeExecResults(execResult, r.streamed.Result(execResult.ExitCode, result.Success))
+	execResult = r.mergeStreamed(execResult, execResult.ExitCode, result.Success)
 	if strings.TrimSpace(execResult.Output) == "" {
 		execResult.Output = firstNonEmpty(result.DisplayOutput, result.Transcript, result.FinalText)
 	}
@@ -355,14 +421,7 @@ func (r *agentCellRun) succeed(execResult domain.ExecResult, result domain.Agent
 	r.cellMu.Lock()
 	cellAgent := firstNonEmpty(result.Agent, r.cell.Agent)
 	r.cellMu.Unlock()
-	resumeInfo := r.resumeInfo(cellAgent, result.ThreadID)
-	if err := execution.WriteAgentThreadArtifact(filepath.Join(r.hostCellDir, "agent-thread.json"), resumeInfo); err != nil {
-		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
-	}
-	agentThreadID := strings.TrimSpace(result.ThreadID)
-	if resumeInfo != nil && agentThreadID == "" {
-		agentThreadID = resumeInfo.ThreadID
-	}
+	agentThreadID := r.threadID(cellAgent, result.ThreadID)
 	r.cellMu.Lock()
 	r.cell.Stdout = execResult.Stdout
 	r.cell.Stderr = execResult.Stderr
@@ -373,7 +432,6 @@ func (r *agentCellRun) succeed(execResult domain.ExecResult, result domain.Agent
 	r.cell.Agent = cellAgent
 	r.cell.AgentThreadID = agentThreadID
 	r.cell.StopReason = result.StopReason
-	r.cell.AgentResume = resumeInfo
 	cellSnapshot := r.cell
 	r.cellMu.Unlock()
 	if err := e.store.AddCell(ctx, session, cellSnapshot); err != nil {

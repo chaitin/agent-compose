@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"io"
 	"os"
 	"path/filepath"
@@ -204,5 +205,40 @@ func TestFollowRunLogsExplicitZeroTailSkipsExistingOutput(t *testing.T) {
 	}
 	if data.Len() != 0 || !metadata || !final {
 		t.Fatalf("zero-tail data/metadata/final = %q/%t/%t", data.String(), metadata, final)
+	}
+}
+
+func TestRunLogReadersServeTheRunLogTextView(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "runs", "r", runlog.FileName)
+	w, err := runlog.Open(path, runlog.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.AppendInitialPrompt("hidden prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendOutput("stdout", "one\ntwo\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendAgentEvent([]byte(`{"kind":"tool_call","id":"t","name":"Bash","status":"completed","command":"ls"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendOutput("stderr", "三\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	const want = "one\ntwo\n\n[tool:Bash]\n$ ls\n三\n"
+	text, next, atEnd, err := readRunLogChunkFromOffset(path, 0)
+	if err != nil || text != want || next != uint64(len(want)) || !atEnd {
+		t.Fatalf("full read = %q next=%d atEnd=%v err=%v", text, next, atEnd, err)
+	}
+	if text, _, _, _ := readRunLogChunkFromOffset(path, 4); text != want[4:] {
+		t.Fatalf("read from 4 = %q", text)
+	}
+	offset, err := tailRunLogOffset(path, 2)
+	if err != nil || want[offset:] != "$ ls\n三\n" {
+		t.Fatalf("tail offset %d (%q) err=%v", offset, want[offset:], err)
 	}
 }

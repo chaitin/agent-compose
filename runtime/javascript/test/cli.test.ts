@@ -3,9 +3,10 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProgram, isMainModule, main } from "../src/cli.js";
-import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, WORKFLOW_RESULT_PREFIX } from "../src/constants.js";
+import { AGENT_EVENT_PREFIX, AGENT_EVENTS_ENV, COMMAND_RESULT_PREFIX, RESULT_PREFIX, WORKFLOW_RESULT_PREFIX } from "../src/constants.js";
 import * as commandModule from "../src/command.js";
 import * as promptModule from "../src/prompt.js";
+import { TranscriptWriter } from "../src/transcript.js";
 import * as streamModule from "../src/stream.js";
 import * as workflowModule from "../src/workflow/command.js";
 import { captureStdio, withTempSession } from "./helpers.js";
@@ -67,6 +68,35 @@ describe("commander CLI", () => {
     });
     expect(stdio.stdout).toBe(`${RESULT_PREFIX}{"provider":"codex","threadId":"s1","stopReason":"completed","finalText":"done","json":null,"transcript":"done","stderr":""}\n`);
     expect(stdio.stderr).toBe("");
+  });
+
+  it("passes an agent event sink to prompt only when the daemon opts in", async () => {
+    const runPrompt = vi.spyOn(promptModule, "runPromptCommand").mockImplementation(async (options) => {
+      options.onEvent?.({ kind: "text_delta", text: "hello" });
+      return {
+        provider: "codex",
+        threadId: "",
+        stopReason: "completed",
+        finalText: "hello",
+        finalTextSource: "provider_message",
+        transcript: "hello",
+        stderr: "",
+      };
+    });
+    const previous = process.env[AGENT_EVENTS_ENV];
+    process.env[AGENT_EVENTS_ENV] = "1";
+    const stdio = captureStdio();
+    try {
+      await createProgram({ exitOverride: true }).parseAsync(["node", "cli", "prompt", "--provider", "codex", "--message-file", "/tmp/message.txt"]);
+    } finally {
+      stdio.restore();
+      if (previous === undefined) delete process.env[AGENT_EVENTS_ENV];
+      else process.env[AGENT_EVENTS_ENV] = previous;
+    }
+    expect(runPrompt).toHaveBeenCalledWith(expect.objectContaining({ onEvent: expect.any(Function) }));
+    const lines = stdio.stdout.trimEnd().split("\n");
+    expect(lines[0]).toBe(`${AGENT_EVENT_PREFIX}{"kind":"text_delta","text":"hello"}`);
+    expect(lines[1]).toMatch(new RegExp(`^${RESULT_PREFIX}`));
   });
 
   it("rejects missing required options through commander", async () => {
@@ -346,7 +376,7 @@ describe("commander CLI", () => {
           systemContext: expect.stringContaining("system body"),
           runtimeRoot: path.join(root, "runtime"),
           outputSchema: { type: "object", properties: { answer: { type: "string" } } },
-        }));
+        }), expect.any(TranscriptWriter));
       } finally {
         if (oldWorkspace === undefined) {
           delete process.env.WORKSPACE;
@@ -393,7 +423,7 @@ describe("commander CLI", () => {
         stateRoot,
         sessionRoot,
         systemContext: expect.stringContaining("shared workflow identity"),
-      }));
+      }), expect.any(TranscriptWriter));
       await expect(fs.stat(sessionRoot)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });

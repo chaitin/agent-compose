@@ -24,6 +24,10 @@ type CellExecutionStream struct {
 type AgentExecutionStream struct {
 	OnStart func(domain.NotebookCell) error
 	OnChunk func(string, domain.ExecChunk) error
+	// OnAgentEvent receives the JSON of each neutral agent event the guest
+	// runtime reported (AgentEventPrefix lines), separated from the output
+	// OnChunk sees.
+	OnAgentEvent func(cellID string, event []byte) error
 }
 
 type ExecuteAgentRequest struct {

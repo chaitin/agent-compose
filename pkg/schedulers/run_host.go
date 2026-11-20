@@ -367,6 +367,9 @@ func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerComma
 		return domain.SchedulerCommandResult{}, err
 	}
 
+	if h.execution.Kind == ExecutionKindTrigger {
+		request.SchedulerID, request.SchedulerRunID = h.scheduler.Summary.ID, h.execution.ID
+	}
 	result, err := h.deps.CommandExecutor.ExecuteSchedulerCommand(ctx, session, request)
 	if err != nil {
 		_ = h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{

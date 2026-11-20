@@ -335,20 +335,19 @@ type WorkspaceConfig struct {
 }
 
 type NotebookCell struct {
-	ID            string           `json:"id"`
-	Type          string           `json:"type,omitempty"`
-	Source        string           `json:"source"`
-	Stdout        string           `json:"stdout"`
-	Stderr        string           `json:"stderr"`
-	Output        string           `json:"output"`
-	ExitCode      int              `json:"exit_code"`
-	Success       bool             `json:"success"`
-	Running       bool             `json:"running,omitempty"`
-	CreatedAt     time.Time        `json:"created_at"`
-	Agent         string           `json:"agent,omitempty"`
-	AgentThreadID string           `json:"agent_thread_id,omitempty"`
-	StopReason    string           `json:"stop_reason,omitempty"`
-	AgentResume   *AgentResumeInfo `json:"agent_resume,omitempty"`
+	ID            string    `json:"id"`
+	Type          string    `json:"type,omitempty"`
+	Source        string    `json:"source"`
+	Stdout        string    `json:"stdout"`
+	Stderr        string    `json:"stderr"`
+	Output        string    `json:"output"`
+	ExitCode      int       `json:"exit_code"`
+	Success       bool      `json:"success"`
+	Running       bool      `json:"running,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	Agent         string    `json:"agent,omitempty"`
+	AgentThreadID string    `json:"agent_thread_id,omitempty"`
+	StopReason    string    `json:"stop_reason,omitempty"`
 }
 
 func (c *NotebookCell) UnmarshalJSON(data []byte) error {
@@ -356,6 +355,12 @@ func (c *NotebookCell) UnmarshalJSON(data []byte) error {
 	var decoded struct {
 		notebookCellAlias
 		LegacyAgentSessionID string `json:"agent_session_id"`
+		// Cells written before the resume artifact was dropped carry their
+		// thread ID inside agent_resume; only the ID is still meaningful.
+		LegacyAgentResume *struct {
+			ThreadID  string `json:"thread_id"`
+			SessionID string `json:"session_id"`
+		} `json:"agent_resume"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
@@ -364,42 +369,11 @@ func (c *NotebookCell) UnmarshalJSON(data []byte) error {
 	if c.AgentThreadID == "" {
 		c.AgentThreadID = decoded.LegacyAgentSessionID
 	}
-	return nil
-}
-
-type AgentResumeInfo struct {
-	Provider           string    `json:"provider,omitempty"`
-	ThreadID           string    `json:"thread_id,omitempty"`
-	ThreadStatePath    string    `json:"thread_state_path,omitempty"`
-	ThreadManifestPath string    `json:"thread_manifest_path,omitempty"`
-	ProviderLogPaths   []string  `json:"provider_log_paths,omitempty"`
-	UpdatedAt          time.Time `json:"updated_at,omitempty"`
-}
-
-func (i *AgentResumeInfo) UnmarshalJSON(data []byte) error {
-	type agentResumeInfoAlias AgentResumeInfo
-	var decoded struct {
-		agentResumeInfoAlias
-		LegacySessionID           string   `json:"session_id"`
-		LegacySessionStatePath    string   `json:"session_state_path"`
-		LegacySessionManifestPath string   `json:"session_manifest_path"`
-		LegacySessionJSONLPaths   []string `json:"session_jsonl_paths"`
-	}
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
-	}
-	*i = AgentResumeInfo(decoded.agentResumeInfoAlias)
-	if i.ThreadID == "" {
-		i.ThreadID = decoded.LegacySessionID
-	}
-	if i.ThreadStatePath == "" {
-		i.ThreadStatePath = decoded.LegacySessionStatePath
-	}
-	if i.ThreadManifestPath == "" {
-		i.ThreadManifestPath = decoded.LegacySessionManifestPath
-	}
-	if len(i.ProviderLogPaths) == 0 && len(decoded.LegacySessionJSONLPaths) > 0 {
-		i.ProviderLogPaths = append([]string(nil), decoded.LegacySessionJSONLPaths...)
+	if c.AgentThreadID == "" && decoded.LegacyAgentResume != nil {
+		c.AgentThreadID = decoded.LegacyAgentResume.ThreadID
+		if c.AgentThreadID == "" {
+			c.AgentThreadID = decoded.LegacyAgentResume.SessionID
+		}
 	}
 	return nil
 }
@@ -421,6 +395,10 @@ func NormalizeStdioStream(stream StdioStream) StdioStream {
 type ExecChunk struct {
 	Text   string
 	Stream StdioStream
+	// Transcript marks text the daemon rebuilt from the guest's agent
+	// events. It is already in the run log as structured entries, so a run
+	// log must not record it again as output.
+	Transcript bool
 }
 
 type SandboxEvent struct {

@@ -87,15 +87,24 @@ func projectRunAgentExecutionStream(ctx context.Context, req agentExecutionStrea
 			return sink.SendStarted(run, time.Now().UTC())
 		},
 		OnChunk: func(cellID string, chunk domain.ExecChunk) error {
-			offset, err := appendProjectRunLogChunk(projectRunAgentCellOutputPath(sandbox, cellID), chunk)
+			if usesRunLog(run) && chunk.Transcript {
+				// Rebuilt from agent events, which OnAgentEvent records.
+				return sendAgentChunk(sink, run, chunk)
+			}
+			if err := appendRunOutput(hub, run, projectRunAgentCellOutputPath(sandbox, cellID), chunk); err != nil {
+				return err
+			}
+			return sendAgentChunk(sink, run, chunk)
+		},
+		OnAgentEvent: func(_ string, event []byte) error {
+			if !usesRunLog(run) {
+				return nil
+			}
+			w, err := runLogWriter(run, hub)
 			if err != nil {
 				return err
 			}
-			publishRunLogChunk(hub, run.RunID, chunk, offset)
-			if sink == nil || sink.SendChunk == nil {
-				return nil
-			}
-			return sink.SendChunk(run.RunID, chunk, time.Now().UTC())
+			return w.AppendAgentEvent(event)
 		},
 	}
 }
@@ -106,4 +115,11 @@ func projectRunAgentCellOutputPath(sandbox *domain.Sandbox, cellID string) strin
 		return ""
 	}
 	return filepath.Join(execution.HostSandboxDir(sandbox), "state", "cells", cellID, "output.txt")
+}
+
+func sendAgentChunk(sink *StreamSink, run domain.ProjectRunRecord, chunk domain.ExecChunk) error {
+	if sink == nil || sink.SendChunk == nil {
+		return nil
+	}
+	return sink.SendChunk(run.RunID, chunk, time.Now().UTC())
 }

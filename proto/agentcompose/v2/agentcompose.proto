@@ -78,8 +78,17 @@ service RunService {
   // the cleanup failure recorded: the sandbox runtime may still exist, because
   // this call gives up on removing it rather than removing it.
   rpc AbandonRunCompletion(AbandonRunCompletionRequest) returns (AbandonRunCompletionResponse);
+  // Deprecated: use ListRunMessages for the conversation, GetRun for the
+  // outcome and FollowRunLogs for what happened in between.
   rpc ListRunEvents(ListRunEventsRequest) returns (ListRunEventsResponse);
+  // Deprecated: use ListRunMessages with sandbox_id.
   rpc ListSandboxRunEvents(ListSandboxRunEventsRequest) returns (ListSandboxRunEventsResponse);
+  // Lists the conversation of Agent Runs: what the user sent and the agent's
+  // final reply for each turn. Exactly one of run_id and sandbox_id selects
+  // the runs; a sandbox lists the runs it hosted, oldest message first. The
+  // complete history of a run, including what happened between messages, is
+  // its log (FollowRunLogs); log_seq points each message at its entry there.
+  rpc ListRunMessages(ListRunMessagesRequest) returns (ListRunMessagesResponse);
   // Stages one file for a later AgentInputFile.upload reference in the same
   // project. The first frame must be info and may appear exactly once; chunk
   // frames follow in order. A response means the bytes were verified and stored.
@@ -317,6 +326,12 @@ enum ProjectAgentHealth {
   PROJECT_AGENT_HEALTH_UNSPECIFIED = 0;
   PROJECT_AGENT_HEALTH_HEALTHY = 1;
   PROJECT_AGENT_HEALTH_AT_RISK = 2;
+}
+
+enum RunMessageRole {
+  RUN_MESSAGE_ROLE_UNSPECIFIED = 0;
+  RUN_MESSAGE_ROLE_USER = 1;
+  RUN_MESSAGE_ROLE_AGENT = 2;
 }
 
 enum RunEventKind {
@@ -1483,9 +1498,24 @@ message FollowRunLogsRequest {
   bool include_metadata = 6;
   // Distinguishes an explicit zero-line tail from the default full history.
   bool tail_set = 7;
+  // Returns the run's log entries in RunLogChunk.entries instead of text.
+  // tail_lines and start_offset address the text view and are ignored; use
+  // start_seq to resume.
+  bool structured = 8;
+  // With structured, returns entries whose seq is greater than start_seq.
+  uint64 start_seq = 9;
+  // Address the output log of one shell/exec step of a scheduler run instead
+  // of an Agent Run: all three are required and run_id must be empty. They
+  // match a scheduler event's scheduler_id, run_id and linked_cell_id. The log
+  // is returned as it stands; follow is ignored. Transitional: scheduler steps
+  // are planned to become Agent Runs of their own.
+  string scheduler_id = 10;
+  string scheduler_run_id = 11;
+  string cell_id = 12;
 }
 
 message RunLogChunk {
+  // Text view of the run's log. offset is the byte offset just past data.
   string data = 1;
   uint64 offset = 2;
   bool is_final = 3;
@@ -1493,6 +1523,125 @@ message RunLogChunk {
   google.protobuf.Timestamp created_at = 5;
   RunSummary run = 6;
   string prompt = 7;
+  // Structured requests: the entries since the previous chunk, in seq order.
+  repeated RunLogEntry entries = 8;
+  // The run predates run logs and has only a text view; structured requests
+  // receive no entries for it.
+  bool legacy_format = 9;
+}
+
+// One entry of a run's log: the complete, ordered history of the run.
+message RunLogEntry {
+  uint64 seq = 1;
+  google.protobuf.Timestamp created_at = 2;
+  // Turn the entry belongs to, starting at 1. A turn is one user input and
+  // the agent's work until it stopped; a command run has a single turn.
+  uint32 turn = 3;
+  // Byte offset of this entry's text in the run's text view.
+  uint64 text_offset = 4;
+  oneof entry {
+    RunLogUserInput user_input = 5;
+    RunLogText text = 6;
+    RunLogToolCall tool_call = 7;
+    RunLogToolResult tool_result = 8;
+    RunLogUsage usage = 9;
+    RunLogError error = 10;
+    RunLogOutput output = 11;
+    RunLogTurnEnd turn_end = 12;
+    RunLogTruncated truncated = 13;
+  }
+}
+
+message RunLogUserInput {
+  string text = 1;
+  // The run's opening prompt rather than a later message.
+  bool initial = 2;
+}
+
+// Assistant prose, coalesced from streamed deltas.
+message RunLogText {
+  string text = 1;
+}
+
+// A tool call, recorded once its arguments are known. Its outcome is the
+// RunLogToolResult with the same id.
+message RunLogToolCall {
+  string id = 1;
+  // The tool call this one was made from, for sub-agent calls.
+  string parent_id = 2;
+  string name = 3;
+  // Provider-neutral category: read, edit, delete, move, search, execute,
+  // think, fetch or other.
+  string kind = 4;
+  // Shell command of an execute call.
+  string command = 5;
+  string input_json = 6;
+}
+
+message RunLogToolResult {
+  string id = 1;
+  string parent_id = 2;
+  string name = 3;
+  // Unset when the provider did not report success or failure.
+  optional bool ok = 4;
+  optional int32 exit_code = 5;
+  // Tool output, keeping its head and tail when it exceeded the log's limit.
+  string output = 6;
+  // Size of the original output when output was cut; 0 when it is whole.
+  uint64 output_bytes = 7;
+  string error = 8;
+}
+
+message RunLogUsage {
+  // step, turn or run. Records of different scopes must not be summed.
+  string scope = 1;
+  string model = 2;
+  // Excludes cached tokens.
+  int64 input_tokens = 3;
+  int64 output_tokens = 4;
+  int64 reasoning_tokens = 5;
+  int64 cached_tokens = 6;
+  int64 cache_write_tokens = 7;
+  double cost_usd = 8;
+}
+
+message RunLogError {
+  string message = 1;
+  // warning, error or fatal.
+  string severity = 2;
+  string code = 3;
+}
+
+// Process output, byte for byte.
+message RunLogOutput {
+  // stdout, stderr, or tty for a terminal session that merges both.
+  string stream = 1;
+  string data = 2;
+}
+
+message RunLogTurnEnd {
+  string stop_reason = 1;
+  string final_text = 2;
+}
+
+// The log reached its size limit; later output and prose were dropped.
+message RunLogTruncated {
+  uint64 dropped_bytes = 1;
+}
+
+// Folded from a finished run's log.
+message RunLogSummary {
+  uint32 turns = 1;
+  uint32 tool_calls = 2;
+  uint32 tool_failures = 3;
+  int64 input_tokens = 4;
+  int64 output_tokens = 5;
+  int64 reasoning_tokens = 6;
+  int64 cached_tokens = 7;
+  double cost_usd = 8;
+  string last_error = 9;
+  // The log reached its size limit.
+  bool truncated = 10;
 }
 
 message StopRunRequest {
@@ -1561,6 +1710,36 @@ message ListSandboxRunEventsResponse {
   // Total matching resources before offset and limit are applied.
   uint32 total = 2;
   repeated string history_available_run_ids = 3;
+}
+
+message ListRunMessagesRequest {
+  // Exactly one of run_id and sandbox_id.
+  string run_id = 1;
+  string sandbox_id = 2;
+  // Maximum resources to return. Zero uses the server default; values above 500 are rejected.
+  uint32 limit = 3;
+  // Number of matching resources to skip. Values at or above total return an empty page.
+  uint32 offset = 4;
+}
+
+message RunMessage {
+  string id = 1;
+  string run_id = 2;
+  RunMessageRole role = 3;
+  string text = 4;
+  string agent = 5;
+  // The run log entry this message was taken from; 0 for runs that predate
+  // run logs.
+  uint64 log_seq = 6;
+  // Agent replies: why the turn ended.
+  string stop_reason = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message ListRunMessagesResponse {
+  repeated RunMessage messages = 1;
+  // Total matching resources before offset and limit are applied.
+  uint32 total = 2;
 }
 
 message RemoveSandboxRequest {
@@ -1779,6 +1958,8 @@ message RunSummary {
   string sandbox_short_id = 21;
   // Present when this Agent Run was created by a SchedulerRun.
   string scheduler_run_id = 22;
+  // Present once the run finished, for runs that keep a run log.
+  RunLogSummary log_summary = 23;
 }
 
 message RunDetail {

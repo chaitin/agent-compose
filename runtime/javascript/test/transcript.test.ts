@@ -18,6 +18,18 @@ describe("transcript helpers", () => {
     }
   });
 
+  it("keeps the transcript without mirroring it when mirror is off", () => {
+    const stdio = captureStdio();
+    try {
+      const writer = new TranscriptWriter({ mirror: false });
+      writer.write("quiet");
+      expect(writer.transcript()).toBe("quiet");
+      expect(stdio.stderr).toBe("");
+    } finally {
+      stdio.restore();
+    }
+  });
+
   it("appends only new deltas for repeated item text", () => {
     const writes: string[] = [];
     const writer = { write: (text: string) => writes.push(text), line: (text = "") => writes.push(`${text}\n`) };

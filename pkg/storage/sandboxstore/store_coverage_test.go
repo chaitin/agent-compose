@@ -520,7 +520,7 @@ func TestStoreReadsAndRemovesSandboxFromLegacySessionsRoot(t *testing.T) {
 	if result, err := store.ListSandboxes(ctx, SandboxListOptions{}); err != nil || len(result.Sandboxes) != 1 || result.Sandboxes[0].Summary.ID != legacyID {
 		t.Fatalf("ListSandboxes result=%#v err=%v", result, err)
 	}
-	if cells, err := store.ListCells(ctx, legacyID); err != nil || len(cells) != 1 || cells[0].AgentThreadID != "thread-1" || cells[0].AgentResume == nil || cells[0].AgentResume.ThreadID != "thread-1" {
+	if cells, err := store.ListCells(ctx, legacyID); err != nil || len(cells) != 1 || cells[0].AgentThreadID != "thread-1" {
 		t.Fatalf("ListCells cells=%#v err=%v", cells, err)
 	}
 	if err := store.RemoveSandbox(ctx, legacyID); err != nil {

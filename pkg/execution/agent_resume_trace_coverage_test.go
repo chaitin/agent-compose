@@ -4,8 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -65,7 +63,7 @@ func testLoadStoredAgentThreadIDReadsLegacySessionID(t *testing.T) {
 	}
 }
 
-func TestAgentThreadLogSelectionAndResumeInfo(t *testing.T) {
+func TestResolveAgentThreadIDFromHostState(t *testing.T) {
 	root := t.TempDir()
 	sessionDir := filepath.Join(root, "sandbox")
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: filepath.Join(sessionDir, "workspace")}}
@@ -78,72 +76,25 @@ func TestAgentThreadLogSelectionAndResumeInfo(t *testing.T) {
 		t.Fatalf("write state: %v", err)
 	}
 
-	historyPath := filepath.Join(sessionDir, "home", ".codex", "history.jsonl")
-	matchingThreadPath := filepath.Join(sessionDir, "home", ".codex", "sessions", "run-thread-1.jsonl")
-	otherThreadPath := filepath.Join(sessionDir, "home", ".codex", "sessions", "run-other.jsonl")
-	for _, path := range []string{historyPath, matchingThreadPath, otherThreadPath} {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
+	if got := ResolveAgentThreadID(context.Background(), AgentThreadIDRequest{Config: &appconfig.Config{}, Sandbox: session, Agent: "codex"}); got != "thread-1" {
+		t.Fatalf("thread id from host state = %q, want thread-1", got)
 	}
-	txtPath := filepath.Join(sessionDir, "home", ".codex", "sessions", "run-thread-1.txt")
-	if err := os.WriteFile(txtPath, []byte("skip"), 0o644); err != nil {
-		t.Fatalf("write txt thread: %v", err)
+	if got := ResolveAgentThreadID(context.Background(), AgentThreadIDRequest{Config: &appconfig.Config{}, Sandbox: session, Agent: "codex", ThreadID: " reported "}); got != "reported" {
+		t.Fatalf("reported thread id = %q, want reported", got)
 	}
-
-	if ShouldIncludeAgentJSONL(txtPath, "codex", "thread-1") {
-		t.Fatal("txt path included as jsonl")
+	if got := ResolveAgentThreadID(context.Background(), AgentThreadIDRequest{Config: &appconfig.Config{}, Sandbox: session, Agent: "claude"}); got != "" {
+		t.Fatalf("thread id without provider state = %q, want empty", got)
 	}
-	if !ShouldIncludeAgentJSONL(historyPath, "codex", "thread-1") {
-		t.Fatal("codex history jsonl excluded")
-	}
-	if !ShouldIncludeAgentJSONL(matchingThreadPath, "codex", "thread-1") {
-		t.Fatal("matching codex thread jsonl excluded")
-	}
-	if ShouldIncludeAgentJSONL(otherThreadPath, "codex", "thread-1") {
-		t.Fatal("non-matching codex thread jsonl included")
-	}
-	if !ShouldIncludeAgentJSONL(filepath.Join(root, "claude.jsonl"), "claude", "thread-1") {
-		t.Fatal("claude jsonl excluded")
-	}
-
-	paths := FindAgentThreadLogPaths(HostSandboxHome(session), "codex", "thread-1")
-	wantPaths := []string{historyPath, matchingThreadPath}
-	if !reflect.DeepEqual(paths, wantPaths) {
-		t.Fatalf("FindAgentThreadLogPaths = %#v, want %#v", paths, wantPaths)
-	}
-	if got := FindAgentThreadLogPaths(HostSandboxHome(session), "unknown", "thread-1"); got != nil {
-		t.Fatalf("unknown provider paths = %#v, want nil", got)
-	}
-
-	info := CollectAgentResumeInfo(context.Background(), AgentResumeInfoRequest{Config: &appconfig.Config{}, Sandbox: session, Agent: "codex", ManifestPath: "/guest/agent-thread.json"})
-	if info == nil {
-		t.Fatal("CollectAgentResumeInfo returned nil")
-		return
-	}
-	if info.Provider != "codex" || info.ThreadID != "thread-1" || info.ThreadStatePath != statePath || info.ThreadManifestPath != "/guest/agent-thread.json" {
-		t.Fatalf("resume info = %#v", info)
-	}
-	if !reflect.DeepEqual(info.ProviderLogPaths, wantPaths) {
-		t.Fatalf("provider log paths = %#v, want %#v", info.ProviderLogPaths, wantPaths)
-	}
-
-	emptySession := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: filepath.Join(root, "empty", "workspace")}}
-	if got := CollectAgentResumeInfo(context.Background(), AgentResumeInfoRequest{Config: &appconfig.Config{}, Sandbox: emptySession}); got != nil {
-		t.Fatalf("empty resume info = %#v, want nil", got)
+	if got := ResolveAgentThreadID(context.Background(), AgentThreadIDRequest{Config: &appconfig.Config{}, Agent: "codex"}); got != "" {
+		t.Fatalf("thread id without sandbox = %q, want empty", got)
 	}
 }
 
-// TestCollectAgentResumeInfoWithGuestFileReader covers the no-shared-mount
+// TestResolveAgentThreadIDWithGuestFileReader covers the no-shared-mount
 // path (k8s - see docs/design/k8s_pod_runtime_driver_design.md §2.1): the
 // thread ID comes from a GuestFileReaderFunc pull instead of a local
-// os.ReadFile, and ThreadStatePath/ProviderLogPaths - which need a
-// host-local path to mean anything - stay unset rather than pointing at
-// something that was never written to local disk.
-func TestCollectAgentResumeInfoWithGuestFileReader(t *testing.T) {
+// os.ReadFile.
+func TestResolveAgentThreadIDWithGuestFileReader(t *testing.T) {
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: "/irrelevant/workspace"}}
 	config := &appconfig.Config{}
 
@@ -153,55 +104,40 @@ func TestCollectAgentResumeInfoWithGuestFileReader(t *testing.T) {
 		return []byte(`{"threadId":"thread-remote"}`), nil
 	}
 
-	info := CollectAgentResumeInfo(context.Background(), AgentResumeInfoRequest{
-		Config: config, Sandbox: session, Agent: "codex", ManifestPath: "/guest/agent-thread.json", ReadGuestFile: reader,
+	got := ResolveAgentThreadID(context.Background(), AgentThreadIDRequest{
+		Config: config, Sandbox: session, Agent: "codex", ReadGuestFile: reader,
 	})
-	if info == nil {
-		t.Fatal("CollectAgentResumeInfo returned nil")
-	}
-	if info.ThreadID != "thread-remote" {
-		t.Fatalf("ThreadID = %q, want %q", info.ThreadID, "thread-remote")
-	}
-	if info.ThreadStatePath != "" {
-		t.Fatalf("ThreadStatePath = %q, want empty (no local mount to point at)", info.ThreadStatePath)
-	}
-	if info.ProviderLogPaths != nil {
-		t.Fatalf("ProviderLogPaths = %#v, want nil (no directory scan without a mount)", info.ProviderLogPaths)
+	if got != "thread-remote" {
+		t.Fatalf("ThreadID = %q, want %q", got, "thread-remote")
 	}
 	appconfig.ApplyDefaultGuestPaths(config)
 	wantPath := filepath.Join(config.GuestStateRoot, "agents", "providers", "codex.json")
 	if gotPath != wantPath {
 		t.Fatalf("guest path pulled = %q, want %q", gotPath, wantPath)
 	}
+
+	failing := func(context.Context, string) ([]byte, error) { return nil, os.ErrNotExist }
+	if got := ResolveAgentThreadID(context.Background(), AgentThreadIDRequest{Config: &appconfig.Config{}, Sandbox: session, Agent: "codex", ReadGuestFile: failing}); got != "" {
+		t.Fatalf("thread id after failed guest read = %q, want empty", got)
+	}
 }
 
-func TestCollectAgentResumeInfoSkipsGuestReadWhenThreadIDAlreadyKnown(t *testing.T) {
+func TestResolveAgentThreadIDSkipsGuestReadWhenThreadIDAlreadyKnown(t *testing.T) {
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: "/irrelevant/workspace"}}
 	reader := func(context.Context, string) ([]byte, error) {
 		t.Fatal("readGuestFile should not be called when threadID is already known")
 		return nil, nil
 	}
 
-	info := CollectAgentResumeInfo(context.Background(), AgentResumeInfoRequest{
-		Config: &appconfig.Config{}, Sandbox: session, Agent: "codex", ThreadID: "thread-already-known", ManifestPath: "/guest/agent-thread.json", ReadGuestFile: reader,
+	got := ResolveAgentThreadID(context.Background(), AgentThreadIDRequest{
+		Config: &appconfig.Config{}, Sandbox: session, Agent: "codex", ThreadID: "thread-already-known", ReadGuestFile: reader,
 	})
-	if info == nil || info.ThreadID != "thread-already-known" {
-		t.Fatalf("resume info = %#v, want ThreadID = thread-already-known", info)
+	if got != "thread-already-known" {
+		t.Fatalf("thread id = %q, want thread-already-known", got)
 	}
 }
 
-func TestAgentSandboxRootsAndTraceDetails(t *testing.T) {
-	home := t.TempDir()
-	if roots := AgentThreadLogRoots(home, "claude"); len(roots) != 3 || !strings.Contains(roots[0], ".claude") {
-		t.Fatalf("claude roots = %#v", roots)
-	}
-	if roots := AgentThreadLogRoots(home, "opencode"); roots != nil {
-		t.Fatalf("opencode roots = %#v, want nil", roots)
-	}
-	if roots := AgentThreadLogRoots(home, "gemini"); roots != nil {
-		t.Fatalf("removed gemini provider roots = %#v, want nil", roots)
-	}
-
+func TestAgentTraceDetails(t *testing.T) {
 	details, consumed := CollectAgentTraceDetails("agent.tool", []string{"one", "  ", "two"})
 	if details != "one" || consumed != 2 {
 		t.Fatalf("tool details=%q consumed=%d, want one/2", details, consumed)

@@ -184,6 +184,11 @@ type ProjectRunRecord struct {
 	// Deadline is the absolute run deadline, persisted so a restarted daemon
 	// can re-arm the run's timeout without the original in-memory timer.
 	Deadline time.Time `json:"deadline,omitempty"`
+	// LogFormat is runlog.FormatJSONL when LogsPath is a run log; empty
+	// means a legacy text transcript.
+	LogFormat string `json:"log_format,omitempty"`
+	// SummaryJSON is the runlog.Summary folded from the run log at completion.
+	SummaryJSON string `json:"summary_json,omitempty"`
 	// Labels holds user-defined key/value pairs attached to the run at start
 	// time. It is not a column on project_run; it is populated by GetProjectRun
 	// from the project_run_label table on read, and by Coordinator.BeginRun on
@@ -244,6 +249,8 @@ type ProjectRunEventRecord struct {
 	ExitCode    int                 `json:"exit_code,omitempty"`
 	StopReason  string              `json:"stop_reason,omitempty"`
 	CreatedAt   time.Time           `json:"created_at"`
+	// LogSeq is the run log entry this message was taken from, or 0.
+	LogSeq uint64 `json:"log_seq,omitempty"`
 }
 
 // ProjectRunEventSandboxCursor describes the position a sandbox-scoped

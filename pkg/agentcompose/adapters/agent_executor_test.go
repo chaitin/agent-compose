@@ -73,16 +73,11 @@ func TestAgentExecutorExecuteAgentRequestPersistsCellAndEvents(t *testing.T) {
 	if len(cells) == 0 || cells[len(cells)-1].ID != cell.ID || !cells[len(cells)-1].Success {
 		t.Fatalf("stored cells = %#v", cells)
 	}
-	threadArtifactPath := filepath.Join(execution.HostSandboxDir(session), "state", "cells", cell.ID, "agent-thread.json")
-	threadArtifact, err := os.ReadFile(threadArtifactPath)
-	if err != nil {
-		t.Fatalf("read agent thread artifact: %v", err)
-	}
-	if !strings.Contains(string(threadArtifact), `"thread_id": "agent-thread-1"`) || !strings.Contains(string(threadArtifact), `"thread_manifest_path":`) {
-		t.Fatalf("agent thread artifact = %s", string(threadArtifact))
-	}
-	if _, err := os.Stat(filepath.Join(execution.HostSandboxDir(session), "state", "cells", cell.ID, "agent-session.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("agent-session.json exists or stat failed unexpectedly: %v", err)
+	// The thread ID lives on the cell; no per-cell resume artifact is written.
+	for _, name := range []string{"agent-thread.json", "agent-session.json"} {
+		if _, err := os.Stat(filepath.Join(execution.HostSandboxDir(session), "state", "cells", cell.ID, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s exists or stat failed unexpectedly: %v", name, err)
+		}
 	}
 	events, err := store.ListEvents(ctx, session.Summary.ID)
 	if err != nil {
@@ -272,5 +267,79 @@ func TestAgentExecutorPersistsFailedCellWhenStreamCallbackFails(t *testing.T) {
 	}
 	if len(events) < 2 || events[len(events)-1].Type != "agent.assistant.failed" {
 		t.Fatalf("events = %#v, want failed assistant event", events)
+	}
+}
+
+func TestAgentExecutorRebuildsTranscriptFromAgentEvents(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:             root,
+		SandboxRoot:          filepath.Join(root, "sandboxes"),
+		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:         "guest:latest",
+		GuestWorkspacePath:   "/workspace",
+		GuestStateRoot:       "/data/state",
+		GuestHomePath:        "/root",
+		JupyterProxyBasePath: "/agent-compose/session",
+		SandboxStartTimeout:  2 * time.Second,
+		AgentTimeout:         2 * time.Second,
+	}
+	store, err := sandboxstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "agent events session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	payload := execution.AgentResultPrefix + `{"provider":"codex","threadId":"t","finalText":"All done.","transcript":"ignored","stopReason":"completed"}` + "\n"
+	events := `__AGENT_EVENT__{"kind":"text_delta","text":"Checking.\n"}` + "\n" +
+		`__AGENT_EVENT__{"kind":"tool_call","id":"c1","name":"shell","status":"completed","command":"ls"}` + "\n" +
+		`__AGENT_EVENT__{"kind":"tool_result","id":"c1","ok":true,"output":"a.txt\n"}` + "\n" +
+		`__AGENT_EVENT__{"kind":"text_delta","text":"All done."}` + "\n"
+	runtime := &fakeAgentRuntime{
+		streamChunks: []domain.ExecChunk{
+			{Text: events[:40]},
+			{Text: events[40:] + payload},
+			{Text: "warning: slow disk\n", Stream: domain.StdioStderr},
+		},
+		result: domain.ExecResult{Stdout: events + payload, Stderr: "warning: slow disk\n", Output: events + payload + "warning: slow disk\n", Success: true},
+	}
+	runner := NewAgentRunner(AgentRunnerDeps{Config: config, Store: store, Runtimes: fakeRuntimeProvider{runtime: runtime}})
+	executor := NewAgentExecutor(config, store, nil, runner)
+	var forwarded []string
+	cell, _, _, err := executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
+		Agent:   "codex",
+		Message: "hello",
+		Stream: execution.AgentExecutionStream{
+			OnAgentEvent: func(_ string, event []byte) error {
+				forwarded = append(forwarded, string(event))
+				return nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAgentRequest returned error: %v", err)
+	}
+	if len(forwarded) != 4 {
+		t.Fatalf("forwarded events = %#v", forwarded)
+	}
+	if got := runtime.specs[0].Env[execution.AgentEventsEnv]; got != "1" {
+		t.Fatalf("%s = %q, want 1", execution.AgentEventsEnv, got)
+	}
+	for _, want := range []string{"Checking.\n", "[tool:shell]\n$ ls\n", "a.txt\n", "All done.", "warning: slow disk"} {
+		if !strings.Contains(cell.Output, want) {
+			t.Fatalf("cell output %q missing %q", cell.Output, want)
+		}
+	}
+	for _, leaked := range []string{execution.AgentEventPrefix, execution.AgentResultPrefix} {
+		if strings.Contains(cell.Output+cell.Stdout+cell.Stderr, leaked) {
+			t.Fatalf("cell leaked %s: output=%q stdout=%q stderr=%q", leaked, cell.Output, cell.Stdout, cell.Stderr)
+		}
 	}
 }

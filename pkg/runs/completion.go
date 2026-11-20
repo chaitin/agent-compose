@@ -351,6 +351,8 @@ func terminalRunUpdate(run domain.ProjectRunRecord, completion domain.ProjectRun
 	}
 	next.CompletedAt = now
 	next.DurationMs = max(0, next.CompletedAt.Sub(next.StartedAt).Milliseconds())
+	// Best effort, as in TransitionRun.
+	_ = finalizeRunLog(&next)
 	statusEvent := domain.ProjectRunEventRecord{ID: terminalStatusEventID(run.RunID), RunID: run.RunID, Kind: domain.ProjectRunEventKindStatus, PayloadJSON: next.ResultJSON, Success: next.Status == domain.ProjectRunStatusSucceeded, ExitCode: next.ExitCode, StopReason: next.Error}
 	return next, statusEvent, nil
 }

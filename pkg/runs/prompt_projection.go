@@ -22,9 +22,13 @@ type promptAttachProjector struct {
 	hasLoggedText          bool
 	logEndsWithNewline     bool
 	persistedAssistantTurn bool
-	eventCtx               context.Context
-	events                 structuredEventStore
-	humanIndex             uint64
+	// turnEnded and turnEndSeq record that the run log already closed the
+	// current turn, so the result frame after a turn completed adds nothing.
+	turnEnded  bool
+	turnEndSeq uint64
+	eventCtx   context.Context
+	events     structuredEventStore
+	humanIndex uint64
 }
 
 // persistentPromptAttachProjectorDeps groups the dependencies needed to build
@@ -104,24 +108,30 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *Tr
 		return []RunAttachOutput{runAttachAgentEventResponse("started", "", string(line))}, nil, nil
 	case "agent_event":
 		name, text := p.agentEventText(frame.Event)
-		if err := p.appendLogText(text, name == "text_delta"); err != nil {
+		if usesRunLog(p.run) {
+			if err := p.appendRunLogEvent(frame.Event, text, name == "text_delta"); err != nil {
+				return nil, nil, err
+			}
+		} else if err := p.appendLogText(text, name == "text_delta"); err != nil {
 			return nil, nil, err
 		}
 		return []RunAttachOutput{runAttachAgentEventResponse(firstNonEmpty(name, "agent_event"), text, string(frame.Event))}, nil, nil
 	case "agent_turn_completed":
-		if err := p.appendLogFinalText(frame.FinalText); err != nil {
+		logSeq, err := p.endTurn(frame.StopReason, frame.FinalText)
+		if err != nil {
 			return nil, nil, err
 		}
-		if err := p.appendAssistantEvent(line, frame.Seq, agentTurnProjection{FinalText: frame.FinalText, FinalTextSource: frame.FinalTextSource, Provider: frame.Provider, StopReason: frame.StopReason}); err != nil {
+		if err := p.appendAssistantEvent(line, frame.Seq, logSeq, agentTurnProjection{FinalText: frame.FinalText, FinalTextSource: frame.FinalTextSource, Provider: frame.Provider, StopReason: frame.StopReason}); err != nil {
 			return nil, nil, err
 		}
 		return []RunAttachOutput{runAttachAgentTurnCompletedResponse(p.run, string(line), warningsFromRun(p.run))}, nil, nil
 	case "result":
-		if err := p.appendLogFinalText(frame.FinalText); err != nil {
+		logSeq, err := p.endTurn(frame.StopReason, frame.FinalText)
+		if err != nil {
 			return nil, nil, err
 		}
 		transition := transitionFromPromptWrapperResult(p.run, p.sandbox, promptWrapperOutcome{LogsPath: p.logsPath, Payload: line, FinalText: frame.FinalText, StopReason: frame.StopReason})
-		transition.TerminalEvents = p.terminalTurnEvents(agentTurnProjection{FinalText: frame.FinalText, FinalTextSource: frame.FinalTextSource, Provider: frame.Provider, StopReason: frame.StopReason})
+		transition.TerminalEvents = p.terminalTurnEvents(logSeq, agentTurnProjection{FinalText: frame.FinalText, FinalTextSource: frame.FinalTextSource, Provider: frame.Provider, StopReason: frame.StopReason})
 		return nil, &transition, nil
 	case "error":
 		message := firstNonEmpty(frame.Message, "runtime stream error")
@@ -324,7 +334,21 @@ func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID s
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.persistedAssistantTurn = false
-	if text != "" {
+	p.turnEnded = false
+	var logSeq uint64
+	if usesRunLog(p.run) {
+		if strings.TrimSpace(message) != "" {
+			w, err := runLogWriter(p.run, p.runLogs)
+			if err != nil {
+				return err
+			}
+			entry, err := w.AppendUser(message)
+			if err != nil {
+				return err
+			}
+			logSeq = entry.Seq
+		}
+	} else if text != "" {
 		if p.hasLoggedText && !p.logEndsWithNewline {
 			text = "\n" + text
 		}
@@ -337,7 +361,7 @@ func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID s
 	}
 	p.humanIndex++
 	_, _, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
-		ID: attachedHumanEventID(p.run.RunID, clientFrameID, uint64(p.humanIndex), message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
+		ID: attachedHumanEventID(p.run.RunID, clientFrameID, uint64(p.humanIndex), message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName, LogSeq: logSeq,
 	})
 	return err
 }
@@ -348,14 +372,66 @@ func (p *promptAttachProjector) AppendStderr(text string) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text, Stream: domain.StdioStderr}); err != nil {
+	if usesRunLog(p.run) {
+		w, err := runLogWriter(p.run, p.runLogs)
+		if err != nil {
+			return err
+		}
+		if err := w.AppendOutput("stderr", text); err != nil {
+			return err
+		}
+	} else if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text, Stream: domain.StdioStderr}); err != nil {
 		return err
 	}
 	p.turnText += text
 	return nil
 }
 
-func (p *promptAttachProjector) appendAssistantEvent(line []byte, seq uint64, turn agentTurnProjection) error {
+// appendRunLogEvent records an agent event in the run log. text is what the
+// event adds to the turn's transcript, kept for the conversation message's
+// transcript fallback exactly as the legacy text log keeps it.
+func (p *promptAttachProjector) appendRunLogEvent(event []byte, text string, prose bool) error {
+	w, err := runLogWriter(p.run, p.runLogs)
+	if err != nil {
+		return err
+	}
+	if err := w.AppendAgentEvent(event); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if prose {
+		p.loggedProse += text
+	}
+	p.turnText += text
+	return nil
+}
+
+// endTurn closes the turn in the log and returns the run log entry the
+// turn's agent message points at (0 for a legacy text log). The turn
+// completed and the result frame both end a turn; the second finds it closed.
+func (p *promptAttachProjector) endTurn(stopReason, finalText string) (uint64, error) {
+	if !usesRunLog(p.run) {
+		return 0, p.appendLogFinalText(finalText)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.turnEnded {
+		return p.turnEndSeq, nil
+	}
+	w, err := runLogWriter(p.run, p.runLogs)
+	if err != nil {
+		return 0, err
+	}
+	entry, err := w.EndTurn(stopReason, finalText)
+	if err != nil {
+		return 0, err
+	}
+	p.turnEnded, p.turnEndSeq = true, entry.Seq
+	return entry.Seq, nil
+}
+
+func (p *promptAttachProjector) appendAssistantEvent(line []byte, seq, logSeq uint64, turn agentTurnProjection) error {
 	p.mu.Lock()
 	store := p.events
 	turn.Transcript = p.turnText
@@ -364,6 +440,9 @@ func (p *promptAttachProjector) appendAssistantEvent(line []byte, seq uint64, tu
 		return nil
 	}
 	events := attachedAgentTurnEvents(p.run, seq, line, turn)
+	for i := range events {
+		events[i].LogSeq = logSeq
+	}
 	if len(events) > 0 {
 		if _, _, err := store.AppendProjectRunEvents(p.eventContext(), events); err != nil {
 			return err
@@ -376,7 +455,7 @@ func (p *promptAttachProjector) appendAssistantEvent(line []byte, seq uint64, tu
 	return nil
 }
 
-func (p *promptAttachProjector) terminalTurnEvents(turn agentTurnProjection) []domain.ProjectRunEventRecord {
+func (p *promptAttachProjector) terminalTurnEvents(logSeq uint64, turn agentTurnProjection) []domain.ProjectRunEventRecord {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.persistedAssistantTurn {
@@ -384,6 +463,9 @@ func (p *promptAttachProjector) terminalTurnEvents(turn agentTurnProjection) []d
 	}
 	turn.Transcript = p.turnText
 	events := terminalPromptTurnEvents(p.run, turn)
+	for i := range events {
+		events[i].LogSeq = logSeq
+	}
 	p.turnText = ""
 	return events
 }

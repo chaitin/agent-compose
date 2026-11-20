@@ -8,6 +8,7 @@ import (
 	"github.com/chaitin/agent-compose/internal/projects"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ type StartRequest struct {
 	CleanupPolicy   string
 	ClientRequestID string
 	Labels          map[string]string
+	// RunLogRoot is the daemon data root. When set, the run records its
+	// history in a run log under it rather than a legacy text transcript.
+	RunLogRoot string
 }
 
 type TransitionRequest struct {
@@ -182,9 +186,15 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 		ResultJSON:      "{}",
 		Labels:          req.Labels,
 	}
+	var promptLogSeq uint64
+	if root := strings.TrimSpace(req.RunLogRoot); root != "" {
+		run.LogFormat = runlog.FormatJSONL
+		run.LogsPath = runlog.RunPath(root, run.RunID)
+		promptLogSeq = initialPromptLogSeq
+	}
 	var initialEvents []domain.ProjectRunEventRecord
 	if strings.TrimSpace(run.Prompt) != "" {
-		initialEvents = append(initialEvents, domain.ProjectRunEventRecord{ID: initialPromptEventID(run.RunID), RunID: run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: run.Prompt, Agent: run.AgentName})
+		initialEvents = append(initialEvents, domain.ProjectRunEventRecord{ID: initialPromptEventID(run.RunID), RunID: run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: run.Prompt, Agent: run.AgentName, LogSeq: promptLogSeq})
 	}
 	created, err := c.store.CreateProjectRunWithEvents(ctx, run, initialEvents)
 	if err != nil {
@@ -298,6 +308,9 @@ func (c *Coordinator) TransitionRun(ctx context.Context, req TransitionRequest) 
 	}
 	batch := make([]domain.ProjectRunEventRecord, 0, len(req.TerminalEvents)+1)
 	if StatusIsTerminal(next.Status) {
+		// The summary is best effort: a run log that cannot be read must not
+		// keep the run from completing.
+		_ = finalizeRunLog(&next)
 		batch = append(batch, req.TerminalEvents...)
 		batch = append(batch, domain.ProjectRunEventRecord{ID: terminalStatusEventID(next.RunID), RunID: next.RunID, Kind: domain.ProjectRunEventKindStatus, PayloadJSON: next.ResultJSON, Success: next.Status == domain.ProjectRunStatusSucceeded, ExitCode: next.ExitCode, StopReason: next.Error})
 	}
@@ -334,7 +347,9 @@ func applyProjectRunTransitionFields(run *domain.ProjectRunRecord, req Transitio
 	if value := strings.TrimSpace(req.ResultJSON); value != "" {
 		run.ResultJSON = value
 	}
-	if value := strings.TrimSpace(req.LogsPath); value != "" {
+	// A run log's location is fixed when the run is created; execution paths
+	// that still report their legacy transcript path must not move it.
+	if value := strings.TrimSpace(req.LogsPath); value != "" && run.LogFormat != runlog.FormatJSONL {
 		run.LogsPath = value
 	}
 	if value := strings.TrimSpace(req.ArtifactsDir); value != "" {
