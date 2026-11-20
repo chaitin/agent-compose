@@ -38,11 +38,9 @@ var closeCallBound = 10 * time.Second
 // time; a [Conversation.Send] issued while an earlier Reply is still streaming
 // returns [ErrBusy].
 type Conversation struct {
-	openingRequestID string
-	openingInput     []*agentcomposev2.AgentInputPart
-	agent            *Agent
-	id               string
-	labels           map[string]string
+	agent  *Agent
+	id     string
+	labels map[string]string
 
 	mu     sync.Mutex
 	stream *attachStream
@@ -134,7 +132,7 @@ func (a *Agent) Open(ctx context.Context, id string, opts ...Option) (*Conversat
 	// fields. Everything from here on is shared state.
 	conversation.mu.Lock()
 	defer conversation.mu.Unlock()
-	if err := conversation.attach(ctx, "Open", ""); err != nil {
+	if err := conversation.attach(ctx, "Open", "", nil); err != nil {
 		if !resolved.restartIfGone {
 			return nil, err
 		}
@@ -172,29 +170,55 @@ func (c *Conversation) RunID() string {
 }
 
 // Send contributes a message and returns the agent's [Reply], which streams
-// while the agent works.
+// while the agent works. [WithFiles] attaches files to this turn and
+// [WithRequestID] pins the identity of a run this turn starts.
 //
 // A Reply that fails because the stream broke leaves the turn's outcome
 // unknown: the daemon was asked to keep the run alive without a viewer, so the
 // agent may well have finished the turn. Resending the same text is the way to
 // recover, and doing so immediately does not record the message twice — it
 // travels under the identity the lost turn already had. The agent can still
-// work through it a second time, so a caller that cares should read
-// [Conversation.History] before resending.
-func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
+// work through it a second time (and materialize its files again), so a caller
+// that cares should read [Conversation.History] before resending.
+func (c *Conversation) Send(ctx context.Context, text string, opts ...SendOption) (*Reply, error) {
 	if strings.TrimSpace(text) == "" {
 		return nil, invalidArgument("Send", "message text is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return nil, ErrClosed
+	resolved := newSendOptions(opts)
+	var inputs *inputFiles
+	var parts []*agentcomposev2.AgentInputPart
+	if len(resolved.files) > 0 {
+		inputs = &inputFiles{files: resolved.files}
+		// A blocked Content.Read is interrupted only by Close, so tie the
+		// readers' lifetime to the request context.
+		stopClose := context.AfterFunc(ctx, func() { _ = inputs.Close() })
+		defer stopClose()
+		// Refuse before staging: a turn the conversation cannot take should not
+		// upload bytes no run will reference.
+		c.mu.Lock()
+		err := c.checkTurnLocked()
+		c.mu.Unlock()
+		if err != nil {
+			return nil, errors.Join(err, inputs.Close())
+		}
+		var prepErr error
+		parts, prepErr = c.prepareFiles(ctx, resolved.files)
+		if prepErr != nil {
+			return nil, errors.Join(prepErr, inputs.Close())
+		}
 	}
-	if c.current != nil && !c.current.Done() {
-		return nil, ErrBusy
+	c.mu.Lock()
+	// Close the readers after releasing the lock: Close may interrupt a blocked
+	// Read on the caller's side and must not hold the conversation's state.
+	defer func() {
+		c.mu.Unlock()
+		_ = inputs.Close()
+	}()
+	if err := c.checkTurnLocked(); err != nil {
+		return nil, err
 	}
 	frameID := c.turnFrameID(text)
 	if c.stream == nil {
@@ -203,7 +227,11 @@ func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 		// otherwise provisions a new environment, carrying this message as the
 		// opening prompt.
 		reattached := c.runID != ""
-		if err := c.attach(ctx, "Send", text); err != nil {
+		opening := &openingTurn{clientRequestID: resolved.requestID}
+		if !reattached {
+			opening.input = parts
+		}
+		if err := c.attach(ctx, "Send", text, opening); err != nil {
 			return nil, err
 		}
 		if reattached {
@@ -211,8 +239,8 @@ func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 				return nil, err
 			}
 			// A reattach start frame carries no prompt, so the message still
-			// has to be sent.
-			if err := c.stream.Send(humanMessage(text, frameID)); err != nil {
+			// has to be sent, with the files this turn carries.
+			if err := c.stream.Send(humanMessage(text, frameID, parts)); err != nil {
 				return nil, fromConnect("Send", err)
 			}
 		} else {
@@ -223,7 +251,7 @@ func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 			// a run starts a run of its own.
 			frameID = ""
 		}
-	} else if err := c.stream.Send(humanMessage(text, frameID)); err != nil {
+	} else if err := c.stream.Send(humanMessage(text, frameID, parts)); err != nil {
 		return nil, fromConnect("Send", err)
 	}
 	c.sentFrameID, c.sentText = frameID, text
@@ -231,6 +259,19 @@ func (c *Conversation) Send(ctx context.Context, text string) (*Reply, error) {
 	reply := newReply(c)
 	c.current = reply
 	return reply, nil
+}
+
+// checkTurnLocked reports why the conversation cannot take a turn now.
+//
+// Callers must hold c.mu.
+func (c *Conversation) checkTurnLocked() error {
+	if c.closed {
+		return ErrClosed
+	}
+	if c.current != nil && !c.current.Done() {
+		return ErrBusy
+	}
+	return nil
 }
 
 // turnFrameID returns the client frame ID this turn's message carries.
@@ -252,9 +293,10 @@ func (c *Conversation) turnFrameID(text string) string {
 	return newFrameID()
 }
 
-// Ask sends a message and waits for the complete answer.
-func (c *Conversation) Ask(ctx context.Context, text string) (Message, error) {
-	reply, err := c.Send(ctx, text)
+// Ask sends a message and waits for the complete answer. Its options are
+// [Conversation.Send]'s.
+func (c *Conversation) Ask(ctx context.Context, text string, opts ...SendOption) (Message, error) {
+	reply, err := c.Send(ctx, text, opts...)
 	if err != nil {
 		return Message{}, err
 	}
@@ -419,11 +461,20 @@ func (c *Conversation) interrupt(ctx context.Context, reply *Reply) error {
 	}))
 }
 
+// openingTurn carries what only a new run's first request can hold: the stable
+// identity a retry resolves to, and the ordered input parts the run references.
+type openingTurn struct {
+	clientRequestID string
+	input           []*agentcomposev2.AgentInputPart
+}
+
 // attach opens the interactive session. prompt is the opening message when
-// starting a new one, and empty when reattaching to an existing run.
+// starting a new one, and empty when reattaching to an existing run. opening
+// carries what only a new run's first request can hold; it is nil for a
+// reattach and for a run that takes no file input.
 //
 // Callers must hold c.mu.
-func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
+func (c *Conversation) attach(ctx context.Context, op, prompt string, opening *openingTurn) error {
 	// The stream belongs to the conversation, not to this call: a Send whose
 	// context is a single HTTP request's must not take the session down with
 	// it when that request ends. Values are kept, cancellation is not.
@@ -443,11 +494,9 @@ func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 		}
 		labels[conversationLabel] = c.id
 		start.Request = &agentcomposev2.RunAgentRequest{
-			ProjectId:       c.agent.projectID,
-			AgentName:       c.agent.name,
-			Prompt:          prompt,
-			ClientRequestId: cmp.Or(c.openingRequestID, newFrameID()),
-			Input:           c.openingInput,
+			ProjectId: c.agent.projectID,
+			AgentName: c.agent.name,
+			Prompt:    prompt,
 			// One run serves every turn of an open session, so the
 			// environment already outlives a turn without being pinned:
 			// stopping it when the run itself ends is enough. Keeping it
@@ -466,6 +515,10 @@ func (c *Conversation) attach(ctx context.Context, op, prompt string) error {
 			// happened.
 			SandboxId: c.sandboxID,
 			Labels:    labels,
+		}
+		if opening != nil {
+			start.Request.ClientRequestId = opening.clientRequestID
+			start.Request.Input = opening.input
 		}
 	}
 	// The opening frame is what makes the daemon answer: a Connect handler
@@ -506,12 +559,12 @@ func (c *Conversation) readLoop(stream *attachStream) {
 	}
 }
 
-// humanMessage builds the frame carrying one turn's message.
-func humanMessage(text, frameID string) *agentcomposev2.AttachAgentRunRequest {
+// humanMessage builds the frame carrying one turn's message and its files.
+func humanMessage(text, frameID string, parts []*agentcomposev2.AgentInputPart) *agentcomposev2.AttachAgentRunRequest {
 	return &agentcomposev2.AttachAgentRunRequest{
 		ClientFrameId: frameID,
 		Frame: &agentcomposev2.AttachAgentRunRequest_HumanMessage{
-			HumanMessage: &agentcomposev2.AttachHumanMessage{Text: text},
+			HumanMessage: &agentcomposev2.AttachHumanMessage{Text: text, Input: parts},
 		},
 	}
 }

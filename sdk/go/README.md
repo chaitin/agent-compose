@@ -67,6 +67,34 @@ vocabulary. The SDK owns the three things the daemon deliberately does not
 model: the conversation's identity, the ordering of its turns, and the
 continuity of the environment they run in.
 
+## Sending files
+
+Files are part of a turn, so they can ride any message:
+
+```go
+reply, err := conversation.Send(ctx, "summarize this report",
+    chat.WithFiles(chat.InputFile{
+        ID:      "attachment-1",
+        Name:    "report.pdf",
+        Size:    uint64(len(content)),
+        SHA256:  sum, // sha256.Sum256(content)[:]
+        Content: reader,
+    }),
+    chat.WithRequestID(requestID), // optional: pins the identity of a new run
+)
+```
+
+A file within the daemon's inline limit travels with the request; a
+larger one is staged through `UploadRunInput` first and referenced by upload id.
+The SDK closes each `Content` on every exit.
+
+`WithRequestID` is the idempotency key of a turn that starts a run: persist it
+and retry with the same key, and the daemon resolves the run the first attempt
+created. It is ignored on a turn that continues an existing run, where the
+message's frame ID is the identity. A resend after a lost outcome can run the
+turn — and materialize its files — a second time; read `History` first if that
+matters.
+
 ## Finding conversations again
 
 `Open` needs an ID, which a product normally already has against its own thread
@@ -317,7 +345,8 @@ and allows one `Reply` in flight at a time; a second `Send` returns `ErrBusy`.
   stop forwarding a human message it has already recorded. The exception is a
   run's **opening** turn, whose message is recorded under an identity derived
   from the run rather than from a frame ID: resending that one does duplicate.
-  A caller that cares reads `History` before resending.
+  A turn that carries files materializes them again on the resend. A caller
+  that cares reads `History` before resending.
 - **`History` and `HistoryPage` return only user and assistant text.** Tool
   calls, reasoning, usage, and every other event kind are turn-scoped and not
   durable messages; replaying a turn's full activity trace after a reload

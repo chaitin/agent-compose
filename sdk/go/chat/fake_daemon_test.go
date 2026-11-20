@@ -41,6 +41,9 @@ type fakeDaemon struct {
 	attach        func(*fakeStream)
 	inputLimits   *agentcomposev2.EngineInputLimits
 	upload        func(info *agentcomposev2.RunInputUploadInfo, data []byte) (*agentcomposev2.UploadRunInputResponse, error)
+	// uploadExisting answers as soon as the info frame arrives, without
+	// reading chunks, the way the daemon does for content it already has.
+	uploadExisting func(info *agentcomposev2.RunInputUploadInfo) (*agentcomposev2.UploadRunInputResponse, error)
 
 	// hold keeps handlers that emulate a detached session parked until the
 	// test ends.
@@ -275,6 +278,16 @@ func (e *fakeEngine) GetCapabilities(context.Context, *connect.Request[agentcomp
 
 func (d *fakeDaemon) UploadRunInput(_ context.Context, stream *connect.ClientStream[agentcomposev2.UploadRunInputRequest]) (*connect.Response[agentcomposev2.UploadRunInputResponse], error) {
 	d.record("UploadRunInput")
+	if d.uploadExisting != nil {
+		if !stream.Receive() {
+			return nil, stream.Err()
+		}
+		response, err := d.uploadExisting(stream.Msg().GetInfo())
+		if err != nil {
+			return nil, err
+		}
+		return connect.NewResponse(response), nil
+	}
 	if d.upload == nil {
 		return nil, unconfigured("UploadRunInput")
 	}
