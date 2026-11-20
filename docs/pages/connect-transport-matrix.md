@@ -23,7 +23,7 @@ When a requested combination is unavailable, the daemon returns a Connect `CodeU
 
 `StartAgentRun(interactive=true)` starts the same detached prompt session without keeping the submission request open. Ordinary `StartAgentRun` calls remain non-interactive.
 
-Attachments are resumable only while the daemon process remains alive. After a daemon restart, persisted run events and logs remain readable, but runtime input/output handles cannot be reconstructed and attach fails closed. After a page refresh or channel switch, clients should read `ListRunEvents`/`FollowRunLogs` before subscribing to live attachment output.
+Attachments are resumable only while the daemon process remains alive. After a daemon restart, persisted run events and logs remain readable, but runtime input/output handles cannot be reconstructed and attach fails closed. After a page refresh or channel switch, clients should read `ListRunMessages` (the conversation) and `FollowRunLogs` (the run log; pass `structured` for entries, resuming with `start_seq`) before subscribing to live attachment output.
 
 ## Staged run input files
 

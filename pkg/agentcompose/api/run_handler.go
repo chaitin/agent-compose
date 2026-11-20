@@ -288,6 +288,9 @@ func (h *RunHandler) FollowRunLogs(ctx context.Context, req *connect.Request[age
 	if err != nil {
 		return err
 	}
+	if req.Msg.GetStructured() {
+		return h.followRunLogEntries(ctx, req, run, stream)
+	}
 	offset, err := initialRunLogOffset(run.LogsPath, int(req.Msg.GetTailLines()), req.Msg.GetStartOffset(), req.Msg.GetTailSet() || req.Msg.GetTailLines() > 0)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
