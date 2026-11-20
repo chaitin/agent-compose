@@ -3,7 +3,7 @@
 Languages: [English](README.md) | 中文
 
 一个项目里四个 `driver: k8s` agent，分别验证 k8s driver 在没有共享文件系统情况下
-（见 `docs/design/k8s_pod_runtime_driver_design.md` §2.1）的几条 guest 同步路径：
+的几条 guest 同步路径：
 
 - `scheduled`：cron 触发，验证 scheduler 能按计划创建并运行 k8s sandbox。
 - `skilled`：git 来源的 skill，验证 daemon 解析后通过 exec 推送到 guest Pod。

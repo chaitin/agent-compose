@@ -191,8 +191,7 @@ On Linux, run this complete prompt-and-removal scenario with the daemon's
 shipped root identity, or with compatible guest/daemon filesystem ownership.
 A root guest creates provider thread state; an unprivileged native daemon can
 hit an existing `RemoveSandbox` permission failure in `state/agents/providers`.
-The [content reuse validation](docs/design/workspace-content-reuse.zh-CN.md)
-records that mixed-UID limitation separately from skills reconciliation.
+That mixed-UID limitation is recorded separately from skills reconciliation.
 
 Three unchanged prompt runs must preserve every canonical skills inode, complete
 tree digest, and Claude alias inode. Further runs restore guest additions,

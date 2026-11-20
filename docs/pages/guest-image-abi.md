@@ -331,8 +331,7 @@ images for the rest of the runtime protocol.
 The `prompt` and `exec` stdout payloads, stream separation, artifact files, and
 interactive NDJSON frames are protocol, not just CLI presentation. A custom
 replacement runtime **MUST** implement the matching release protocol. Reusing
-the repository runtime is strongly recommended; see
-[agent-compose and runtime call contract](https://github.com/chaitin/agent-compose/blob/main/docs/design/agent-compose-runtime_contract.md).
+the repository runtime is strongly recommended.
 
 ### 4.1 Graceful-stop capability
 

@@ -8,7 +8,7 @@
  * whenIdle, flush, exit) and dsh-TUI's dsh-cc-tui plugin (create-vs-resume,
  * ctx.on('session/event', ...) subscription, agentDefaultModel selection).
  * Neither is reused directly: headless has no resume/no event stream, and
- * cc-tui is interactive. See docs/design/dsh_agent_provider_design.md §3.3/§3.4.
+ * cc-tui is interactive.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -40,7 +40,6 @@ function writeSessionEventLine(sessionId, event) {
 // once that server's plugin has finished loading (and its tools are
 // registered on ctx.tools), so awaiting all of them guarantees every
 // configured server's tools are visible before the agent's first turn.
-// See docs/design/dsh_agent_provider_design.md §6.
 async function registerMcpServers(ctx) {
   const raw = process.env.DSH_MCP_SERVERS;
   if (!raw) return;
@@ -57,7 +56,7 @@ async function registerMcpServers(ctx) {
 // deployment's persona with its own" — dsh-system-prompt's doc comment), and
 // agent.ctx is agent-scoped, so this replaces the empty global default the
 // cordis.patch.yml `system-prompt` row leaves in place instead of duplicating
-// it. See docs/design/dsh_agent_provider_design.md §7.
+// it.
 async function injectPersona(agent, config) {
   if (!config.systemContextFile) return;
   const text = await fs.readFile(config.systemContextFile, 'utf8');

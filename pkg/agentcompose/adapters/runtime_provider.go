@@ -46,8 +46,8 @@ type SandboxRuntimePreflight interface {
 }
 
 // GuestFileReader and GuestDirReader are implemented only by drivers with no
-// shared filesystem between the daemon and the sandbox (currently just k8s
-// - see docs/design/k8s_pod_runtime_driver_design.md §2.1). Drivers with a
+// shared filesystem between the daemon and the sandbox (currently just k8s).
+// Drivers with a
 // real mount (docker/boxlite/microsandbox) have no need for them; callers
 // that want a driver-agnostic path should type-assert and fall back to
 // reading the sandbox's local mounted path directly when unsupported.
@@ -184,7 +184,7 @@ func NewRuntimeProvider(config *appconfig.Config, proxyStateGetter ProxyStateGet
 
 	// VM drivers are held by the sandbox-host process, not the daemon: the
 	// daemon drives them through the remoteSandboxRuntime over the shared unix
-	// socket. See docs/design/daemon-upgrade-sandbox-survival.zh-CN.md §3.4.
+	// socket.
 	sandboxHost := driverpkg.NewSandboxHostConnector(config.SandboxHostSocket, config.DataRoot, driverpkg.SandboxHostMode(config.SandboxHostMode))
 	provider.sandboxHost = sandboxHost
 	boxliteRuntime := driverpkg.NewRemoteSandboxRuntime(driverpkg.RuntimeDriverBoxlite, sandboxHost)

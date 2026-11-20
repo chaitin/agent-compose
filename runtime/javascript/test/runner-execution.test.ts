@@ -865,7 +865,7 @@ describe("runner execution", () => {
     // it exercises every else-branch delete in dsh.ts's runPrompt at once.
     // Stub host values first so the assertions below are deterministic —
     // proof the delete branches ran, not that the CI environment happened
-    // not to have these vars set (see docs/design/dsh_agent_provider_design.md §3.5).
+    // not to have these vars set.
     // DSH_MODEL is the deliberate exception: the daemon's facade config sets it
     // to the model it resolved and bound the run's token to, so it is carried
     // through rather than cleared (see dsh-runner.test.ts for that contract).

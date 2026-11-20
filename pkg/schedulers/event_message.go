@@ -30,8 +30,7 @@ type SandboxDirResolver interface {
 const schedulerEventMessageReplacement = "\uFFFD"
 
 // ResolveEventMessage returns the display text for a scheduler_event and
-// whether that text came from a live artifact read, per
-// docs/design/scheduler_event_storage_design.md §6. The returned text is always
+// whether that text came from a live artifact read. The returned text is always
 // valid UTF-8: invalid byte runs are replaced with U+FFFD (see
 // schedulerEventMessageReplacement), because the text is sent in a protobuf
 // string field that cannot carry arbitrary bytes.

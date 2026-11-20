@@ -17,8 +17,7 @@ import (
 // daemon instead of going through the sandbox-host RPC. They are metadata-only
 // control-plane operations (list sandboxes by label, remove stopped sandboxes)
 // against the MicrosandboxHome the daemon and host share, and do not take a live
-// runtime handle or need KVM. See the known-exception note in
-// docs/design/daemon-upgrade-sandbox-survival.zh-CN.md §3.4; move these onto the
+// runtime handle or need KVM. Move these onto the
 // sandbox-host RPC when the contract grows cache/cleanup methods.
 
 func ListMicrosandboxManagedResources(ctx context.Context, config *appconfig.Config) ([]ManagedRuntimeResource, []string, error) {

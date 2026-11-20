@@ -384,8 +384,7 @@ func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerComma
 		level = "error"
 	}
 	// message is always empty for this event type: full output lives in the
-	// sandbox cell artifact and is reconstructed on read by ResolveEventMessage
-	// (see docs/design/scheduler_event_storage_design.md §4/§6).
+	// sandbox cell artifact and is reconstructed on read by ResolveEventMessage.
 	_ = h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
 		EventType:       "scheduler.command.completed",
 		Level:           level,

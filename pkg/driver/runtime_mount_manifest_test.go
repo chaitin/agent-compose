@@ -122,7 +122,7 @@ func TestPrepareRuntimeMountManifestForDockerIncludesRequiredMountsOnly(t *testi
 }
 
 // The k8s driver has no shared filesystem between the daemon and a sandbox
-// Pod (see docs/design/k8s_pod_runtime_driver_design.md §2.1): sandbox data
+// Pod: sandbox data
 // flows over Exec, not a mount, so its manifest declares none.
 func TestPrepareRuntimeMountManifestForK8sHasNoMounts(t *testing.T) {
 	root := t.TempDir()

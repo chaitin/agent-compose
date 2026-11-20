@@ -17,8 +17,7 @@ const microsandboxImageCacheKind = "microsandbox-image"
 // (Image.List/Remove) instead of going through the sandbox-host RPC. It is a
 // metadata-only control-plane operation against the shared MicrosandboxHome and
 // does not need a live runtime handle or KVM; Image.Remove carries force=false
-// as the SDK-level in-use guard. See the known-exception note in
-// docs/design/daemon-upgrade-sandbox-survival.zh-CN.md §3.4; move it onto the
+// as the SDK-level in-use guard. Move it onto the
 // sandbox-host RPC when the contract grows cache methods.
 
 type microsandboxRuntimeCacheSource struct{}

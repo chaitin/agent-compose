@@ -51,8 +51,6 @@ already-running sandboxes. The **web UI** is a separate service
 ([agent-compose-ui](https://github.com/chaitin/agent-compose-ui)) and is not
 hosted by the daemon.
 
-For the full architecture, see [docs/design/agent-compose_design.md](docs/design/agent-compose_design.md).
-
 ## Quick start
 
 ### Option A — Run a server (recommended)

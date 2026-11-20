@@ -15,8 +15,7 @@ import (
 
 // Detach CLI surface. The guest runtime exposes these subcommands so the
 // daemon can run a task behind a guest-side supervisor and re-attach to its
-// journal after a daemon restart. See
-// docs/design/daemon-upgrade-sandbox-survival.zh-CN.md.
+// journal after a daemon restart.
 const (
 	detachCLI               = "agent-compose-runtime"
 	DetachStopReasonUser    = "user"

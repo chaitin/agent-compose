@@ -22,8 +22,7 @@ func newCLISandboxHostCommand() *cobra.Command {
 		Use:   "sandbox-host",
 		Short: "Run the long-lived sandbox-host process that holds VM driver state",
 		Long: "Run the sandbox-host process that owns microsandbox and BoxLite VMs so the daemon can be " +
-			"upgraded without tearing them down. Normally started by the daemon or by compose; see " +
-			"docs/design/daemon-upgrade-sandbox-survival.zh-CN.md.",
+			"upgraded without tearing them down. Normally started by the daemon or by compose.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSandboxHost(cmd.Context())

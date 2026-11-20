@@ -4,8 +4,7 @@
 // tearing down running VMs.
 //
 // This is NOT part of the public proto module: it rides the same binary and is
-// deliberately scoped to the driver.SandboxRuntime boundary. See
-// docs/design/daemon-upgrade-sandbox-survival.zh-CN.md §3.4.
+// deliberately scoped to the driver.SandboxRuntime boundary.
 //
 // Regenerate the Go output with `cd pkg/driver/sandboxhost && buf generate`.
 

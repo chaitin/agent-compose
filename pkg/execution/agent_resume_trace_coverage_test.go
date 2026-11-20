@@ -138,7 +138,7 @@ func TestAgentThreadLogSelectionAndResumeInfo(t *testing.T) {
 }
 
 // TestCollectAgentResumeInfoWithGuestFileReader covers the no-shared-mount
-// path (k8s - see docs/design/k8s_pod_runtime_driver_design.md §2.1): the
+// path (k8s): the
 // thread ID comes from a GuestFileReaderFunc pull instead of a local
 // os.ReadFile, and ThreadStatePath/ProviderLogPaths - which need a
 // host-local path to mean anything - stay unset rather than pointing at

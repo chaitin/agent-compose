@@ -42,8 +42,6 @@
 
 **daemon** 是唯一的状态权威：负责持久化、scheduler 执行、runtime 生命周期和控制面 API。**CLI** 是一个轻客户端 —— 读取本地 `agent-compose.yml`，做本地校验，再调用 daemon。compose 文件描述的是 *project 和 agent*，不是已经在跑的 sandbox。**Web UI** 是独立服务（[agent-compose-ui](https://github.com/chaitin/agent-compose-ui)），不由 daemon 托管。
 
-完整架构见 [docs/design/agent-compose_design.md](docs/design/agent-compose_design.md)。
-
 ## 快速开始
 
 ### 方式 A —— 部署服务器（推荐）
@@ -362,7 +360,6 @@ macOS/Linux daemon 原生二进制只用于本地开发和 CI 验证。独立的
 
 - [英文文档索引](README.md)
 - [命令行使用手册](docs/pages/zh-CN/command-line-manual.md)
-- [架构说明](docs/design/agent-compose_design.md)
 
 ## 一次性 V2 存储迁移
 

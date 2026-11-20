@@ -5,8 +5,7 @@
 # container (an upgrade) no longer tears the VMs down. The daemon shares the
 # sandbox-host network namespace so a guest still reaches the daemon through
 # the `agent-compose:7410` alias, and both services share the unix socket that
-# carries the daemon<->sandbox-host RPC. See
-# docs/design/daemon-upgrade-sandbox-survival.zh-CN.md section 3.4.
+# carries the daemon<->sandbox-host RPC.
 #
 # Requires Docker Compose v2.24.4 or later for the `ports: !reset []` override.
 services:

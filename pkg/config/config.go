@@ -921,8 +921,7 @@ func loadDriverHomesConfig(logger *slog.Logger, dataRoot string) (driverHomesCon
 	// sandboxes only. It's needed whenever the daemon's own reachable
 	// address differs from what a Pod should call back to - for example a
 	// Tailscale Cluster Egress Service's in-cluster DNS name when the
-	// daemon isn't deployed inside the cluster (see
-	// docs/design/k8s_pod_runtime_driver_design.md §2.2). Left empty by
+	// daemon isn't deployed inside the cluster. Left empty by
 	// default so k8s sandboxes fall back to the daemon-wide value, same as
 	// every other driver.
 	k8sRuntimeBaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("K8S_RUNTIME_BASE_URL")), "/")
@@ -1592,8 +1591,7 @@ func DefaultAgentComposeSocket() string {
 }
 
 // defaultSandboxHostSocketDir is the compose-deployment mount point the daemon
-// and sandbox-host share (see docs/design/daemon-upgrade-sandbox-survival.zh-CN.md
-// §3.4), and the fallback directory for a native deployment on Linux.
+// and sandbox-host share, and the fallback directory for a native deployment on Linux.
 const defaultSandboxHostSocketDir = "/run/agent-compose"
 
 func DefaultSandboxHostSocket() string {

@@ -41,7 +41,7 @@ program owns its business decisions and any model/tool loop.
 
 This guide walks you through connecting agent-compose to [OctoBus](https://github.com/chaitin/OctoBus) — a local gateway that exposes approved enterprise APIs, tools, and services to AI agents — and verifying that an agent can call a capability from inside its sandbox. It takes about 15 minutes.
 
-For configuration field reference, see the [agent-compose.yml Manual](https://github.com/chaitin/agent-compose/blob/main/docs/pages/agent-compose-yaml-manual.md) (`octobus_servers`, `capset_ids`). For internal architecture, see the [OctoBus integration design](https://github.com/chaitin/agent-compose/blob/main/docs/design/octobus_integration.md).
+For configuration field reference, see the [agent-compose.yml Manual](https://github.com/chaitin/agent-compose/blob/main/docs/pages/agent-compose-yaml-manual.md) (`octobus_servers`, `capset_ids`).
 
 ## Concepts in one minute
 

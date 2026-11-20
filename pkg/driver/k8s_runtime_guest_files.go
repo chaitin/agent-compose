@@ -18,9 +18,8 @@ import (
 )
 
 // ReadGuestFile and ReadGuestDir let the daemon pull data a guest process
-// wrote back out of a sandbox Pod without any shared filesystem (see
-// docs/design/k8s_pod_runtime_driver_design.md §2.1: the k8s driver mounts
-// nothing). Both are plain SandboxRuntime.Exec calls under the hood - `cat`
+// wrote back out of a sandbox Pod without any shared filesystem (the k8s
+// driver mounts nothing). Both are plain SandboxRuntime.Exec calls under the hood - `cat`
 // for one file, `tar` for a directory (the same primitive `kubectl cp` is
 // built on) - so they only need whatever's already in the guest image (a
 // POSIX shell, cat, tar), no image changes and no extra plumbing beyond
@@ -81,9 +80,8 @@ func (r *k8sRuntime) ReadGuestDir(ctx context.Context, sandbox *Sandbox, vmState
 
 // WriteGuestFile pushes content into a sandbox Pod at a guest-absolute
 // path, for the daemon-writes/guest-reads direction (prompts, skills,
-// generated MCP/provider config - see
-// docs/design/k8s_pod_runtime_driver_design.md §2.1 and §6) that docker/
-// boxlite get for free from their shared mount and the k8s driver doesn't.
+// generated MCP/provider config) that docker/boxlite get for free from
+// their shared mount and the k8s driver doesn't.
 //
 // Content is streamed on stdin through the k8s exec subresource. This remains
 // an internal k8s transfer primitive rather than adding a field used by only

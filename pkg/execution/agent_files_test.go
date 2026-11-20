@@ -191,8 +191,8 @@ func TestWriteAgentSkillsRejectsUserClaudeSkillsDirectory(t *testing.T) {
 	}
 }
 
-// No-shared-mount path (k8s - see docs/design/k8s_pod_runtime_driver_design.md
-// §2.1): the writer reconciles one canonical directory and its provider aliases.
+// No-shared-mount path (k8s): the writer reconciles one canonical directory
+// and its provider aliases.
 func TestWriteAgentSkillsPushesToGuestWhenPresent(t *testing.T) {
 	root := t.TempDir()
 	session := &domain.Sandbox{Summary: domain.SandboxSummary{WorkspacePath: filepath.Join(root, "workspace")}}

@@ -667,7 +667,7 @@ func (r *k8sRuntime) containerEnv(ctx context.Context, sandbox *Sandbox) (map[st
 		env[key] = value
 	}
 	// K8S_RUNTIME_BASE_URL overrides the daemon-wide AGENT_COMPOSE_RUNTIME_BASE_URL
-	// for k8s sandboxes only - see docs/design/k8s_pod_runtime_driver_design.md §2.2.
+	// for k8s sandboxes only.
 	if base := strings.TrimRight(strings.TrimSpace(r.config.K8sRuntimeBaseURL), "/"); base != "" {
 		env["AGENT_COMPOSE_RUNTIME_BASE_URL"] = base
 	}
@@ -959,8 +959,8 @@ func (r *k8sRuntime) execWithInput(ctx context.Context, request k8sExecRequest, 
 // stdout/stderr display but silently corrupts arbitrary binary content (a
 // PNG, a zip, any non-text artifact). ReadGuestFile and ReadGuestDir pull
 // exactly that kind of arbitrary guest-written content back through this
-// same exec subresource - see docs/design/k8s_pod_runtime_driver_design.md
-// §2.1, the k8s driver has no shared filesystem to read files from - so they
+// same exec subresource - the k8s driver has no shared filesystem to read
+// files from - so they
 // use this path instead of execWithInput.
 func (r *k8sRuntime) execRaw(ctx context.Context, request k8sExecRequest, stdin io.Reader) (stdout, stderr []byte, exitCode int, err error) {
 	executor, err := r.newExecutorFor(ctx, request, stdin != nil)
