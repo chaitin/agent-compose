@@ -148,7 +148,7 @@ func RegisterRoutes(di do.Injector) {
 	// 256 KiB chunk limit. Serve that one procedure from a handler instance
 	// with a per-message read limit; Connect otherwise allows any message size.
 	routeHandlers := handler
-	_, uploadHandler := agentcomposev2connect.NewRunServiceHandler(runHandler, api.UploadRunInputHandlerOptions()...)
+	_, uploadHandler := agentcomposev2connect.NewRunServiceHandler(runHandler, api.UploadRunInputHandlerOptions(handlerOptions...)...)
 	runServiceHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == agentcomposev2connect.RunServiceUploadRunInputProcedure {
 			uploadHandler.ServeHTTP(w, r)

@@ -99,6 +99,12 @@ func (u *Upload) Commit() (Object, bool, error) {
 		ExpiresAt: now.Add(s.opts.TTL),
 	}
 	object.Path = filepath.Join(s.opts.Root, u.projectID, object.UploadID)
+	// A paused upload can commit with a temp file whose mtime predates the
+	// stale-residue horizon. Refresh it before publishing so a residue scan
+	// holding an older live snapshot cannot delete the new content.
+	if err := os.Chtimes(u.file.Name(), now, now); err != nil {
+		return Object{}, false, fmt.Errorf("touch run input upload: %w", err)
+	}
 	if err := os.Rename(u.file.Name(), object.Path); err != nil {
 		return Object{}, false, fmt.Errorf("publish run input upload: %w", err)
 	}

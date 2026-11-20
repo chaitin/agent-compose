@@ -28,11 +28,12 @@ const MaxRunInputUploadChunkBytes = 256 << 10
 // check rejects it.
 const MaxRunInputUploadMessageBytes = 2 * MaxRunInputUploadChunkBytes
 
-// UploadRunInputHandlerOptions is the handler option set for the RunService
-// instance that serves UploadRunInput. The shared error contract still applies;
-// the read limit bounds each frame the client sends.
-func UploadRunInputHandlerOptions() []connect.HandlerOption {
-	return append(ErrorContractHandlerOptions(), connect.WithReadMaxBytes(MaxRunInputUploadMessageBytes))
+// UploadRunInputHandlerOptions appends the per-message read limit to the shared
+// RunService handler options, so interceptors and policies added to the base
+// set keep covering this procedure.
+func UploadRunInputHandlerOptions(base ...connect.HandlerOption) []connect.HandlerOption {
+	options := append([]connect.HandlerOption{}, base...)
+	return append(options, connect.WithReadMaxBytes(MaxRunInputUploadMessageBytes))
 }
 
 // RunInputUploadStore is the staging area UploadRunInput writes to.

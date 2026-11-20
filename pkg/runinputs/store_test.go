@@ -125,6 +125,36 @@ func TestUploadCommitPublishesReadOnlyContent(t *testing.T) {
 	}
 }
 
+func TestCommitRefreshesContentMtime(t *testing.T) {
+	clock := newClock()
+	store := openTestStore(t, t.TempDir(), clock)
+	data := []byte("paused upload")
+	pending, _, err := store.Begin("proj-1", int64(len(data)), digestOf(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pending.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	// A paused upload can reach Commit with a temp file older than the residue
+	// horizon; the published content must not inherit that timestamp.
+	old := clock.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(pending.file.Name(), old, old); err != nil {
+		t.Fatal(err)
+	}
+	object, _, err := pending.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(object.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.ModTime().Before(clock.Now().Add(-time.Minute)) {
+		t.Fatalf("content mtime = %s, want a timestamp near %s", info.ModTime(), clock.Now())
+	}
+}
+
 func TestUploadRejectsMismatchAndLeavesNothing(t *testing.T) {
 	root := t.TempDir()
 	store := openTestStore(t, root, newClock())

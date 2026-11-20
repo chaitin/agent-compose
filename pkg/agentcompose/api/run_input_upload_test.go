@@ -47,7 +47,7 @@ func newUploadServer(t *testing.T) (*httptest.Server, *runinputs.Store) {
 	}
 	handler := NewRunHandler(nil, uploadProjectRunStore{}).WithRunInputUploads(store)
 	mux := http.NewServeMux()
-	path, serviceHandler := agentcomposev2connect.NewRunServiceHandler(handler, UploadRunInputHandlerOptions()...)
+	path, serviceHandler := agentcomposev2connect.NewRunServiceHandler(handler, UploadRunInputHandlerOptions(ErrorContractHandlerOptions()...)...)
 	mux.Handle(path, serviceHandler)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
