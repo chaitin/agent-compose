@@ -306,6 +306,7 @@ func (r *SchedulerSandboxRunner) Ensure(ctx context.Context, scheduler domain.Sc
 	if err != nil {
 		return nil, "", err
 	}
+	schedulers.NotifySandboxAcquired(ctx, session.Summary.ID)
 	workspaceSnapshot, agentDefinition, agentConfig := cfg.WorkspaceSnapshot, cfg.AgentDefinition, cfg.AgentConfig
 	effectivePolicy, forceNew, configHash := cfg.EffectivePolicy, cfg.ForceNew, cfg.ConfigHash
 	ensureErr := func() error {
@@ -410,6 +411,7 @@ func (r *SchedulerSandboxRunner) loadOrResumeLocked(ctx context.Context, session
 	if err != nil {
 		return nil, "", err
 	}
+	schedulers.NotifySandboxAcquired(ctx, session.Summary.ID)
 	if session.Summary.VMStatus == domain.VMStatusRunning {
 		return session, "", nil
 	}
