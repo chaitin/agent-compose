@@ -233,3 +233,78 @@ func RunLogEntryToProto(entry runlog.Entry) *agentcomposev2.RunLogEntry {
 	}
 	return out
 }
+
+// SchedulerRunGetter resolves a persisted scheduler run.
+type SchedulerRunGetter interface {
+	GetSchedulerRun(ctx context.Context, schedulerID, runID string) (domain.SchedulerRunSummary, error)
+}
+
+type schedulerStepLogs struct {
+	dataRoot string
+	runs     SchedulerRunGetter
+}
+
+// WithSchedulerStepLogs lets FollowRunLogs serve the step logs scheduler
+// runs keep under dataRoot.
+func (h *RunHandler) WithSchedulerStepLogs(dataRoot string, schedulerRuns SchedulerRunGetter) *RunHandler {
+	h.steps = schedulerStepLogs{dataRoot: strings.TrimSpace(dataRoot), runs: schedulerRuns}
+	return h
+}
+
+// followSchedulerStepLog serves the log of one shell/exec step of a scheduler
+// run, in text or structured form, as it stands.
+func (h *RunHandler) followSchedulerStepLog(ctx context.Context, req *connect.Request[agentcomposev2.FollowRunLogsRequest], stream *connect.ServerStream[agentcomposev2.RunLogChunk]) error {
+	schedulerID := strings.TrimSpace(req.Msg.GetSchedulerId())
+	schedulerRunID := strings.TrimSpace(req.Msg.GetSchedulerRunId())
+	cellID := strings.TrimSpace(req.Msg.GetCellId())
+	if schedulerID == "" || schedulerRunID == "" || cellID == "" {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("scheduler_id, scheduler_run_id and cell_id are all required for a scheduler step"))
+	}
+	if strings.ContainsAny(cellID, `/\`) || cellID == "." || cellID == ".." {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid cell id %q", cellID))
+	}
+	if h.steps.dataRoot == "" || h.steps.runs == nil {
+		return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("scheduler step logs are not available"))
+	}
+	if _, err := h.steps.runs.GetSchedulerRun(ctx, schedulerID, schedulerRunID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
+			return connect.NewError(connect.CodeNotFound, fmt.Errorf("scheduler run %s not found", schedulerRunID))
+		}
+		return ConnectErrorForDomainKind(err, ResourceRun)
+	}
+	path := runlog.SchedulerCellPath(h.steps.dataRoot, schedulerID, schedulerRunID, cellID)
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return connect.NewError(connect.CodeNotFound, fmt.Errorf("scheduler step %s has no log", cellID))
+		}
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	final := &agentcomposev2.RunLogChunk{IsFinal: true, CreatedAt: FormatProjectTime(time.Now().UTC())}
+	if req.Msg.GetStructured() {
+		seq := req.Msg.GetStartSeq()
+		if err := sendRunLogEntries(stream, domain.ProjectRunRecord{LogsPath: path}, &seq); err != nil {
+			return err
+		}
+		return stream.Send(final)
+	}
+	offset, err := initialRunLogOffset(path, int(req.Msg.GetTailLines()), req.Msg.GetStartOffset(), req.Msg.GetTailSet() || req.Msg.GetTailLines() > 0)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	for {
+		data, next, atEnd, err := readRunLogChunkFromOffset(path, offset)
+		if err != nil {
+			return connect.NewError(connect.CodeInternal, err)
+		}
+		if data != "" {
+			if err := stream.Send(&agentcomposev2.RunLogChunk{Data: data, Offset: next, CreatedAt: FormatProjectTime(time.Now().UTC())}); err != nil {
+				return err
+			}
+		}
+		offset = next
+		if atEnd || data == "" {
+			final.Offset = offset
+			return stream.Send(final)
+		}
+	}
+}

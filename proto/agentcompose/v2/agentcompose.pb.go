@@ -9758,9 +9758,17 @@ type FollowRunLogsRequest struct {
 	// start_seq to resume.
 	Structured bool `protobuf:"varint,8,opt,name=structured,proto3" json:"structured,omitempty"`
 	// With structured, returns entries whose seq is greater than start_seq.
-	StartSeq      uint64 `protobuf:"varint,9,opt,name=start_seq,json=startSeq,proto3" json:"start_seq,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StartSeq uint64 `protobuf:"varint,9,opt,name=start_seq,json=startSeq,proto3" json:"start_seq,omitempty"`
+	// Address the output log of one shell/exec step of a scheduler run instead
+	// of an Agent Run: all three are required and run_id must be empty. They
+	// match a scheduler event's scheduler_id, run_id and linked_cell_id. The log
+	// is returned as it stands; follow is ignored. Transitional: scheduler steps
+	// are planned to become Agent Runs of their own.
+	SchedulerId    string `protobuf:"bytes,10,opt,name=scheduler_id,json=schedulerId,proto3" json:"scheduler_id,omitempty"`
+	SchedulerRunId string `protobuf:"bytes,11,opt,name=scheduler_run_id,json=schedulerRunId,proto3" json:"scheduler_run_id,omitempty"`
+	CellId         string `protobuf:"bytes,12,opt,name=cell_id,json=cellId,proto3" json:"cell_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *FollowRunLogsRequest) Reset() {
@@ -9854,6 +9862,27 @@ func (x *FollowRunLogsRequest) GetStartSeq() uint64 {
 		return x.StartSeq
 	}
 	return 0
+}
+
+func (x *FollowRunLogsRequest) GetSchedulerId() string {
+	if x != nil {
+		return x.SchedulerId
+	}
+	return ""
+}
+
+func (x *FollowRunLogsRequest) GetSchedulerRunId() string {
+	if x != nil {
+		return x.SchedulerRunId
+	}
+	return ""
+}
+
+func (x *FollowRunLogsRequest) GetCellId() string {
+	if x != nil {
+		return x.CellId
+	}
+	return ""
 }
 
 type RunLogChunk struct {
@@ -24981,7 +25010,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\x10ListRunsResponse\x12/\n" +
 	"\x04runs\x18\x01 \x03(\v2\x1b.agentcompose.v2.RunSummaryR\x04runs\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\rR\x05total\x122\n" +
-	"\x15event_scope_truncated\x18\x03 \x01(\bR\x13eventScopeTruncated\"\xa9\x02\n" +
+	"\x15event_scope_truncated\x18\x03 \x01(\bR\x13eventScopeTruncated\"\x8f\x03\n" +
 	"\x14FollowRunLogsRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x15\n" +
@@ -24995,7 +25024,11 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\n" +
 	"structured\x18\b \x01(\bR\n" +
 	"structured\x12\x1b\n" +
-	"\tstart_seq\x18\t \x01(\x04R\bstartSeq\"\xee\x02\n" +
+	"\tstart_seq\x18\t \x01(\x04R\bstartSeq\x12!\n" +
+	"\fscheduler_id\x18\n" +
+	" \x01(\tR\vschedulerId\x12(\n" +
+	"\x10scheduler_run_id\x18\v \x01(\tR\x0eschedulerRunId\x12\x17\n" +
+	"\acell_id\x18\f \x01(\tR\x06cellId\"\xee\x02\n" +
 	"\vRunLogChunk\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\tR\x04data\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x04R\x06offset\x12\x19\n" +

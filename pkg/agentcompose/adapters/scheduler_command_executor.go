@@ -17,6 +17,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/llms"
 	"github.com/chaitin/agent-compose/pkg/llms/runtimefacade"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
@@ -192,10 +193,23 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		}
 	}
 
+	stepLog := e.openStepLog(request, cellID)
+	if stepLog != nil {
+		defer func() { _ = stepLog.Close() }()
+	}
 	streamWriter := func(chunk domain.ExecChunk) {
 		filtered, visible := execution.FilterCommandStreamChunk(chunk)
 		if !visible {
 			return
+		}
+		if stepLog != nil {
+			stream := "stdout"
+			if domain.NormalizeStdioStream(filtered.Stream) == domain.StdioStderr {
+				stream = "stderr"
+			}
+			// The step log is history; failing to write it must not fail
+			// the command the script is waiting for.
+			_ = stepLog.AppendOutput(stream, filtered.Text)
 		}
 		cellMu.Lock()
 		streamed.WriteChunk(filtered)
@@ -326,4 +340,26 @@ func commandFacadeStoreFor(configDB *configstore.ConfigStore) runtimefacade.Comm
 		return nil
 	}
 	return configDB
+}
+
+// openStepLog opens the log of one shell/exec step of a persisted scheduler
+// run, inside the directory that run owns, so the step's output outlives the
+// sandbox it ran in. It returns nil when the command is not a scheduler run
+// step or the log cannot be opened.
+func (e *SchedulerCommandExecutor) openStepLog(request domain.SchedulerCommandRequest, cellID string) *runlog.Writer {
+	if e == nil || e.Config == nil || strings.TrimSpace(e.Config.DataRoot) == "" ||
+		strings.TrimSpace(request.SchedulerID) == "" || strings.TrimSpace(request.SchedulerRunID) == "" {
+		return nil
+	}
+	maxBytes := request.MaxOutputBytes
+	if maxBytes <= 0 {
+		maxBytes = execution.DefaultSchedulerCommandMaxOutputBytes
+	}
+	path := runlog.SchedulerCellPath(e.Config.DataRoot, request.SchedulerID, request.SchedulerRunID, cellID)
+	// Leave room for the entry framing around the output itself.
+	w, err := runlog.Open(path, runlog.Options{MaxBytes: 2*maxBytes + 64<<10})
+	if err != nil {
+		return nil
+	}
+	return w
 }

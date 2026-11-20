@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 )
 
 // SandboxDirResolver resolves a sandbox ID to its host-side state directory.
@@ -17,6 +18,33 @@ import (
 // without a full sandbox store.
 type SandboxDirResolver interface {
 	SandboxDir(id string) string
+}
+
+// StepLogResolver locates the log a shell/exec step of a scheduler run wrote
+// under the daemon data root. A SandboxDirResolver that also implements it is
+// asked first: the step log outlives the sandbox, the cell artifact does not.
+type StepLogResolver interface {
+	SchedulerStepLogPath(schedulerID, schedulerRunID, cellID string) string
+}
+
+// ArtifactDirs resolves both sandbox cell artifacts and scheduler step logs.
+type ArtifactDirs struct {
+	Sandboxes SandboxDirResolver
+	DataRoot  string
+}
+
+func (d ArtifactDirs) SandboxDir(id string) string {
+	if d.Sandboxes == nil {
+		return ""
+	}
+	return d.Sandboxes.SandboxDir(id)
+}
+
+func (d ArtifactDirs) SchedulerStepLogPath(schedulerID, schedulerRunID, cellID string) string {
+	if strings.TrimSpace(d.DataRoot) == "" {
+		return ""
+	}
+	return runlog.SchedulerCellPath(d.DataRoot, schedulerID, schedulerRunID, cellID)
 }
 
 // schedulerEventMessageReplacement replaces each run of bytes in an event
@@ -82,6 +110,9 @@ func readCommandCompletedArtifact(ctx context.Context, event domain.SchedulerEve
 	if sandboxDirs == nil || ctx.Err() != nil {
 		return "", false
 	}
+	if text, ok := readCommandStepLog(event, sandboxDirs); ok {
+		return text, true
+	}
 	sandboxID := strings.TrimSpace(event.LinkedSandboxID)
 	cellID := strings.TrimSpace(event.LinkedCellID)
 	if sandboxID == "" || cellID == "" {
@@ -124,4 +155,24 @@ func commandEventOutputBytes(event domain.SchedulerEvent) int {
 		return 0
 	}
 	return int(value)
+}
+
+// readCommandStepLog returns the step's output from its scheduler run step
+// log, when the resolver knows where step logs live and one was written.
+func readCommandStepLog(event domain.SchedulerEvent, dirs SandboxDirResolver) (string, bool) {
+	resolver, ok := dirs.(StepLogResolver)
+	cellID := strings.TrimSpace(event.LinkedCellID)
+	if !ok || cellID == "" || strings.TrimSpace(event.SchedulerID) == "" || strings.TrimSpace(event.RunID) == "" {
+		return "", false
+	}
+	path := resolver.SchedulerStepLogPath(event.SchedulerID, event.RunID, cellID)
+	if path == "" {
+		return "", false
+	}
+	entries, err := runlog.ReadEntries(path, 0)
+	if err != nil {
+		return "", false
+	}
+	text := runlog.RenderText(entries)
+	return firstHostNonEmpty(text, "scheduler command completed"), true
 }

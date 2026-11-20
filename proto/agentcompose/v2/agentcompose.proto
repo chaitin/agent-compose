@@ -1504,6 +1504,14 @@ message FollowRunLogsRequest {
   bool structured = 8;
   // With structured, returns entries whose seq is greater than start_seq.
   uint64 start_seq = 9;
+  // Address the output log of one shell/exec step of a scheduler run instead
+  // of an Agent Run: all three are required and run_id must be empty. They
+  // match a scheduler event's scheduler_id, run_id and linked_cell_id. The log
+  // is returned as it stands; follow is ignored. Transitional: scheduler steps
+  // are planned to become Agent Runs of their own.
+  string scheduler_id = 10;
+  string scheduler_run_id = 11;
+  string cell_id = 12;
 }
 
 message RunLogChunk {

@@ -120,7 +120,10 @@ func RegisterRoutes(di do.Injector) {
 		SchedulerRuntime: schedulerController,
 		SchedulerRuns:    schedulerController.SchedulerRuns(),
 		AgentModels:      newProjectAgentModelResolver(do.MustInvoke[*configstore.ConfigStore](di)),
-		SandboxDirs:      do.MustInvoke[*sandboxstore.Store](di),
+		SandboxDirs: schedulers.ArtifactDirs{
+			Sandboxes: do.MustInvoke[*sandboxstore.Store](di),
+			DataRoot:  do.MustInvoke[*appconfig.Config](di).DataRoot,
+		},
 		RunHistory: &runhistory.Remover{
 			Store:      do.MustInvoke[*configstore.ConfigStore](di),
 			Schedulers: schedulerController,
@@ -139,7 +142,8 @@ func RegisterRoutes(di do.Injector) {
 		controller: do.MustInvoke[*runs.Controller](di),
 		supervisor: do.MustInvoke[*RunSupervisor](di),
 	}
-	runHandler := api.NewRunHandlerWithRunLogHub(runDelegate, do.MustInvoke[*configstore.ConfigStore](di), do.MustInvoke[*runs.RunLogHub](di), do.MustInvoke[*RunSupervisor](di))
+	runHandler := api.NewRunHandlerWithRunLogHub(runDelegate, do.MustInvoke[*configstore.ConfigStore](di), do.MustInvoke[*runs.RunLogHub](di), do.MustInvoke[*RunSupervisor](di)).
+		WithSchedulerStepLogs(do.MustInvoke[*appconfig.Config](di).DataRoot, do.MustInvoke[*configstore.ConfigStore](di))
 	if uploads := do.MustInvoke[runInputStore](di).Store; uploads != nil {
 		runHandler.WithRunInputUploads(uploads)
 	}

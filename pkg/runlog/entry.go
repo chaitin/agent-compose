@@ -98,6 +98,13 @@ type Usage struct {
 	CostUSD          float64 `json:"cost_usd,omitempty"`
 }
 
+// IsLogPath reports whether path names a run log (a run's run.log.jsonl or a
+// scheduler step's <cell>.log.jsonl) rather than a legacy text transcript,
+// which is always a .txt file.
+func IsLogPath(path string) bool {
+	return strings.HasSuffix(path, ".jsonl")
+}
+
 // RunPath is where a project run's log lives under the daemon data root.
 // The directory belongs to the run, not to its sandbox, so removing the
 // sandbox does not remove the history.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -66,6 +65,7 @@ type RunHandler struct {
 	store    RunStore
 	runLogs  *runs.RunLogHub
 	uploads  RunInputUploadStore
+	steps    schedulerStepLogs
 }
 
 func NewRunHandler(delegate RunAgentDelegate, store RunStore, stoppers ...ActiveRunStopper) *RunHandler {
@@ -280,6 +280,13 @@ func (h *RunHandler) FollowRunLogs(ctx context.Context, req *connect.Request[age
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
 	}
 	runID := strings.TrimSpace(req.Msg.GetRunId())
+	if req.Msg.GetSchedulerRunId() != "" || req.Msg.GetSchedulerId() != "" || req.Msg.GetCellId() != "" {
+		if runID != "" {
+			return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id and scheduler step are mutually exclusive"))
+		}
+		PrepareStreamingHeaders(stream.ResponseHeader())
+		return h.followSchedulerStepLog(ctx, req, stream)
+	}
 	if runID == "" {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id is required"))
 	}
@@ -466,7 +473,7 @@ type runLogText struct {
 }
 
 func openRunLogText(path string) (*runLogText, error) {
-	if filepath.Base(path) == runlog.FileName {
+	if runlog.IsLogPath(path) {
 		entries, err := runlog.ReadEntries(path, 0)
 		if err != nil {
 			return nil, err
