@@ -156,13 +156,6 @@ func cloneNotebookCell(cell *domain.NotebookCell) *domain.NotebookCell {
 		return nil
 	}
 	cloned := *cell
-	if cell.AgentResume != nil {
-		resume := *cell.AgentResume
-		if len(cell.AgentResume.ProviderLogPaths) > 0 {
-			resume.ProviderLogPaths = append([]string(nil), cell.AgentResume.ProviderLogPaths...)
-		}
-		cloned.AgentResume = &resume
-	}
 	return &cloned
 }
 

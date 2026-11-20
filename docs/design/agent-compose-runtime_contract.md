@@ -560,19 +560,11 @@ unsupported, or different, the runtime writes a warning to stderr. A reset
 preserves instruction correctness but does not preserve the previous provider
 conversation history.
 
-After agent execution completes, the host also generates a cell-level manifest:
-
-```text
-/data/state/cells/<cell_id>/agent-thread.json
-```
-
-The host writes this file to record:
-
-- provider
-- provider thread state file path
-- provider thread id
-- provider-native log paths, such as Codex
-  `/data/home/.codex/sessions/.../*.jsonl`
+After agent execution completes, the host records the provider thread id on
+the cell (`agent_thread_id`). When the runtime result does not report one, the
+host falls back to reading `/data/state/agents/providers/<provider>.json`.
+Provider-native logs under `/data/home` are not indexed by the host; see
+`run-log-timeline.zh-CN.md` for how run history is recorded.
 
 ### 8.1 Resume Limits After Failure Or Cancellation
 
@@ -585,8 +577,7 @@ the provider runner throws, this can happen:
 - provider-native logs already exist, such as
   `/data/home/.codex/sessions/.../*.jsonl`
 - `/data/state/agents/providers/codex.json` has not yet been generated
-- the host can record discovered native log paths in `agent-thread.json`, but
-  cannot obtain a definite `threadId`
+- the host cannot obtain a definite `threadId`
 
 This means automatic resume after cancellation/failure depends on whether
 provider state has already been written successfully.
@@ -798,7 +789,6 @@ Failed cells write:
 /data/state/cells/<cell_id>/stderr.txt
 /data/state/cells/<cell_id>/output.txt
 /data/state/cells/<cell_id>/exitcode.txt
-/data/state/cells/<cell_id>/agent-thread.json
 ```
 
 and write an `agent.assistant.failed` event.
