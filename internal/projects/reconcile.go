@@ -27,6 +27,7 @@ type ReconcileSchedulerStore interface {
 	GetProjectScheduler(ctx context.Context, projectID, schedulerID string) (domain.ProjectSchedulerRecord, error)
 	UpsertProjectScheduler(ctx context.Context, scheduler domain.ProjectSchedulerRecord) (domain.ProjectSchedulerRecord, error)
 	SetProjectSchedulerEnabled(ctx context.Context, projectID, schedulerID string, enabled bool) (domain.ProjectSchedulerRecord, error)
+	SetSchedulerEnabled(ctx context.Context, schedulerID string, enabled bool) error
 	ListProjectSchedulers(ctx context.Context, projectID string) ([]domain.ProjectSchedulerRecord, error)
 	GetScheduler(ctx context.Context, schedulerID string) (domain.Scheduler, error)
 	ReplaceSchedulerTriggers(ctx context.Context, schedulerID string, triggers []domain.SchedulerTrigger) ([]domain.SchedulerTrigger, error)
@@ -86,6 +87,16 @@ func (s *mutationTrackingSchedulerStore) ReplaceSchedulerTriggers(ctx context.Co
 		s.uncertain = true
 	}
 	return records, err
+}
+
+func (s *mutationTrackingSchedulerStore) SetSchedulerEnabled(ctx context.Context, schedulerID string, enabled bool) error {
+	err := s.ReconcileSchedulerStore.SetSchedulerEnabled(ctx, schedulerID, enabled)
+	if err == nil {
+		s.changed = true
+	} else {
+		s.uncertain = true
+	}
+	return err
 }
 
 // ReconcileSchedulersRequest describes the project schedulers to reconcile
@@ -176,7 +187,7 @@ func reconcileCurrentSchedulers(ctx context.Context, store ReconcileSchedulerSto
 			return changes, currentByID, false, fmt.Errorf("replace scheduler triggers %s: %w", saved.ID, err)
 		}
 		if scheduler.Enabled {
-			enabledScheduler, enableErr := store.SetProjectSchedulerEnabled(ctx, scheduler.ProjectID, scheduler.SchedulerID, true)
+			enabledScheduler, enableErr := enableReconciledScheduler(ctx, store, existing, saved)
 			if enableErr != nil {
 				cleanupFailedScheduler(ctx, options, stagedScheduler, saved.ID)
 				return changes, currentByID, false, fmt.Errorf("enable project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, enableErr)
@@ -201,6 +212,20 @@ func reconcileCurrentSchedulers(ctx context.Context, store ReconcileSchedulerSto
 		})
 	}
 	return changes, currentByID, unchanged, nil
+}
+
+func enableReconciledScheduler(ctx context.Context, store ReconcileSchedulerStore, existing, staged domain.ProjectSchedulerRecord) (domain.ProjectSchedulerRecord, error) {
+	if existing.ID == "" || existing.Enabled {
+		return store.SetProjectSchedulerEnabled(ctx, staged.ProjectID, staged.SchedulerID, true)
+	}
+	// Explicit resumption uses the API's scheduling semantics: missed ticks while
+	// disabled are skipped. The temporary staging pause of an enabled scheduler
+	// must preserve its schedule, including any tick due during daemon downtime.
+	if err := store.SetSchedulerEnabled(ctx, staged.ID, true); err != nil {
+		return domain.ProjectSchedulerRecord{}, err
+	}
+	staged.Enabled = true
+	return staged, nil
 }
 
 // disableRemovedSchedulers disables any project scheduler that is no longer

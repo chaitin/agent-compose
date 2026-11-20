@@ -452,6 +452,10 @@ func (s *controllerCoverageStore) SetProjectSchedulerEnabled(context.Context, st
 	return domain.ProjectSchedulerRecord{}, nil
 }
 
+func (s *controllerCoverageStore) SetSchedulerEnabled(context.Context, string, bool) error {
+	return nil
+}
+
 func (s *controllerCoverageStore) GetScheduler(context.Context, string) (domain.Scheduler, error) {
 	return domain.Scheduler{}, sql.ErrNoRows
 }
