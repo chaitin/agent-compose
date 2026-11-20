@@ -33,13 +33,22 @@ export function appendDelta(
 export class TranscriptWriter implements TranscriptTextWriter {
   private readonly chunks: string[] = [];
 
+  /**
+   * `mirror` copies the transcript to stderr as it is written. It is turned
+   * off when the daemon consumes structured agent events instead, so the
+   * same answer does not reach the run log twice.
+   */
+  constructor(private readonly options: { mirror?: boolean } = {}) {}
+
   write(text: string): void {
     if (!text) {
       return;
     }
     const normalized = normalizeNewlines(text);
     this.chunks.push(normalized);
-    process.stderr.write(normalized);
+    if (this.options.mirror !== false) {
+      process.stderr.write(normalized);
+    }
   }
 
   line(text = ""): void {

@@ -4,6 +4,7 @@ import { realpathSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
+import { agentEventLineSink } from "./agent-event-lines.js";
 import { runExecCommand } from "./command.js";
 import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, WORKFLOW_RESULT_PREFIX } from "./constants.js";
 import { formatError } from "./errors.js";
@@ -51,7 +52,13 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
       const { skill, ...promptOptions } = options;
       const shutdown = new RuntimeShutdownController();
       try {
-        const result = await runPromptCommand({ ...promptOptions, skills: skill, abortController: shutdown.abortController });
+        const onEvent = agentEventLineSink();
+        const result = await runPromptCommand({
+          ...promptOptions,
+          skills: skill,
+          abortController: shutdown.abortController,
+          ...(onEvent ? { onEvent } : {}),
+        });
         process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(result)}\n`);
       } finally {
         shutdown.dispose();

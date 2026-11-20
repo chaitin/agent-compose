@@ -96,7 +96,7 @@ describe("runtime shape integration workflows", () => {
           abortController,
         });
         expect(result.threadId).toBe("shape-session");
-        expect(claudeSpy).toHaveBeenLastCalledWith(expect.objectContaining({ abortController }));
+        expect(claudeSpy).toHaveBeenLastCalledWith(expect.objectContaining({ abortController }), expect.any(TranscriptWriter));
       } finally {
         stdio.restore();
         claudeSpy.mockRestore();
