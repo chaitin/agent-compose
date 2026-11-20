@@ -1,7 +1,6 @@
 package runinputs
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -11,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/chaitin/agent-compose/pkg/agentinput"
 )
 
 type metadata struct {
@@ -105,7 +106,8 @@ func (s *Store) loadMetadata(dir, projectID, name string) (*entry, bool) {
 
 // removeResidue removes files that belong to no live object and are older
 // than staleResidueAge. live is a snapshot of the index; an object committed
-// after it has fresh files, which the age check keeps.
+// after it has fresh files, which the age check keeps. In-progress temp files
+// are never touched: load removes crash residue before the daemon serves.
 func (s *Store) removeResidue(live map[string]struct{}) {
 	projects, err := os.ReadDir(s.opts.Root)
 	if err != nil {
@@ -124,6 +126,12 @@ func (s *Store) removeResidue(live map[string]struct{}) {
 		}
 		for _, item := range entries {
 			name := item.Name()
+			if strings.HasPrefix(name, tempPrefix) {
+				// An upload in progress owns its temp file. Crash residue is
+				// removed by load before the daemon serves, so runtime cleanup
+				// must never delete one of these.
+				continue
+			}
 			if _, ok := live[strings.TrimSuffix(name, metadataSuffix)]; ok {
 				continue
 			}
@@ -132,6 +140,13 @@ func (s *Store) removeResidue(live map[string]struct{}) {
 				continue
 			}
 			s.removePath(filepath.Join(dir, name))
+		}
+		// A project directory empties once its last object is collected. Remove
+		// it only after it has aged, so an upload that is between MkdirAll and
+		// its first write is never pulled out from under itself. Best effort:
+		// the directory is non-empty whenever an upload is in flight.
+		if info, err := os.Stat(dir); err == nil && now.Sub(info.ModTime()) >= staleResidueAge {
+			_ = os.Remove(dir)
 		}
 	}
 }
@@ -188,13 +203,5 @@ func validSegment(value string) bool {
 }
 
 func isSHA256(value string) bool {
-	if len(value) != sha256.Size*2 {
-		return false
-	}
-	for _, r := range value {
-		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return false
-		}
-	}
-	return true
+	return agentinput.IsSHA256(value)
 }

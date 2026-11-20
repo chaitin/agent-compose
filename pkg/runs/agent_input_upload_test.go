@@ -2,9 +2,11 @@ package runs
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 
+	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/apierror"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -96,7 +98,27 @@ func TestAdmitAgentInputAppliesUploadFileLimit(t *testing.T) {
 // only after admission, so a rejected upload must leave created empty.
 type startRunStore struct {
 	ControllerStore
-	created map[string]domain.ProjectRunRecord
+	created   map[string]domain.ProjectRunRecord
+	agent     domain.ProjectAgentRecord
+	existing  map[string]domain.ProjectRunRecord
+	getRunErr error
+}
+
+func (s *startRunStore) GetProjectAgent(_ context.Context, projectID, name string) (domain.ProjectAgentRecord, error) {
+	if s.agent.ProjectID != projectID || s.agent.AgentName != name {
+		return domain.ProjectAgentRecord{}, domain.ResourceError(domain.ErrNotFound, "project agent", name, "project agent not found", nil)
+	}
+	return s.agent, nil
+}
+
+func (s *startRunStore) GetProjectRun(_ context.Context, runID string) (domain.ProjectRunRecord, error) {
+	if s.getRunErr != nil {
+		return domain.ProjectRunRecord{}, s.getRunErr
+	}
+	if run, ok := s.existing[runID]; ok {
+		return run, nil
+	}
+	return domain.ProjectRunRecord{}, sql.ErrNoRows
 }
 
 func (s *startRunStore) GetProject(_ context.Context, id string) (domain.ProjectRecord, error) {
@@ -112,6 +134,119 @@ func (s *startRunStore) CreateProjectRunWithEvents(_ context.Context, run domain
 	}
 	s.created[run.RunID] = run
 	return run, nil
+}
+
+func TestStartProjectRunRetryWithExpiredUpload(t *testing.T) {
+	runID, err := projects.StableProjectRunID("project-1", "worker", string(NormalizeSource("")), "retry-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newController := func(status string) (*Controller, *startRunStore) {
+		store := &startRunStore{
+			agent: domain.ProjectAgentRecord{ProjectID: "project-1", AgentName: "worker"},
+			existing: map[string]domain.ProjectRunRecord{
+				runID: {RunID: runID, ProjectID: "project-1", AgentName: "worker", Status: status},
+			},
+		}
+		controller := &Controller{
+			config: &appconfig.Config{
+				AgentInputUploadFileLimitBytes: 1 << 20,
+				AgentInputUploadTurnLimitBytes: 2 << 20,
+			},
+			configDB: store,
+			// The upload the first attempt referenced has since expired.
+			uploads: fakeUploads{},
+		}
+		return controller, store
+	}
+
+	t.Run("finished run is returned", func(t *testing.T) {
+		controller, store := newController(domain.ProjectRunStatusSucceeded)
+		req := uploadRequest("up-expired")
+		req.ClientRequestID = "retry-1"
+		started, err := controller.StartProjectRun(context.Background(), req)
+		if err != nil {
+			t.Fatalf("idempotent retry: %v", err)
+		}
+		if started.Run.RunID != runID {
+			t.Fatalf("run = %s, want the existing %s", started.Run.RunID, runID)
+		}
+		if len(store.created) != 0 {
+			t.Fatalf("retry created runs = %v, want none", store.created)
+		}
+	})
+
+	t.Run("pending run reports not applied", func(t *testing.T) {
+		controller, store := newController(domain.ProjectRunStatusPending)
+		req := uploadRequest("up-expired")
+		req.ClientRequestID = "retry-1"
+		started, err := controller.StartProjectRun(context.Background(), req)
+		if !errors.Is(err, domain.ErrNotFound) || errors.Is(err, ErrInvalidRequest) {
+			t.Fatalf("err = %v, want NOT_FOUND without the invalid-request sentinel", err)
+		}
+		if !apierror.IsNotApplied(err) {
+			t.Fatalf("err = %v, want NOT_APPLIED so the client can re-upload and retry", err)
+		}
+		if started.Run.RunID != "" {
+			t.Fatalf("run = %+v, want none: a PENDING run cannot execute without its input", started.Run)
+		}
+		if len(store.created) != 0 {
+			t.Fatalf("retry created runs = %v, want none", store.created)
+		}
+	})
+}
+
+func TestStartProjectRunSurfacesLookupFailure(t *testing.T) {
+	lookupErr := errors.New("config store is unavailable")
+	store := &startRunStore{
+		agent:     domain.ProjectAgentRecord{ProjectID: "project-1", AgentName: "worker"},
+		getRunErr: lookupErr,
+	}
+	controller := &Controller{
+		config: &appconfig.Config{
+			AgentInputUploadFileLimitBytes: 1 << 20,
+			AgentInputUploadTurnLimitBytes: 2 << 20,
+		},
+		configDB: store,
+		uploads:  fakeUploads{},
+	}
+	req := uploadRequest("up-1")
+	req.ClientRequestID = "retry-1"
+	_, err := controller.StartProjectRun(context.Background(), req)
+	if !errors.Is(err, lookupErr) {
+		t.Fatalf("err = %v, want the lookup failure to surface", err)
+	}
+	if apierror.IsNotApplied(err) {
+		t.Fatalf("err = %v, want no NOT_APPLIED retry hint when the lookup failed", err)
+	}
+	if len(store.created) != 0 {
+		t.Fatalf("created runs = %v, want none", store.created)
+	}
+}
+
+func TestStartProjectRunRetryReturnsExistingRunWithoutUploads(t *testing.T) {
+	runID, err := projects.StableProjectRunID("project-1", "worker", string(NormalizeSource("")), "retry-text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &startRunStore{
+		agent: domain.ProjectAgentRecord{ProjectID: "project-1", AgentName: "worker"},
+		existing: map[string]domain.ProjectRunRecord{
+			runID: {RunID: runID, ProjectID: "project-1", AgentName: "worker", Status: domain.ProjectRunStatusSucceeded},
+		},
+	}
+	controller := &Controller{config: &appconfig.Config{}, configDB: store}
+	req := RunAgentRequest{ProjectID: "project-1", AgentName: "worker", Prompt: "hello", ClientRequestID: "retry-text"}
+	started, err := controller.StartProjectRun(context.Background(), req)
+	if err != nil {
+		t.Fatalf("idempotent retry: %v", err)
+	}
+	if started.Run.RunID != runID {
+		t.Fatalf("run = %s, want the existing %s", started.Run.RunID, runID)
+	}
+	if len(store.created) != 0 {
+		t.Fatalf("retry created runs = %v, want none", store.created)
+	}
 }
 
 // TestStartProjectRunRejectsUnresolvableUploadBeforePersisting pins the run

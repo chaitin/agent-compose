@@ -29,11 +29,14 @@ const (
 	DefaultAgentInputFileLimit      int   = 20
 
 	// Upload-sourced files (UploadRunInput) have their own, larger budget so a
-	// large attachment never consumes the inline request budget.
+	// large attachment never consumes the inline request budget. The TTL must
+	// cover sandbox preparation (the default SANDBOX_START_TIMEOUT is 30m and
+	// the image pull runs inside it): a run whose reference expires before
+	// materialization fails before the agent starts.
 	DefaultAgentInputUploadFileLimitBytes  int64         = 100 << 20
 	DefaultAgentInputUploadTurnLimitBytes  int64         = 200 << 20
 	DefaultAgentInputUploadStoreLimitBytes int64         = 8 << 30
-	DefaultAgentInputUploadTTL             time.Duration = 15 * time.Minute
+	DefaultAgentInputUploadTTL             time.Duration = time.Hour
 )
 const DefaultAgentComposeSocketPath = "/var/run/agent-compose.sock"
 const DefaultAgentTimeout = 10 * time.Hour

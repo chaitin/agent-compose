@@ -20,6 +20,22 @@ import (
 // stream at full speed.
 const MaxRunInputUploadChunkBytes = 256 << 10
 
+// MaxRunInputUploadMessageBytes is the per-message read limit for
+// UploadRunInput. The limit is measured on the encoded message, and the Connect
+// JSON codec base64-encodes bytes (4/3 inflation), so it allows twice the chunk
+// size. Connect decodes a whole message before the handler sees it, so without
+// this limit an oversized frame would be buffered in memory before the chunk
+// check rejects it.
+const MaxRunInputUploadMessageBytes = 2 * MaxRunInputUploadChunkBytes
+
+// UploadRunInputHandlerOptions appends the per-message read limit to the shared
+// RunService handler options, so interceptors and policies added to the base
+// set keep covering this procedure.
+func UploadRunInputHandlerOptions(base ...connect.HandlerOption) []connect.HandlerOption {
+	options := append([]connect.HandlerOption{}, base...)
+	return append(options, connect.WithReadMaxBytes(MaxRunInputUploadMessageBytes))
+}
+
 // RunInputUploadStore is the staging area UploadRunInput writes to.
 type RunInputUploadStore interface {
 	Begin(projectID string, size int64, digest string) (*runinputs.Upload, *runinputs.Object, error)
@@ -40,7 +56,8 @@ func (h *RunHandler) UploadRunInput(ctx context.Context, stream *connect.ClientS
 	}
 	if !stream.Receive() {
 		if err := stream.Err(); err != nil {
-			return nil, err
+			// The info frame never arrived, so nothing was staged.
+			return nil, WriteErrorNotAppliedForCode(connect.CodeOf(err), ResourceGeneric, err)
 		}
 		return nil, uploadInvalid(fmt.Errorf("upload requires an info frame"))
 	}
@@ -87,9 +104,9 @@ func (h *RunHandler) UploadRunInput(ctx context.Context, stream *connect.ClientS
 		}
 	}
 	if err := stream.Err(); err != nil {
-		// The client went away mid-upload; the deferred abort removes the
-		// partial file.
-		return nil, WriteErrorNotAppliedForCode(connect.CodeCanceled, ResourceGeneric, err)
+		// The client went away mid-upload or the transport cut the stream; the
+		// deferred abort removes the partial file and releases its reservation.
+		return nil, WriteErrorNotAppliedForCode(connect.CodeOf(err), ResourceGeneric, err)
 	}
 	object, deduplicated, err := upload.Commit()
 	if err != nil {
@@ -110,8 +127,10 @@ func uploadInvalid(err error) error {
 	return WriteErrorNotAppliedForCode(connect.CodeInvalidArgument, ResourceGeneric, err)
 }
 
-// uploadError maps a staging failure. Validation and capacity failures provably
-// stored nothing; an I/O failure while publishing reports UNKNOWN.
+// uploadError maps a staging failure. Validation, capacity, and I/O failures
+// all leave nothing referenceable: an object becomes referenceable only when
+// Commit indexes it, and the deferred Abort removes any partial file and
+// releases the bytes charged so far.
 func uploadError(err error) error {
 	switch {
 	case errors.Is(err, runinputs.ErrInvalid):
@@ -120,6 +139,6 @@ func uploadError(err error) error {
 		marked := apierror.NotApplied(err)
 		return NewOperationError(connect.CodeResourceExhausted, apierror.ReasonStorageUnavailable, apierror.EffectFor(marked), marked)
 	default:
-		return WriteErrorForCode(connect.CodeInternal, ResourceGeneric, err)
+		return WriteErrorNotAppliedForCode(connect.CodeInternal, ResourceGeneric, err)
 	}
 }

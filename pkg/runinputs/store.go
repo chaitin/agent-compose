@@ -146,6 +146,10 @@ func (s *Store) MaxObjectBytes() int64 { return s.opts.MaxObjectBytes }
 
 // Begin starts an upload. When the project already holds the same content it
 // returns that object instead, with its expiry extended, and no Upload.
+//
+// Begin only checks that the declared size could still fit. The bytes are
+// charged as they arrive (see reserve), so an upload that never sends content
+// cannot pin capacity it does not use.
 func (s *Store) Begin(projectID string, size int64, digest string) (*Upload, *Object, error) {
 	if !validSegment(projectID) {
 		return nil, nil, fmt.Errorf("%w: project id %q is not a valid path segment", ErrInvalid, projectID)
@@ -182,25 +186,25 @@ func (s *Store) Begin(projectID string, size int64, digest string) (*Upload, *Ob
 		s.removeAll(garbage)
 		return nil, nil, err
 	}
-	s.reserved += size
-	s.project[projectID] += size
 	s.mu.Unlock()
 	s.removeAll(garbage)
 
 	upload, err := s.createUpload(projectID, size, digest)
 	if err != nil {
-		s.release(projectID, size)
 		return nil, nil, err
 	}
 	return upload, nil, nil
 }
 
+// admitLocked rejects an upload whose declared size provably cannot fit. It
+// does not reserve the bytes: the caller charges them as they arrive, so the
+// check is advisory under concurrency and the per-chunk reserve is binding.
+// The free-space floor is an admission hint, not a continuous invariant: other
+// processes and concurrent admissions can still take it below the floor, and
+// the store's byte budget is the hard limit.
 func (s *Store) admitLocked(projectID string, size int64, free, total uint64, spaceErr error) error {
-	if s.used+s.reserved+size > s.opts.MaxStoreBytes {
-		return fmt.Errorf("%w: staging %d more bytes would exceed %d", ErrExhausted, size, s.opts.MaxStoreBytes)
-	}
-	if limit := s.opts.MaxStoreBytes / projectShareDivisor; s.project[projectID]+size > limit {
-		return fmt.Errorf("%w: project would exceed its %d byte share", ErrExhausted, limit)
+	if err := s.budgetsLocked(projectID, size); err != nil {
+		return err
 	}
 	if spaceErr != nil {
 		// The byte budgets still bound the store; a filesystem that cannot
@@ -210,6 +214,17 @@ func (s *Store) admitLocked(projectID string, size int64, free, total uint64, sp
 	}
 	if float64(free)-float64(size) < float64(total)*minFreeRatio {
 		return fmt.Errorf("%w: filesystem free space is below %.0f%%", ErrExhausted, minFreeRatio*100)
+	}
+	return nil
+}
+
+// budgetsLocked checks the daemon's exact limits. The caller holds the lock.
+func (s *Store) budgetsLocked(projectID string, size int64) error {
+	if s.used+s.reserved+size > s.opts.MaxStoreBytes {
+		return fmt.Errorf("%w: staging %d more bytes would exceed %d", ErrExhausted, size, s.opts.MaxStoreBytes)
+	}
+	if limit := s.opts.MaxStoreBytes / projectShareDivisor; s.project[projectID]+size > limit {
+		return fmt.Errorf("%w: project would exceed its %d byte share", ErrExhausted, limit)
 	}
 	return nil
 }
@@ -252,23 +267,51 @@ func (s *Store) Collect() int {
 }
 
 // commit indexes a published object. When the same content was indexed first
-// it returns that object instead and the caller discards its copy.
+// it returns that object instead and the caller discards its copy. The upload
+// charged its bytes as they arrived, so publishing moves that reservation into
+// usage and a duplicate releases it.
 func (s *Store) commit(object Object) (Object, bool) {
 	s.mu.Lock()
 	if existing := s.lookupDigestLocked(object.ProjectID, object.SHA256); existing != nil {
 		s.extendLocked(existing)
 		snapshot := existing.Object
+		s.reserved -= object.SizeBytes
+		s.releaseProjectLocked(object.ProjectID, object.SizeBytes)
 		s.mu.Unlock()
 		s.persist(existing)
 		return snapshot, true
 	}
-	s.index(&entry{Object: object, persisted: object.ExpiresAt})
+	s.objects[object.UploadID] = &entry{Object: object, persisted: object.ExpiresAt}
+	s.byDigest[digestKey{project: object.ProjectID, sha256: object.SHA256}] = object.UploadID
+	s.reserved -= object.SizeBytes
+	s.used += object.SizeBytes
 	s.mu.Unlock()
 	return object, false
 }
 
-// release returns a reservation taken by Begin.
+// reserve charges bytes that have arrived to an upload in progress. Begin only
+// checks the declared size, so capacity tracks what is actually stored rather
+// than what a client promised, and concurrent uploads cannot jointly exceed the
+// byte budgets.
+func (s *Store) reserve(projectID string, size int64) error {
+	if size <= 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.budgetsLocked(projectID, size); err != nil {
+		return err
+	}
+	s.reserved += size
+	s.project[projectID] += size
+	return nil
+}
+
+// release gives back a charge taken by reserve.
 func (s *Store) release(projectID string, size int64) {
+	if size <= 0 {
+		return
+	}
 	s.mu.Lock()
 	s.reserved -= size
 	s.releaseProjectLocked(projectID, size)

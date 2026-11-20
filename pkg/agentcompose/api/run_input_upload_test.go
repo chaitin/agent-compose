@@ -32,6 +32,12 @@ func (uploadProjectRunStore) GetProject(_ context.Context, id string) (domain.Pr
 
 func newUploadClient(t *testing.T) (agentcomposev2connect.RunServiceClient, *runinputs.Store) {
 	t.Helper()
+	server, store := newUploadServer(t)
+	return agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL), store
+}
+
+func newUploadServer(t *testing.T) (*httptest.Server, *runinputs.Store) {
+	t.Helper()
 	store, err := runinputs.Open(runinputs.Options{
 		Root: t.TempDir(), MaxObjectBytes: 1 << 20, MaxStoreBytes: 8 << 20, TTL: 15 * time.Minute,
 		FreeSpace: func(string) (uint64, uint64, error) { return 1 << 40, 1 << 40, nil },
@@ -41,11 +47,11 @@ func newUploadClient(t *testing.T) (agentcomposev2connect.RunServiceClient, *run
 	}
 	handler := NewRunHandler(nil, uploadProjectRunStore{}).WithRunInputUploads(store)
 	mux := http.NewServeMux()
-	path, serviceHandler := agentcomposev2connect.NewRunServiceHandler(handler, ErrorContractHandlerOptions()...)
+	path, serviceHandler := agentcomposev2connect.NewRunServiceHandler(handler, UploadRunInputHandlerOptions(ErrorContractHandlerOptions()...)...)
 	mux.Handle(path, serviceHandler)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
-	return agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL), store
+	return server, store
 }
 
 func sendUpload(t *testing.T, client agentcomposev2connect.RunServiceClient, frames ...*agentcomposev2.UploadRunInputRequest) (*agentcomposev2.UploadRunInputResponse, error) {
@@ -101,7 +107,9 @@ func TestUploadRunInputStagesAndDeduplicates(t *testing.T) {
 		t.Fatalf("resolve = %+v, %v", object, err)
 	}
 
-	again, err := sendUpload(t, client, infoFrame("project-1", data))
+	// A client that already has the content may still pipeline chunks; the
+	// daemon answers after info and the response must still arrive intact.
+	again, err := sendUpload(t, client, infoFrame("project-1", data), chunkFrame(data[:5]), chunkFrame(data[5:]))
 	if err != nil {
 		t.Fatalf("dedup upload: %v", err)
 	}
@@ -121,6 +129,7 @@ func TestUploadRunInputRejectsBadStreams(t *testing.T) {
 	}{
 		"no frames":       {nil, connect.CodeInvalidArgument},
 		"chunk first":     {[]*agentcomposev2.UploadRunInputRequest{chunkFrame(data)}, connect.CodeInvalidArgument},
+		"empty chunk":     {[]*agentcomposev2.UploadRunInputRequest{infoFrame("project-1", data), chunkFrame(nil)}, connect.CodeInvalidArgument},
 		"duplicate info":  {[]*agentcomposev2.UploadRunInputRequest{infoFrame("project-1", data), infoFrame("project-1", data)}, connect.CodeInvalidArgument},
 		"short upload":    {[]*agentcomposev2.UploadRunInputRequest{infoFrame("project-1", data), chunkFrame(data[:2])}, connect.CodeInvalidArgument},
 		"digest mismatch": {[]*agentcomposev2.UploadRunInputRequest{infoFrame("project-1", []byte("PAYLOAD")), chunkFrame(data)}, connect.CodeInvalidArgument},
@@ -134,6 +143,30 @@ func TestUploadRunInputRejectsBadStreams(t *testing.T) {
 			requireUploadError(t, err, test.code, apierror.EffectNotApplied)
 		})
 	}
+}
+
+func TestUploadRunInputAcceptsMaxChunkOverJSON(t *testing.T) {
+	// The Connect JSON codec base64-encodes bytes, so a full chunk is larger on
+	// the wire than the chunk limit. The transport read limit must allow it.
+	server, _ := newUploadServer(t)
+	client := agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL, connect.WithProtoJSON())
+	data := make([]byte, MaxRunInputUploadChunkBytes)
+	response, err := sendUpload(t, client, infoFrame("project-1", data), chunkFrame(data))
+	if err != nil {
+		t.Fatalf("JSON upload of one full chunk: %v", err)
+	}
+	if response.GetUploadId() == "" || response.GetDeduplicated() {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestUploadRunInputRejectsOversizedFrameAtTheTransport(t *testing.T) {
+	client, _ := newUploadClient(t)
+	// Larger than the per-message read limit, so Connect rejects the frame
+	// before the handler can see it. Nothing is staged either way.
+	frame := make([]byte, MaxRunInputUploadMessageBytes+1)
+	_, err := sendUpload(t, client, infoFrame("project-1", frame), chunkFrame(frame))
+	requireUploadError(t, err, connect.CodeResourceExhausted, apierror.EffectNotApplied)
 }
 
 func TestUploadRunInputReportsExhaustedStore(t *testing.T) {
