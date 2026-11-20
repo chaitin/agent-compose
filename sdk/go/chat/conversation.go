@@ -181,33 +181,38 @@ func (c *Conversation) RunID() string {
 // work through it a second time (and materialize its files again), so a caller
 // that cares should read [Conversation.History] before resending.
 func (c *Conversation) Send(ctx context.Context, text string, opts ...SendOption) (*Reply, error) {
+	resolved := newSendOptions(opts)
+	var inputs *inputFiles
+	if len(resolved.files) > 0 {
+		inputs = &inputFiles{files: resolved.files}
+		// Every return path closes the readers, the validation rejections
+		// below included: the caller was promised that Send owns them.
+		defer func() { _ = inputs.Close() }()
+		// A blocked Content.Read is interrupted only by Close, so tie the
+		// readers' lifetime to the request context.
+		stopClose := context.AfterFunc(ctx, func() { _ = inputs.Close() })
+		defer stopClose()
+	}
 	if strings.TrimSpace(text) == "" {
 		return nil, invalidArgument("Send", "message text is required")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	resolved := newSendOptions(opts)
-	var inputs *inputFiles
 	var parts []*agentcomposev2.AgentInputPart
-	if len(resolved.files) > 0 {
-		inputs = &inputFiles{files: resolved.files}
-		// A blocked Content.Read is interrupted only by Close, so tie the
-		// readers' lifetime to the request context.
-		stopClose := context.AfterFunc(ctx, func() { _ = inputs.Close() })
-		defer stopClose()
+	if inputs != nil {
 		// Refuse before staging: a turn the conversation cannot take should not
 		// upload bytes no run will reference.
 		c.mu.Lock()
 		err := c.checkTurnLocked()
 		c.mu.Unlock()
 		if err != nil {
-			return nil, errors.Join(err, inputs.Close())
+			return nil, err
 		}
 		var prepErr error
 		parts, prepErr = c.prepareFiles(ctx, resolved.files)
 		if prepErr != nil {
-			return nil, errors.Join(prepErr, inputs.Close())
+			return nil, prepErr
 		}
 	}
 	c.mu.Lock()

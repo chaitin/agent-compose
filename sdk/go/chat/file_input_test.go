@@ -273,6 +273,36 @@ func TestFileInputTooLargeForInlineWithoutUploadIsRejected(t *testing.T) {
 	}
 }
 
+// TestFileInputClosedOnEarlyRejection verifies that Send closes the readers
+// even when it rejects the turn before doing any work: WithFiles promises the
+// SDK owns Content from the moment it is passed.
+func TestFileInputClosedOnEarlyRejection(t *testing.T) {
+	daemon := newFakeDaemon(t)
+	conversation := daemon.client(t).Agent("project", "worker").Start()
+
+	file, reader := inputFile("file", "a.txt", []byte("x"))
+	if _, err := conversation.Send(context.Background(), "  ", WithFiles(file)); err == nil {
+		t.Fatal("empty text was accepted")
+	}
+	if !reader.closed.Load() {
+		t.Fatal("reader not closed after an empty-text rejection")
+	}
+
+	file, reader = inputFile("file", "a.txt", []byte("x"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := conversation.Send(ctx, "hello", WithFiles(file)); err == nil {
+		t.Fatal("canceled context was accepted")
+	}
+	if !reader.closed.Load() {
+		t.Fatal("reader not closed after a canceled-context rejection")
+	}
+
+	if calls := daemon.count("AttachAgentRun") + daemon.count("GetCapabilities"); calls != 0 {
+		t.Fatalf("rejected turns made %d daemon calls, want none", calls)
+	}
+}
+
 // TestFileInputTravelsOnALaterTurn verifies that a turn after the opening one
 // carries its files on the human message. Input is a turn property: a
 // conversation that keeps one run across turns must still accept files on any
