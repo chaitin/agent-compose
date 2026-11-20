@@ -75,7 +75,7 @@ AC 里有两种 run：**project run** 是在 sandbox 里执行一次 agent 或�
 |---|---|---|---|
 | 状态 | 数据库 `scheduler_run` | `GetSchedulerRun` | 不变 |
 | 时间线 | 数据库 `scheduler_event` | `ListProjectSchedulerEvents(run_id)` | 不变：脚本日志、各步骤的完成和失败、`linked_cell_id`，以及 agent 步骤对应的 project run |
-| 步骤输出 | `<data>/scheduler-runs/<id>/cells/<cell_id>.log.jsonl` | `FollowRunLogs(scheduler_run_id, cell_id)` | **新增**：每个 shell/exec 步骤的完整输出，见"scheduler run 的日志" |
+| 步骤输出 | `<data>/schedulers/<scheduler_id>/runs/<run_id>/cells/<cell_id>.log.jsonl` | `FollowRunLogs(scheduler_id, scheduler_run_id, cell_id)` | **新增**：每个 shell/exec 步骤的完整输出，见"scheduler run 的日志" |
 
 scheduler run 里的 agent 步骤不在这里存储：它本身就是一个 project run，按 project run 的三层读取。
 
@@ -101,28 +101,10 @@ scheduler run 里的 agent 步骤不在这里存储：它本身就是一个 proj
 
 ### 条目 schema
 
-API 上不能只返回一个 `payload_json`，否则应用层又得自己写解析器。条目定义成有类型的 proto：外层是固定的信封，每种条目对应 `oneof` 的一个分支。核心类型沿用 `agent-event.ts` 里跨 provider 的统一定义；provider 特有的字段放进 `extra_json` 兜底，不对外承诺稳定。
+API 上不能只返回一个 `payload_json`，否则应用层又得自己写解析器。条目定义成有类型的 proto（`RunLogEntry`）：外层是 `seq / created_at / turn / text_offset`，每种条目对应 `oneof` 的一个分支：`user_input / text / tool_call / tool_result / usage / error / output / turn_end / truncated`，字段沿用 `agent-event.ts` 里跨 provider 的统一定义。
 
-```proto
-message RunLogEntry {
-  uint64 seq = 1;
-  google.protobuf.Timestamp created_at = 2;
-  uint32 turn = 3;
-  oneof entry {
-    RunLogUserInput user_input = 10;    // 用户输入
-    RunLogText text = 11;               // 合并后的助手正文
-    RunLogToolCall tool_call = 12;      // 按 id 合并，带最终状态、输入，以及截断后的输出
-    RunLogUsage usage = 13;
-    RunLogError error = 14;
-    RunLogOutput output = 15;           // 进程输出：stream + data
-    RunLogTurnEnd turn_end = 16;        // stop_reason + final_text
-    RunLogTruncated truncated = 17;     // 日志达到上限
-  }
-  string extra_json = 30;
-}
-```
-
-- `tool_call` 和 `tool_result` 在 API 上合成一条：调用方关心的是"调用了什么、结果如何"，不需要自己按 id 去配对。
+- 字段号连续，不留空号：v2 的 `TestV2FieldNumbersHaveNoUnexplainedGaps` 不允许无说明的空号，所以没有预留的 `extra_json`。provider 特有的字段以后需要时再按新分支或新字段加。
+- `tool_call` 和 `tool_result` 是两条：调用在参数完整时记一条，结果在第一次 `tool_result` 时记一条，两条的 `id` 相同。合成一条就得等工具执行完才能写，长时间运行的命令在执行期间就看不到了。
 - 新增条目类型时只加 `oneof` 分支。旧客户端遇到不认识的分支直接跳过，不会因此报错。
 - 文件里存的 jsonl 和这个 proto 一一对应，但文件格式本身属于内部实现。
 
@@ -149,7 +131,7 @@ cell 作为存储结构退出：不再有 `state/cells/<id>/` 目录，也不再
 |---|---|---|---|
 | `stdout.txt` / `stderr.txt` / `output.txt` | 各 2080 | 执行输出 | 日志文件里的 `output` 行 |
 | `source.txt` / `exitcode.txt` | 各 44 | 输入和退出码 | run 记录或 scheduler 事件 |
-| `command-request.json` | 2057 | host 写给 guest 的调用参数，包括完整的命令和环境变量 | sandbox 里的临时调用目录 `state/exec/<cell_id>/`，这一步结束就删除 |
+| `command-request.json` | 2057 | host 写给 guest 的调用参数，包括完整的命令和环境变量 | sandbox 里的临时调用目录 `state/exec/<cell_id>/`，这一步结束就删除（**尚未实现**，见"落地状态"） |
 | `command-result.json` | 2033 | guest 写回给 host 的执行结果 | 同上；host 读完后，结果写进 run 记录或 scheduler 事件 |
 | `agent-thread.json` | 23 | 没有任何地方读它 | 删除 |
 | `journal-cursor` | — | detach 后 reattach 用的游标 | run 目录 |
@@ -165,7 +147,7 @@ scheduler run 自己的时间线已经存在**数据库**的 `scheduler_event` �
 - 输出本身可能很大。devboard 上超过 64 KiB 的 command 输出有 173 条，最大的达到 4 MiB，而且已经被截断过（`stdoutTruncated: true`）。
 
 做法：
-- 每个步骤一个文件，放在 `<data>/scheduler-runs/<scheduler_run_id>/cells/<cell_id>.log.jsonl`。格式和 `run.log.jsonl` 相同，只有 `output` 行（以及达到上限时的 `truncated` 行），上限沿用 `MaxOutputBytes`。
+- 每个步骤一个文件，放在 `<data>/schedulers/<scheduler_id>/runs/<run_id>/cells/<cell_id>.log.jsonl`（scheduler run 本来就拥有的 `<data>/schedulers/<scheduler_id>/runs/<run_id>/` 目录下）。格式和 `run.log.jsonl` 相同，只有 `output` 行（以及达到上限时的 `truncated` 行），上限沿用 `MaxOutputBytes`。
 - 只有调用过 shell/exec 的 scheduler run 才创建这个目录，并且跟着 `PruneSchedulerRuns` 一起删除。scheduler run 的数量是 project run 的 100 多倍（devboard 上 46524 比 369），绝大多数是轻量的轮询脚本，不会产生这个目录。
 - `scheduler.agent` 不变：它会创建 project run，日志在那个 run 自己的目录里，scheduler 事件通过 `run_id` 引用它。
 - 读取：`FollowRunLogs` 新增 `scheduler_run_id + cell_id` 这种寻址方式，和 `run_id` 互斥，返回的文本模式和结构化模式都和 project run 一样。`event_message.go` 改成读这个文件的尾部。
@@ -184,7 +166,7 @@ AC 只能保证 shell 的输出完整保存，**没办法把 shell 里调用的 
 
 ### 读取：状态、对话、过程
 
-**状态：`GetRun`。** `RunDetail` 新增 `summary` 字段（工具调用次数、usage、最后一个错误）；`RunSummary` 只带列表页需要的那几项。
+**状态：`GetRun`。** `RunSummary` 新增 `log_summary`（轮数、工具调用和失败次数、usage、最后一个错误、是否截断），`ListRuns` 和 `GetRun`（`RunDetail.summary`）都带上它。
 
 **对话：`ListRunMessages`。** 由 `ListRunEvents` 改名而来。现在的名字和功能不符：它叫 "Events"，实际返回的却是对话加终态，而 "event" 这个词应该留给过程事件。拆开来看：
 
@@ -238,7 +220,7 @@ message ListRunMessagesRequest {
 | command 的 `stdout/stderr/output.txt` | 合并成 `output` 行；`event_message.go` 改成读日志尾部 |
 | `source.txt` / `exitcode.txt` / `command-result.json` | 这些信息都已经在 run 记录里。先确认崩溃恢复逻辑不依赖它们，再删除 |
 | 未关联 run 的 Exec `transcript.txt` | 不再落盘 |
-| scheduler 事件靠 `linked_cell_id` 读 cell 的 output.txt（`schedulers/event_message.go`） | 字段不变。改成读 `scheduler-runs/<id>/cells/<cell_id>.log.jsonl` 的尾部 |
+| scheduler 事件靠 `linked_cell_id` 读 cell 的 output.txt（`schedulers/event_message.go`） | 字段不变。改成读 `schedulers/<scheduler_id>/runs/<run_id>/cells/<cell_id>.log.jsonl` 的尾部 |
 | UI 从 STATUS 的 payload 里取 `cellId` 来关联旧 cell | 见"改名的兼容性"第 2 条 |
 | `state/cells/<id>/` 目录、`cells.json`，以及非交互 agent run 写入的 sandbox 事件（`ListSandboxHistory` / `WatchSandbox`） | 新 run 不再写入；`cell_id` 仍然生成，见"cell：保留名字，不保留目录"；旧 cell 保留，只读 |
 | guest 内的 `state/agents/providers/<p>.json` | 保留，这是 runtime 内部的 resume 状态 |
@@ -270,27 +252,46 @@ message ListRunMessagesRequest {
 
 1. 删除死数据：`agent-thread.json`、`ProviderLogPaths`、HOME 目录遍历。
 2. runtime 非交互路径输出结构化事件。
-3. host 端统一 projector，写 `run.log.jsonl` 和 run 汇总，加上 `log_format` 列；scheduler 的 shell/exec 步骤改为写 `scheduler-runs/<id>/cells/<cell_id>.log.jsonl`，调用参数文件改到临时调用目录。
+3. host 端统一 projector，写 `run.log.jsonl` 和 run 汇总，加上 `log_format` 列；scheduler 的 shell/exec 步骤改为写 `schedulers/<scheduler_id>/runs/<run_id>/cells/<cell_id>.log.jsonl`，调用参数文件改到临时调用目录。
 4. `FollowRunLogs` 改成渲染实现，并支持 `structured=true`；新增 `ListRunMessages`（可按 run 或按 sandbox 过滤），`ListRunEvents` / `ListSandboxRunEvents` 转发到新实现。
 5. `sdk/go` 加上读取辅助函数；UI 和 tokenproxy 接入新接口；ac-task-observer 改成走 API。
 6. 下线派生文件、`AgentTraceEvents`，以及 `ListRunEvents` / `ListSandboxRunEvents` 和 STATUS 事件。
 
+## 落地状态
+
+已完成（agent-compose 仓库，`feat/run-log-timeline` 分支）：
+
+- 第 1 步：删除 `agent-thread.json`、`AgentResumeInfo` 和 HOME 目录遍历，只保留 thread ID 的兜底解析。
+- 第 2 步：runtime 非交互路径通过 `AGENT_COMPOSE_RUNTIME_EVENTS=1` 输出 `__AGENT_EVENT__` 行；daemon 不设这个变量时行为不变，旧 runtime 忽略它、继续把文本写到 stderr，两边都能互相兼容。
+- 第 3 步：`pkg/runlog` 和全部执行路径接入；`log_format` / `summary_json` / `log_seq` 三个列（migration 000021）；`RemoveRunHistory` 删除 run 自己的目录。
+- 第 4 步：`FollowRunLogs(structured)`、`ListRunMessages`、`RunSummary.log_summary`。
+- scheduler 方案 A：shell/exec 步骤日志、scheduler 事件优先读步骤日志、`FollowRunLogs` 按步骤寻址（快照，不支持 follow）。
+
+未完成：
+
+- `sdk/go`：SDK 依赖已发布的 proto 版本（不走 `replace`），要等本分支合入 main、自动打出新的 `proto/vX.Y.Z` 之后才能用新 RPC。
+- agent-compose-ui / desktop：迁移到 `ListRunMessages` 和结构化 `FollowRunLogs`，tokenproxy 白名单加 `ListRunMessages`。
+- ac-task-observer：改走 API，重写 `SKILL.md`。
+- agentkit 自定义 guest：同步 runtime 的事件输出（不同步也能工作，只是没有结构化过程）。
+- `command-request.json` 移到临时调用目录：它是 guest 读取调用参数的路径，改动牵涉 guest runtime，单独做。
+- 第 6 步：按"改名的兼容性"一节，旧 RPC 和 STATUS 事件要保留一个版本、等调用方迁移后再下线，不在本次范围内。
+
 ## 后续方向：scheduler 的 shell/exec 改为 project run
 
-本次方案（"scheduler run 的日志"一节）里，同样是在 sandbox 里执行命令，却有两套处理方式：project command run 有 run 记录、走 `FollowRunLogs(run_id)`；scheduler 的 shell/exec 只有 `cell_id`、日志放在 `scheduler-runs/` 下面，需要第二种寻址方式。更一致的原则是**编排归 scheduler run，执行统一归 project run**：`scheduler.shell` / `scheduler.exec` 应该和 `scheduler.agent` 一样，每次调用都创建一个 project command run。
+本次方案（"scheduler run 的日志"一节）里，同样是在 sandbox 里执行命令，却有两套处理方式：project command run 有 run 记录、走 `FollowRunLogs(run_id)`；scheduler 的 shell/exec 只有 `cell_id`、日志放在 scheduler run 目录的 `cells/` 下面，需要第二种寻址方式。更一致的原则是**编排归 scheduler run，执行统一归 project run**：`scheduler.shell` / `scheduler.exec` 应该和 `scheduler.agent` 一样，每次调用都创建一个 project command run。
 
 本次先不这样做，因为它还牵涉到 scheduler 和 sandbox 的归属关系（见 `scheduler-sandbox-ownership.zh-CN.md`）。但本次方案必须保证以后能平滑迁移过去：
 
 - scheduler 步骤的日志格式和 `run.log.jsonl` 完全一致，迁移时只换存放位置。
 - `cell_id` 作为对齐键：以后创建的 command run，其 `cellId` 沿用这一步原来的 `cell_id`，`scheduler_event.linked_cell_id` 前后指向同一个东西。
-- `FollowRunLogs(scheduler_run_id, cell_id)` 在 proto 注释和文档里都标为过渡用；UI 和 SDK 把它封装在内部，不直接暴露给上层。
-- `scheduler-runs/` 的目录布局不对外承诺。
+- `FollowRunLogs(scheduler_id, scheduler_run_id, cell_id)` 在 proto 注释和文档里都标为过渡用；UI 和 SDK 把它封装在内部，不直接暴露给上层。
+- `schedulers/<id>/runs/<run>/cells/` 的目录布局不对外承诺。
 
 迁移步骤：
 
 1. `scheduler.shell` / `scheduler.exec` 改为创建 project command run（`cleanup_policy=keep`、`source=scheduler`，sandbox 的归属仍然由 scheduler 的绑定关系决定），scheduler 事件新增 `linked_run_id`。
 2. 读取时按事件分发：有 `linked_run_id` 的走 `run_id`，只有 `cell_id` 的走旧路径。
-3. 旧的步骤日志不迁移，等 `PruneSchedulerRuns` 自然清理完，再删除旧的寻址方式和 `scheduler-runs/` 目录。
+3. 旧的步骤日志不迁移，等 `PruneSchedulerRuns` 自然清理完，再删除旧的寻址方式和 `cells/` 子目录。
 4. UI 的 run 列表默认过滤掉 `source=scheduler` 的 run。devboard 上累计大约有 1.8 万次 shell 调用，不过滤的话会淹没其他 run。
 
 ## 决定
