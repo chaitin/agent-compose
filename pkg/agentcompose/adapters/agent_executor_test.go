@@ -73,16 +73,11 @@ func TestAgentExecutorExecuteAgentRequestPersistsCellAndEvents(t *testing.T) {
 	if len(cells) == 0 || cells[len(cells)-1].ID != cell.ID || !cells[len(cells)-1].Success {
 		t.Fatalf("stored cells = %#v", cells)
 	}
-	threadArtifactPath := filepath.Join(execution.HostSandboxDir(session), "state", "cells", cell.ID, "agent-thread.json")
-	threadArtifact, err := os.ReadFile(threadArtifactPath)
-	if err != nil {
-		t.Fatalf("read agent thread artifact: %v", err)
-	}
-	if !strings.Contains(string(threadArtifact), `"thread_id": "agent-thread-1"`) || !strings.Contains(string(threadArtifact), `"thread_manifest_path":`) {
-		t.Fatalf("agent thread artifact = %s", string(threadArtifact))
-	}
-	if _, err := os.Stat(filepath.Join(execution.HostSandboxDir(session), "state", "cells", cell.ID, "agent-session.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("agent-session.json exists or stat failed unexpectedly: %v", err)
+	// The thread ID lives on the cell; no per-cell resume artifact is written.
+	for _, name := range []string{"agent-thread.json", "agent-session.json"} {
+		if _, err := os.Stat(filepath.Join(execution.HostSandboxDir(session), "state", "cells", cell.ID, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s exists or stat failed unexpectedly: %v", name, err)
+		}
 	}
 	events, err := store.ListEvents(ctx, session.Summary.ID)
 	if err != nil {

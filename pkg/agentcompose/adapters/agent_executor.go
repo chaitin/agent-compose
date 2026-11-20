@@ -280,9 +280,9 @@ func (r *agentCellRun) finish(execResult domain.ExecResult, result domain.AgentR
 	return r.succeed(execResult, result)
 }
 
-func (r *agentCellRun) resumeInfo(agent, threadID string) *domain.AgentResumeInfo {
-	return execution.CollectAgentResumeInfo(r.ctx, execution.AgentResumeInfoRequest{
-		Config: r.e.config, Sandbox: r.session, Agent: agent, ThreadID: threadID, ManifestPath: filepath.Join(r.hostCellDir, "agent-thread.json"), ReadGuestFile: r.e.runner.guestFileReaderFor(r.session),
+func (r *agentCellRun) threadID(agent, threadID string) string {
+	return execution.ResolveAgentThreadID(r.ctx, execution.AgentThreadIDRequest{
+		Config: r.e.config, Sandbox: r.session, Agent: agent, ThreadID: threadID, ReadGuestFile: r.e.runner.guestFileReaderFor(r.session),
 	})
 }
 
@@ -307,14 +307,7 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 	r.cellMu.Lock()
 	cellAgent := firstNonEmpty(result.Agent, r.cell.Agent, r.agent)
 	r.cellMu.Unlock()
-	resumeInfo := r.resumeInfo(cellAgent, result.ThreadID)
-	if err := execution.WriteAgentThreadArtifact(filepath.Join(r.hostCellDir, "agent-thread.json"), resumeInfo); err != nil {
-		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
-	}
-	agentThreadID := strings.TrimSpace(result.ThreadID)
-	if resumeInfo != nil && agentThreadID == "" {
-		agentThreadID = resumeInfo.ThreadID
-	}
+	agentThreadID := r.threadID(cellAgent, result.ThreadID)
 	r.cellMu.Lock()
 	r.cell.Stdout = execResult.Stdout
 	r.cell.Stderr = execResult.Stderr
@@ -325,7 +318,6 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 	r.cell.Agent = cellAgent
 	r.cell.AgentThreadID = agentThreadID
 	r.cell.StopReason = result.StopReason
-	r.cell.AgentResume = resumeInfo
 	failedCell := r.cell
 	r.cellMu.Unlock()
 	if addErr := e.store.AddCell(ctx, session, failedCell); addErr != nil {
@@ -355,14 +347,7 @@ func (r *agentCellRun) succeed(execResult domain.ExecResult, result domain.Agent
 	r.cellMu.Lock()
 	cellAgent := firstNonEmpty(result.Agent, r.cell.Agent)
 	r.cellMu.Unlock()
-	resumeInfo := r.resumeInfo(cellAgent, result.ThreadID)
-	if err := execution.WriteAgentThreadArtifact(filepath.Join(r.hostCellDir, "agent-thread.json"), resumeInfo); err != nil {
-		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
-	}
-	agentThreadID := strings.TrimSpace(result.ThreadID)
-	if resumeInfo != nil && agentThreadID == "" {
-		agentThreadID = resumeInfo.ThreadID
-	}
+	agentThreadID := r.threadID(cellAgent, result.ThreadID)
 	r.cellMu.Lock()
 	r.cell.Stdout = execResult.Stdout
 	r.cell.Stderr = execResult.Stderr
@@ -373,7 +358,6 @@ func (r *agentCellRun) succeed(execResult domain.ExecResult, result domain.Agent
 	r.cell.Agent = cellAgent
 	r.cell.AgentThreadID = agentThreadID
 	r.cell.StopReason = result.StopReason
-	r.cell.AgentResume = resumeInfo
 	cellSnapshot := r.cell
 	r.cellMu.Unlock()
 	if err := e.store.AddCell(ctx, session, cellSnapshot); err != nil {
