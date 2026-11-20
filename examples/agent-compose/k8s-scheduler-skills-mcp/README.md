@@ -3,8 +3,7 @@
 Languages: English | [中文](README.zh-CN.md)
 
 Four `driver: k8s` agents in one project, each exercising a different
-guest-sync path that has no shared filesystem to fall back on (see
-`docs/design/k8s_pod_runtime_driver_design.md` §2.1):
+guest-sync path that has no shared filesystem to fall back on:
 
 - `scheduled`: a cron trigger, verifying the scheduler creates and runs a k8s
   sandbox on schedule.

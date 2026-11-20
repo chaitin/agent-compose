@@ -1,8 +1,7 @@
 # agent-compose's dsh profile: a static overlay on top of the @deepseek-ai/dsh-base
 # bundle layer. Every mutable value (facade credentials, model, skills, session
 # root, prompt text) flows in through the spawn-time environment set by
-# runtime/javascript/src/runners/dsh.ts — see docs/design/dsh_agent_provider_design.md
-# §3.2/§3.5. This file ships as a repo asset (assets/.dsh/...), not an npm package.
+# runtime/javascript/src/runners/dsh.ts. This file ships as a repo asset (assets/.dsh/...), not an npm package.
 
 # dsh-base mounts two LLM adapters: llm-deepseek (its native one, active) and
 # llm-pi-ai (dormant until a profile supplies routes). agent-compose uses the
@@ -63,8 +62,7 @@
 # `readFileSync` a temp file the way runner.js can, and passing a large
 # system context as a single env var risks Linux's exec() argument-length
 # limit. Left at its dsh-base default (empty persona); agent-compose-runner
-# injects the persona itself as an agent-scoped section instead (see
-# docs/design/dsh_agent_provider_design.md §3.2).
+# injects the persona itself as an agent-scoped section instead.
 
 # Each sandbox gets its own durable session store on the agent-compose state
 # volume, not dsh-base's default $DSH_HOME/sessions.

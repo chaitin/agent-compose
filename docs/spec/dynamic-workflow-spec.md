@@ -67,16 +67,14 @@ task test
 
 `runtime/agent-compose-runtime-sdk/src/agent.ts` 当前通过临时 message/schema 文件调用 `agent-compose-runtime prompt`，解析 stdout 中的 `__AGENT_RESULT__` 行，并在 SDK 侧解析 JSON。该 SDK API 不回调 Go host。
 
-`docs/design/agent-compose-runtime_contract.md` 现已描述 `workflow` 子命令、`__WORKFLOW_RESULT__` stdout 协议与 `__WORKFLOW_EVENT__` stderr 事件流，以及 SDK 的 `runtime.workflow()` / `runtime.workflowFile()`。该文档仍明确说明还没有：
+`workflow` 子命令、`__WORKFLOW_RESULT__` stdout 协议与 `__WORKFLOW_EVENT__` stderr 事件流，以及 SDK 的 `runtime.workflow()` / `runtime.workflowFile()` 已经落地。当前仍未提供：
 
 - scheduler 到 Node workflow 的专用 bridge token。
 - 让 Node workflow 直接操作 scheduler state/event/artifact 的 context object。
 
-该设计文档已随本方案同步更新。
-
 ### 现有 scheduler 边界
 
-`docs/design/agent-compose_design.md` 定义 scheduler runtime 使用 QJS，负责 trigger 注册、轻量 state、event publish，以及把需要 sandbox 能力的工作委托给 runtime sandbox。该层不是复杂 Node.js workflow、npm dependencies 或长耗时业务逻辑的承载点。
+Scheduler runtime 使用 QJS，负责 trigger 注册、轻量 state、event publish，以及把需要 sandbox 能力的工作委托给 runtime sandbox。该层不是复杂 Node.js workflow、npm dependencies 或长耗时业务逻辑的承载点。
 
 因此 dynamic workflow 首版不把 `scheduler` 扩展成完整 workflow engine。若 scheduler 要触发 workflow，应通过已有 `scheduler.exec` / `scheduler.shell` 运行 workspace Node.js 脚本，脚本再使用 `@chaitin-ai/agent-compose-runtime-sdk` 的 workflow API。
 
@@ -911,8 +909,6 @@ workflow result must be JSON-serializable; did you forget to await agent(), para
 
 - `runtime/javascript/README.md`：新增 `workflow` CLI 使用和协议说明。
 - `runtime/agent-compose-runtime-sdk/README.md`：新增 `runtime.workflow()`、`runtime.workflowFile()` 示例和类型说明。
-- `docs/design/agent-compose-runtime_contract.md`：把“没有 workflow 子命令/协议”更新为新契约。
-- `docs/design/agent-compose_design.md`：保留 scheduler QJS 不承载复杂 workflow 的边界，并说明推荐通过 runtime SDK 运行。
 
 ### 质量门禁
 

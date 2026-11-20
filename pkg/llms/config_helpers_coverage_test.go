@@ -146,8 +146,8 @@ func TestE2ERuntimeConfigAndEnvHelperWorkflows(t *testing.T) {
 	TestRuntimeConfigAndEnvHelperWorkflows(t)
 }
 
-// No-shared-mount path (k8s - see docs/design/k8s_pod_runtime_driver_design.md
-// §2.1): both codex and opencode MCP config still merge against the
+// No-shared-mount path (k8s): both codex and opencode MCP config still merge
+// against the
 // daemon's own local copy of the file, but must also push the resulting
 // merged content to the guest path a mount would otherwise have made it
 // appear at for free.

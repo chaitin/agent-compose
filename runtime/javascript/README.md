@@ -102,8 +102,6 @@ When the host binds a run to an agent definition with non-empty `system_prompt`,
 
 The `prompt` command reads that convention path, combines it with the MPI catalog via `buildSystemContext` in `src/system-context.ts`, and passes the result to provider runners as `systemContext`. Per-turn user text stays in `--message-file` only.
 
-See `docs/design/agent_system_prompt_design.md` for the full host/guest contract.
-
 ## Development
 
 ```sh

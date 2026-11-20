@@ -93,8 +93,8 @@ func (h *ProjectHandler) ListProjectSchedulerEvents(ctx context.Context, req *co
 // maxConcurrentEventMessageResolves bounds how many ResolveEventMessage calls
 // that actually read a sandbox cell artifact run in parallel for a single
 // response page. New command.completed rows (empty DB message) are the only
-// ones that pay this cost (see docs/design/scheduler_event_storage_design.md
-// §4/§6); a small bounded pool trades a handful of goroutines for lower
+// ones that pay this cost; a small bounded pool trades a handful of goroutines
+// for lower
 // wall-clock time without unbounded fan-out against the filesystem.
 const maxConcurrentEventMessageResolves = 8
 

@@ -161,8 +161,7 @@ func TestK8sEnsureSandboxCreatesPodWhenMissing(t *testing.T) {
 	if len(pod.Spec.Containers) != 1 || pod.Spec.Containers[0].Image != sandbox.Summary.GuestImage {
 		t.Fatalf("pod container image = %+v, want %q", pod.Spec.Containers, sandbox.Summary.GuestImage)
 	}
-	// The k8s driver has no shared filesystem with the daemon (see
-	// docs/design/k8s_pod_runtime_driver_design.md §2.1): sandbox data
+	// The k8s driver has no shared filesystem with the daemon: sandbox data
 	// flows over Exec, not a mount, so the Pod declares none.
 	if len(pod.Spec.Volumes) != 0 {
 		t.Fatalf("pod declares volumes %+v, want none", pod.Spec.Volumes)

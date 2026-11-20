@@ -10,8 +10,7 @@ import (
 // guestFileWriterFor returns an execution.GuestFileWriterFunc that pushes a
 // file into sandbox's Pod over Exec, or nil if runtime's driver has a real
 // shared filesystem with the daemon and has no need for one (docker/
-// boxlite/microsandbox today - see
-// docs/design/k8s_pod_runtime_driver_design.md §2.1). runtime is typed as
+// boxlite/microsandbox today). runtime is typed as
 // this package's own Runtime interface (only ExecStream), so the type
 // assertion below is against the concrete value it holds - the same
 // pattern pkg/agentcompose/adapters.driverRuntimeAdapter uses internally

@@ -34,8 +34,7 @@ type CapabilityGuideDeps struct {
 	// needed when WriteGuestFile is set.
 	Config *appconfig.Config
 	// WriteGuestFile pushes the rendered guide into the sandbox for
-	// runtimes with no shared filesystem (k8s - see
-	// docs/design/k8s_pod_runtime_driver_design.md §2.1). nil for drivers
+	// runtimes with no shared filesystem (k8s). nil for drivers
 	// with a real mount (docker/boxlite/microsandbox), which see the host
 	// write below for free.
 	WriteGuestFile execution.GuestFileWriterFunc

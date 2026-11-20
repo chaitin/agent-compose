@@ -94,9 +94,8 @@ export class DshRunner {
       // Not an env var: runner.js is real ESM (unlike cordis.patch.yml's
       // `!!js` eval sandbox, which has no `require`), so it can read this
       // file directly and inject it as an agent-scoped persona section via
-      // `agent.ctx.systemPrompt.section()` — see docs/design/dsh_agent_provider_design.md
-      // §3.2. Avoids the exec() argument-length limit a large system context
-      // would risk as a single env var (§3.5).
+      // `agent.ctx.systemPrompt.section()`. Avoids the exec() argument-length
+      // limit a large system context would risk as a single env var.
       const systemContext = this.options.systemContext || "";
       let systemContextFile = "";
       if (systemContext) {
@@ -469,7 +468,6 @@ function dshReasoningEffort(effort: RunnerOptions["effort"]): string {
   }
 }
 
-// See docs/design/dsh_agent_provider_design.md §6.
 type DshMcpServerConfig =
   | { transport: "stdio"; serverName: string; command: string; args: string[]; env: Record<string, string> }
   | { transport: "streamable-http"; serverName: string; url: string; headers: Record<string, string> };

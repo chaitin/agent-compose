@@ -33,7 +33,7 @@ const result = await runtime.capabilities.call(selectedToolID, params, {
 
 本指南带你完成 agent-compose 与 [OctoBus](https://github.com/chaitin/OctoBus)（一个把企业内部 API、工具和服务安全暴露给 AI Agent 的本地网关）的对接，并验证 Agent 能在自己的沙箱内成功调用一个能力。全程约 15 分钟。
 
-配置字段参考见 [agent-compose.yml 配置手册](https://github.com/chaitin/agent-compose/blob/main/docs/pages/zh-CN/agent-compose-yaml-manual.md)（`octobus_servers`、`capset_ids`）；内部实现原理见 [OctoBus 集成设计文档](https://github.com/chaitin/agent-compose/blob/main/docs/design/octobus_integration.md)。
+配置字段参考见 [agent-compose.yml 配置手册](https://github.com/chaitin/agent-compose/blob/main/docs/pages/zh-CN/agent-compose-yaml-manual.md)（`octobus_servers`、`capset_ids`）。
 
 ## 一分钟理解核心概念
 

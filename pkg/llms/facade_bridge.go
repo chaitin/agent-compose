@@ -162,8 +162,7 @@ func normalizeRuntimeRawRoleItems(payload map[string]json.RawMessage, field stri
 // redundant restatement of the request. The pair lookup is the library's
 // implementation detail; if a future release returned a bridge for another
 // protocol, this turns that into a local, explicit error instead of silently
-// posting the wrong protocol upstream. See
-// docs/design/llm_model_routing_redesign.md, phase P0.
+// posting the wrong protocol upstream.
 func crossFamilyBridge(inbound, upstream protocolbridge.Protocol) (protocolbridge.CrossFamilyBridge, error) {
 	bridge, ok := protocolbridge.NewCrossFamilyBridgeForProtocol(inbound, upstream)
 	if !ok {
