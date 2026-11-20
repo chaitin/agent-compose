@@ -44,6 +44,11 @@ type Entry struct {
 
 	// user and text carry Text; error carries its message in Text.
 	Text string `json:"text,omitempty"`
+	// Initial marks the run's opening prompt, which the text view omits as
+	// the legacy transcript did. Later user input is shown, after a newline
+	// when Newline says the text before it did not end with one.
+	Initial bool `json:"initial,omitempty"`
+	Newline bool `json:"nl,omitempty"`
 
 	// output
 	Stream string `json:"stream,omitempty"`
@@ -116,6 +121,18 @@ func SchedulerCellPath(dataRoot, schedulerID, schedulerRunID, cellID string) str
 // header with the command or arguments, then the tool's output.
 func Render(e Entry) string {
 	switch e.Type {
+	case EntryUser:
+		if e.Initial || strings.TrimSpace(e.Text) == "" {
+			return ""
+		}
+		text := e.Text
+		if !strings.HasSuffix(text, "\n") {
+			text += "\n"
+		}
+		if e.Newline {
+			text = "\n" + text
+		}
+		return text
 	case EntryText:
 		return e.Text
 	case EntryOutput:

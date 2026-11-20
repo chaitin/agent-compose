@@ -39,7 +39,7 @@ func types(entries []Entry) string {
 
 func TestClaudeToolCallIsRecordedOnceWithItsArguments(t *testing.T) {
 	w, path := openTest(t, Options{})
-	if _, err := w.AppendUser("list files"); err != nil {
+	if _, err := w.AppendInitialPrompt("list files"); err != nil {
 		t.Fatal(err)
 	}
 	// claude: announce without input, re-emit once arguments finish, then result.
@@ -135,15 +135,16 @@ func TestEndTurnAppendsOnlyTheUnstreamedTail(t *testing.T) {
 	if _, err := w.AppendUser("again"); err != nil {
 		t.Fatal(err)
 	}
+	mustEvent(t, w, `{"kind":"usage","scope":"turn","inputTokens":1}`)
 	if _, err := w.EndTurn("stop", "Only final."); err != nil {
 		t.Fatal(err)
 	}
 	_ = w.Close()
 	entries, _ := ReadEntries(path, 0)
-	if got := types(entries); got != "text,text,turn_end,user,text,turn_end" {
+	if got := types(entries); got != "text,text,turn_end,user,usage,text,turn_end" {
 		t.Fatalf("entry types = %s", got)
 	}
-	if entries[1].Text != " is 42." || entries[4].Text != "Only final." || entries[4].Turn != 2 {
+	if entries[1].Text != " is 42." || entries[5].Text != "Only final." || entries[5].Turn != 2 {
 		t.Fatalf("entries = %#v", entries)
 	}
 }
@@ -269,5 +270,33 @@ func TestPaths(t *testing.T) {
 	}
 	if got := SchedulerCellPath("/data", "s", "r", "c"); got != "/data/schedulers/s/runs/r/cells/c.log.jsonl" {
 		t.Fatal(got)
+	}
+}
+
+func TestFollowUpUserInputIsShownOnItsOwnLine(t *testing.T) {
+	w, path := openTest(t, Options{})
+	_, _ = w.AppendInitialPrompt("first")
+	mustEvent(t, w, `{"kind":"text_delta","text":"no newline"}`)
+	_, _ = w.EndTurn("stop", "no newline")
+	_, _ = w.AppendUser("second")
+	_, _ = w.AppendUser("third\n")
+	_ = w.Close()
+	entries, _ := ReadEntries(path, 0)
+	if text := RenderText(entries); text != "no newline\nsecond\nthird\n" {
+		t.Fatalf("text view = %q", text)
+	}
+}
+
+func TestEndTurnWithoutAgentEventsKeepsTheAnswerOnlyInTheTurnEnd(t *testing.T) {
+	// An older runtime sends no events and mirrors its transcript as output.
+	w, path := openTest(t, Options{})
+	_ = w.AppendOutput("stderr", "The answer is 42.\n")
+	if _, err := w.EndTurn("stop", "The answer is 42."); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	entries, _ := ReadEntries(path, 0)
+	if got := types(entries); got != "output,turn_end" || entries[1].FinalText != "The answer is 42." {
+		t.Fatalf("entries = %#v", entries)
 	}
 }

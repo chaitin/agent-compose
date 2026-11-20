@@ -110,7 +110,7 @@ func ParseCommandExecResult(result domain.ExecResult) (domain.RuntimeCommandResu
 }
 
 func SummarizeAgentExecFailure(result domain.ExecResult) string {
-	detail := strings.TrimSpace(firstNonEmpty(result.Stderr, result.Output, result.Stdout))
+	detail := strings.TrimSpace(firstNonEmpty(result.Stderr, StripAgentEventLines(result.Output), StripAgentEventLines(result.Stdout)))
 	if detail == "" {
 		return ""
 	}
@@ -152,8 +152,8 @@ func FilterCommandStreamChunk(chunk domain.ExecChunk) (domain.ExecChunk, bool) {
 
 func SanitizeAgentExecResult(result domain.ExecResult) domain.ExecResult {
 	cleaned := result
-	cleaned.Stdout = StripAgentResultPayload(result.Stdout)
-	cleaned.Output = StripAgentResultPayload(result.Output)
+	cleaned.Stdout = StripAgentResultPayload(StripAgentEventLines(result.Stdout))
+	cleaned.Output = StripAgentResultPayload(StripAgentEventLines(result.Output))
 	return cleaned
 }
 

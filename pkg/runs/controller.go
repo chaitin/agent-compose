@@ -284,6 +284,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		CleanupPolicy:   CleanupPolicyFromProto(req.CleanupPolicy),
 		ClientRequestID: req.ClientRequestID,
 		Labels:          req.Labels,
+		RunLogRoot:      c.runLogRoot(),
 	}
 	// Idempotency comes before admission: a retry must return the run the first
 	// attempt created even when its input (a staged upload, for example) can no
@@ -837,6 +838,13 @@ type agentRunOutcome struct {
 func (c *Controller) finishProjectRunAgent(transitionCtx, runCtx context.Context, outcome agentRunOutcome) (domain.ProjectRunRecord, error) {
 	transition := TransitionFromAgentCell(outcome.Run, outcome.Sandbox, outcome.Cell, outcome.Assistant.Message, outcome.ExecErr)
 	transition.TerminalEvents = projectAgentTerminalEvents(outcome.Run, outcome.Cell, outcome.Assistant, outcome.ExecErr)
+	stopReason := outcome.Cell.StopReason
+	if stopReason == "" && (outcome.ExecErr != nil || !outcome.Cell.Success) {
+		stopReason = "error"
+	}
+	// The log is the run's history, not its outcome: failing to close the
+	// turn there must not change how the run itself completes.
+	_ = endRunLogTurn(c.runLogs, outcome.Run, stopReason, strings.TrimSpace(outcome.Assistant.Message), transition.TerminalEvents)
 	if outcome.ExecErr != nil || !outcome.Cell.Success {
 		return c.completeProjectRunError(transitionCtx, runCtx, transition, outcome.ExecErr)
 	}

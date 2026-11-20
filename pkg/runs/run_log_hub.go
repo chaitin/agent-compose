@@ -12,6 +12,10 @@ type RunLogEvent struct {
 	Data      string
 	Offset    uint64
 	CreatedAt time.Time
+	// Seq is the run log entry that produced the event, 0 for a legacy text
+	// transcript. Entries with no text (usage, turn ends) still publish, so
+	// a structured follower wakes for them.
+	Seq uint64
 }
 
 type RunLogSubscription struct {
@@ -76,7 +80,7 @@ func (h *RunLogHub) Subscribe(runID string) *RunLogSubscription {
 }
 
 func (h *RunLogHub) Publish(event RunLogEvent) bool {
-	if h == nil || event.RunID == "" || event.Data == "" {
+	if h == nil || event.RunID == "" || (event.Data == "" && event.Seq == 0) {
 		return false
 	}
 	if event.CreatedAt.IsZero() {

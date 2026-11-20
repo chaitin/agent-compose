@@ -51,9 +51,9 @@ func appendProjectRunEventsTx(ctx context.Context, tx *sql.Tx, events []domain.P
 		if event.CreatedAt.IsZero() {
 			event.CreatedAt = time.Now().UTC()
 		}
-		err := tx.QueryRowContext(ctx, `INSERT INTO project_run_event (id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at)
-			SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM project_run_event WHERE run_id = ?
-			RETURNING seq`, event.ID, event.RunID, string(event.Kind), event.Text, event.Agent, event.Name, event.PayloadJSON, BoolToInt(event.Success), event.ExitCode, event.StopReason, event.CreatedAt.UTC().UnixMilli(), event.RunID).Scan(&event.Sequence)
+		err := tx.QueryRowContext(ctx, `INSERT INTO project_run_event (id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at, log_seq)
+			SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM project_run_event WHERE run_id = ?
+			RETURNING seq`, event.ID, event.RunID, string(event.Kind), event.Text, event.Agent, event.Name, event.PayloadJSON, BoolToInt(event.Success), event.ExitCode, event.StopReason, event.CreatedAt.UTC().UnixMilli(), event.LogSeq, event.RunID).Scan(&event.Sequence)
 		if err != nil {
 			existing, found, findErr := getRunEventByID(ctx, tx, event.ID)
 			if findErr == nil && found && existing.RunID == event.RunID {
@@ -73,7 +73,7 @@ func (s *projectStore) ListProjectRunEvents(ctx context.Context, runID string, a
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at FROM project_run_event WHERE run_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`, strings.TrimSpace(runID), afterSequence, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at, log_seq FROM project_run_event WHERE run_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`, strings.TrimSpace(runID), afterSequence, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list run events: %w", err)
 	}
@@ -96,7 +96,7 @@ func (s *projectStore) ListProjectRunEventsPage(ctx context.Context, runID strin
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at FROM project_run_event WHERE run_id = ? ORDER BY seq ASC LIMIT ? OFFSET ?`, strings.TrimSpace(runID), limit, max(offset, 0))
+	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at, log_seq FROM project_run_event WHERE run_id = ? ORDER BY seq ASC LIMIT ? OFFSET ?`, strings.TrimSpace(runID), limit, max(offset, 0))
 	if err != nil {
 		return nil, fmt.Errorf("list run event page: %w", err)
 	}
@@ -164,7 +164,7 @@ func (s *projectStore) ListProjectRunEventsForSandbox(ctx context.Context, sandb
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.run_id, e.seq, e.kind, e.text, e.agent, e.name, e.payload_json, e.success, e.exit_code, e.stop_reason, e.created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.run_id, e.seq, e.kind, e.text, e.agent, e.name, e.payload_json, e.success, e.exit_code, e.stop_reason, e.created_at, e.log_seq
 		FROM project_run_event e JOIN project_run r ON r.run_id = e.run_id
 		WHERE r.sandbox_id = ? AND (e.created_at > ? OR (e.created_at = ? AND (e.run_id > ? OR (e.run_id = ? AND e.seq > ?))))
 		ORDER BY e.created_at ASC, e.run_id ASC, e.seq ASC LIMIT ?`, strings.TrimSpace(sandboxID), afterCreatedAt.UTC().UnixMilli(), afterCreatedAt.UTC().UnixMilli(), afterRunID, afterRunID, afterSequence, limit)
@@ -190,7 +190,7 @@ func (s *projectStore) ListProjectRunEventsForSandboxPage(ctx context.Context, s
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.run_id, e.seq, e.kind, e.text, e.agent, e.name, e.payload_json, e.success, e.exit_code, e.stop_reason, e.created_at
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.run_id, e.seq, e.kind, e.text, e.agent, e.name, e.payload_json, e.success, e.exit_code, e.stop_reason, e.created_at, e.log_seq
 		FROM project_run_event e JOIN project_run r ON r.run_id = e.run_id
 		WHERE r.sandbox_id = ? ORDER BY e.created_at ASC, e.run_id ASC, e.seq ASC LIMIT ? OFFSET ?`, strings.TrimSpace(sandboxID), limit, max(offset, 0))
 	if err != nil {
@@ -217,7 +217,7 @@ func scanRunEvent(scan runEventScanner) (domain.ProjectRunEventRecord, error) {
 	var event domain.ProjectRunEventRecord
 	var success int
 	var createdAt int64
-	if err := scan(&event.ID, &event.RunID, &event.Sequence, &event.Kind, &event.Text, &event.Agent, &event.Name, &event.PayloadJSON, &success, &event.ExitCode, &event.StopReason, &createdAt); err != nil {
+	if err := scan(&event.ID, &event.RunID, &event.Sequence, &event.Kind, &event.Text, &event.Agent, &event.Name, &event.PayloadJSON, &success, &event.ExitCode, &event.StopReason, &createdAt, &event.LogSeq); err != nil {
 		return event, fmt.Errorf("scan run event: %w", err)
 	}
 	event.Success = success != 0
@@ -226,7 +226,7 @@ func scanRunEvent(scan runEventScanner) (domain.ProjectRunEventRecord, error) {
 }
 
 func getRunEventByID(ctx context.Context, tx *sql.Tx, eventID string) (domain.ProjectRunEventRecord, bool, error) {
-	event, err := scanRunEvent(tx.QueryRowContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at FROM project_run_event WHERE id = ?`, eventID).Scan)
+	event, err := scanRunEvent(tx.QueryRowContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at, log_seq FROM project_run_event WHERE id = ?`, eventID).Scan)
 	if err == nil {
 		return event, true, nil
 	}

@@ -395,6 +395,10 @@ func NormalizeStdioStream(stream StdioStream) StdioStream {
 type ExecChunk struct {
 	Text   string
 	Stream StdioStream
+	// Transcript marks text the daemon rebuilt from the guest's agent
+	// events. It is already in the run log as structured entries, so a run
+	// log must not record it again as output.
+	Transcript bool
 }
 
 type SandboxEvent struct {

@@ -264,13 +264,15 @@ func (c *Controller) receiveCommandInteractionFrames(in commandInteractionReceiv
 			stream := driverOutputStreamToRun(frame.Type)
 			chunk := domain.ExecChunk{Text: string(frame.Data), Stream: stream}
 			accumulator.WriteChunk(chunk)
-			offset, err := appendProjectRunLogChunk(logsPath, chunk)
-			if err != nil {
+			logChunk := chunk
+			if start.TTY {
+				logChunk.Stream = domain.StdioStream("tty")
+			}
+			if err := appendRunOutput(c.runLogs, run, logsPath, logChunk); err != nil {
 				transition.ExitCode = 1
 				transition.Error = fmt.Sprintf("command execution failed: %v", err)
 				return transition, err
 			}
-			c.publishRunLogChunk(run.RunID, chunk, offset)
 			if err := send(runAttachOutputResponse(frame.Data, stream, start.TTY)); err != nil {
 				transition.ExitCode = 1
 				transition.Error = fmt.Sprintf("command execution failed: %v", err)

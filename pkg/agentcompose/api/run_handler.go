@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/apierror"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 	"github.com/chaitin/agent-compose/proto/agentcompose/v2/agentcomposev2connect"
@@ -451,29 +453,52 @@ func initialRunLogOffset(path string, tailLines int, startOffset uint64, tailSet
 
 const runLogFileChunkBytes = 64 * 1024
 
-func readRunLogChunkFromOffset(path string, offset uint64) (string, uint64, bool, error) {
+// runLogText is the text view of a run's log: a legacy transcript file read
+// as-is, or a run log rendered to text. Offsets into either are byte offsets
+// into that text, which is what FollowRunLogs promises its clients.
+type runLogText struct {
+	io.ReaderAt
+	size  int64
+	close func() error
+}
+
+func openRunLogText(path string) (*runLogText, error) {
+	if filepath.Base(path) == runlog.FileName {
+		entries, err := runlog.ReadEntries(path, 0)
+		if err != nil {
+			return nil, err
+		}
+		text := runlog.RenderText(entries)
+		return &runLogText{ReaderAt: strings.NewReader(text), size: int64(len(text)), close: func() error { return nil }}, nil
+	}
 	file, err := os.Open(path)
 	if err != nil {
-		return "", offset, false, err
+		return nil, err
 	}
-	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return &runLogText{ReaderAt: file, size: info.Size(), close: file.Close}, nil
+}
+
+func readRunLogChunkFromOffset(path string, offset uint64) (string, uint64, bool, error) {
+	text, err := openRunLogText(path)
 	if err != nil {
 		return "", offset, false, err
 	}
-	if offset > uint64(info.Size()) {
+	defer func() { _ = text.close() }()
+	if offset > uint64(text.size) {
 		offset = 0
 	}
-	if _, err := file.Seek(int64(offset), io.SeekStart); err != nil {
-		return "", offset, false, err
-	}
 	data := make([]byte, runLogFileChunkBytes)
-	n, err := io.ReadFull(file, data)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+	n, err := text.ReadAt(data, int64(offset))
+	if err != nil && !errors.Is(err, io.EOF) {
 		return "", offset, false, err
 	}
 	nextOffset := offset + uint64(n)
-	atSnapshotEnd := nextOffset >= uint64(info.Size())
+	atSnapshotEnd := nextOffset >= uint64(text.size)
 	if !utf8.Valid(data[:n]) {
 		prefixLength, incomplete := incompleteUTF8SuffixStart(data[:n])
 		if !incomplete {
@@ -485,7 +510,7 @@ func readRunLogChunkFromOffset(path string, offset uint64) (string, uint64, bool
 			return string(data[:n]), nextOffset, true, nil
 		}
 	}
-	return string(data[:n]), nextOffset, nextOffset >= uint64(info.Size()), nil
+	return string(data[:n]), nextOffset, nextOffset >= uint64(text.size), nil
 }
 
 func incompleteUTF8SuffixStart(data []byte) (int, bool) {
@@ -503,19 +528,15 @@ func incompleteUTF8SuffixStart(data []byte) (int, bool) {
 }
 
 func tailRunLogOffset(path string, lines int) (uint64, error) {
-	file, err := os.Open(path)
+	file, err := openRunLogText(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, nil
 		}
 		return 0, err
 	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil {
-		return 0, err
-	}
-	size := info.Size()
+	defer func() { _ = file.close() }()
+	size := file.size
 	if lines <= 0 || size == 0 {
 		return uint64(size), nil
 	}
