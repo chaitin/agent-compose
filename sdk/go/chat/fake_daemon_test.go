@@ -39,6 +39,11 @@ type fakeDaemon struct {
 	listProjects  func(*agentcomposev2.ListProjectsRequest) (*agentcomposev2.ListProjectsResponse, error)
 	getProject    func(*agentcomposev2.GetProjectRequest) (*agentcomposev2.GetProjectResponse, error)
 	attach        func(*fakeStream)
+	inputLimits   *agentcomposev2.EngineInputLimits
+	upload        func(info *agentcomposev2.RunInputUploadInfo, data []byte) (*agentcomposev2.UploadRunInputResponse, error)
+	// uploadExisting answers as soon as the info frame arrives, without
+	// reading chunks, the way the daemon does for content it already has.
+	uploadExisting func(info *agentcomposev2.RunInputUploadInfo) (*agentcomposev2.UploadRunInputResponse, error)
 
 	// hold keeps handlers that emulate a detached session parked until the
 	// test ends.
@@ -53,6 +58,7 @@ func newFakeDaemon(t *testing.T) *fakeDaemon {
 	daemon := &fakeDaemon{t: t, hold: make(chan struct{})}
 	mux := http.NewServeMux()
 	mux.Handle(agentcomposev2connect.NewRunServiceHandler(daemon))
+	mux.Handle(agentcomposev2connect.NewEngineServiceHandler(&fakeEngine{daemon: daemon}))
 	mux.Handle(agentcomposev2connect.NewProjectServiceHandler(&fakeProjects{daemon: daemon}))
 	daemon.server = httptest.NewServer(h2c.NewHandler(mux, &http2.Server{}))
 	t.Cleanup(daemon.server.Close)
@@ -254,6 +260,51 @@ func (p *fakeProjects) GetProject(_ context.Context, request *connect.Request[ag
 		return nil, unconfigured("GetProject")
 	}
 	response, err := p.daemon.getProject(request.Msg)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(response), nil
+}
+
+type fakeEngine struct {
+	agentcomposev2connect.UnimplementedEngineServiceHandler
+	daemon *fakeDaemon
+}
+
+func (e *fakeEngine) GetCapabilities(context.Context, *connect.Request[agentcomposev2.GetEngineCapabilitiesRequest]) (*connect.Response[agentcomposev2.GetEngineCapabilitiesResponse], error) {
+	e.daemon.record("GetCapabilities")
+	return connect.NewResponse(&agentcomposev2.GetEngineCapabilitiesResponse{InputLimits: e.daemon.inputLimits}), nil
+}
+
+func (d *fakeDaemon) UploadRunInput(_ context.Context, stream *connect.ClientStream[agentcomposev2.UploadRunInputRequest]) (*connect.Response[agentcomposev2.UploadRunInputResponse], error) {
+	d.record("UploadRunInput")
+	if d.uploadExisting != nil {
+		if !stream.Receive() {
+			return nil, stream.Err()
+		}
+		response, err := d.uploadExisting(stream.Msg().GetInfo())
+		if err != nil {
+			return nil, err
+		}
+		return connect.NewResponse(response), nil
+	}
+	if d.upload == nil {
+		return nil, unconfigured("UploadRunInput")
+	}
+	var info *agentcomposev2.RunInputUploadInfo
+	var data []byte
+	for stream.Receive() {
+		switch frame := stream.Msg().GetFrame().(type) {
+		case *agentcomposev2.UploadRunInputRequest_Info:
+			info = frame.Info
+		case *agentcomposev2.UploadRunInputRequest_Chunk:
+			data = append(data, frame.Chunk...)
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+	response, err := d.upload(info, data)
 	if err != nil {
 		return nil, err
 	}
