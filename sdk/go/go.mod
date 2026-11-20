@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	connectrpc.com/connect v1.19.2
-	github.com/chaitin/agent-compose/proto v0.1.22-0.20261119023413-666d0d20dfae
+	github.com/chaitin/agent-compose/proto v0.1.22
 	golang.org/x/net v0.38.0
 	google.golang.org/protobuf v1.36.12
 )

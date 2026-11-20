@@ -1,7 +1,7 @@
 connectrpc.com/connect v1.19.2 h1:McQ83FGdzL+t60peksi0gXC7MQ/iLKgLduAnThbM0mo=
 connectrpc.com/connect v1.19.2/go.mod h1:tN20fjdGlewnSFeZxLKb0xwIZ6ozc3OQs2hTXy4du9w=
-github.com/chaitin/agent-compose/proto v0.1.22-0.20261119023413-666d0d20dfae h1:tAmcx0mHKbSCSpliXu7S6dll6JyfTQrzO12oTGcjGBg=
-github.com/chaitin/agent-compose/proto v0.1.22-0.20261119023413-666d0d20dfae/go.mod h1:ctLhXiWw/iKsBeanJ6J0bllf+WCFFpY5rrcN7tm6bgU=
+github.com/chaitin/agent-compose/proto v0.1.22 h1:ydN27FTkJWchSSam0i7CkqyBHAYkEoXBf1+ymc+TkpY=
+github.com/chaitin/agent-compose/proto v0.1.22/go.mod h1:ctLhXiWw/iKsBeanJ6J0bllf+WCFFpY5rrcN7tm6bgU=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
 golang.org/x/net v0.38.0 h1:vRMAPTMaeGqVhG5QyLJHqNDwecKTomGeqbnfZyKlBI8=
