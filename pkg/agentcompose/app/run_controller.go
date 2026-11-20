@@ -18,6 +18,7 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/dashboard"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runinputs"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -59,7 +60,17 @@ func NewRunController(di do.Injector) (*runs.Controller, error) {
 		Removal:         do.MustInvoke[*sandboxes.RemovalCoordinator](di),
 		Completion:      do.MustInvoke[*runs.CompletionManager](di),
 		Recorder:        do.MustInvoke[*telemetry.Recorder](di),
+		Uploads:         runUploadResolver(do.MustInvoke[runInputStore](di).Store),
 	}), nil
+}
+
+// runUploadResolver keeps a nil store a nil interface, so admission reports
+// the upload source as unavailable instead of calling a nil store.
+func runUploadResolver(store *runinputs.Store) runs.UploadResolver {
+	if store == nil {
+		return nil
+	}
+	return store
 }
 
 type runCompletionStopper struct {

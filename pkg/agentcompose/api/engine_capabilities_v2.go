@@ -7,7 +7,6 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/chaitin/agent-compose/pkg/agentinput"
 	"github.com/chaitin/agent-compose/pkg/capmatrix"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
@@ -82,21 +81,16 @@ func engineProviderCapabilitiesV2(declaration capmatrix.ProviderCapabilities) *a
 }
 
 func engineInputLimitsV2(config *appconfig.Config) *agentcomposev2.EngineInputLimits {
-	limits := agentinput.DefaultLimits()
-	if config != nil {
-		if config.AgentInputFileLimitBytes > 0 {
-			limits.MaxFileBytes = uint64(config.AgentInputFileLimitBytes)
-		}
-		if config.AgentInputTurnLimitBytes > 0 {
-			limits.MaxTurnBytes = uint64(config.AgentInputTurnLimitBytes)
-		}
-		if config.AgentInputFileLimit > 0 {
-			limits.MaxFiles = uint32(config.AgentInputFileLimit)
-		}
+	limits := config.AgentInputLimits()
+	out := &agentcomposev2.EngineInputLimits{
+		MaxFileBytes:       limits.MaxFileBytes,
+		MaxTurnBytes:       limits.MaxTurnBytes,
+		MaxFiles:           limits.MaxFiles,
+		MaxUploadFileBytes: limits.MaxUploadFileBytes,
+		MaxUploadTurnBytes: limits.MaxUploadTurnBytes,
 	}
-	return &agentcomposev2.EngineInputLimits{
-		MaxFileBytes: limits.MaxFileBytes,
-		MaxTurnBytes: limits.MaxTurnBytes,
-		MaxFiles:     limits.MaxFiles,
+	if limits.MaxUploadFileBytes > 0 {
+		out.MaxUploadChunkBytes = MaxRunInputUploadChunkBytes
 	}
+	return out
 }

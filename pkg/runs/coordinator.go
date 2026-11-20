@@ -84,13 +84,18 @@ func (c *Coordinator) SetNow(now func() time.Time) {
 	c.now = now
 }
 
-func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.ProjectRunRecord, error) {
-	if c == nil || c.store == nil {
-		return domain.ProjectRunRecord{}, fmt.Errorf("config store is required")
-	}
-	if c.stableRunID == nil {
-		return domain.ProjectRunRecord{}, fmt.Errorf("stable run id function is required")
-	}
+// runIdentity is the part of a start request the stable run ID depends on.
+// BeginRun and ExistingRun resolve it through one path, so an idempotent retry
+// looks up exactly the run the first attempt created.
+type runIdentity struct {
+	project      domain.ProjectRecord
+	projectAgent domain.ProjectAgentRecord
+	runID        string
+}
+
+// normalizeStartRequest trims the fields both run-start paths share and
+// normalizes the source the stable run ID uses.
+func normalizeStartRequest(req StartRequest) StartRequest {
 	req.ProjectID = strings.TrimSpace(req.ProjectID)
 	req.AgentName = strings.TrimSpace(req.AgentName)
 	req.Source = NormalizeSource(req.Source)
@@ -99,20 +104,47 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 	req.TriggerID = strings.TrimSpace(req.TriggerID)
 	req.Driver = strings.TrimSpace(req.Driver)
 	req.ClientRequestID = strings.TrimSpace(req.ClientRequestID)
+	return req
+}
+
+// resolveIdentity resolves the project, agent, and stable run ID. Callers
+// normalize the request first and only call it with a project, agent, and
+// idempotency key present.
+func (c *Coordinator) resolveIdentity(ctx context.Context, req StartRequest) (runIdentity, error) {
+	project, err := c.store.GetProject(ctx, req.ProjectID)
+	if err != nil {
+		return runIdentity{}, fmt.Errorf("resolve project %s: %w", req.ProjectID, err)
+	}
+	projectAgent, err := c.store.GetProjectAgent(ctx, project.ID, req.AgentName)
+	if err != nil {
+		return runIdentity{}, fmt.Errorf("resolve project agent %s/%s: %w", project.ID, req.AgentName, err)
+	}
+	runID, err := c.stableRunID(project.ID, projectAgent.AgentName, req.Source, req.ClientRequestID)
+	if err != nil {
+		return runIdentity{}, err
+	}
+	return runIdentity{project: project, projectAgent: projectAgent, runID: runID}, nil
+}
+
+func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.ProjectRunRecord, error) {
+	if c == nil || c.store == nil {
+		return domain.ProjectRunRecord{}, fmt.Errorf("config store is required")
+	}
+	if c.stableRunID == nil {
+		return domain.ProjectRunRecord{}, fmt.Errorf("stable run id function is required")
+	}
+	req = normalizeStartRequest(req)
 	if req.ProjectID == "" || req.AgentName == "" {
 		return domain.ProjectRunRecord{}, fmt.Errorf("project id and agent name are required")
 	}
 	if req.ClientRequestID == "" {
 		req.ClientRequestID = uuid.NewString()
 	}
-	project, err := c.store.GetProject(ctx, req.ProjectID)
+	identity, err := c.resolveIdentity(ctx, req)
 	if err != nil {
-		return domain.ProjectRunRecord{}, fmt.Errorf("resolve project %s: %w", req.ProjectID, err)
+		return domain.ProjectRunRecord{}, err
 	}
-	projectAgent, err := c.store.GetProjectAgent(ctx, project.ID, req.AgentName)
-	if err != nil {
-		return domain.ProjectRunRecord{}, fmt.Errorf("resolve project agent %s/%s: %w", project.ID, req.AgentName, err)
-	}
+	project, projectAgent, runID := identity.project, identity.projectAgent, identity.runID
 	revision, err := c.store.GetProjectRevision(ctx, project.ID, project.CurrentRevision)
 	if err != nil {
 		return domain.ProjectRunRecord{}, fmt.Errorf("resolve project revision %s/%d: %w", project.ID, project.CurrentRevision, err)
@@ -130,10 +162,6 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 		if err != nil {
 			return domain.ProjectRunRecord{}, err
 		}
-	}
-	runID, err := c.stableRunID(project.ID, projectAgent.AgentName, req.Source, req.ClientRequestID)
-	if err != nil {
-		return domain.ProjectRunRecord{}, err
 	}
 	run := domain.ProjectRunRecord{
 		RunID:           runID,
@@ -165,6 +193,36 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 	return created, nil
 }
 
+// ExistingRun returns the run a request's idempotency key already created. It
+// resolves only what the run ID depends on, so a retry can be recognized
+// without resolving the request input again.
+func (c *Coordinator) ExistingRun(ctx context.Context, req StartRequest) (domain.ProjectRunRecord, bool, error) {
+	if c == nil || c.store == nil {
+		return domain.ProjectRunRecord{}, false, fmt.Errorf("config store is required")
+	}
+	if c.stableRunID == nil {
+		return domain.ProjectRunRecord{}, false, fmt.Errorf("stable run id function is required")
+	}
+	req = normalizeStartRequest(req)
+	if req.ProjectID == "" || req.AgentName == "" || req.ClientRequestID == "" {
+		return domain.ProjectRunRecord{}, false, nil
+	}
+	identity, err := c.resolveIdentity(ctx, req)
+	if err != nil {
+		return domain.ProjectRunRecord{}, false, err
+	}
+	run, err := c.store.GetProjectRun(ctx, identity.runID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
+			return domain.ProjectRunRecord{}, false, nil
+		}
+		return domain.ProjectRunRecord{}, false, err
+	}
+	return run, true, nil
+}
+
+// BindSandbox attaches a sandbox to a run and records whether this request
+// created it.
 func (c *Coordinator) BindSandbox(ctx context.Context, runID, sandboxID string, created bool) (domain.ProjectRunRecord, error) {
 	current, err := c.store.GetProjectRun(ctx, strings.TrimSpace(runID))
 	if err != nil {

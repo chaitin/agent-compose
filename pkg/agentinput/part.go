@@ -27,6 +27,10 @@ const (
 	// SourceWorkspacePath references a file already inside the sandbox
 	// workspace and copies nothing.
 	SourceWorkspacePath
+	// SourceUpload references a file staged by UploadRunInput. Admission
+	// resolves it to the staged content, and execution copies that content
+	// into the workspace.
+	SourceUpload
 )
 
 // Part is one ordered piece of a human turn. Exactly one of Text and File is
@@ -51,6 +55,13 @@ type File struct {
 	WorkspacePath string
 	// SHA256 optionally pins the content digest as lowercase hex.
 	SHA256 string
+	// UploadID holds the staged upload when Source is SourceUpload.
+	UploadID string
+	// UploadPath and UploadSize are set by admission once UploadID resolved
+	// to a live staged object. Validate rejects an unresolved upload, so
+	// execution never receives a reference it has to look up again.
+	UploadPath string
+	UploadSize int64
 }
 
 // TextPart returns a text part.

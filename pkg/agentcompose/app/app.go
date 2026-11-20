@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,6 +32,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/resources"
 	"github.com/chaitin/agent-compose/pkg/runhistory"
+	"github.com/chaitin/agent-compose/pkg/runinputs"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -93,6 +95,7 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewSchedulerSandboxRunner)
 	do.Provide(di, NewSandboxRPCBridge)
 	do.Provide(di, NewSchedulerController)
+	do.Provide(di, NewRunInputStore)
 	do.Provide(di, NewRunController)
 	do.Provide(di, NewSandboxRunTargetResolver)
 	do.Provide(di, NewSandboxRemovalCoordinator)
@@ -137,8 +140,23 @@ func RegisterRoutes(di do.Injector) {
 		supervisor: do.MustInvoke[*RunSupervisor](di),
 	}
 	runHandler := api.NewRunHandlerWithRunLogHub(runDelegate, do.MustInvoke[*configstore.ConfigStore](di), do.MustInvoke[*runs.RunLogHub](di), do.MustInvoke[*RunSupervisor](di))
+	if uploads := do.MustInvoke[runInputStore](di).Store; uploads != nil {
+		runHandler.WithRunInputUploads(uploads)
+	}
 	path, handler = agentcomposev2connect.NewRunServiceHandler(runHandler, handlerOptions...)
-	app.Any(path+"*", echo.WrapHandler(handler))
+	// UploadRunInput decodes each frame before the handler can enforce its
+	// 256 KiB chunk limit. Serve that one procedure from a handler instance
+	// with a per-message read limit; Connect otherwise allows any message size.
+	routeHandlers := handler
+	_, uploadHandler := agentcomposev2connect.NewRunServiceHandler(runHandler, api.UploadRunInputHandlerOptions(handlerOptions...)...)
+	runServiceHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == agentcomposev2connect.RunServiceUploadRunInputProcedure {
+			uploadHandler.ServeHTTP(w, r)
+			return
+		}
+		routeHandlers.ServeHTTP(w, r)
+	})
+	app.Any(path+"*", echo.WrapHandler(runServiceHandler))
 	execHandler := api.NewExecHandler(api.ExecHandlerDeps{
 		Config:   do.MustInvoke[*appconfig.Config](di),
 		Store:    do.MustInvoke[*sandboxstore.Store](di),
@@ -262,20 +280,22 @@ func NewCleanupRunner(di do.Injector) (*cleanup.Runner, error) {
 		slog.Warn("failed to recover transient workspace snapshots", "error", err)
 	}
 
-	return &cleanup.Runner{
-		Interval: config.CleanupInterval,
-		Policies: []cleanup.Policy{
-			{TTL: time.Nanosecond, Cleaner: snapshots},
-			{TTL: config.WorkspaceCleanupTTL, Cleaner: &sandboxes.WorkspaceCleaner{
-				Store: store, Locks: do.MustInvoke[*sandboxes.LifecycleLocks](di),
-			}},
-			{TTL: config.SandboxRetentionTTL, Cleaner: &sandboxes.SandboxRetentionCleaner{
-				Store: store, Locks: do.MustInvoke[*sandboxes.LifecycleLocks](di), ArchiveRoot: config.SandboxArchiveRoot,
-				Removal: do.MustInvoke[*sandboxes.RemovalCoordinator](di), SandboxRoot: config.SandboxRoot,
-			}},
-			{TTL: config.ImageCacheCleanupTTL, Cleaner: &adapters.ImageCacheCleaner{Cache: imageCache, Sandboxes: store, SandboxRoot: config.SandboxRoot}},
-		},
-	}, nil
+	policies := []cleanup.Policy{
+		{TTL: time.Nanosecond, Cleaner: snapshots},
+		{TTL: config.WorkspaceCleanupTTL, Cleaner: &sandboxes.WorkspaceCleaner{
+			Store: store, Locks: do.MustInvoke[*sandboxes.LifecycleLocks](di),
+		}},
+		{TTL: config.SandboxRetentionTTL, Cleaner: &sandboxes.SandboxRetentionCleaner{
+			Store: store, Locks: do.MustInvoke[*sandboxes.LifecycleLocks](di), ArchiveRoot: config.SandboxArchiveRoot,
+			Removal: do.MustInvoke[*sandboxes.RemovalCoordinator](di), SandboxRoot: config.SandboxRoot,
+		}},
+		{TTL: config.ImageCacheCleanupTTL, Cleaner: &adapters.ImageCacheCleaner{Cache: imageCache, Sandboxes: store, SandboxRoot: config.SandboxRoot}},
+	}
+	if uploads := do.MustInvoke[runInputStore](di).Store; uploads != nil {
+		// The store applies its own TTL; the policy TTL only enables it.
+		policies = append(policies, cleanup.Policy{TTL: time.Nanosecond, Cleaner: runinputs.Cleaner{Store: uploads}})
+	}
+	return &cleanup.Runner{Interval: config.CleanupInterval, Policies: policies}, nil
 }
 
 func StartBackground(di do.Injector) error {

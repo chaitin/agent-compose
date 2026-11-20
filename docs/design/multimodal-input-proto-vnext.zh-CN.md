@@ -50,9 +50,9 @@ message AgentInputFile {
   oneof source {
     AgentInputFileBytes bytes = 3;
     AgentInputFileWorkspacePath workspace_path = 4;
+    // Added after this baseline by the two-step upload change.
+    AgentInputFileUpload upload = 5;
   }
-  // Field 5 is reserved for a future upload-reference source.
-  reserved 5;
 }
 
 message AgentInputFileBytes {
@@ -102,7 +102,7 @@ message GetEngineCapabilitiesResponse {
 
 `EngineProviderCapabilities` 不新增任何字段：文件输入与 provider 无关。
 
-`AgentInputFile` 的字段 5 已 `reserved`，预留给后续“先上传后引用”的来源（例如流式上传返回的 `upload_id`）。本次不实现，发版后补充该来源时不需要改动现有字段布局。
+`AgentInputFile` 的字段 5 在本文档描述的 #852 基线中是 `reserved`；后续的“先上传后引用”变更已把它实现为 `AgentInputFileUpload upload = 5`（配合 `UploadRunInput`），不需要改动现有字段布局。
 
 ## 3. 语义
 

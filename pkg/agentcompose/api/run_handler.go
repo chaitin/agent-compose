@@ -63,6 +63,7 @@ type RunHandler struct {
 	stopper  ActiveRunStopper
 	store    RunStore
 	runLogs  *runs.RunLogHub
+	uploads  RunInputUploadStore
 }
 
 func NewRunHandler(delegate RunAgentDelegate, store RunStore, stoppers ...ActiveRunStopper) *RunHandler {

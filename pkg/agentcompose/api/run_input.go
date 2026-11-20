@@ -48,6 +48,9 @@ func agentInputFileFromProto(file *agentcomposev2.AgentInputFile) agentinput.Fil
 		out.Source = agentinput.SourceWorkspacePath
 		out.WorkspacePath = source.WorkspacePath.GetPath()
 		out.SHA256 = source.WorkspacePath.GetSha256()
+	case *agentcomposev2.AgentInputFile_Upload:
+		out.Source = agentinput.SourceUpload
+		out.UploadID = source.Upload.GetUploadId()
 	}
 	return out
 }

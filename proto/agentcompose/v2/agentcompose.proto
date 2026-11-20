@@ -80,6 +80,15 @@ service RunService {
   rpc AbandonRunCompletion(AbandonRunCompletionRequest) returns (AbandonRunCompletionResponse);
   rpc ListRunEvents(ListRunEventsRequest) returns (ListRunEventsResponse);
   rpc ListSandboxRunEvents(ListSandboxRunEventsRequest) returns (ListSandboxRunEventsResponse);
+  // Stages one file for a later AgentInputFile.upload reference in the same
+  // project. The first frame must be info and may appear exactly once; chunk
+  // frames follow in order. A response means the bytes were verified and stored.
+  // Any error leaves nothing referenceable, so the call is safe to retry. The
+  // same content in the same project is stored once: when it already exists the
+  // server responds immediately with deduplicated set and the client may stop
+  // sending chunks. A staged file expires unless a run references it; a run that
+  // references an expired upload is rejected before it is created.
+  rpc UploadRunInput(stream UploadRunInputRequest) returns (UploadRunInputResponse);
 }
 
 service ExecService {
@@ -2897,12 +2906,19 @@ message AgentInputFile {
 
     // A file that already exists inside the sandbox workspace.
     AgentInputFileWorkspacePath workspace_path = 4;
-  }
 
-  // Field 5 is reserved for a future upload-reference source (for example an
-  // upload_id returned by a streaming upload RPC). Reserving it now keeps the
-  // layout stable when that source is implemented.
-  reserved 5;
+    // A file staged by UploadRunInput in the same project. The daemon copies it
+    // into the sandbox workspace before the turn starts, so the agent never
+    // sees or changes the staged object. Limits come from the upload_* fields
+    // of EngineInputLimits instead of the inline limits.
+    AgentInputFileUpload upload = 5;
+  }
+}
+
+message AgentInputFileUpload {
+  // Required. The upload_id returned by UploadRunInput. An unknown, expired,
+  // or other-project upload is rejected with NOT_FOUND before the run starts.
+  string upload_id = 1;
 }
 
 message AgentInputFileBytes {
@@ -2927,6 +2943,40 @@ message AgentInputFileWorkspacePath {
   string sha256 = 2;
 }
 
+message UploadRunInputRequest {
+  oneof frame {
+    // Must be the first frame and appear exactly once.
+    RunInputUploadInfo info = 1;
+    // Content bytes in order, at most EngineInputLimits.max_upload_chunk_bytes
+    // each. Bytes beyond info.size_bytes are rejected.
+    bytes chunk = 2;
+  }
+}
+
+message RunInputUploadInfo {
+  // Required. The project that may reference the upload.
+  string project_id = 1;
+  // Required. Exact content size, greater than zero.
+  uint64 size_bytes = 2;
+  // Required. Lowercase hex SHA-256 of the content. A mismatch is rejected
+  // with INVALID_ARGUMENT and nothing is stored.
+  string sha256 = 3;
+  // Field 4 is reserved for a resumable-upload offset.
+  reserved 4;
+}
+
+message UploadRunInputResponse {
+  // Opaque identifier for AgentInputFileUpload.upload_id. It is not derived
+  // from the content digest.
+  string upload_id = 1;
+  // When the upload stops being referenceable unless a run references it
+  // first. Referencing an upload from a run extends it.
+  google.protobuf.Timestamp expires_at = 2;
+  // True when the same content already existed in this project and no new
+  // bytes were stored.
+  bool deduplicated = 3;
+}
+
 // EngineInputLimits are daemon-wide admission limits. They come from
 // AGENT_INPUT_* configuration and are reported so a client can validate
 // before sending a request that would be rejected.
@@ -2938,6 +2988,14 @@ message EngineInputLimits {
   // Maximum number of files in one turn. Text parts are not counted, so a
   // prompt or interleaved text does not consume the file budget.
   uint32 max_files = 3;
+  // Maximum bytes for one UploadRunInput object. Zero means UploadRunInput and
+  // the upload source are unavailable on this daemon.
+  uint64 max_upload_file_bytes = 4;
+  // Maximum total bytes of upload-sourced files in one turn. Counted separately
+  // from max_turn_bytes, which covers inline and workspace files.
+  uint64 max_upload_turn_bytes = 5;
+  // Maximum bytes in one UploadRunInputRequest.chunk frame.
+  uint32 max_upload_chunk_bytes = 6;
 }
 
 enum RunHistoryKind {

@@ -128,6 +128,7 @@ type Controller struct {
 	interactiveSessions *InteractiveSessionManager
 	recorder            *telemetry.Recorder
 	detachCache         *detachCapabilityCache
+	uploads             UploadResolver
 }
 
 type llmFacadeTokenDeleter interface {
@@ -161,6 +162,8 @@ type ControllerDependencies struct {
 	InteractiveSessions *InteractiveSessionManager
 	// Recorder is optional: a nil recorder keeps daemon telemetry disabled.
 	Recorder *telemetry.Recorder
+	// Uploads is optional: nil makes the upload input source unavailable.
+	Uploads UploadResolver
 }
 
 type SandboxRemoval interface {
@@ -195,6 +198,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		interactiveSessions: interactiveSessions,
 		recorder:            deps.Recorder,
 		detachCache:         &detachCapabilityCache{},
+		uploads:             deps.Uploads,
 	}
 }
 
@@ -267,17 +271,8 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		}
 	}
 	warnings := resolved.Warnings
-	input, inputWarnings, err := c.admitAgentInput(req)
-	if err != nil {
-		return StartedProjectRun{}, err
-	}
-	if len(input) > 0 {
-		req.Input = input
-		req.Prompt = agentinput.Text(input)
-	}
-	warnings = append(warnings, inputWarnings...)
 	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
-	run, err := coordinator.BeginRun(ctx, StartRequest{
+	startRequest := StartRequest{
 		ProjectID:       req.ProjectID,
 		AgentName:       req.AgentName,
 		Source:          req.Source,
@@ -289,11 +284,45 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		CleanupPolicy:   CleanupPolicyFromProto(req.CleanupPolicy),
 		ClientRequestID: req.ClientRequestID,
 		Labels:          req.Labels,
-	})
+	}
+	// Idempotency comes before admission: a retry must return the run the first
+	// attempt created even when its input (a staged upload, for example) can no
+	// longer be resolved. A PENDING run still needs its input admitted before it
+	// can execute.
+	existingRun, existingFound, err := coordinator.ExistingRun(ctx, startRequest)
+	if err != nil {
+		// The daemon cannot tell whether this idempotency key already created a
+		// run, so returning a retryable failure would hide it.
+		return StartedProjectRun{}, err
+	}
+	if existingFound && existingRun.Status != domain.ProjectRunStatusPending {
+		run := withRunWarnings(existingRun, warnings)
+		return c.startedProjectRun(coordinator, run, req, warnings, requestMetadata), nil
+	}
+	input, inputWarnings, err := c.admitAgentInput(ctx, req)
+	if err != nil {
+		// A PENDING run cannot execute without its input, so returning it would
+		// hand the client a run that is bound to fail. NOT_APPLIED lets it
+		// upload again and retry with the same idempotency key.
+		return StartedProjectRun{}, err
+	}
+	if len(input) > 0 {
+		req.Input = input
+		req.Prompt = agentinput.Text(input)
+	}
+	warnings = append(warnings, inputWarnings...)
+	startRequest.Prompt = req.Prompt
+	run, err := coordinator.BeginRun(ctx, startRequest)
 	if err != nil {
 		return StartedProjectRun{}, fmt.Errorf("%w: %w", ErrInvalidRequest, err)
 	}
 	run = withRunWarnings(run, warnings)
+	return c.startedProjectRun(coordinator, run, req, warnings, requestMetadata), nil
+}
+
+// startedProjectRun builds the result shared by a fresh run and an idempotent
+// retry whose input can no longer be resolved.
+func (c *Controller) startedProjectRun(coordinator *Coordinator, run domain.ProjectRunRecord, req RunAgentRequest, warnings []string, requestMetadata domain.RequestMetadata) StartedProjectRun {
 	return StartedProjectRun{
 		Run:             run,
 		Warnings:        warnings,
@@ -309,7 +338,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 				Warnings:    warnings,
 			}, stream)
 		},
-	}, nil
+	}
 }
 
 func (c *Controller) RunProjectAgent(ctx context.Context, req RunAgentRequest, stream *StreamSink) (domain.ProjectRunRecord, error, error) {

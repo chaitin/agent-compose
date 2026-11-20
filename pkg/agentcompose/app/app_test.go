@@ -23,6 +23,7 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runinputs"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -119,8 +120,11 @@ func TestNewCleanupRunnerSeparatesWorkspaceAndSandboxRetentionPolicies(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.Policies) != 4 {
-		t.Fatalf("cleanup policies = %#v, want transient snapshots, workspace, sandbox retention, and image cache", runner.Policies)
+	if len(runner.Policies) != 5 {
+		t.Fatalf("cleanup policies = %#v, want transient snapshots, workspace, sandbox retention, image cache, and run input uploads", runner.Policies)
+	}
+	if _, ok := runner.Policies[4].Cleaner.(runinputs.Cleaner); !ok {
+		t.Fatalf("run input upload cleaner = %T", runner.Policies[4].Cleaner)
 	}
 	if runner.Policies[1].TTL != 12*time.Hour {
 		t.Fatalf("workspace cleanup TTL = %s", runner.Policies[1].TTL)

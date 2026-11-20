@@ -158,6 +158,9 @@ const (
 	// RunServiceListSandboxRunEventsProcedure is the fully-qualified name of the RunService's
 	// ListSandboxRunEvents RPC.
 	RunServiceListSandboxRunEventsProcedure = "/agentcompose.v2.RunService/ListSandboxRunEvents"
+	// RunServiceUploadRunInputProcedure is the fully-qualified name of the RunService's UploadRunInput
+	// RPC.
+	RunServiceUploadRunInputProcedure = "/agentcompose.v2.RunService/UploadRunInput"
 	// ExecServiceExecProcedure is the fully-qualified name of the ExecService's Exec RPC.
 	ExecServiceExecProcedure = "/agentcompose.v2.ExecService/Exec"
 	// ExecServiceStreamExecProcedure is the fully-qualified name of the ExecService's StreamExec RPC.
@@ -1032,6 +1035,15 @@ type RunServiceClient interface {
 	AbandonRunCompletion(context.Context, *connect.Request[v2.AbandonRunCompletionRequest]) (*connect.Response[v2.AbandonRunCompletionResponse], error)
 	ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error)
 	ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error)
+	// Stages one file for a later AgentInputFile.upload reference in the same
+	// project. The first frame must be info and may appear exactly once; chunk
+	// frames follow in order. A response means the bytes were verified and stored.
+	// Any error leaves nothing referenceable, so the call is safe to retry. The
+	// same content in the same project is stored once: when it already exists the
+	// server responds immediately with deduplicated set and the client may stop
+	// sending chunks. A staged file expires unless a run references it; a run that
+	// references an expired upload is rejected before it is created.
+	UploadRunInput(context.Context) *connect.ClientStreamForClient[v2.UploadRunInputRequest, v2.UploadRunInputResponse]
 }
 
 // NewRunServiceClient constructs a client for the agentcompose.v2.RunService service. By default,
@@ -1111,6 +1123,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("ListSandboxRunEvents")),
 			connect.WithClientOptions(opts...),
 		),
+		uploadRunInput: connect.NewClient[v2.UploadRunInputRequest, v2.UploadRunInputResponse](
+			httpClient,
+			baseURL+RunServiceUploadRunInputProcedure,
+			connect.WithSchema(runServiceMethods.ByName("UploadRunInput")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -1127,6 +1145,7 @@ type runServiceClient struct {
 	abandonRunCompletion *connect.Client[v2.AbandonRunCompletionRequest, v2.AbandonRunCompletionResponse]
 	listRunEvents        *connect.Client[v2.ListRunEventsRequest, v2.ListRunEventsResponse]
 	listSandboxRunEvents *connect.Client[v2.ListSandboxRunEventsRequest, v2.ListSandboxRunEventsResponse]
+	uploadRunInput       *connect.Client[v2.UploadRunInputRequest, v2.UploadRunInputResponse]
 }
 
 // RunAgent calls agentcompose.v2.RunService.RunAgent.
@@ -1184,6 +1203,11 @@ func (c *runServiceClient) ListSandboxRunEvents(ctx context.Context, req *connec
 	return c.listSandboxRunEvents.CallUnary(ctx, req)
 }
 
+// UploadRunInput calls agentcompose.v2.RunService.UploadRunInput.
+func (c *runServiceClient) UploadRunInput(ctx context.Context) *connect.ClientStreamForClient[v2.UploadRunInputRequest, v2.UploadRunInputResponse] {
+	return c.uploadRunInput.CallClientStream(ctx)
+}
+
 // RunServiceHandler is an implementation of the agentcompose.v2.RunService service.
 type RunServiceHandler interface {
 	// Creates a persistent Agent Run and waits for it to reach a terminal state.
@@ -1220,6 +1244,15 @@ type RunServiceHandler interface {
 	AbandonRunCompletion(context.Context, *connect.Request[v2.AbandonRunCompletionRequest]) (*connect.Response[v2.AbandonRunCompletionResponse], error)
 	ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error)
 	ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error)
+	// Stages one file for a later AgentInputFile.upload reference in the same
+	// project. The first frame must be info and may appear exactly once; chunk
+	// frames follow in order. A response means the bytes were verified and stored.
+	// Any error leaves nothing referenceable, so the call is safe to retry. The
+	// same content in the same project is stored once: when it already exists the
+	// server responds immediately with deduplicated set and the client may stop
+	// sending chunks. A staged file expires unless a run references it; a run that
+	// references an expired upload is rejected before it is created.
+	UploadRunInput(context.Context, *connect.ClientStream[v2.UploadRunInputRequest]) (*connect.Response[v2.UploadRunInputResponse], error)
 }
 
 // NewRunServiceHandler builds an HTTP handler from the service implementation. It returns the path
@@ -1295,6 +1328,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("ListSandboxRunEvents")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceUploadRunInputHandler := connect.NewClientStreamHandler(
+		RunServiceUploadRunInputProcedure,
+		svc.UploadRunInput,
+		connect.WithSchema(runServiceMethods.ByName("UploadRunInput")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/agentcompose.v2.RunService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RunServiceRunAgentProcedure:
@@ -1319,6 +1358,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceListRunEventsHandler.ServeHTTP(w, r)
 		case RunServiceListSandboxRunEventsProcedure:
 			runServiceListSandboxRunEventsHandler.ServeHTTP(w, r)
+		case RunServiceUploadRunInputProcedure:
+			runServiceUploadRunInputHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1370,6 +1411,10 @@ func (UnimplementedRunServiceHandler) ListRunEvents(context.Context, *connect.Re
 
 func (UnimplementedRunServiceHandler) ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.ListSandboxRunEvents is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) UploadRunInput(context.Context, *connect.ClientStream[v2.UploadRunInputRequest]) (*connect.Response[v2.UploadRunInputResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.UploadRunInput is not implemented"))
 }
 
 // ExecServiceClient is a client for the agentcompose.v2.ExecService service.
