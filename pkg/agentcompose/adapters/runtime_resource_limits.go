@@ -72,3 +72,15 @@ func classifyResourceLimitsError(err error) error {
 	}
 	return domain.ClassifyError(domain.ErrFailedPrecondition, "declared sandbox resource limits cannot be enforced", err)
 }
+
+// classifyStorageRootError marks a driver storage root other accounts could
+// substitute as a failed precondition: the deployment must fix the directory
+// permissions, and retrying unchanged will not help. It applies to every
+// runtime operation because the driver refuses each of them, stop and remove
+// included, until the permissions are fixed.
+func classifyStorageRootError(err error) error {
+	if err == nil || !errors.Is(err, driverpkg.ErrSandboxStorageRootUnsafe) || errors.Is(err, domain.ErrFailedPrecondition) {
+		return err
+	}
+	return domain.ClassifyError(domain.ErrFailedPrecondition, "sandbox storage root is not protected from other accounts", err)
+}

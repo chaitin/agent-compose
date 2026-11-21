@@ -18,10 +18,24 @@ const sandboxHostErrorDomain = "sandbox-host.agent-compose"
 // yet and retry it.
 const sandboxHostReasonResourceLimitsUnavailable = "SANDBOX_RESOURCE_LIMITS_UNAVAILABLE"
 
+// sandboxHostReasonStorageRootUnsafe marks a FailedPrecondition that carries
+// ErrSandboxStorageRootUnsafe. Like the resource-limits reason it keeps the
+// daemon from reading a deployment misconfiguration as a guest that is not
+// ready yet.
+const sandboxHostReasonStorageRootUnsafe = "SANDBOX_STORAGE_ROOT_UNSAFE"
+
 func sandboxHostResourceLimitsStatus(err error) error {
+	return sandboxHostFailedPreconditionStatus(err, sandboxHostReasonResourceLimitsUnavailable)
+}
+
+func sandboxHostStorageRootStatus(err error) error {
+	return sandboxHostFailedPreconditionStatus(err, sandboxHostReasonStorageRootUnsafe)
+}
+
+func sandboxHostFailedPreconditionStatus(err error, reason string) error {
 	st := status.New(codes.FailedPrecondition, err.Error())
 	if detailed, detailErr := st.WithDetails(&errdetails.ErrorInfo{
-		Reason: sandboxHostReasonResourceLimitsUnavailable,
+		Reason: reason,
 		Domain: sandboxHostErrorDomain,
 	}); detailErr == nil {
 		st = detailed

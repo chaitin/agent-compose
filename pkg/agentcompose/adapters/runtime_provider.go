@@ -402,7 +402,7 @@ func (r driverRuntimeAdapter) EnsureSandbox(ctx context.Context, session *domain
 		return domain.SandboxVMInfo{}, err
 	}
 	info, err := r.runtime.EnsureSandbox(ctx, driverSandbox, execution.ToDriverVMState(vmState), execution.ToDriverProxyState(proxyState))
-	err = classifyResourceLimitsError(err)
+	err = classifyStorageRootError(classifyResourceLimitsError(err))
 	r.recorder.RecordSandboxCreate(ctx, runtimeDriverName(session, vmState.Driver), time.Since(startedAt), err)
 	endSpan(err)
 	if err != nil {
@@ -439,13 +439,14 @@ func (r driverRuntimeAdapter) StopSandbox(ctx context.Context, session *domain.S
 		r.executions.cancel(session.Summary.ID)
 	}
 	missing, err := r.runtime.StopSandbox(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState))
+	err = classifyStorageRootError(err)
 	endSpan(err)
 	return missing, err
 }
 
 func (r driverRuntimeAdapter) RemoveSandbox(ctx context.Context, session *domain.Sandbox, vmState domain.VMState) error {
 	ctx, endSpan := startRuntimeSpan(ctx, r.recorder, telemetry.SpanSandboxRemove, session, vmState.Driver)
-	err := r.runtime.RemoveSandbox(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState))
+	err := classifyStorageRootError(r.runtime.RemoveSandbox(ctx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState)))
 	endSpan(err)
 	return err
 }
@@ -461,7 +462,7 @@ func (r driverRuntimeAdapter) Exec(ctx context.Context, session *domain.Sandbox,
 	result, err := r.runtime.Exec(execCtx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), execution.ToDriverExecSpec(marked))
 	reportMeasuredLowerLayerIsolationFacts(session.Summary.ID, vmState.Driver, result.SecurityFacts)
 	endSpan(err)
-	return execution.FromDriverExecResult(result), classifyExecTerminationError(err)
+	return execution.FromDriverExecResult(result), classifyExecTerminationError(classifyStorageRootError(err))
 }
 
 func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *domain.Sandbox, vmState domain.VMState, spec domain.ExecSpec, stream domain.ExecStreamWriter) (domain.ExecResult, error) {
@@ -480,7 +481,7 @@ func (r driverRuntimeAdapter) ExecStream(ctx context.Context, session *domain.Sa
 	result, err := r.runtime.ExecStream(execCtx, execution.ToDriverSandbox(session), execution.ToDriverVMState(vmState), execution.ToDriverExecSpec(marked), driverStream)
 	reportMeasuredLowerLayerIsolationFacts(session.Summary.ID, vmState.Driver, result.SecurityFacts)
 	endSpan(err)
-	return execution.FromDriverExecResult(result), classifyExecTerminationError(err)
+	return execution.FromDriverExecResult(result), classifyExecTerminationError(classifyStorageRootError(err))
 }
 
 // TerminateProcessTree forwards a marker-based process-tree termination to the

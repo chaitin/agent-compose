@@ -815,7 +815,11 @@ func (r *microsandboxRuntime) ensureReady(ctx context.Context) error {
 	r.initMu.Lock()
 	defer r.initMu.Unlock()
 	if r.ready {
-		return nil
+		// Re-checked on every operation, not cached with readiness: the SDK
+		// re-verifies the catalog ancestors on each call, so permissions changed
+		// after startup break it the same way, and a fix takes effect without a
+		// restart.
+		return CheckMicrosandboxStorageRoot(r.config.MicrosandboxHome)
 	}
 	runtimeConfig, err := r.prepareEnvironment()
 	if err != nil {
@@ -853,6 +857,9 @@ func (r *microsandboxRuntime) ensureReady(ctx context.Context) error {
 func (r *microsandboxRuntime) prepareEnvironment() (microsandbox.RuntimeConfig, error) {
 	if err := os.MkdirAll(r.config.MicrosandboxHome, 0o755); err != nil {
 		return microsandbox.RuntimeConfig{}, fmt.Errorf("create microsandbox home: %w", err)
+	}
+	if err := CheckMicrosandboxStorageRoot(r.config.MicrosandboxHome); err != nil {
+		return microsandbox.RuntimeConfig{}, err
 	}
 	// The v0.7 SDK's native backend keeps sandbox state under fixed home
 	// subdirectories (sandboxes/, agent/) and no longer creates them itself
