@@ -305,6 +305,8 @@ docker compose --profile with-ui up -d   # 同时启动 Web UI
 
 以上命令默认使用不含 KVM 权限的基础 Compose。需要在 Linux KVM 主机显式启用 BoxLite/Microsandbox 时，把 `COMPOSE_FILE=docker-compose.yml:docker-compose.kvm.yml` 写入部署目录的 `.env`；`docker-compose.kvm.yml` 只增加 `privileged` 和 `/dev/kvm` 能力，不是本地 build override。
 
+Microsandbox 会拒绝可能被其他账户替换路径的存储根：从 `/` 到数据目录（`AGENT_COMPOSE_DATA_DIR`，挂载为 `/data`）的每一级目录都必须属于 root 或 daemon 的运行用户，并且不能组可写或他人可写（像 `/tmp` 那样带 sticky 位的除外）。数据目录是 `0775` 时，所有 Microsandbox 操作都会失败，Docker 沙箱不受影响；sandbox-host 启动时会在日志里指出是哪一级目录，对它执行 `chmod go-w` 后无需重启即可恢复。
+
 Daemon 还会以只读方式挂载 Linux 宿主机的 `/etc/localtime`，因此未显式设置 `timezone` 的 cron trigger 会跟随宿主机时区。仅在需要覆盖宿主机时区时才在 `.env` 中设置 `TZ`，修改后需要重启 daemon。
 
 **[`.env.example`](.env.example) 是权威的、带完整注释的配置参考。** 对外部署前至少检查这些：

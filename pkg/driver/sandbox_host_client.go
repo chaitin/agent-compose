@@ -89,8 +89,11 @@ func fromGRPCError(err error) error {
 	case codes.NotFound:
 		return fmt.Errorf("%w: %s", ErrGuestRuntimeGone, status.Convert(err).Message())
 	case codes.FailedPrecondition:
-		if sandboxHostStatusReason(err) == sandboxHostReasonResourceLimitsUnavailable {
+		switch sandboxHostStatusReason(err) {
+		case sandboxHostReasonResourceLimitsUnavailable:
 			return fmt.Errorf("%w: %s", ErrSandboxResourceLimitsUnavailable, status.Convert(err).Message())
+		case sandboxHostReasonStorageRootUnsafe:
+			return fmt.Errorf("%w: %s", ErrSandboxStorageRootUnsafe, status.Convert(err).Message())
 		}
 		return fmt.Errorf("%w: %s", ErrGuestRuntimeNotReady, status.Convert(err).Message())
 	case codes.Aborted:

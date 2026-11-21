@@ -385,6 +385,14 @@ overlay:
 docker compose -f docker-compose.yml -f docker-compose.kvm.yml up -d
 ```
 
+Microsandbox refuses a storage root that other accounts could substitute:
+every directory from `/` down to the data directory (`AGENT_COMPOSE_DATA_DIR`,
+mounted at `/data`) must be owned by root or the daemon's user and must not be
+group- or other-writable unless it is sticky like `/tmp`. A `0775` data
+directory makes every Microsandbox operation fail while Docker sandboxes keep
+working; the sandbox-host logs the offending directory at startup, and
+`chmod go-w` on it takes effect without a restart.
+
 The daemon also mounts the Linux host's `/etc/localtime` read-only. Cron
 triggers without an explicit `timezone` therefore follow the host timezone.
 Set `TZ` in `.env` only to override it, and restart the daemon after changing

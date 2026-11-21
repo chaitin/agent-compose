@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
@@ -88,12 +89,28 @@ func newSandboxHostServer(config *appconfig.Config) (*sandboxHostServer, error) 
 	if err != nil {
 		return nil, err
 	}
+	reportMicrosandboxStorageRoot(config)
 	return &sandboxHostServer{
 		runtimes: map[string]SandboxRuntime{
 			RuntimeDriverBoxlite:      boxlite,
 			RuntimeDriverMicrosandbox: microsandbox,
 		},
 	}, nil
+}
+
+// reportMicrosandboxStorageRoot surfaces an unusable Microsandbox storage root
+// when the host starts instead of at the first sandbox operation, which may be
+// hours later and would fail with an opaque io error. It only logs: the host
+// still serves the other drivers, and every Microsandbox operation re-checks
+// and refuses with ErrSandboxStorageRootUnsafe until the permissions are fixed.
+func reportMicrosandboxStorageRoot(config *appconfig.Config) {
+	if !microsandboxCompiled || config == nil {
+		return
+	}
+	if err := CheckMicrosandboxStorageRoot(config.MicrosandboxHome); err != nil {
+		slog.Error("microsandbox sandboxes will fail until the storage root is fixed",
+			"microsandbox_home", config.MicrosandboxHome, "error", err)
+	}
 }
 
 func (s *sandboxHostServer) runtimeFor(sandbox *Sandbox) (SandboxRuntime, error) {
@@ -120,10 +137,10 @@ func (s *sandboxHostServer) runtimeForDriver(driver string) (SandboxRuntime, err
 // sentinel-backed errors are preserved with dedicated codes so the daemon can
 // reconstruct them via fromGRPCError: interaction-unsupported rides
 // Unimplemented, guest-runtime-gone rides NotFound, guest-runtime-not-ready
-// rides FailedPrecondition, resource-limits-unavailable rides FailedPrecondition
-// with an ErrorInfo reason, exec-termination-unconfirmed rides Aborted; context
-// cancellation and deadline expiry keep their gRPC codes; everything else rides
-// Internal with its message.
+// rides FailedPrecondition, resource-limits-unavailable and storage-root-unsafe
+// ride FailedPrecondition with an ErrorInfo reason, exec-termination-unconfirmed
+// rides Aborted; context cancellation and deadline expiry keep their gRPC codes;
+// everything else rides Internal with its message.
 func sandboxHostStatus(err error) error {
 	if err == nil {
 		return nil
@@ -131,6 +148,8 @@ func sandboxHostStatus(err error) error {
 	switch {
 	case errors.Is(err, ErrSandboxResourceLimitsUnavailable):
 		return sandboxHostResourceLimitsStatus(err)
+	case errors.Is(err, ErrSandboxStorageRootUnsafe):
+		return sandboxHostStorageRootStatus(err)
 	case errors.Is(err, ErrRuntimeInteractionUnsupported):
 		return status.Error(codes.Unimplemented, err.Error())
 	case errors.Is(err, ErrGuestRuntimeGone):
