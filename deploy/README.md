@@ -215,6 +215,15 @@ The base topology mounts the Docker socket without privilege or KVM. Use the
 persisted KVM overlay only on a prepared host when selecting BoxLite or
 Microsandbox.
 
+In the KVM overlay the daemon and the sandbox-host share one network namespace
+held by a small `netns` service (container `agent-compose-netns`, which runs
+`sleep` in the sandbox-host image). Because neither of them holds it, a
+sandbox-host restart no longer leaves the daemon unreachable. Older overlays had
+the daemon join the sandbox-host's namespace; the first `docker compose up -d`
+with this overlay creates `netns` and recreates the sandbox-host and the
+daemon, which ends any BoxLite or Microsandbox VM that is running at that
+moment, so upgrade while no VM sandbox is in use.
+
 It also mounts the Linux host's `/etc/localtime` read-only so daemon-local cron
 schedules follow the host timezone. Set `TZ` in `.env` only when the daemon
 should intentionally use another timezone, then restart the daemon.

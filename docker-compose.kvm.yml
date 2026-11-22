@@ -2,13 +2,36 @@
 #
 # It moves the VM runtime out of the daemon container and into a long-lived
 # sandbox-host service that owns the VM processes, so recreating the daemon
-# container (an upgrade) no longer tears the VMs down. The daemon shares the
-# sandbox-host network namespace so a guest still reaches the daemon through
-# the `agent-compose:7410` alias, and both services share the unix socket that
-# carries the daemon<->sandbox-host RPC.
+# container (an upgrade) no longer tears the VMs down. Both services share the
+# unix socket that carries the daemon<->sandbox-host RPC.
+#
+# Both services also share one network namespace, so a guest reaches the daemon
+# through the `agent-compose:7410` alias and the daemon reaches the port
+# forwards the sandbox-host opens. That namespace is held by the `netns`
+# service, which only sleeps, rather than by either of them: Docker joins a
+# `service:` network namespace only when the joining container starts, so if
+# the sandbox-host held it, any restart of the sandbox-host (a crash, an OOM
+# kill, a manual `docker restart`) would leave the running daemon in the old,
+# now-empty namespace and unreachable until it was recreated.
 #
 # Requires Docker Compose v2.24.4 or later for the `ports: !reset []` override.
 services:
+  netns:
+    # Reuses the sandbox-host image so no extra image has to be pulled or
+    # mirrored. It changes only when the sandbox-host image does, and Compose
+    # then recreates the sandbox-host and the daemon on the new namespace too.
+    image: ${AGENT_COMPOSE_SANDBOX_HOST_IMAGE:-chaitin/agent-compose:latest}
+    container_name: agent-compose-netns
+    restart: always
+    entrypoint: ["/usr/bin/tini", "--", "sleep", "infinity"]
+    command: []
+    ports:
+      - 127.0.0.1:7410:7410
+    networks:
+      default:
+        aliases:
+          - agent-compose
+
   sandbox-host:
     # The host image is independent of AGENT_COMPOSE_IMAGE: falling back to the
     # daemon image would recreate the host (and tear down its VMs) on a
@@ -18,6 +41,9 @@ services:
     container_name: agent-compose-sandbox-host
     restart: always
     command: ["sandbox-host"]
+    network_mode: "service:netns"
+    depends_on:
+      - netns
     environment:
       SANDBOX_INIT_SOCKET_DIR: ${SANDBOX_INIT_SOCKET_DIR:-/data/run/agent-compose}
     privileged: true
@@ -30,16 +56,13 @@ services:
       - ./.env:/data/work/.env:ro
       - sandbox-host-run:/run/agent-compose
     working_dir: /data/work
-    ports:
-      - 127.0.0.1:7410:7410
-    networks:
-      default:
-        aliases:
-          - agent-compose
 
   agent-compose:
-    network_mode: "service:sandbox-host"
+    network_mode: "service:netns"
     ports: !reset []
+    depends_on:
+      - netns
+      - sandbox-host
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/localtime:/etc/localtime:ro

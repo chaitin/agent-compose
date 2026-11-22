@@ -23,6 +23,8 @@ type composeEnvContractService struct {
 	Devices       []string                     `yaml:"devices"`
 	Ports         []string                     `yaml:"ports"`
 	Command       []string                     `yaml:"command"`
+	Entrypoint    []string                     `yaml:"entrypoint"`
+	Restart       string                       `yaml:"restart"`
 	NetworkMode   string                       `yaml:"network_mode"`
 	ContainerName string                       `yaml:"container_name"`
 	Networks      map[string]composeEnvNetwork `yaml:"networks"`
@@ -180,11 +182,36 @@ func TestDockerComposeKVMOverlayContract(t *testing.T) {
 	if !stringSliceContains(hostService.Volumes, "sandbox-host-run:/run/agent-compose") {
 		t.Fatalf("sandbox-host volumes = %#v, want shared sandbox-host socket volume", hostService.Volumes)
 	}
-	if !stringSliceContains(hostService.Ports, "127.0.0.1:7410:7410") {
-		t.Fatalf("sandbox-host ports = %#v, want loopback daemon port", hostService.Ports)
+	// The sandbox-host joins the namespace held by the netns service instead of
+	// holding it, so a host restart cannot strand the daemon in a stale one.
+	if hostService.NetworkMode != "service:netns" {
+		t.Fatalf("sandbox-host network_mode = %q, want service:netns", hostService.NetworkMode)
 	}
-	if network, ok := hostService.Networks["default"]; !ok || !stringSliceContains(network.Aliases, "agent-compose") {
-		t.Fatalf("sandbox-host networks = %#v, want agent-compose alias", hostService.Networks)
+	if len(hostService.Ports) != 0 || len(hostService.Networks) != 0 {
+		t.Fatalf("sandbox-host ports = %#v networks = %#v, want none (held by netns)", hostService.Ports, hostService.Networks)
+	}
+
+	netnsService, ok := overlay.Services["netns"]
+	if !ok {
+		t.Fatal("docker-compose.kvm.yml missing netns service")
+	}
+	if netnsService.Image != hostService.Image {
+		t.Fatalf("netns image = %q, want the sandbox-host image %q so no extra image is needed", netnsService.Image, hostService.Image)
+	}
+	if strings.Join(netnsService.Entrypoint, " ") != "/usr/bin/tini -- sleep infinity" {
+		t.Fatalf("netns entrypoint = %#v, want tini running sleep infinity", netnsService.Entrypoint)
+	}
+	if netnsService.Restart != "always" {
+		t.Fatalf("netns restart = %q, want always", netnsService.Restart)
+	}
+	if netnsService.Privileged != nil || len(netnsService.Devices) != 0 || len(netnsService.Volumes) != 0 {
+		t.Fatalf("netns must hold only the network namespace: privileged=%v devices=%#v volumes=%#v", netnsService.Privileged, netnsService.Devices, netnsService.Volumes)
+	}
+	if !stringSliceContains(netnsService.Ports, "127.0.0.1:7410:7410") {
+		t.Fatalf("netns ports = %#v, want loopback daemon port", netnsService.Ports)
+	}
+	if network, ok := netnsService.Networks["default"]; !ok || !stringSliceContains(network.Aliases, "agent-compose") {
+		t.Fatalf("netns networks = %#v, want agent-compose alias", netnsService.Networks)
 	}
 
 	daemonService, ok := overlay.Services["agent-compose"]
@@ -197,8 +224,8 @@ func TestDockerComposeKVMOverlayContract(t *testing.T) {
 	if len(daemonService.Devices) != 0 {
 		t.Fatalf("overlay agent-compose devices = %#v, want none (moved to sandbox-host)", daemonService.Devices)
 	}
-	if daemonService.NetworkMode != "service:sandbox-host" {
-		t.Fatalf("overlay agent-compose network_mode = %q, want service:sandbox-host", daemonService.NetworkMode)
+	if daemonService.NetworkMode != "service:netns" {
+		t.Fatalf("overlay agent-compose network_mode = %q, want service:netns", daemonService.NetworkMode)
 	}
 	if !stringSliceContains(daemonService.Volumes, "sandbox-host-run:/run/agent-compose") {
 		t.Fatalf("overlay agent-compose volumes = %#v, want shared sandbox-host socket volume", daemonService.Volumes)
@@ -232,13 +259,24 @@ func assertComposeKVMOverlayKeys(t *testing.T, data []byte) {
 		t.Fatalf("KVM overlay volumes = %#v, want sandbox-host-run", document["volumes"])
 	}
 	services, ok := document["services"].(map[string]any)
-	if !ok || len(services) != 2 {
-		t.Fatalf("KVM overlay services = %#v, want sandbox-host and agent-compose", document["services"])
+	if !ok || len(services) != 3 {
+		t.Fatalf("KVM overlay services = %#v, want netns, sandbox-host, and agent-compose", document["services"])
+	}
+	netnsKeys := composeContractServiceKeys(t, data, "docker-compose.kvm.yml", "netns")
+	for _, key := range []string{"image", "entrypoint", "restart", "ports", "networks"} {
+		if _, ok := netnsKeys[key]; !ok {
+			t.Fatalf("KVM overlay netns missing %q", key)
+		}
 	}
 	hostKeys := composeContractServiceKeys(t, data, "docker-compose.kvm.yml", "sandbox-host")
-	for _, key := range []string{"command", "privileged", "devices", "volumes", "ports", "networks"} {
+	for _, key := range []string{"command", "privileged", "devices", "volumes", "network_mode"} {
 		if _, ok := hostKeys[key]; !ok {
 			t.Fatalf("KVM overlay sandbox-host missing %q", key)
+		}
+	}
+	for _, key := range []string{"ports", "networks"} {
+		if _, ok := hostKeys[key]; ok {
+			t.Fatalf("KVM overlay sandbox-host must omit %q (held by netns)", key)
 		}
 	}
 	daemonKeys := composeContractServiceKeys(t, data, "docker-compose.kvm.yml", "agent-compose")
