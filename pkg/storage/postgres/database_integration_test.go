@@ -235,3 +235,67 @@ func newTestSchema(t *testing.T, ctx context.Context, dsn string) (string, *sql.
 	})
 	return schema, admin
 }
+
+func TestPostgresInstanceLockMonitorReacquiresIntegration(t *testing.T) {
+	dsn := testPostgresDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	schema, _ := newTestSchema(t, ctx, dsn)
+	db, err := openDB(withSearchPath(dsn, schema))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	lock, err := AcquireInstanceLock(ctx, db)
+	if err != nil {
+		t.Fatalf("acquire lock: %v", err)
+	}
+	monitorCtx, stopMonitor := context.WithCancel(ctx)
+	monitorDone := make(chan error, 1)
+	go func() { monitorDone <- lock.Monitor(monitorCtx, 20*time.Millisecond, 2*time.Second) }()
+	t.Cleanup(func() {
+		stopMonitor()
+		select {
+		case err := <-monitorDone:
+			if err != nil {
+				t.Errorf("monitor stopped with error: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Error("monitor did not stop")
+		}
+		if err := lock.Close(); err != nil {
+			t.Errorf("close lock: %v", err)
+		}
+	})
+
+	// Simulate the PostgreSQL session dying: the advisory lock is released and
+	// Monitor must take a new one.
+	lock.mu.Lock()
+	old := lock.conn
+	lock.conn = nil
+	lock.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		lock.mu.Lock()
+		reacquired := lock.conn != nil
+		lock.mu.Unlock()
+		if reacquired {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("instance lock was not reacquired")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := AcquireInstanceLock(ctx, db); !errors.Is(err, ErrInstanceLocked) {
+		t.Fatalf("lock after reacquire error = %v, want ErrInstanceLocked", err)
+	}
+}

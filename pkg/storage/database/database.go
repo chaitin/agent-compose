@@ -4,6 +4,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -43,7 +44,14 @@ type Database struct {
 	db      *sql.DB
 	dialect dialect.Dialect
 
-	lock      interface{ Close() error }
+	sqlite   *storagesqlite.Database
+	postgres *postgres.Database
+	lock     *postgres.InstanceLock
+
+	lockLost      chan error
+	monitorCancel context.CancelFunc
+	monitorDone   chan struct{}
+
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -60,7 +68,7 @@ func Open(ctx context.Context, config Config) (*Database, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &Database{db: sqliteDB.DB(), dialect: dialect.SQLite(), lock: sqliteDB}, nil
+		return &Database{db: sqliteDB.DB(), dialect: dialect.SQLite(), sqlite: sqliteDB}, nil
 	case DriverPostgres:
 		if config.AcquirePostgresLock && config.Postgres.MaxOpenConns == 1 {
 			return nil, fmt.Errorf("PostgreSQL mode requires DB_MAX_OPEN_CONNS of at least 2 because one connection holds the single-instance lock")
@@ -69,15 +77,33 @@ func Open(ctx context.Context, config Config) (*Database, error) {
 		if err != nil {
 			return nil, err
 		}
-		var lock *postgres.InstanceLock
+		owner := &Database{
+			db:       postgresDB.DB(),
+			dialect:  dialect.Postgres(),
+			postgres: postgresDB,
+		}
 		if config.AcquirePostgresLock {
-			lock, err = postgres.AcquireInstanceLock(ctx, postgresDB.DB())
+			lock, err := postgres.AcquireInstanceLock(ctx, postgresDB.DB())
 			if err != nil {
 				_ = postgresDB.Close()
 				return nil, err
 			}
+			owner.lock = lock
+			owner.lockLost = make(chan error, 1)
+			monitorCtx, cancel := context.WithCancel(ctx)
+			owner.monitorCancel = cancel
+			owner.monitorDone = make(chan struct{})
+			go func() {
+				defer close(owner.monitorDone)
+				if err := lock.Monitor(monitorCtx, 5*time.Second, 30*time.Second); err != nil {
+					select {
+					case owner.lockLost <- err:
+					default:
+					}
+				}
+			}()
 		}
-		return &Database{db: postgresDB.DB(), dialect: dialect.Postgres(), lock: compositeCloser{lock: lock, database: postgresDB}}, nil
+		return owner, nil
 	default:
 		return nil, fmt.Errorf("unsupported database driver %q", config.Driver)
 	}
@@ -97,13 +123,38 @@ func (d *Database) Dialect() dialect.Dialect {
 	return dialect.OrSQLite(d.dialect)
 }
 
+// LockLost reports a lost single-instance lock. A nil channel means the
+// backend has no instance lock (SQLite) or no lock was requested.
+func (d *Database) LockLost() <-chan error {
+	if d == nil {
+		return nil
+	}
+	return d.lockLost
+}
+
 func (d *Database) Close() error {
 	if d == nil {
 		return nil
 	}
 	d.closeOnce.Do(func() {
+		if d.monitorCancel != nil {
+			d.monitorCancel()
+		}
+		if d.monitorDone != nil {
+			select {
+			case <-d.monitorDone:
+			case <-time.After(5 * time.Second):
+				d.closeErr = fmt.Errorf("timed out stopping PostgreSQL instance lock monitor")
+			}
+		}
 		if d.lock != nil {
-			d.closeErr = d.lock.Close()
+			d.closeErr = errors.Join(d.closeErr, d.lock.Close())
+		}
+		if d.postgres != nil {
+			d.closeErr = errors.Join(d.closeErr, d.postgres.Close())
+		}
+		if d.sqlite != nil {
+			d.closeErr = errors.Join(d.closeErr, d.sqlite.Close())
 		}
 	})
 	return d.closeErr
@@ -112,20 +163,4 @@ func (d *Database) Close() error {
 // Shutdown adapts Close to the samber/do Shutdowner interface.
 func (d *Database) Shutdown() error {
 	return d.Close()
-}
-
-// compositeCloser releases the instance lock before closing the database.
-type compositeCloser struct {
-	lock     *postgres.InstanceLock
-	database *postgres.Database
-}
-
-func (c compositeCloser) Close() error {
-	if c.lock != nil {
-		if err := c.lock.Close(); err != nil {
-			_ = c.database.Close()
-			return err
-		}
-	}
-	return c.database.Close()
 }

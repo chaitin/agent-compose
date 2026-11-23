@@ -281,9 +281,12 @@ PostgreSQL mode.
 PostgreSQL 17 is the tested server version. PostgreSQL mode is intentionally
 single-instance. At startup the daemon takes a
 session-scoped advisory lock on the database; a second daemon on the same
-database exits with an error instead of running. This protects the current
-scheduler, run-recovery, sandbox-projection, runtime-callback, and streaming
-models, which still assume one daemon process and one node-local `DATA_ROOT`.
+database exits with an error instead of running. If PostgreSQL restarts, the
+daemon tries to reacquire the lock for up to 30 seconds; if another instance
+takes it or the outage exceeds that window, the daemon stops rather than serving
+without the lock. This protects the current scheduler, run-recovery,
+sandbox-projection, runtime-callback, and streaming models, which still assume
+one daemon process and one node-local `DATA_ROOT`.
 PostgreSQL does not make those capabilities cluster-safe; multi-replica
 deployment remains unsupported.
 

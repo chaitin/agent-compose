@@ -14,6 +14,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/fxgo/restful"
 	"github.com/chaitin/agent-compose/pkg/fxgo/utils"
 	"github.com/chaitin/agent-compose/pkg/health"
+	storagedb "github.com/chaitin/agent-compose/pkg/storage/database"
 	"github.com/chaitin/agent-compose/pkg/telemetry"
 	"io"
 	"log"
@@ -56,6 +57,7 @@ type DaemonApp struct {
 	Echo      *echo.Echo
 	Logger    *slog.Logger
 	Config    *config.Config
+	Database  *storagedb.Database
 	Telemetry *telemetry.Provider
 	// EgressProxy decides a sandbox's outbound connections before the daemon
 	// opens them. It is served on the TCP listener a sandbox can reach; the unix
@@ -170,6 +172,7 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 		Echo:            app,
 		Logger:          logger,
 		Config:          conf,
+		Database:        do.MustInvoke[*storagedb.Database](di),
 		Telemetry:       telemetryProvider,
 		EgressProxy:     do.MustInvoke[*proxy.EgressProxy](di),
 		startBackground: startBackground,
@@ -214,7 +217,17 @@ func (a *DaemonApp) Run(ctx context.Context) error {
 	}
 
 	serverErrCh := servers.serve(a.Logger)
+	var lockLost <-chan error
+	if a.Database != nil {
+		lockLost = a.Database.LockLost()
+	}
 	select {
+	case err := <-lockLost:
+		a.Logger.Error("PostgreSQL instance lock lost; shutting down", "error", err)
+		if shutdownErr := a.shutdown(servers); shutdownErr != nil {
+			return errors.Join(err, shutdownErr)
+		}
+		return err
 	case err := <-serverErrCh:
 		if err != nil {
 			a.Logger.Error("agent-compose server failed", "error", err)

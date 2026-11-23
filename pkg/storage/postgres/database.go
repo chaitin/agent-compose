@@ -122,10 +122,14 @@ func (d *Database) Shutdown() error {
 var ErrInstanceLocked = errors.New("another agent-compose instance is using this PostgreSQL database; multi-instance operation is not supported")
 
 // InstanceLock is a session-scoped PostgreSQL advisory lock held for the
-// lifetime of the daemon. Losing the underlying connection releases it.
+// lifetime of the daemon. Monitor reacquires it after a connection loss; if
+// another daemon takes it first, the caller must stop serving.
 type InstanceLock struct {
+	db        *sql.DB
+	mu        sync.Mutex
 	conn      *sql.Conn
 	key       int64
+	closed    chan struct{}
 	closeOnce sync.Once
 	closeErr  error
 }
@@ -146,32 +150,151 @@ func AcquireInstanceLock(ctx context.Context, db *sql.DB) (*InstanceLock, error)
 		return nil, fmt.Errorf("read PostgreSQL database name: %w", err)
 	}
 	key := advisoryKey("agent-compose:instance:" + database)
-	var acquired bool
-	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, key).Scan(&acquired); err != nil {
+	acquired, err := tryInstanceLock(ctx, conn, key)
+	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("acquire PostgreSQL instance lock: %w", err)
+		return nil, err
 	}
 	if !acquired {
 		_ = conn.Close()
 		return nil, ErrInstanceLocked
 	}
-	return &InstanceLock{conn: conn, key: key}, nil
+	return &InstanceLock{db: db, conn: conn, key: key, closed: make(chan struct{})}, nil
+}
+
+// Monitor keeps the advisory lock alive. A dropped PostgreSQL session releases
+// the lock; Monitor first tries to reacquire it for retryWindow so a brief
+// database restart does not require a daemon restart. If another instance took
+// the lock, or the database stays unavailable past the window, Monitor returns
+// an error and the daemon must stop.
+func (l *InstanceLock) Monitor(ctx context.Context, interval, retryWindow time.Duration) error {
+	if l == nil {
+		return nil
+	}
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	if retryWindow <= 0 {
+		retryWindow = 30 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-l.closed:
+			return nil
+		case <-ticker.C:
+		}
+		pingCtx, cancel := context.WithTimeout(ctx, interval)
+		err := l.ping(pingCtx)
+		cancel()
+		if err == nil {
+			continue
+		}
+		if err := l.reacquire(ctx, retryWindow); err != nil {
+			return err
+		}
+	}
+}
+
+func (l *InstanceLock) ping(ctx context.Context) error {
+	l.mu.Lock()
+	conn := l.conn
+	l.mu.Unlock()
+	if conn == nil {
+		return fmt.Errorf("PostgreSQL instance lock connection is not held")
+	}
+	return conn.PingContext(ctx)
+}
+
+func (l *InstanceLock) reacquire(ctx context.Context, retryWindow time.Duration) error {
+	l.mu.Lock()
+	old := l.conn
+	l.conn = nil
+	l.mu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+	deadline := time.Now().Add(retryWindow)
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-l.closed:
+			return nil
+		default:
+		}
+		conn, err := l.db.Conn(ctx)
+		if err == nil {
+			acquired, lockErr := tryInstanceLock(ctx, conn, l.key)
+			if lockErr == nil && acquired {
+				l.mu.Lock()
+				select {
+				case <-l.closed:
+					l.mu.Unlock()
+					_ = conn.Close()
+					return nil
+				default:
+				}
+				l.conn = conn
+				l.mu.Unlock()
+				return nil
+			}
+			_ = conn.Close()
+			if lockErr != nil {
+				err = lockErr
+			} else {
+				err = ErrInstanceLocked
+			}
+		}
+		if errors.Is(err, ErrInstanceLocked) {
+			return fmt.Errorf("PostgreSQL instance lock was taken by another daemon while reconnecting: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("PostgreSQL instance lock could not be reacquired: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-l.closed:
+			return nil
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func tryInstanceLock(ctx context.Context, conn *sql.Conn, key int64) (bool, error) {
+	var acquired bool
+	if err := conn.QueryRowContext(ctx, `SELECT pg_try_advisory_lock($1)`, key).Scan(&acquired); err != nil {
+		return false, fmt.Errorf("acquire PostgreSQL instance lock: %w", err)
+	}
+	return acquired, nil
 }
 
 func (l *InstanceLock) Close() error {
-	if l == nil || l.conn == nil {
+	if l == nil {
 		return nil
 	}
 	l.closeOnce.Do(func() {
+		close(l.closed)
+		l.mu.Lock()
+		conn := l.conn
+		l.conn = nil
+		l.mu.Unlock()
+		if conn == nil {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		var released bool
-		if err := l.conn.QueryRowContext(ctx, `SELECT pg_advisory_unlock($1)`, l.key).Scan(&released); err != nil {
+		if err := conn.QueryRowContext(ctx, `SELECT pg_advisory_unlock($1)`, l.key).Scan(&released); err != nil {
 			l.closeErr = fmt.Errorf("release PostgreSQL instance lock: %w", err)
 		} else if !released {
 			l.closeErr = fmt.Errorf("release PostgreSQL instance lock: lock was not held")
 		}
-		if err := l.conn.Close(); err != nil {
+		if err := conn.Close(); err != nil {
 			l.closeErr = errors.Join(l.closeErr, fmt.Errorf("close PostgreSQL instance lock connection: %w", err))
 		}
 	})

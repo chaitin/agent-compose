@@ -246,6 +246,8 @@ daemon 不会把 URL 或密码写入日志或错误信息。PostgreSQL 模式下
 当前测试的 PostgreSQL 服务端版本为 17。PostgreSQL 模式目前明确只支持单实例。
 daemon 启动时会在数据库上持有会话级
 advisory lock；同一数据库上的第二个 daemon 会直接报错退出，而不是继续运行。
+如果 PostgreSQL 重启，daemon 会在最多 30 秒内尝试重新获取该锁；如果锁被其他
+实例拿走，或故障时间超过该窗口，daemon 会停止，而不是在没有锁的情况下继续服务。
 这是为了保护当前的 scheduler、run 恢复、sandbox 投影、runtime 回调和流式模型：
 它们仍假设只有一个 daemon 进程和一个节点本地 `DATA_ROOT`。PostgreSQL 不会让
 这些能力变成集群安全；多副本部署仍不受支持。
