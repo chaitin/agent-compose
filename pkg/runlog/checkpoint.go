@@ -47,8 +47,11 @@ func recoverCheckpoint(path string) (*Recovery, error) {
 		return nil, fmt.Errorf("decode run log checkpoint state: %w", err)
 	}
 	recovery := Recovery{SourceOffset: header.SourceOffset, LogBytes: header.LogBytes, State: saved.State, merger: saved.Merger}
-	if saved.Merger == nil || !json.Valid(recovery.State) {
-		return nil, errors.New("invalid run log checkpoint state")
+	if saved.Merger == nil {
+		return nil, errors.New("invalid run log checkpoint: missing merger state")
+	}
+	if !json.Valid(recovery.State) {
+		return nil, errors.New("invalid run log checkpoint: consumer state is not valid JSON")
 	}
 	info, err := os.Stat(path)
 	if err != nil {

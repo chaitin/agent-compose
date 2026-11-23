@@ -296,11 +296,28 @@ func TestOnAppendSeesEntriesInOrder(t *testing.T) {
 }
 
 func TestPaths(t *testing.T) {
-	if got := RunPath("/data", "r1"); got != "/data/runs/r1/run.log.jsonl" {
-		t.Fatal(got)
+	if got, err := RunPath("/data", " r1 "); err != nil || got != "/data/runs/r1/run.log.jsonl" {
+		t.Fatal(got, err)
 	}
-	if got := SchedulerCellPath("/data", "s", "r", "c"); got != "/data/schedulers/s/runs/r/cells/c.log.jsonl" {
-		t.Fatal(got)
+	if got, err := SchedulerCellPath("/data", "s", "r", "c"); err != nil || got != "/data/schedulers/s/runs/r/cells/c.log.jsonl" {
+		t.Fatal(got, err)
+	}
+}
+
+func TestPathsRejectIDsThatLeaveTheDataRoot(t *testing.T) {
+	for _, id := range []string{"", " ", ".", "..", "../etc", "a/b", `a\b`, "a\x00b"} {
+		if got, err := RunPath("/data", id); err == nil {
+			t.Fatalf("RunPath(%q) = %q, want error", id, got)
+		}
+		if got, err := SchedulerCellPath("/data", "s", id, "c"); err == nil {
+			t.Fatalf("SchedulerCellPath(run %q) = %q, want error", id, got)
+		}
+		if got, err := SchedulerCellPath("/data", "s", "r", id); err == nil {
+			t.Fatalf("SchedulerCellPath(cell %q) = %q, want error", id, got)
+		}
+	}
+	if _, err := RunPath("", "r1"); err == nil {
+		t.Fatal("RunPath accepted an empty data root")
 	}
 }
 

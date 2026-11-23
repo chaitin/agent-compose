@@ -292,7 +292,7 @@ func TestReadEntryBatchWalksTheLogInBatches(t *testing.T) {
 func TestSummarizeLogMatchesSummarize(t *testing.T) {
 	w, path := openTest(t, Options{})
 	writeMixedLog(t, w, 2)
-	mustEvent(t, w, `{"kind":"error","error":"boom"}`)
+	mustEvent(t, w, `{"kind":"error","message":"boom"}`)
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestSummarizeLogMatchesSummarize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := Summarize(entries); got != want || got.Turns != 2 || got.ToolCalls != 40 {
+	if want := Summarize(entries); got != want || got.Turns != 2 || got.ToolCalls != 40 || got.LastError != "boom" {
 		t.Fatalf("SummarizeLog = %+v, Summarize = %+v", got, want)
 	}
 }

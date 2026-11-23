@@ -35,8 +35,14 @@ type Options struct {
 	MaxBytes       int64
 	ToolOutputHalf int
 	Now            func() time.Time
-	// OnAppend runs after each entry is durably appended, with the entry's
-	// rendered text. It is called with the writer's lock held, in order.
+	// OnAppend runs after each entry is appended, with the entry's rendered
+	// text. It is called with the writer's lock held, in order.
+	//
+	// Once the log has a checkpoint, an entry only counts once the next
+	// Checkpoint commits it: until then a crash rolls it back. OnAppend is
+	// then deferred to that Checkpoint, and entries appended after the last
+	// one are never reported, not even by Close; the next Open rolls them
+	// back and replaying the journal appends and reports them again.
 	OnAppend func(entry Entry, rendered string)
 }
 
@@ -219,7 +225,9 @@ func (w *Writer) Flush() error {
 	return w.appendAllLocked(w.merger.FlushText())
 }
 
-// Close flushes buffered text and closes the file.
+// Close flushes buffered text and closes the file. Entries a checkpointed
+// log appended since its last Checkpoint are not reported to OnAppend; see
+// Options.OnAppend.
 func (w *Writer) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
