@@ -44,6 +44,7 @@ func TestPostgresConfigStoreIntegration(t *testing.T) {
 	assertConcurrentProjectRevisions(t, ctx, store, project.ID)
 	assertConcurrentRunEvents(t, ctx, store, run.RunID)
 	assertConcurrentEvents(t, ctx, store)
+	assertSchedulerRuns(t, ctx, store, project.ID)
 
 	// Search uses the backend-specific contains expression.
 	results, err := store.ListProjects(ctx, domain.ProjectListOptions{Query: "concurr"})
@@ -218,4 +219,51 @@ func postgresTestSearchPath(dsn, schema string) string {
 		separator = "&"
 	}
 	return dsn + separator + "search_path=" + schema
+}
+
+func assertSchedulerRuns(t *testing.T, ctx context.Context, store *ConfigStore, projectID string) {
+	t.Helper()
+	scheduler, err := store.UpsertProjectScheduler(ctx, domain.ProjectSchedulerRecord{
+		ProjectID: projectID, SchedulerID: "scheduler-pg", AgentName: "worker",
+		Revision: 1, Enabled: true, SpecJSON: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create scheduler: %v", err)
+	}
+	startedAt := time.Now().UTC().Truncate(time.Millisecond)
+	if err := store.CreateSchedulerRun(ctx, domain.SchedulerRunSummary{
+		ID: "scheduler-run-pg", SchedulerID: scheduler.SchedulerID,
+		TriggerID: "trigger-pg", TriggerKind: "cron", Status: domain.SchedulerRunStatusRunning,
+		StartedAt: startedAt, PayloadJSON: `{}`,
+	}); err != nil {
+		t.Fatalf("create scheduler run: %v", err)
+	}
+	interrupted, err := store.ListInterruptedSchedulerRuns(ctx, startedAt.Add(time.Second))
+	if err != nil {
+		t.Fatalf("list interrupted scheduler runs: %v", err)
+	}
+	if len(interrupted) != 1 || interrupted[0].ID != "scheduler-run-pg" {
+		t.Fatalf("interrupted scheduler runs = %+v", interrupted)
+	}
+	completedAt := startedAt.Add(time.Second)
+	if err := store.UpdateSchedulerRun(ctx, domain.SchedulerRunSummary{
+		ID: "scheduler-run-pg", SchedulerID: scheduler.SchedulerID,
+		TriggerID: "trigger-pg", TriggerKind: "cron", Status: domain.SchedulerRunStatusSucceeded,
+		StartedAt: startedAt, CompletedAt: completedAt, DurationMs: 1000, ResultJSON: `{"ok":true}`,
+	}); err != nil {
+		t.Fatalf("update scheduler run: %v", err)
+	}
+	runs, err := store.ListSchedulerRuns(ctx, scheduler.SchedulerID, 10)
+	if err != nil {
+		t.Fatalf("list scheduler runs: %v", err)
+	}
+	if len(runs) != 1 || runs[0].Status != domain.SchedulerRunStatusSucceeded || runs[0].DurationMs != 1000 {
+		t.Fatalf("scheduler runs = %+v", runs)
+	}
+	if err := store.AddSchedulerEvent(ctx, domain.SchedulerEvent{
+		ID: "scheduler-event-pg", SchedulerID: scheduler.SchedulerID, RunID: "scheduler-run-pg",
+		Type: "scheduler.run.succeeded", Level: "info", Message: "done", CreatedAt: completedAt,
+	}); err != nil {
+		t.Fatalf("add scheduler event: %v", err)
+	}
 }

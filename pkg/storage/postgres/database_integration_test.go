@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 func TestPostgresMigrationsIntegration(t *testing.T) {
@@ -48,6 +50,18 @@ func TestPostgresMigrationsIntegration(t *testing.T) {
 		if !exists {
 			t.Fatalf("table %s was not created", table)
 		}
+	}
+
+	lockTx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin run history lock transaction: %v", err)
+	}
+	if _, err := lockTx.ExecContext(ctx, dialect.Postgres().LockRunHistoryTablesStatement()); err != nil {
+		_ = lockTx.Rollback()
+		t.Fatalf("run history lock statement: %v", err)
+	}
+	if err := lockTx.Rollback(); err != nil {
+		t.Fatalf("rollback run history lock: %v", err)
 	}
 
 	var sequence int64
