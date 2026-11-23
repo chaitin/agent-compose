@@ -69,6 +69,7 @@ func newRootCommand(out, errOut io.Writer, runDaemon daemonRunner) *cobra.Comman
 		newCLISandboxHostCommand(),
 		newCLIVersionCommand(&options),
 		newCLIStatusCommand(&options),
+		newCLIDBCommand(&options),
 		newCLIAuthCommand(&options),
 		newCLIConfigCommand(&options),
 		newCLIProjectCommand(&options),
