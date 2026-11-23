@@ -59,20 +59,38 @@ jq -e --arg data_source "$ROOT_DIR/data" --arg ui_data_source "$ROOT_DIR/data/ag
 ' >/dev/null <<<"$ui_json"
 
 # The KVM overlay moves the VM runtime out of the daemon and into the
-# sandbox-host service. The daemon joins the host network namespace, drops its
-# own published port, and no longer needs privilege or /dev/kvm.
+# sandbox-host service. The daemon joins the shared network namespace, drops
+# its own published port, and no longer needs privilege or /dev/kvm.
 jq -e '
   .services["agent-compose"] as $service |
   $service.privileged != true and
   (($service.devices // []) | length == 0) and
-  $service.network_mode == "service:sandbox-host" and
+  $service.network_mode == "service:netns" and
+  ($service.depends_on | has("netns") and has("sandbox-host")) and
   (($service.ports // []) | length == 0) and
   any($service.volumes[]; .source == "/var/run/docker.sock" and .target == "/var/run/docker.sock") and
   any($service.volumes[]; .source == "sandbox-host-run" and .target == "/run/agent-compose")
 ' >/dev/null <<<"$kvm_json"
 
-# sandbox-host owns the VM processes: privileged, /dev/kvm, the loopback 7410
-# port, the `agent-compose` network alias, and the shared socket volume.
+# The netns service holds the shared network namespace, so a sandbox-host
+# restart cannot strand the daemon in a stale one: it carries the loopback 7410
+# port and the `agent-compose` alias, only sleeps, needs no privilege, and uses
+# the sandbox-host image so no extra image has to be pulled or mirrored.
+jq -e '
+  .services["netns"] as $netns |
+  $netns.privileged != true and
+  (($netns.devices // []) | length == 0) and
+  (($netns.volumes // []) | length == 0) and
+  $netns.restart == "always" and
+  $netns.entrypoint == ["/usr/bin/tini", "--", "sleep", "infinity"] and
+  $netns.image == .services["sandbox-host"].image and
+  any($netns.ports[]; .host_ip == "127.0.0.1" and .target == 7410 and .published == "7410") and
+  any($netns.networks.default.aliases[]; . == "agent-compose")
+' >/dev/null <<<"$kvm_json"
+
+# sandbox-host owns the VM processes: privileged, /dev/kvm, and the shared
+# socket volume. It joins the netns namespace instead of holding one, so it
+# publishes no port and declares no network alias of its own.
 jq -e --arg data_source "$ROOT_DIR/data" '
   .services["sandbox-host"] as $host |
   $host.privileged == true and
@@ -86,8 +104,10 @@ jq -e --arg data_source "$ROOT_DIR/data" '
     )
   ) and
   $host.command == ["sandbox-host"] and
-  any($host.ports[]; .host_ip == "127.0.0.1" and .target == 7410 and .published == "7410") and
-  any($host.networks.default.aliases[]; . == "agent-compose") and
+  $host.network_mode == "service:netns" and
+  ($host.depends_on | has("netns")) and
+  (($host.ports // []) | length == 0) and
+  ($host.networks == null) and
   any($host.volumes[]; .source == "/var/run/docker.sock" and .target == "/var/run/docker.sock") and
   any($host.volumes[]; .source == $data_source and .target == "/data") and
   any($host.volumes[]; .source == "sandbox-host-run" and .target == "/run/agent-compose")
@@ -114,7 +134,8 @@ host_image_json=$(env \
 
 jq -e '
   .services["agent-compose"].image == "example.invalid/daemon:upgraded" and
-  .services["sandbox-host"].image == "chaitin/agent-compose:latest"
+  .services["sandbox-host"].image == "chaitin/agent-compose:latest" and
+  .services["netns"].image == "chaitin/agent-compose:latest"
 ' >/dev/null <<<"$host_image_json"
 
 # The daemon's identity (image, working directory, environment) is preserved
