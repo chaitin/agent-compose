@@ -1322,7 +1322,7 @@ Scheduler 可以使用声明式 `triggers`，也可以使用 JavaScript `script`
 | `LLM_MAX_CONCURRENCY` | `8` | 同时进行的 `scheduler.llm.async` 调用数。 |
 | `AGENT_MAX_CONCURRENCY` | `3` | 同时进行的 `scheduler.agent.async` 运行数。 |
 
-agent 的上限明显更低：每个并行 agent 运行都会创建独立 sandbox，而 sandbox 创建本身没有数量限制，且每次运行都要经由 SQLite 连接池写入（`SQLITE_MAX_OPEN_CONNS`，默认 4 条）。非正整数会被忽略并回退到默认值。`scheduler.agent.async` 始终使用 `new` sandbox 策略：并行 agent 无法共享同一个 sandbox。
+agent 的上限明显更低：每个并行 agent 运行都会创建独立 sandbox，而 sandbox 创建本身没有数量限制，且 SQLite 模式下每次运行都要经由 SQLite 连接池写入（`SQLITE_MAX_OPEN_CONNS`，默认 4 条）。非正整数会被忽略并回退到默认值。`scheduler.agent.async` 始终使用 `new` sandbox 策略：并行 agent 无法共享同一个 sandbox。
 
 #### 声明式 Trigger
 

@@ -294,6 +294,12 @@ tasks:
       - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} ./scripts/run-go-test-shape.sh integration
       - cd runtime/javascript && TEST_SHAPE=integration npm run test:unit
 
+  test:postgres:
+    desc: Run PostgreSQL integration tests (requires AGENT_COMPOSE_TEST_POSTGRES_DSN)
+    deps: ['generate:proto']
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go test -count=1 -timeout=20m ./pkg/storage/... -run 'Postgres.*Integration'
+
   test:e2e:
     desc: Run E2E tests
     deps: ['generate:proto']

@@ -260,7 +260,7 @@ const reviews = await Promise.all(
 | `LLM_MAX_CONCURRENCY` | 8 | 同时进行的 `scheduler.llm.async` 调用数 |
 | `AGENT_MAX_CONCURRENCY` | 3 | 同时进行的 `scheduler.agent.async` 运行数 |
 
-agent 的默认值明显更低，因为每个并行 agent 都是一个新 sandbox，而 sandbox 创建本身没有数量限制，且每次运行都要写数据库（SQLite 连接池默认 4 条，见 `SQLITE_MAX_OPEN_CONNS`）。
+agent 的默认值明显更低，因为每个并行 agent 都是一个新 sandbox，而 sandbox 创建本身没有数量限制，且 SQLite 模式下每次运行都要写数据库（连接池默认 4 条，见 `SQLITE_MAX_OPEN_CONNS`）。
 
 非法值或非正数会被忽略并回退到默认值。
 

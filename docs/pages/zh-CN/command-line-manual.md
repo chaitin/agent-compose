@@ -215,14 +215,61 @@ env_file:
 
 ### Daemon 数据库并发
 
-daemon 在启动 migration 期间只使用一个 SQLite 连接。migration 成功后，文件型
+在 SQLite 模式下，daemon 在启动 migration 期间只使用一个连接。migration 成功后，文件型
 数据库默认最多使用四个运行期连接，使 WAL reader 可以和 writer 并发推进。可以将
 `SQLITE_MAX_OPEN_CONNS` 设置为 `1` 到 `32` 之间的整数来覆盖该限制。无论配置值
 是多少，内存 SQLite 数据库始终限制为一个连接。
 
 增大连接数可以允许更多数据库操作并发执行，但不会增加 SQLite writer 数量：WAL
 仍然只允许一个活跃 writer。因此，只有在连接等待指标表明确有需要，并且已经用部署
-环境的写入负载验证后，才应设置高于默认值的连接数。
+环境的写入负载验证后，才应设置高于默认值的连接数。`DB_DRIVER=postgres` 时这些
+限制不适用。
+
+### PostgreSQL 后端（单实例）
+
+未设置 `DB_DRIVER` 时，SQLite 仍是默认后端，daemon 继续使用
+`DATA_ROOT/data.db`。要使用外置 PostgreSQL，请同时设置：
+
+```dotenv
+DB_DRIVER=postgres
+DB_URL=postgres://user:password@db.example.com:5432/agent_compose?sslmode=verify-full
+```
+
+`DB_URL` 只在 PostgreSQL 模式下读取，必须是 `postgres://` 或
+`postgresql://` URL；`sslmode` 等 TLS 参数直接写在 URL 中。连接池由
+`DB_MAX_OPEN_CONNS`（默认 10，最小 2）、`DB_MAX_IDLE_CONNS`（默认 5）、
+`DB_CONN_MAX_LIFETIME`（默认 30m）和 `DB_CONNECT_TIMEOUT`（默认 10s）控制。
+其中一条连接专门用于持有单实例锁。
+daemon 不会把 URL 或密码写入日志或错误信息。PostgreSQL 模式下
+`SQLITE_MAX_OPEN_CONNS` 不生效。
+
+当前测试的 PostgreSQL 服务端版本为 17。PostgreSQL 模式目前明确只支持单实例。
+daemon 启动时会在数据库上持有会话级
+advisory lock；同一数据库上的第二个 daemon 会直接报错退出，而不是继续运行。
+这是为了保护当前的 scheduler、run 恢复、sandbox 投影、runtime 回调和流式模型：
+它们仍假设只有一个 daemon 进程和一个节点本地 `DATA_ROOT`。PostgreSQL 不会让
+这些能力变成集群安全；多副本部署仍不受支持。
+
+daemon 会在事务级 advisory lock 下自动执行 PostgreSQL migration，因此并发启动
+是安全的。运维也可以显式检查和执行：
+
+```bash
+agent-compose db status
+agent-compose db migrate
+```
+
+如需迁移已有数据，请先停止 daemon，再把 SQLite 数据库拷贝到一个已迁移且为空的
+PostgreSQL 目标库：
+
+```bash
+agent-compose db copy --source /data/data.db --to 'postgres://.../agent_compose?sslmode=require'
+```
+
+`db copy` 以只读方式打开 SQLite 源，要求源 schema 已是最新版本，拒绝非空目标库，
+并逐表校验行数。SQLite 文件不会被修改，因此回退方式是停止 daemon 并移除
+`DB_DRIVER`/`DB_URL`；切换后写入 PostgreSQL 的数据不会自动回到 SQLite。即使在
+PostgreSQL 模式下，`DATA_ROOT` 仍需保留在节点上：sandbox、workspace、run 输入、
+镜像缓存和 scheduler 产物仍存放在这里。
 
 ## 常见工作流
 

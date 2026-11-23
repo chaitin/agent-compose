@@ -1,8 +1,29 @@
 # Agent-Compose Helm Chart
 
 This chart installs the Agent-Compose daemon and its Kubernetes runtime
-permissions. The daemon is intentionally deployed as one replica because its
-SQLite state is single-writer.
+permissions. The daemon is intentionally deployed as one replica. SQLite is
+single-writer, and PostgreSQL mode also holds a single-daemon advisory lock;
+multi-replica operation is not supported by either backend yet.
+
+## PostgreSQL backend
+
+The chart still deploys one daemon replica. To use an external PostgreSQL
+database, pass the settings through `extraEnv` (keep the password in a Secret):
+
+```yaml
+extraEnv:
+  - name: DB_DRIVER
+    value: postgres
+  - name: DB_URL
+    valueFrom:
+      secretKeyRef:
+        name: agent-compose-database
+        key: url
+```
+
+The daemon applies migrations automatically and holds a single-instance
+advisory lock. `DATA_ROOT` (the chart's PersistentVolume) is still required for
+workspaces, sandboxes, and image caches.
 
 ## Install
 

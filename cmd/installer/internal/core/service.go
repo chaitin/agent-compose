@@ -470,6 +470,11 @@ func selectDataDir(installDir string, env *envFile, existingEnv bool) (string, s
 			return "", "", fmt.Errorf("AGENT_COMPOSE_DATA_DIR must be ./data or ./data/agent-compose when using the installer")
 		}
 	}
+	// In PostgreSQL mode data.db may legitimately be absent. Do not infer the
+	// legacy SQLite layout from a missing file; DATA_ROOT is still ./data.
+	if driver, ok := env.Get("DB_DRIVER"); ok && strings.EqualFold(strings.TrimSpace(driver), "postgres") {
+		return "./data", filepath.Join(installDir, "data"), nil
+	}
 	currentDB := regularFile(filepath.Join(installDir, "data", "data.db"))
 	legacyDB := regularFile(filepath.Join(installDir, "data", "agent-compose", "data.db"))
 	if currentDB && legacyDB {

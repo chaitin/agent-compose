@@ -403,6 +403,7 @@ configuration reference.** At minimum, review these before exposing a deployment
 - `AGENT_COMPOSE_AUTH_TOKEN` — optional shared Bearer token for daemon HTTP(S) control-plane access.
 - `AGENT_COMPOSE_HTTP_PORT` — host port for the web UI / reverse proxy (`with-ui`).
 - `RUNTIME_DRIVER` — default runtime driver.
+- `DB_DRIVER`, `DB_URL` — optional external PostgreSQL backend; SQLite remains the default.
 
 ## Web UI
 

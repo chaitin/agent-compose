@@ -370,6 +370,13 @@ so every ordinary `Test*` in that package runs in the E2E shape even when its
 name does not repeat the `E2E` marker. Environment-gated daemon and Docker tests
 may still skip when their documented opt-in variables are absent.
 
+PostgreSQL integration tests are gated by
+`AGENT_COMPOSE_TEST_POSTGRES_DSN=postgres://...` and skip when it is unset, so
+the default `task test` stays free of external services. Run them locally with
+`task test:postgres`; CI runs the same selection in a dedicated job with a
+PostgreSQL service container. The tests create a unique schema per test and drop
+it afterward, so one server can serve the whole suite.
+
 Generated protocol clients, vendored code, build artifacts, and test fixtures
 should be excluded from coverage calculations unless the project intentionally
 treats them as maintained source code. Any exclusions must be documented in the
