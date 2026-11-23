@@ -54,7 +54,7 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 	} else if err := insertProjectRunLabelsTx(ctx, tx, run.RunID, run.Labels); err != nil {
 		return ProjectRunRecord{}, err
 	}
-	if _, _, err := appendProjectRunEventsTx(ctx, tx, events); err != nil {
+	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("append create project run events: %w", err)
 	}
 	stored, err := getProjectRunTx(ctx, tx, run.RunID)
@@ -101,7 +101,7 @@ func (s *projectStore) UpdateProjectRunWithEvents(ctx context.Context, run Proje
 	if rows == 0 {
 		return ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", run.RunID, fmt.Sprintf("project run %s not found", run.RunID), nil)
 	}
-	if _, _, err := appendProjectRunEventsTx(ctx, tx, events); err != nil {
+	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("append update project run events: %w", err)
 	}
 	updated, err := getProjectRunTx(ctx, tx, run.RunID)

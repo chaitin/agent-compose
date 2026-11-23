@@ -141,7 +141,9 @@ func NewDaemonApp(ctx context.Context, opts DaemonOptions) (*DaemonApp, error) {
 	}
 	do.Provide(di, NewEcho)
 	health.Setup(di)
-	agentcomposeapp.Register(di)
+	if err := agentcomposeapp.Register(di); err != nil {
+		return nil, err
+	}
 
 	app := do.MustInvoke[*echo.Echo](di)
 	logger := do.MustInvoke[*slog.Logger](di)

@@ -9,11 +9,14 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"strings"
 	"time"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 // llmStore owns LLM provider/model configuration and facade tokens.
 type llmStore struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect dialect.Dialect
 }
 
 func (s *llmStore) HasLLMProviders(ctx context.Context) (bool, error) {

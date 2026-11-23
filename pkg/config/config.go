@@ -71,11 +71,19 @@ const (
 var BuildVersion = "0"
 
 type Config struct {
-	AgentTelemetry             AgentTelemetryConfig
-	DbAddr                     string
-	DbName                     string
-	DbTimeout                  time.Duration
-	SQLiteMaxOpenConns         int
+	AgentTelemetry     AgentTelemetryConfig
+	DbAddr             string
+	DbName             string
+	DbTimeout          time.Duration
+	SQLiteMaxOpenConns int
+	// DBDriver selects SQLite (default) or an external PostgreSQL backend.
+	// DBURL is only read when DBDriver is postgres.
+	DBDriver                   DatabaseDriver
+	DBURL                      string
+	DBMaxOpenConns             int
+	DBMaxIdleConns             int
+	DBConnMaxLifetime          time.Duration
+	DBConnectTimeout           time.Duration
 	DataRoot                   string
 	SandboxRoot                string
 	SandboxRootExplicit        bool
@@ -471,6 +479,12 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		DbName:                          database.DbName,
 		DbTimeout:                       database.DbTimeout,
 		SQLiteMaxOpenConns:              database.SQLiteMaxOpenConns,
+		DBDriver:                        database.Driver,
+		DBURL:                           database.DatabaseURL,
+		DBMaxOpenConns:                  database.MaxOpenConns,
+		DBMaxIdleConns:                  database.MaxIdleConns,
+		DBConnMaxLifetime:               database.ConnMaxLifetime,
+		DBConnectTimeout:                database.ConnectTimeout,
 		DataRoot:                        normalized.DataRoot,
 		SandboxRoot:                     normalized.SandboxRoot,
 		SandboxRootExplicit:             sandbox.Explicit,
@@ -579,13 +593,21 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 	}
 }
 
-// databaseConfig holds the sqlite connection settings NewConfig derives from
-// the environment.
+// databaseConfig holds the database settings NewConfig derives from the
+// environment. SQLite fields are always populated; PostgreSQL fields are only
+// meaningful when Driver is postgres.
 type databaseConfig struct {
+	Driver             DatabaseDriver
 	DbAddr             string
 	DbName             string
 	DbTimeout          time.Duration
 	SQLiteMaxOpenConns int
+
+	DatabaseURL     string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	ConnectTimeout  time.Duration
 }
 
 func loadDatabaseConfig(logger *slog.Logger, dataRoot string) (databaseConfig, error) {
@@ -602,11 +624,29 @@ func loadDatabaseConfig(logger *slog.Logger, dataRoot string) (databaseConfig, e
 	if err != nil {
 		return databaseConfig{}, err
 	}
+	driver, err := loadDatabaseDriver()
+	if err != nil {
+		return databaseConfig{}, err
+	}
+	databaseURL, err := loadDatabaseURL(driver, logger)
+	if err != nil {
+		return databaseConfig{}, err
+	}
+	pool, err := loadDatabasePoolSettings(driver)
+	if err != nil {
+		return databaseConfig{}, err
+	}
 	return databaseConfig{
+		Driver:             driver,
 		DbAddr:             filepath.Join(dataRoot, "data.db"),
 		DbName:             "agent_compose",
 		DbTimeout:          dbTimeout,
 		SQLiteMaxOpenConns: sqliteMaxOpenConns,
+		DatabaseURL:        databaseURL,
+		MaxOpenConns:       pool.maxOpenConns,
+		MaxIdleConns:       pool.maxIdleConns,
+		ConnMaxLifetime:    pool.connMaxLifetime,
+		ConnectTimeout:     pool.connectTimeout,
 	}, nil
 }
 

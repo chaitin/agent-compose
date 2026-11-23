@@ -3,7 +3,10 @@ package configstore
 import (
 	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	sqlitedrv "modernc.org/sqlite"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 // SQLite reports constraint violations through extended result codes. Only the
@@ -32,4 +35,15 @@ func isSQLiteDuplicateRow(err error) bool {
 	default:
 		return false
 	}
+}
+
+// isDuplicateRow classifies a unique/primary-key conflict for the active
+// backend. PostgreSQL reports it as SQLSTATE 23505; SQLite uses extended
+// result codes.
+func isDuplicateRow(d dialect.Dialect, err error) bool {
+	if d != nil && d.Name() == dialect.NamePostgres {
+		var pgErr *pgconn.PgError
+		return errors.As(err, &pgErr) && pgErr.Code == "23505"
+	}
+	return isSQLiteDuplicateRow(err)
 }

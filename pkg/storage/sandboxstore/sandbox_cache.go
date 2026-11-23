@@ -11,6 +11,8 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/storage/storeutil"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 const sandboxCacheVersion = 2
@@ -22,15 +24,20 @@ var errSandboxCache = errors.New("sandbox listing cache failure")
 // exists so ListSandboxes can answer with an indexed query instead of scanning
 // every sandbox directory.
 type sandboxCache struct {
-	db     *sql.DB
-	ownsDB bool
+	db      *sql.DB
+	dialect dialect.Dialect
+	ownsDB  bool
 }
 
 func openSandboxCacheDB(ctx context.Context, db *sql.DB) (*sandboxCache, bool, error) {
+	return openSandboxCacheDBWithDialect(ctx, db, dialect.SQLite())
+}
+
+func openSandboxCacheDBWithDialect(ctx context.Context, db *sql.DB, d dialect.Dialect) (*sandboxCache, bool, error) {
 	if db == nil {
 		return nil, false, fmt.Errorf("sandbox listing database is required")
 	}
-	idx := &sandboxCache{db: db}
+	idx := &sandboxCache{db: db, dialect: dialect.OrSQLite(d)}
 	if err := idx.quickCheck(ctx); err != nil {
 		return nil, false, err
 	}
@@ -93,7 +100,7 @@ func (x *sandboxCache) Close() error {
 
 func (x *sandboxCache) quickCheck(ctx context.Context) error {
 	var quickCheck string
-	if err := x.db.QueryRowContext(ctx, `PRAGMA quick_check(1)`).Scan(&quickCheck); err != nil {
+	if err := x.db.QueryRowContext(ctx, x.dialect.QuickCheckQuery()).Scan(&quickCheck); err != nil {
 		return sandboxCacheError("quick check", err)
 	}
 	if quickCheck != "ok" {

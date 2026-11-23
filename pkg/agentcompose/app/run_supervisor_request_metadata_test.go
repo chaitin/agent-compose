@@ -88,7 +88,7 @@ func TestRunSupervisorDetachedRunsKeepRequestMetadata(t *testing.T) {
 			close(controller.finish)
 			cancelRequest()
 			select {
-			case <-done:
+			case <-done: //nolint:errcheck // wait for the goroutine to finish; the stub's error is checked elsewhere.
 			case <-time.After(time.Second):
 				t.Fatal("run start did not return")
 			}

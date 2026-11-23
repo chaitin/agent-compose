@@ -85,8 +85,15 @@ func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Ide
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if lock := s.dialect.LockRunHistoryTablesStatement(); lock != "" {
+		if _, err := tx.ExecContext(ctx, lock); err != nil {
+			return fmt.Errorf("lock run history tables: %w", err)
+		}
+	}
 	// Write first: a deferred SQLite transaction that reads before its first
-	// write can fail to upgrade once another writer commits.
+	// write can fail to upgrade once another writer commits. On PostgreSQL the
+	// table lock above supplies the same exclusion; the project row update is
+	// still a harmless write fence for the project itself.
 	if _, err := tx.ExecContext(ctx, "UPDATE project SET updated_at=updated_at WHERE id=?", id.ProjectID); err != nil {
 		return err
 	}

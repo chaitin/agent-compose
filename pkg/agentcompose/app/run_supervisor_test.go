@@ -630,7 +630,7 @@ func TestRunSupervisorReattachRunSurvivesShutdownSignal(t *testing.T) {
 	if _, err := supervisor.StopActiveRun(context.Background(), "run-1", "cleanup"); err != nil {
 		t.Fatalf("StopActiveRun() error = %v", err)
 	}
-	<-controller.ended
+	<-controller.ended //nolint:errcheck // wait for the follower to exit; the stop cause is asserted by other cases.
 }
 
 func TestRunSupervisorReattachRunReportsFailure(t *testing.T) {

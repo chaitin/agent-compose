@@ -9,6 +9,8 @@ import (
 	"github.com/chaitin/agent-compose/internal/projects"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/storage/storeutil"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 const (
@@ -22,7 +24,7 @@ const (
 // disagree with its reported total.
 func (s *projectStore) ListProjects(ctx context.Context, options ProjectListOptions) (ProjectListResult, error) {
 	limit, offset := projectListBounds(options)
-	where, args := projectListWhere(options)
+	where, args := projectListWhere(options, s.dialect)
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -125,14 +127,15 @@ func projectListBounds(options ProjectListOptions) (limit, offset int) {
 	return limit, offset
 }
 
-func projectListWhere(options ProjectListOptions) (string, []any) {
+func projectListWhere(options ProjectListOptions, d dialect.Dialect) (string, []any) {
 	clauses := make([]string, 0, 2)
 	args := make([]any, 0, 3)
 	if !options.IncludeRemoved {
 		clauses = append(clauses, "p.removed_at = 0")
 	}
 	if query := strings.ToLower(strings.TrimSpace(options.Query)); query != "" {
-		clauses = append(clauses, `(instr(lower(p.id), ?) > 0 OR instr(lower(p.name), ?) > 0 OR instr(lower(p.source_path), ?) > 0)`)
+		d = dialect.OrSQLite(d)
+		clauses = append(clauses, "("+d.Contains("lower(p.id)")+" OR "+d.Contains("lower(p.name)")+" OR "+d.Contains("lower(p.source_path)")+")")
 		args = append(args, query, query, query)
 	}
 	if len(clauses) == 0 {

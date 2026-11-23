@@ -9,6 +9,8 @@ import (
 	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 type (
@@ -28,7 +30,8 @@ type (
 // coreStore owns the shared configuration domains: global env vars, workspace
 // configs.
 type coreStore struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect dialect.Dialect
 }
 
 // ConfigStore is the composite persistence facade over DATA_ROOT/data.db. Each
@@ -41,7 +44,8 @@ type coreStore struct {
 // promoted method would panic; the sub-store types are unexported to keep direct
 // construction confined to this package.
 type ConfigStore struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect dialect.Dialect
 
 	*coreStore
 	*schedulerStore
@@ -53,17 +57,26 @@ type ConfigStore struct {
 	*volumeStore
 }
 
+// FromDB constructs a store over the SQLite dialect. Existing callers and
+// tests keep this default; a PostgreSQL composition root uses
+// FromDBWithDialect.
 func FromDB(db *sql.DB) *ConfigStore {
+	return FromDBWithDialect(db, dialect.SQLite())
+}
+
+func FromDBWithDialect(db *sql.DB, d dialect.Dialect) *ConfigStore {
+	d = dialect.OrSQLite(d)
 	return &ConfigStore{
 		db:                     db,
-		coreStore:              &coreStore{db: db},
-		schedulerStore:         &schedulerStore{db: db},
-		eventStore:             &eventStore{db: db},
-		projectStore:           &projectStore{db: db},
-		llmStore:               &llmStore{db: db},
-		credentialStore:        &credentialStore{db: db},
-		capabilityGatewayStore: &capabilityGatewayStore{db: db},
-		volumeStore:            &volumeStore{db: db},
+		dialect:                d,
+		coreStore:              &coreStore{db: db, dialect: d},
+		schedulerStore:         &schedulerStore{db: db, dialect: d},
+		eventStore:             &eventStore{db: db, dialect: d},
+		projectStore:           &projectStore{db: db, dialect: d},
+		llmStore:               &llmStore{db: db, dialect: d},
+		credentialStore:        &credentialStore{db: db, dialect: d},
+		capabilityGatewayStore: &capabilityGatewayStore{db: db, dialect: d},
+		volumeStore:            &volumeStore{db: db, dialect: d},
 	}
 }
 

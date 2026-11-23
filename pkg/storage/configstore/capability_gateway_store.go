@@ -9,11 +9,14 @@ import (
 	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 // capabilityGatewayStore owns the capability gateway settings row.
 type capabilityGatewayStore struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect dialect.Dialect
 }
 
 // capabilityGatewayRowID pins the settings to a single row.

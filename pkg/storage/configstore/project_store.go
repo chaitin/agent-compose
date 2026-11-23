@@ -12,11 +12,14 @@ import (
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/idset"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 // projectStore owns projects, revisions, agents, schedulers, runs, and sandboxes.
 type projectStore struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect dialect.Dialect
 }
 
 func (s *projectStore) UpsertProject(ctx context.Context, project ProjectRecord) (ProjectRecord, error) {
@@ -87,8 +90,8 @@ func (s *projectStore) SaveProjectRevision(ctx context.Context, revision Project
 		return ProjectRevisionRecord{}, false, fmt.Errorf("get project revision conn: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
-	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
-		return ProjectRevisionRecord{}, false, fmt.Errorf("begin immediate project revision tx: %w", err)
+	if _, err := conn.ExecContext(ctx, s.dialect.BeginWriteStatement()); err != nil {
+		return ProjectRevisionRecord{}, false, fmt.Errorf("begin project revision tx: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -105,7 +108,7 @@ func (s *projectStore) SaveProjectRevision(ctx context.Context, revision Project
 	}
 
 	var currentRevision int64
-	if err := conn.QueryRowContext(ctx, `SELECT current_revision FROM project WHERE id = ?`, revision.ProjectID).Scan(&currentRevision); err != nil {
+	if err := conn.QueryRowContext(ctx, `SELECT current_revision FROM project WHERE id = ?`+s.dialect.ForUpdateClause(), revision.ProjectID).Scan(&currentRevision); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ProjectRevisionRecord{}, false, domain.ResourceError(domain.ErrNotFound, "project", revision.ProjectID, fmt.Sprintf("project %s not found", revision.ProjectID), err)
 		}

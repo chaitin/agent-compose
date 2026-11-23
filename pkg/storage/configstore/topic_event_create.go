@@ -23,14 +23,19 @@ func (s *eventStore) CreateEvent(ctx context.Context, item domain.TopicEventReco
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	result, err := insertTopicEvent(ctx, tx, normalized)
+	// PostgreSQL sequences do not guarantee commit order; event pagination
+	// relies on sequence order matching visibility. SQLite's single writer
+	// already provides this, so its dialect returns an empty statement.
+	if lock := s.dialect.LockEventSequenceStatement(); lock != "" {
+		if _, err := tx.ExecContext(ctx, lock); err != nil {
+			return domain.TopicEventRecord{}, fmt.Errorf("lock event sequence: %w", err)
+		}
+	}
+
+	sequence, err := insertTopicEvent(ctx, tx, normalized)
 	if err != nil {
 		_ = tx.Rollback()
 		return s.resolveTopicEventInsertError(ctx, normalized, err)
-	}
-	sequence, err := result.LastInsertId()
-	if err != nil {
-		return domain.TopicEventRecord{}, fmt.Errorf("read event sequence: %w", err)
 	}
 	normalized.Sequence = sequence
 	if err := storeSequencedTopicEventPayload(ctx, tx, &normalized); err != nil {
@@ -42,12 +47,14 @@ func (s *eventStore) CreateEvent(ctx context.Context, item domain.TopicEventReco
 	return normalized, nil
 }
 
-func insertTopicEvent(ctx context.Context, tx *sql.Tx, item domain.TopicEventRecord) (sql.Result, error) {
-	return tx.ExecContext(ctx, `INSERT INTO event(
+func insertTopicEvent(ctx context.Context, tx *sql.Tx, item domain.TopicEventRecord) (int64, error) {
+	var sequence int64
+	err := tx.QueryRowContext(ctx, `INSERT INTO event(
 		id, topic, source, provider, intent, correlation_id, idempotency_key, delivery_id, payload_hash, payload_json,
 		dispatch_status, parent_event_id, publisher_type, publisher_id, publisher_run_id, publisher_project_id,
 		replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at, last_error, dead_letter_at, created_at, dispatched_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	RETURNING sequence`,
 		item.ID,
 		item.Topic,
 		item.Source,
@@ -73,7 +80,11 @@ func insertTopicEvent(ctx context.Context, tx *sql.Tx, item domain.TopicEventRec
 		domain.NonZeroTimeUnixMilli(item.DeadLetterAt),
 		item.CreatedAt.UnixMilli(),
 		domain.NonZeroTimeUnixMilli(item.DispatchedAt),
-	)
+	).Scan(&sequence)
+	if err != nil {
+		return 0, err
+	}
+	return sequence, nil
 }
 
 func (s *eventStore) resolveTopicEventInsertError(ctx context.Context, item domain.TopicEventRecord, insertErr error) (domain.TopicEventRecord, error) {

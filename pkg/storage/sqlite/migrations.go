@@ -297,3 +297,27 @@ func validateAppliedMigrations(available []migration, applied []appliedMigration
 	}
 	return nil
 }
+
+// LatestMigrationVersion returns the highest embedded SQLite migration
+// version. Offline copy tools use it to reject a source database that has not
+// been upgraded by a matching daemon yet.
+func LatestMigrationVersion() (int64, error) {
+	migrations, err := loadMigrations(embeddedMigrations)
+	if err != nil {
+		return 0, err
+	}
+	return migrations[len(migrations)-1].version, nil
+}
+
+// AppliedMigrationVersion returns the highest recorded migration version, or
+// zero when the database has no migration history.
+func AppliedMigrationVersion(ctx context.Context, db *sql.DB) (int64, error) {
+	if db == nil {
+		return 0, fmt.Errorf("SQLite database is required")
+	}
+	var version int64
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return 0, fmt.Errorf("read SQLite migration version: %w", err)
+	}
+	return version, nil
+}

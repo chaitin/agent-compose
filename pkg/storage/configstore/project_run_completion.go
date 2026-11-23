@@ -50,7 +50,7 @@ func (s *projectStore) StageProjectRunCompletion(ctx context.Context, completion
 	}
 	created := rows > 0
 	if created {
-		if _, _, err := appendProjectRunEventsTx(ctx, tx, events); err != nil {
+		if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
 			return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("append staged project run completion events: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE project_run SET status = 'running', cleanup_error = '',
@@ -160,7 +160,7 @@ func (s *projectStore) finalizeProjectRunCompletion(ctx context.Context, run dom
 	if rows, _ := result.RowsAffected(); rows == 0 {
 		return domain.ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", run.RunID, "project run not found", nil)
 	}
-	if _, _, err := appendProjectRunEventsTx(ctx, tx, []domain.ProjectRunEventRecord{statusEvent}); err != nil {
+	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, []domain.ProjectRunEventRecord{statusEvent}); err != nil {
 		return domain.ProjectRunRecord{}, fmt.Errorf("append terminal project run status event: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM project_run_completion WHERE run_id = ?`, run.RunID); err != nil {
