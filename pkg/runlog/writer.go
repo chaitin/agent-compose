@@ -25,7 +25,8 @@ const DefaultRunLogMaxBytes int64 = 256 << 20
 
 // maxLogLineBytes bounds one run log line, so that a single oversized entry —
 // however it is produced — cannot make the whole log unreadable: the writer
-// drops entries past this length and the reader skips lines past it.
+// shrinks an entry that would not fit (see fitLine) and the reader skips lines
+// past it.
 const maxLogLineBytes int64 = 16 << 20
 
 // Options configures a Writer. Zero values use the defaults.
@@ -306,14 +307,9 @@ func (w *Writer) writeLocked(entry Entry) (Entry, error) {
 	entry.Seq = w.seq + 1
 	entry.Time = w.opts.Now().UTC()
 	entry.TextOffset = w.textOffset
-	line, err := json.Marshal(entry)
+	entry, line, err := fitLine(entry)
 	if err != nil {
-		return Entry{}, fmt.Errorf("encode run log entry: %w", err)
-	}
-	// Check the final encoding, including position metadata and newline,
-	// against the same physical line bound the reader applies.
-	if int64(len(line))+1 > maxLogLineBytes {
-		return Entry{}, nil
+		return Entry{}, err
 	}
 	line = append(line, '\n')
 	if _, err := w.file.Write(line); err != nil {
@@ -334,4 +330,76 @@ func (w *Writer) writeLocked(entry Entry) (Entry, error) {
 		}
 	}
 	return entry, nil
+}
+
+// fitLine encodes entry as one log line. The final encoding, including the
+// position metadata and the newline, is checked against the same bound the
+// reader applies; an entry past it keeps a shrinking head and tail of each of
+// its long fields until it fits, instead of being dropped. Dropping it would
+// lose the very entries a run's state depends on (a user message, a turn end)
+// and hand the caller no sequence number to point at. What was cut is marked
+// in the text itself.
+func fitLine(entry Entry) (Entry, []byte, error) {
+	line, err := json.Marshal(entry)
+	if err != nil {
+		return Entry{}, nil, fmt.Errorf("encode run log entry: %w", err)
+	}
+	for budget := maxEntryTextBytes; int64(len(line))+1 > maxLogLineBytes; budget /= 4 {
+		fitted := shrinkEntry(entry, budget)
+		if line, err = json.Marshal(fitted); err != nil {
+			return Entry{}, nil, fmt.Errorf("encode run log entry: %w", err)
+		}
+		if int64(len(line))+1 <= maxLogLineBytes {
+			return fitted, line, nil
+		}
+		if budget == 0 {
+			return Entry{}, nil, fmt.Errorf("run log %s entry does not fit in one line", entry.Type)
+		}
+	}
+	return entry, line, nil
+}
+
+// shrinkEntry keeps at most budget bytes of each long field of entry. It
+// copies what it changes, as Tool is shared with the merger's state.
+func shrinkEntry(entry Entry, budget int) Entry {
+	entry.Text = clampText(entry.Text, budget)
+	entry.FinalText = clampText(entry.FinalText, budget)
+	entry.Data = clampText(entry.Data, budget)
+	entry.Code = clampText(entry.Code, budget)
+	if entry.Tool != nil {
+		tool := *entry.Tool
+		tool.Name = clampText(tool.Name, budget)
+		tool.Command = clampText(tool.Command, budget)
+		tool.Output = clampText(tool.Output, budget)
+		tool.Error = clampText(tool.Error, budget)
+		tool.Input = clampToolInput(tool.Input, budget)
+		if len(tool.Changes) > 0 {
+			keep := min(len(tool.Changes), budget/64)
+			changes := make([]FileChange, keep)
+			for i, change := range tool.Changes[:keep] {
+				changes[i] = FileChange{Path: clampText(change.Path, budget), Kind: clampText(change.Kind, budget)}
+			}
+			tool.Changes = changes
+		}
+		entry.Tool = &tool
+	}
+	if entry.Usage != nil {
+		usage := *entry.Usage
+		usage.Model = clampText(usage.Model, budget)
+		entry.Usage = &usage
+	}
+	return entry
+}
+
+// clampText keeps at most about limit bytes of s, half from each end, with a
+// marker saying how much was omitted between them.
+func clampText(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	if limit/2 <= 0 {
+		return fmt.Sprintf("[… %d bytes omitted …]", len(s))
+	}
+	clamped, _ := truncateMiddle(s, limit/2)
+	return clamped
 }

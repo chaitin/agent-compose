@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func openTest(t *testing.T, opts Options) (*Writer, string) {
@@ -424,14 +425,75 @@ func TestReadEntryBatchReadsOnlyAppended(t *testing.T) {
 	}
 }
 
-func TestOversizedEssentialEntryIsDropped(t *testing.T) {
-	w, path := openTest(t, Options{})
-	if _, err := w.AppendInitialPrompt("first"); err != nil {
+func TestOversizedEssentialEntriesAreKeptShrunk(t *testing.T) {
+	w, path := openTest(t, Options{MaxBytes: DefaultRunLogMaxBytes})
+	huge := func(c string) string { return strings.Repeat(c, int(maxLogLineBytes)+1) }
+	// Entries a run's state depends on must survive past the per-line bound:
+	// the caller records their sequence numbers as the conversation's index.
+	initial, err := w.AppendInitialPrompt(huge("p"))
+	if err != nil || initial.Seq == 0 {
+		t.Fatalf("initial prompt: seq=%d err=%v", initial.Seq, err)
+	}
+	user, err := w.AppendUser(huge("u"))
+	if err != nil || user.Seq == 0 {
+		t.Fatalf("user: seq=%d err=%v", user.Seq, err)
+	}
+	end, err := w.EndTurn("stop", huge("f"))
+	if err != nil || end.Seq == 0 {
+		t.Fatalf("turn end: seq=%d err=%v", end.Seq, err)
+	}
+	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// A user message larger than the per-line bound must be dropped so the log
-	// stays readable, rather than written whole past MaxBytes.
-	if _, err := w.AppendUser(strings.Repeat("u", int(maxLogLineBytes)+1)); err != nil {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, line := range strings.SplitAfter(string(data), "\n") {
+		if int64(len(line)) > maxLogLineBytes {
+			t.Fatalf("line %d is %d bytes, past the bound", i, len(line))
+		}
+	}
+	entries, err := ReadEntries(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySeq := map[uint64]Entry{}
+	for _, e := range entries {
+		bySeq[e.Seq] = e
+	}
+	for _, want := range []struct {
+		seq   uint64
+		typ   EntryType
+		field func(Entry) string
+	}{
+		{initial.Seq, EntryUser, func(e Entry) string { return e.Text }},
+		{user.Seq, EntryUser, func(e Entry) string { return e.Text }},
+		{end.Seq, EntryTurnEnd, func(e Entry) string { return e.FinalText }},
+	} {
+		got, ok := bySeq[want.seq]
+		if !ok || got.Type != want.typ || !strings.Contains(want.field(got), "bytes omitted") {
+			t.Fatalf("seq %d: %#v", want.seq, got.Type)
+		}
+	}
+	// The final answer was never streamed, so the turn's prose carries it
+	// whole, split across entries rather than cut.
+	var prose strings.Builder
+	for _, e := range entries {
+		if e.Type == EntryText {
+			prose.WriteString(e.Text)
+		}
+	}
+	if prose.String() != huge("f") {
+		t.Fatalf("final text prose: %d bytes, want %d", prose.Len(), len(huge("f")))
+	}
+}
+
+func TestLargeOutputIsSplitAndKeptWhole(t *testing.T) {
+	w, path := openTest(t, Options{})
+	// Multi-byte runes straddle every split point.
+	data := strings.Repeat("é—x", maxEntryTextBytes/2)
+	if err := w.AppendOutput("stdout", data); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
@@ -439,11 +501,49 @@ func TestOversizedEssentialEntryIsDropped(t *testing.T) {
 	}
 	entries, err := ReadEntries(path, 0)
 	if err != nil {
-		t.Fatalf("read: %v", err)
+		t.Fatal(err)
 	}
+	var stdout strings.Builder
+	outputs := 0
 	for _, e := range entries {
-		if e.Type == EntryUser && len(e.Text) > int(maxLogLineBytes) {
-			t.Fatalf("oversized user entry was written: %d bytes", len(e.Text))
+		if e.Type == EntryOutput && e.Stream == "stdout" {
+			outputs++
+			if !utf8.ValidString(e.Data) || len(e.Data) > maxEntryTextBytes {
+				t.Fatalf("output entry %d: %d bytes, valid=%v", e.Seq, len(e.Data), utf8.ValidString(e.Data))
+			}
+			stdout.WriteString(e.Data)
 		}
+	}
+	if outputs < 2 || stdout.String() != data {
+		t.Fatalf("outputs=%d, stdout %d bytes, want %d", outputs, stdout.Len(), len(data))
+	}
+}
+
+func TestToolErrorIsKeptFromBothEnds(t *testing.T) {
+	w, path := openTest(t, Options{})
+	if err := w.AppendAgentEvent([]byte(`{"kind":"tool_call","id":"a","name":"Bash","command":"make","status":"completed"}`)); err != nil {
+		t.Fatal(err)
+	}
+	failure := "start " + strings.Repeat("e", int(maxLogLineBytes)) + " end"
+	event, err := json.Marshal(map[string]any{"kind": "tool_result", "id": "a", "ok": false, "error": failure})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendAgentEvent(event); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := ReadEntries(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Type != EntryToolResult {
+		t.Fatalf("entries: %d", len(entries))
+	}
+	got := entries[1].Tool.Error
+	if len(got) > 2*DefaultToolOutputHalf+64 || !strings.HasPrefix(got, "start ") || !strings.HasSuffix(got, " end") {
+		t.Fatalf("tool error: %d bytes", len(got))
 	}
 }

@@ -14,6 +14,12 @@ const textFlushBytes = 4 << 10
 // single essential line past the log's per-line bound and make it unreadable.
 const maxToolInputBytes = 1 << 20
 
+// maxEntryTextBytes bounds the text one prose or output entry carries. Longer
+// text is split across consecutive entries rather than cut, so the text view
+// and a stream's bytes stay complete; even fully escaped, one such entry stays
+// far below the per-line bound.
+const maxEntryTextBytes = 1 << 20
+
 // Pending is an entry a Merger produced, before a Writer gives it a position.
 // Essential entries survive the log cap; see Writer.
 type Pending struct {
@@ -111,7 +117,11 @@ func (m *Merger) Output(stream, data string) []Pending {
 		return nil
 	}
 	m.rememberLegacyOutput(data)
-	return append(m.FlushText(), Pending{Entry: Entry{Type: EntryOutput, Stream: stream, Data: data}})
+	out := m.FlushText()
+	for _, part := range splitText(data, maxEntryTextBytes) {
+		out = append(out, Pending{Entry: Entry{Type: EntryOutput, Stream: stream, Data: part}})
+	}
+	return out
 }
 
 // EndTurn closes the turn, recording final text that never reached the log as
@@ -120,7 +130,7 @@ func (m *Merger) EndTurn(stopReason, finalText string) []Pending {
 	out := m.FlushText()
 	if m.turnEvents || !strings.Contains(m.legacyOutput, finalText) {
 		if rest := finalText[streamedFinalTextOverlap(m.turnProse, finalText):]; rest != "" {
-			out = append(out, m.text(rest))
+			out = append(out, m.text(rest)...)
 		}
 	}
 	m.turnProse = ""
@@ -167,12 +177,53 @@ func (m *Merger) FlushText() []Pending {
 	}
 	text := m.pendingText.String()
 	m.pendingText.Reset()
-	return []Pending{m.text(text)}
+	return m.text(text)
 }
 
-func (m *Merger) text(text string) Pending {
+// text records prose, split into entries of at most maxEntryTextBytes.
+func (m *Merger) text(text string) []Pending {
 	m.turnProse += text
-	return Pending{Entry: Entry{Type: EntryText, Text: text}}
+	parts := splitText(text, maxEntryTextBytes)
+	out := make([]Pending, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, Pending{Entry: Entry{Type: EntryText, Text: part}})
+	}
+	return out
+}
+
+// splitText cuts s into pieces of at most n bytes (n > 0), at rune starts
+// where the input is valid UTF-8, so no piece ends in half a character.
+func splitText(s string, n int) []string {
+	var parts []string
+	for len(s) > n {
+		head := runePrefix(s, n)
+		if head == "" {
+			// No rune start in reach: invalid input, cut at the byte bound.
+			head = s[:n]
+		}
+		parts = append(parts, head)
+		s = s[len(head):]
+	}
+	return append(parts, s)
+}
+
+// runePrefix returns the longest prefix of s of at most n bytes that does not
+// end inside a UTF-8 sequence, backing off at most one sequence's length.
+func runePrefix(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	cut := n
+	for back := 0; back < utf8.UTFMax-1 && cut > 0 && !utf8.RuneStart(s[cut]); back++ {
+		cut--
+	}
+	if !utf8.RuneStart(s[cut]) {
+		cut = n
+	}
+	return s[:cut]
 }
 
 // agentEvent mirrors the provider-neutral AgentEvent union of the runtime
@@ -249,7 +300,7 @@ func (m *Merger) textDelta(text string) []Pending {
 	}
 	m.pendingText.Reset()
 	m.pendingText.WriteString(pending[cut+1:])
-	return []Pending{m.text(pending[:cut+1])}
+	return m.text(pending[:cut+1])
 }
 
 func (m *Merger) tool(id string) *toolState {
@@ -280,7 +331,7 @@ func (m *Merger) toolCall(event agentEvent) []Pending {
 		tool.Command = event.Command
 	}
 	if toolInputText(event.Input) != "" {
-		tool.Input = clampToolInput(event.Input)
+		tool.Input = clampToolInput(event.Input, maxToolInputBytes)
 	}
 	if len(event.Changes) > 0 {
 		tool.Changes = append([]FileChange(nil), event.Changes...)
@@ -307,17 +358,14 @@ func (m *Merger) emitToolCall(state *toolState) []Pending {
 	return append(m.FlushText(), Pending{Entry: Entry{Type: EntryToolCall, Tool: &call}, Essential: true})
 }
 
-// clampToolInput keeps a tool call's arguments within maxToolInputBytes while
+// clampToolInput keeps a tool call's arguments within limit bytes while
 // staying valid JSON, so the entry always serializes. An oversized input
 // degrades to a string that keeps its head and a truncation marker.
-func clampToolInput(input json.RawMessage) json.RawMessage {
-	if len(input) <= maxToolInputBytes {
+func clampToolInput(input json.RawMessage, limit int) json.RawMessage {
+	if len(input) <= limit {
 		return input
 	}
-	head := string(input[:maxToolInputBytes])
-	for len(head) > 0 && !utf8.ValidString(head) {
-		head = head[:len(head)-1]
-	}
+	head := runePrefix(string(input), limit)
 	out, err := json.Marshal(head + "\n[… tool input truncated …]")
 	if err != nil {
 		return json.RawMessage(`"[tool input truncated]"`)
@@ -339,10 +387,13 @@ func (m *Merger) toolResult(event agentEvent) []Pending {
 	}
 	out = append(out, m.FlushText()...)
 	output, outputBytes := truncateMiddle(event.Output, m.toolOutputHalf)
+	// A failing tool's error often carries its whole stderr; it is kept like
+	// the output, from both ends, so the essential result line stays small.
+	failure, _ := truncateMiddle(event.Error, m.toolOutputHalf)
 	result := Tool{
 		ID: state.tool.ID, ParentID: state.tool.ParentID, Name: state.tool.Name,
 		OK: event.OK, ExitCode: state.tool.ExitCode,
-		Output: output, OutputBytes: outputBytes, Error: event.Error,
+		Output: output, OutputBytes: outputBytes, Error: failure,
 	}
 	if event.ExitCode != nil {
 		code := *event.ExitCode
