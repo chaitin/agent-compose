@@ -11,15 +11,17 @@ afterEach(() => {
 });
 
 describe("Codex CLI integration", () => {
-  it("surfaces MCP tool calls from the real Codex SDK subprocess path", async () => {
+  it.each(["128000", "0"])("surfaces MCP tool calls with context window %s through the real Codex SDK subprocess path", async (window) => {
     await withTempSession(async (root) => {
       const binDir = path.join(root, "bin");
       const fakeCodex = path.join(binDir, "codex");
       const messageFile = path.join(root, "message.txt");
+      const argsFile = path.join(root, "argv.json");
       await fs.mkdir(binDir, { recursive: true });
       await fs.mkdir(path.join(root, "workspace"), { recursive: true });
       await fs.writeFile(messageFile, "run lookup", "utf8");
       await fs.writeFile(fakeCodex, `#!/usr/bin/env node
+require("node:fs").writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));
 process.stdin.resume();
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "codex-cli-thread" }) + "\\n");
 process.stdout.write(JSON.stringify({
@@ -44,6 +46,7 @@ process.stdout.write(JSON.stringify({
 `, "utf8");
       await fs.chmod(fakeCodex, 0o755);
       vi.stubEnv("CODEX_BIN", fakeCodex);
+      vi.stubEnv("AGENT_COMPOSE_CODEX_CONTEXT_WINDOW", window);
 
       const stdio = captureStdio();
       try {
@@ -66,6 +69,12 @@ process.stdout.write(JSON.stringify({
         stdio.restore();
       }
 
+      const args = JSON.parse(await fs.readFile(argsFile, "utf8"));
+      expect(args.includes("model_context_window=128000")).toBe(window !== "0");
+      expect(args.includes("model_auto_compact_token_limit=96000")).toBe(window !== "0");
+      if (window === "0") {
+        expect(args.some((arg: string) => /^model_(context_window|auto_compact_token_limit)=/.test(arg))).toBe(false);
+      }
       expect(stdio.stderr).toContain("[mcp:srv/lookup]");
       expect(stdio.stderr).toContain("\"query\": \"docs\"");
       expect(stdio.stderr).toContain("lookup result");

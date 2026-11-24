@@ -21088,8 +21088,10 @@ type LLMModelSpec struct {
 	Headers map[string]string `protobuf:"bytes,5,rep,name=headers,proto3" json:"headers,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Positive output cap. Zero or absent inherits the facade default.
 	MaxOutputTokens *int32 `protobuf:"varint,6,opt,name=max_output_tokens,json=maxOutputTokens,proto3,oneof" json:"max_output_tokens,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Total context window in tokens. Zero or absent keeps runtime defaults.
+	ContextWindow *int32 `protobuf:"varint,7,opt,name=context_window,json=contextWindow,proto3,oneof" json:"context_window,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LLMModelSpec) Reset() {
@@ -21160,6 +21162,13 @@ func (x *LLMModelSpec) GetHeaders() map[string]string {
 func (x *LLMModelSpec) GetMaxOutputTokens() int32 {
 	if x != nil && x.MaxOutputTokens != nil {
 		return *x.MaxOutputTokens
+	}
+	return 0
+}
+
+func (x *LLMModelSpec) GetContextWindow() int32 {
+	if x != nil && x.ContextWindow != nil {
+		return *x.ContextWindow
 	}
 	return 0
 }
@@ -24691,18 +24700,20 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\bprovider\x18\x01 \x01(\v2\x1c.agentcompose.v2.LLMProviderR\bprovider\"'\n" +
 	"\x15DeleteProviderRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"\x18\n" +
-	"\x16DeleteProviderResponse\"\xb2\x02\n" +
+	"\x16DeleteProviderResponse\"\xf1\x02\n" +
 	"\fLLMModelSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprotocol\x18\x03 \x01(\tR\bprotocol\x12\x19\n" +
 	"\bbase_url\x18\x04 \x01(\tR\abaseUrl\x12D\n" +
 	"\aheaders\x18\x05 \x03(\v2*.agentcompose.v2.LLMModelSpec.HeadersEntryR\aheaders\x12/\n" +
-	"\x11max_output_tokens\x18\x06 \x01(\x05H\x00R\x0fmaxOutputTokens\x88\x01\x01\x1a:\n" +
+	"\x11max_output_tokens\x18\x06 \x01(\x05H\x00R\x0fmaxOutputTokens\x88\x01\x01\x12*\n" +
+	"\x0econtext_window\x18\a \x01(\x05H\x01R\rcontextWindow\x88\x01\x01\x1a:\n" +
 	"\fHeadersEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\x14\n" +
-	"\x12_max_output_tokens\"J\n" +
+	"\x12_max_output_tokensB\x11\n" +
+	"\x0f_context_window\"J\n" +
 	"\x11LLMProviderModels\x125\n" +
 	"\x06models\x18\x01 \x03(\v2\x1d.agentcompose.v2.LLMModelSpecR\x06models\"`\n" +
 	"\x10LLMProtocolProbe\x12\x1a\n" +

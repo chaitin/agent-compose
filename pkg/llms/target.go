@@ -61,5 +61,6 @@ func NewResolvedTarget(provider Provider, model Model, config ProviderModelConfi
 		Provider: effectiveProvider, Model: model, WireAPI: wireAPI,
 		Endpoint: EndpointForProvider(effectiveProvider, wireAPI), Headers: headers,
 		MaxOutputTokens: config.MaxOutputTokens,
+		ContextWindow:   config.ContextWindow,
 	}, nil
 }

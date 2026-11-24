@@ -148,12 +148,13 @@ func TestPrepareAgentLLMDialectGuestConfig(t *testing.T) {
 			wantGuestModel: "gpt-5.5", wantInbound: ProtocolResponses, wantConvert: false,
 			wantProviderID: "gateway-responses",
 			wantEnv: map[string]string{
-				"AGENT_COMPOSE_SANDBOX_TOKEN": facadeTokenPlaceholder,
-				"LLM_API_KEY":                 facadeTokenPlaceholder,
-				"LLM_API_ENDPOINT":            openAIEndpoint,
-				"LLM_API_PROTOCOL":            string(ProtocolResponses),
-				"LLM_MODEL":                   "gpt-5.5",
-				"CODEX_MODEL":                 "gpt-5.5",
+				"AGENT_COMPOSE_CODEX_CONTEXT_WINDOW": "0",
+				"AGENT_COMPOSE_SANDBOX_TOKEN":        facadeTokenPlaceholder,
+				"LLM_API_KEY":                        facadeTokenPlaceholder,
+				"LLM_API_ENDPOINT":                   openAIEndpoint,
+				"LLM_API_PROTOCOL":                   string(ProtocolResponses),
+				"LLM_MODEL":                          "gpt-5.5",
+				"CODEX_MODEL":                        "gpt-5.5",
 				// The startup compatibility facade can publish this model under
 				// either OpenAI name, so the managed environment writes both and
 				// stays authoritative for the alias.

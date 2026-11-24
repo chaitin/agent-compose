@@ -201,9 +201,13 @@ func applyCatalogModel(ctx context.Context, tx *sql.Tx, upsert catalogModelUpser
 	if definition.MaxOutputTokens != nil {
 		maxOutputTokens = *definition.MaxOutputTokens
 	}
+	contextWindow := 0
+	if definition.ContextWindow != nil {
+		contextWindow = *definition.ContextWindow
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider_model(
-		provider_id, model_id, wire_api, weight, base_url, headers_json, max_output_tokens, display_name)
-		VALUES(?, ?, ?, 10, ?, ?, ?, ?)`, providerID, modelID, protocol, strings.TrimSpace(pointerString(definition.BaseURL)), headersJSON, maxOutputTokens, pointerString(definition.Name)); err != nil {
+		provider_id, model_id, wire_api, weight, base_url, headers_json, max_output_tokens, display_name, context_window)
+		VALUES(?, ?, ?, 10, ?, ?, ?, ?, ?)`, providerID, modelID, protocol, strings.TrimSpace(pointerString(definition.BaseURL)), headersJSON, maxOutputTokens, pointerString(definition.Name), contextWindow); err != nil {
 		return fmt.Errorf("bind provider %q model %q: %w", providerID, modelID, err)
 	}
 	return nil
@@ -393,9 +397,9 @@ func (s *llmStore) ClearDefaultLLMModel(ctx context.Context) error {
 // LLMProviderModelConfig returns all effective model-binding overrides.
 func (s *llmStore) LLMProviderModelConfig(ctx context.Context, providerID, modelID string) (llms.ProviderModelConfig, bool, error) {
 	var config llms.ProviderModelConfig
-	err := s.db.QueryRowContext(ctx, `SELECT wire_api, base_url, headers_json, max_output_tokens, display_name
+	err := s.db.QueryRowContext(ctx, `SELECT wire_api, base_url, headers_json, max_output_tokens, display_name, context_window
 		FROM llm_provider_model WHERE provider_id = ? AND model_id = ?`, strings.TrimSpace(providerID), strings.TrimSpace(modelID)).
-		Scan(&config.WireAPI, &config.BaseURL, &config.HeadersJSON, &config.MaxOutputTokens, &config.DisplayName)
+		Scan(&config.WireAPI, &config.BaseURL, &config.HeadersJSON, &config.MaxOutputTokens, &config.DisplayName, &config.ContextWindow)
 	if errors.Is(err, sql.ErrNoRows) {
 		return llms.ProviderModelConfig{}, false, nil
 	}
@@ -409,7 +413,7 @@ func (s *llmStore) LLMProviderModelConfig(ctx context.Context, providerID, model
 // ListLLMProviderModelConfigs returns every provider-model binding so the
 // catalog can be loaded in one pass instead of per connection and model.
 func (s *llmStore) ListLLMProviderModelConfigs(ctx context.Context) ([]llms.ProviderModelBinding, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT provider_id, model_id, wire_api, base_url, headers_json, max_output_tokens, display_name
+	rows, err := s.db.QueryContext(ctx, `SELECT provider_id, model_id, wire_api, base_url, headers_json, max_output_tokens, display_name, context_window
 		FROM llm_provider_model ORDER BY provider_id ASC, model_id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("query provider model bindings: %w", err)
@@ -420,7 +424,7 @@ func (s *llmStore) ListLLMProviderModelConfigs(ctx context.Context) ([]llms.Prov
 		var binding llms.ProviderModelBinding
 		if err := rows.Scan(&binding.ProviderID, &binding.ModelID, &binding.Config.WireAPI,
 			&binding.Config.BaseURL, &binding.Config.HeadersJSON, &binding.Config.MaxOutputTokens,
-			&binding.Config.DisplayName); err != nil {
+			&binding.Config.DisplayName, &binding.Config.ContextWindow); err != nil {
 			return nil, fmt.Errorf("scan provider model binding: %w", err)
 		}
 		normalizeBindingWireAPI(&binding.Config)

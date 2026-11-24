@@ -43,6 +43,7 @@ func modelSpecsFromV2(models *agentcomposev2.LLMProviderModels) *[]llms.ModelSpe
 			ID: model.GetId(), Name: model.GetName(), Protocol: model.GetProtocol(),
 			BaseURL: model.GetBaseUrl(), Headers: model.GetHeaders(),
 			MaxOutputTokens: int(model.GetMaxOutputTokens()),
+			ContextWindow:   int(model.GetContextWindow()),
 		})
 	}
 	return &converted
@@ -160,6 +161,13 @@ func modelSpecsToV2(providerID string, bindings []llms.ProviderModelBinding) ([]
 			}
 			maxOutputTokens := int32(binding.Config.MaxOutputTokens)
 			spec.MaxOutputTokens = &maxOutputTokens
+		}
+		if binding.Config.ContextWindow > 0 {
+			if binding.Config.ContextWindow > llms.MaxModelContextWindow {
+				return nil, fmt.Errorf("provider %q model %q: context window %d exceeds %d", providerID, binding.ModelID, binding.Config.ContextWindow, llms.MaxModelContextWindow)
+			}
+			contextWindow := int32(binding.Config.ContextWindow)
+			spec.ContextWindow = &contextWindow
 		}
 		specs = append(specs, spec)
 	}

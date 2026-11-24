@@ -50,6 +50,10 @@ func TestPostgresCopyIntegration(t *testing.T) {
 	}
 
 	store := configstore.FromDBWithDialect(target.DB(), dialect.Postgres())
+	config, ok, err := store.LLMProviderModelConfig(ctx, "provider-copy", "model-copy")
+	if err != nil || !ok || config.ContextWindow != 128_000 || config.MaxOutputTokens != 2048 {
+		t.Fatalf("copied model config = %+v, found = %v, err = %v", config, ok, err)
+	}
 	project, err := store.GetProject(ctx, "project-copy")
 	if err != nil {
 		t.Fatalf("read copied project: %v", err)
@@ -89,6 +93,10 @@ func seedSQLiteSource(t *testing.T, ctx context.Context) string {
 		t.Fatalf("open source database: %v", err)
 	}
 	store := configstore.FromDB(db.DB())
+	if _, err := db.DB().ExecContext(ctx, `INSERT INTO llm_provider_model(provider_id, model_id, context_window, max_output_tokens)
+		VALUES(?, ?, ?, ?)`, "provider-copy", "model-copy", 128_000, 2048); err != nil {
+		t.Fatalf("seed model context window: %v", err)
+	}
 	project, err := store.UpsertProject(ctx, domain.ProjectRecord{ID: "project-copy", Name: "copy-project", SourcePath: "/tmp/copy", SourceJSON: `{}`})
 	if err != nil {
 		t.Fatalf("seed project: %v", err)

@@ -1,5 +1,6 @@
 import { codexTelemetryConfig, providerTelemetryEnv } from "../telemetry.js";
 import { resolveCodexPath } from "../codex-path.js";
+import { codexModelConfig } from "../codex-model-config.js";
 import {
   codexThreadStateMetadata,
   codexThreadStartWarning,
@@ -426,6 +427,7 @@ export class CodexRunner {
       // prevents a changed override from being combined with stale model-visible instructions.
       config: {
         ...codexTelemetryConfig(this.options.telemetry),
+        ...codexModelConfig(process.env),
         ...(this.options.systemContext ? { developer_instructions: this.options.systemContext } : {}),
       },
     });
