@@ -18,6 +18,8 @@ func (s *schedulerStore) loadSchedulerDefinition(ctx context.Context, schedulerI
 	if schedulerID == "" {
 		return domain.Scheduler{}, fmt.Errorf("scheduler id is required")
 	}
+	// Kept as SQL: joins project_scheduler, project, and project_revision in one
+	// consistent read; ent cannot express this join without splitting the read.
 	row := s.db.QueryRowContext(ctx, `SELECT
 		s.id, s.short_id, s.project_id, s.id, s.agent_name,
 		s.revision, s.enabled, s.trigger_count, s.spec_json, s.last_error,

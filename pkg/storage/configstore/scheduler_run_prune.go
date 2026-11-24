@@ -2,10 +2,14 @@ package configstore
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/eventdelivery"
+	"github.com/chaitin/agent-compose/ent/dao/eventsandboxlink"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerevent"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerrun"
 	"github.com/chaitin/agent-compose/pkg/idset"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -16,55 +20,49 @@ func (s *schedulerStore) ListSchedulerRunsForPrune(ctx context.Context, filter s
 	if len(schedulerIDs) == 0 {
 		return []domain.SchedulerRunSummary{}, nil
 	}
-	placeholders := make([]string, len(schedulerIDs))
-	args := make([]any, 0, len(schedulerIDs)+len(filter.Statuses)+4)
-	for index, schedulerID := range schedulerIDs {
-		placeholders[index] = "?"
-		args = append(args, schedulerID)
-	}
-	query := schedulers.SelectSchedulerRunSQL() + ` WHERE scheduler_id IN (` + strings.Join(placeholders, ",") + `) AND trigger_id <> ''`
+	query := s.client.SchedulerRun.Query().
+		Where(
+			schedulerrun.SchedulerIDIn(schedulerIDs...),
+			schedulerrun.TriggerIDNEQ(""),
+		)
 	if triggerID := strings.TrimSpace(filter.TriggerID); triggerID != "" {
-		query += ` AND trigger_id = ?`
-		args = append(args, triggerID)
+		query = query.Where(schedulerrun.TriggerIDEQ(triggerID))
 	}
 	if len(filter.Statuses) > 0 {
-		statusPlaceholders := make([]string, len(filter.Statuses))
+		statuses := make([]string, len(filter.Statuses))
 		for index, status := range filter.Statuses {
-			statusPlaceholders[index] = "?"
-			args = append(args, strings.TrimSpace(status))
+			statuses[index] = strings.TrimSpace(status)
 		}
-		query += ` AND status IN (` + strings.Join(statusPlaceholders, ",") + `)`
+		query = query.Where(schedulerrun.StatusIn(statuses...))
 	}
 	if filter.OlderThan > 0 {
 		cutoff := filter.Now.Add(-filter.OlderThan).UnixMilli()
-		query += ` AND ((completed_at > 0 AND completed_at <= ?) OR (completed_at = 0 AND started_at <= ?))`
-		args = append(args, cutoff, cutoff)
+		query = query.Where(schedulerrun.Or(
+			schedulerrun.And(schedulerrun.CompletedAtGT(0), schedulerrun.CompletedAtLTE(cutoff)),
+			schedulerrun.And(schedulerrun.CompletedAtEQ(0), schedulerrun.StartedAtLTE(cutoff)),
+		))
 	}
-	query += ` ORDER BY started_at ASC, scheduler_id ASC, run_id ASC`
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	entities, err := query.
+		Order(schedulerrun.ByStartedAt(), schedulerrun.BySchedulerID(), schedulerrun.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query scheduler runs for prune: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	result := make([]domain.SchedulerRunSummary, 0)
-	for rows.Next() {
-		run, scanErr := schedulers.ScanSchedulerRun(rows.Scan)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		result = append(result, run)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate scheduler runs for prune: %w", err)
+	result := make([]domain.SchedulerRunSummary, 0, len(entities))
+	for _, entity := range entities {
+		result = append(result, schedulerRunFromEntity(entity))
 	}
 	return result, nil
 }
 
+// Kept as SQL: four correlated COUNT subqueries across scheduler_event,
+// event_delivery, event_sandbox_link, and scheduler_run; ent cannot express
+// this as one consistent read.
 func (s *schedulerStore) CountSchedulerRunPruneData(ctx context.Context, keys []schedulers.SchedulerRunKey) (schedulers.SchedulerRunPruneDatabaseStats, error) {
 	keys = normalizedSchedulerRunKeys(keys)
 	var stats schedulers.SchedulerRunPruneDatabaseStats
 	for _, key := range keys {
-		eligible, err := schedulerRunPruneKeyIsEligible(ctx, s.db, key)
+		eligible, err := schedulerRunPruneKeyIsEligible(ctx, s.client, key)
 		if err != nil {
 			return schedulers.SchedulerRunPruneDatabaseStats{}, err
 		}
@@ -98,14 +96,15 @@ func (s *schedulerStore) DeleteSchedulerRunPruneData(ctx context.Context, keys [
 	if len(keys) == 0 {
 		return schedulers.SchedulerRunPruneDatabaseResult{}, nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return schedulers.SchedulerRunPruneDatabaseResult{}, fmt.Errorf("begin scheduler run prune: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
 	var result schedulers.SchedulerRunPruneDatabaseResult
 	for _, key := range keys {
-		removed, err := deleteSchedulerRunPruneRows(ctx, tx, key, &result.Stats)
+		removed, err := deleteSchedulerRunPruneRows(ctx, client, key, &result.Stats)
 		if err != nil {
 			return schedulers.SchedulerRunPruneDatabaseResult{}, err
 		}
@@ -119,8 +118,8 @@ func (s *schedulerStore) DeleteSchedulerRunPruneData(ctx context.Context, keys [
 	return result, nil
 }
 
-func deleteSchedulerRunPruneRows(ctx context.Context, tx *sql.Tx, key schedulers.SchedulerRunKey, stats *schedulers.SchedulerRunPruneDatabaseStats) (bool, error) {
-	eligible, err := schedulerRunPruneKeyIsEligible(ctx, tx, key)
+func deleteSchedulerRunPruneRows(ctx context.Context, client *dao.Client, key schedulers.SchedulerRunKey, stats *schedulers.SchedulerRunPruneDatabaseStats) (bool, error) {
+	eligible, err := schedulerRunPruneKeyIsEligible(ctx, client, key)
 	if err != nil {
 		return false, err
 	}
@@ -128,46 +127,59 @@ func deleteSchedulerRunPruneRows(ctx context.Context, tx *sql.Tx, key schedulers
 		return false, nil
 	}
 	steps := []struct {
-		name  string
-		query string
-		add   func(uint64)
+		name string
+		exec func() (int, error)
+		add  func(uint64)
 	}{
-		{name: "event sandbox links", query: `DELETE FROM event_sandbox_link WHERE scheduler_id = ? AND scheduler_run_id = ?`, add: func(count uint64) { stats.EventSandboxLinks += count }},
-		{name: "event deliveries", query: `DELETE FROM event_delivery WHERE scheduler_id = ? AND scheduler_run_id = ?`, add: func(count uint64) { stats.EventDeliveries += count }},
-		{name: "scheduler events", query: `DELETE FROM scheduler_event WHERE scheduler_id = ? AND scheduler_run_id = ?`, add: func(count uint64) { stats.SchedulerEvents += count }},
-		{name: "scheduler run", query: `DELETE FROM scheduler_run WHERE scheduler_id = ? AND run_id = ? AND trigger_id <> ''`, add: func(count uint64) { stats.Runs += count }},
+		{name: "event sandbox links", exec: func() (int, error) {
+			return client.EventSandboxLink.Delete().
+				Where(eventsandboxlink.SchedulerIDEQ(key.SchedulerID), eventsandboxlink.SchedulerRunIDEQ(key.RunID)).
+				Exec(ctx)
+		}, add: func(count uint64) { stats.EventSandboxLinks += count }},
+		{name: "event deliveries", exec: func() (int, error) {
+			return client.EventDelivery.Delete().
+				Where(eventdelivery.SchedulerIDEQ(key.SchedulerID), eventdelivery.SchedulerRunIDEQ(key.RunID)).
+				Exec(ctx)
+		}, add: func(count uint64) { stats.EventDeliveries += count }},
+		{name: "scheduler events", exec: func() (int, error) {
+			return client.SchedulerEvent.Delete().
+				Where(schedulerevent.IDEQ(key.SchedulerID), schedulerevent.SchedulerRunIDEQ(key.RunID)).
+				Exec(ctx)
+		}, add: func(count uint64) { stats.SchedulerEvents += count }},
+		{name: "scheduler run", exec: func() (int, error) {
+			return client.SchedulerRun.Delete().
+				Where(
+					schedulerrun.SchedulerIDEQ(key.SchedulerID),
+					schedulerrun.IDEQ(key.RunID),
+					schedulerrun.TriggerIDNEQ(""),
+				).
+				Exec(ctx)
+		}, add: func(count uint64) { stats.Runs += count }},
 	}
 	for _, step := range steps {
-		result, err := tx.ExecContext(ctx, step.query, key.SchedulerID, key.RunID)
+		rows, err := step.exec()
 		if err != nil {
 			return false, fmt.Errorf("delete scheduler run %s %s/%s: %w", step.name, key.SchedulerID, key.RunID, err)
-		}
-		rows, err := result.RowsAffected()
-		if err != nil {
-			return false, fmt.Errorf("count deleted scheduler run %s %s/%s: %w", step.name, key.SchedulerID, key.RunID, err)
 		}
 		step.add(uint64(rows))
 	}
 	return true, nil
 }
 
-type schedulerRunPruneQueryRower interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}
-
-func schedulerRunPruneKeyIsEligible(ctx context.Context, queryer schedulerRunPruneQueryRower, key schedulers.SchedulerRunKey) (bool, error) {
-	var eligible bool
-	err := queryer.QueryRowContext(ctx, `SELECT EXISTS(
-		SELECT 1 FROM scheduler_run
-		WHERE scheduler_id = ? AND run_id = ? AND trigger_id <> ''
-		AND status IN (?, ?, ?, ?)
-	)`,
-		key.SchedulerID, key.RunID,
-		domain.SchedulerRunStatusSucceeded,
-		domain.SchedulerRunStatusFailed,
-		domain.SchedulerRunStatusCanceled,
-		domain.SchedulerRunStatusSkipped,
-	).Scan(&eligible)
+func schedulerRunPruneKeyIsEligible(ctx context.Context, client *dao.Client, key schedulers.SchedulerRunKey) (bool, error) {
+	eligible, err := client.SchedulerRun.Query().
+		Where(
+			schedulerrun.SchedulerIDEQ(key.SchedulerID),
+			schedulerrun.IDEQ(key.RunID),
+			schedulerrun.TriggerIDNEQ(""),
+			schedulerrun.StatusIn(
+				domain.SchedulerRunStatusSucceeded,
+				domain.SchedulerRunStatusFailed,
+				domain.SchedulerRunStatusCanceled,
+				domain.SchedulerRunStatusSkipped,
+			),
+		).
+		Exist(ctx)
 	if err != nil {
 		return false, fmt.Errorf("recheck scheduler run prune candidate %s/%s: %w", key.SchedulerID, key.RunID, err)
 	}
