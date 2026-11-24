@@ -6,11 +6,17 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/predicate"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerevent"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerrun"
 	"github.com/chaitin/agent-compose/pkg/idset"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
 
+// Kept as SQL: the run_id filter is a dynamically built resource-ID prefix
+// clause (resourceIDClause); ent predicates would duplicate that identity logic.
 func (s *schedulerStore) GetSchedulerRunForSchedulers(ctx context.Context, schedulerIDs []string, runID string) (domain.SchedulerRunSummary, error) {
 	schedulerIDs = idset.Normalize(schedulerIDs)
 	runID = strings.TrimSpace(runID)
@@ -66,47 +72,45 @@ func (s *schedulerStore) ListSchedulerRunsPage(ctx context.Context, filter sched
 	if filter.Limit <= 0 {
 		filter.Limit = 50
 	}
-	placeholders := make([]string, len(schedulerIDs))
-	args := make([]any, 0, len(schedulerIDs)+7)
-	for index, schedulerID := range schedulerIDs {
-		placeholders[index] = "?"
-		args = append(args, schedulerID)
-	}
-	query := schedulers.SelectSchedulerRunSQL() + ` WHERE scheduler_id IN (` + strings.Join(placeholders, ",") + `)`
+	query := s.client.SchedulerRun.Query().
+		Where(schedulerrun.SchedulerIDIn(schedulerIDs...))
 	if filter.RequireTrigger {
-		query += ` AND trigger_id <> ''`
+		query = query.Where(schedulerrun.TriggerIDNEQ(""))
 	}
 	if triggerID := strings.TrimSpace(filter.TriggerID); triggerID != "" {
-		query += ` AND trigger_id = ?`
-		args = append(args, triggerID)
+		query = query.Where(schedulerrun.TriggerIDEQ(triggerID))
 	}
 	if status := strings.TrimSpace(filter.Status); status != "" {
-		query += ` AND status = ?`
-		args = append(args, status)
+		query = query.Where(schedulerrun.StatusEQ(status))
 	}
 	if !filter.BeforeStartedAt.IsZero() {
-		query += ` AND (started_at < ? OR (started_at = ? AND (scheduler_id < ? OR (scheduler_id = ? AND run_id < ?))))`
 		beforeMillis := filter.BeforeStartedAt.UTC().UnixMilli()
-		args = append(args, beforeMillis, beforeMillis, strings.TrimSpace(filter.BeforeSchedulerID), strings.TrimSpace(filter.BeforeSchedulerID), strings.TrimSpace(filter.BeforeRunID))
+		query = query.Where(schedulerrun.Or(
+			schedulerrun.StartedAtLT(beforeMillis),
+			schedulerrun.And(
+				schedulerrun.StartedAtEQ(beforeMillis),
+				schedulerrun.Or(
+					schedulerrun.SchedulerIDLT(strings.TrimSpace(filter.BeforeSchedulerID)),
+					schedulerrun.And(
+						schedulerrun.SchedulerIDEQ(strings.TrimSpace(filter.BeforeSchedulerID)),
+						schedulerrun.IDLT(strings.TrimSpace(filter.BeforeRunID)),
+					),
+				),
+			),
+		))
 	}
-	query += ` ORDER BY started_at DESC, scheduler_id DESC, run_id DESC LIMIT ? OFFSET ?`
-	args = append(args, filter.Limit, max(filter.Offset, 0))
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	entities, err := query.
+		Order(dao.Desc(schedulerrun.FieldStartedAt, schedulerrun.FieldSchedulerID, schedulerrun.FieldID)).
+		Limit(filter.Limit).
+		Offset(max(filter.Offset, 0)).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query scheduler run page: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	items := make([]domain.SchedulerRunSummary, 0)
-	for rows.Next() {
-		item, err := schedulers.ScanSchedulerRun(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate scheduler run page: %w", err)
+	items := make([]domain.SchedulerRunSummary, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, schedulerRunFromEntity(entity))
 	}
 	return items, nil
 }
@@ -116,24 +120,19 @@ func (s *schedulerStore) CountSchedulerRunsPage(ctx context.Context, filter sche
 	if len(schedulerIDs) == 0 {
 		return 0, nil
 	}
-	args := make([]any, 0, len(schedulerIDs)+2)
-	for _, schedulerID := range schedulerIDs {
-		args = append(args, schedulerID)
-	}
-	query := `SELECT COUNT(*) FROM scheduler_run WHERE scheduler_id IN (` + placeholders(len(schedulerIDs)) + `)`
+	query := s.client.SchedulerRun.Query().
+		Where(schedulerrun.SchedulerIDIn(schedulerIDs...))
 	if filter.RequireTrigger {
-		query += ` AND trigger_id <> ''`
+		query = query.Where(schedulerrun.TriggerIDNEQ(""))
 	}
 	if triggerID := strings.TrimSpace(filter.TriggerID); triggerID != "" {
-		query += ` AND trigger_id = ?`
-		args = append(args, triggerID)
+		query = query.Where(schedulerrun.TriggerIDEQ(triggerID))
 	}
 	if status := strings.TrimSpace(filter.Status); status != "" {
-		query += ` AND status = ?`
-		args = append(args, status)
+		query = query.Where(schedulerrun.StatusEQ(status))
 	}
-	var total int
-	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
+	total, err := query.Count(ctx)
+	if err != nil {
 		return 0, fmt.Errorf("count scheduler runs: %w", err)
 	}
 	return total, nil
@@ -141,8 +140,7 @@ func (s *schedulerStore) CountSchedulerRunsPage(ctx context.Context, filter sche
 
 func (s *schedulerStore) ListSchedulerRunSandboxIDs(ctx context.Context, keys []schedulers.SchedulerRunKey) (map[schedulers.SchedulerRunKey][]string, error) {
 	result := make(map[schedulers.SchedulerRunKey][]string)
-	clauses := make([]string, 0, len(keys))
-	args := make([]any, 0, len(keys)*2)
+	predicates := make([]predicate.SchedulerEvent, 0, len(keys))
 	seenKeys := make(map[schedulers.SchedulerRunKey]struct{}, len(keys))
 	for _, key := range keys {
 		key.SchedulerID = strings.TrimSpace(key.SchedulerID)
@@ -154,24 +152,37 @@ func (s *schedulerStore) ListSchedulerRunSandboxIDs(ctx context.Context, keys []
 			continue
 		}
 		seenKeys[key] = struct{}{}
-		clauses = append(clauses, `(scheduler_id = ? AND scheduler_run_id = ?)`)
-		args = append(args, key.SchedulerID, key.RunID)
+		predicates = append(predicates, schedulerevent.And(
+			schedulerevent.IDEQ(key.SchedulerID),
+			schedulerevent.SchedulerRunIDEQ(key.RunID),
+		))
 	}
-	if len(clauses) == 0 {
+	if len(predicates) == 0 {
 		return result, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT scheduler_id, scheduler_run_id, linked_sandbox_id FROM scheduler_event WHERE linked_sandbox_id <> '' AND (`+strings.Join(clauses, ` OR `)+`) ORDER BY scheduler_id ASC, scheduler_run_id ASC, linked_sandbox_id ASC`, args...)
+	entities, err := s.client.SchedulerEvent.Query().
+		Where(
+			schedulerevent.LinkedSandboxIDNEQ(""),
+			schedulerevent.Or(predicates...),
+		).
+		Select(
+			schedulerevent.FieldID,
+			schedulerevent.FieldSchedulerRunID,
+			schedulerevent.FieldLinkedSandboxID,
+		).
+		Order(
+			schedulerevent.ByID(),
+			schedulerevent.BySchedulerRunID(),
+			schedulerevent.ByLinkedSandboxID(),
+		).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query scheduler run sandbox ids: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	seen := make(map[schedulers.SchedulerRunKey]map[string]struct{})
-	for rows.Next() {
-		var key schedulers.SchedulerRunKey
-		var sandboxID string
-		if err := rows.Scan(&key.SchedulerID, &key.RunID, &sandboxID); err != nil {
-			return nil, fmt.Errorf("scan scheduler run sandbox id: %w", err)
-		}
+	for _, entity := range entities {
+		key := schedulers.SchedulerRunKey{SchedulerID: entity.ID, RunID: entity.SchedulerRunID}
+		sandboxID := entity.LinkedSandboxID
 		if seen[key] == nil {
 			seen[key] = make(map[string]struct{})
 		}
@@ -181,12 +192,11 @@ func (s *schedulerStore) ListSchedulerRunSandboxIDs(ctx context.Context, keys []
 		seen[key][sandboxID] = struct{}{}
 		result[key] = append(result[key], sandboxID)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate scheduler run sandbox ids: %w", err)
-	}
 	return result, nil
 }
 
+// Kept as SQL: CTE with a ROW_NUMBER() window function ranks scheduler runs per
+// sandbox; ent cannot express window functions without changing the read.
 func (s *schedulerStore) BatchGetLatestSchedulerRunsBySandboxIDs(ctx context.Context, schedulerIDs, sandboxIDs []string) (map[string]domain.SchedulerRunSummary, error) {
 	schedulerIDs = idset.Normalize(schedulerIDs)
 	sandboxIDs = idset.Normalize(sandboxIDs)
