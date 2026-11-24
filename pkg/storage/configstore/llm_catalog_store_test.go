@@ -61,8 +61,9 @@ func TestIntegrationApplyModelCatalogResolvesLiteralModelsDefaultsAndBehavior(t 
 		t.Fatal(err)
 	}
 	baseURL, protocol, apiKey, limit := "https://gateway.example/api/openai", llms.APIProtocolChatCompletions, "catalog-key", 99999
+	window := 128_000
 	catalog := llms.ModelCatalog{Default: llms.CatalogDefault("baizhi/deepseek-v4-flash"), Providers: map[string]llms.CatalogProvider{
-		"baizhi": {BaseURL: &baseURL, Protocol: &protocol, APIKey: &apiKey, Models: []llms.CatalogModel{{ID: "deepseek-v4-flash", MaxOutputTokens: &limit}}},
+		"baizhi": {BaseURL: &baseURL, Protocol: &protocol, APIKey: &apiKey, Models: []llms.CatalogModel{{ID: "deepseek-v4-flash", MaxOutputTokens: &limit, ContextWindow: &window}}},
 	}}
 	if err := store.ApplyModelCatalog(ctx, catalog); err != nil {
 		t.Fatalf("ApplyModelCatalog: %v", err)
@@ -76,14 +77,14 @@ func TestIntegrationApplyModelCatalogResolvesLiteralModelsDefaultsAndBehavior(t 
 	if err != nil {
 		t.Fatalf("resolve literal model: %v", err)
 	}
-	if literal.Model.ID != "upstream-only-model" || literal.MaxOutputTokens != 0 {
+	if literal.Model.ID != "upstream-only-model" || literal.MaxOutputTokens != 0 || literal.ContextWindow != 0 {
 		t.Fatalf("literal target = %#v", literal)
 	}
 	configured, err := resolveCatalogModel(ctx, store, "deepseek-v4-flash")
 	if err != nil {
 		t.Fatalf("resolve configured model: %v", err)
 	}
-	if configured.MaxOutputTokens != limit || configured.Provider.APIKey != apiKey {
+	if configured.MaxOutputTokens != limit || configured.ContextWindow != window || configured.Provider.APIKey != apiKey {
 		t.Fatalf("configured target = %#v", configured)
 	}
 	defaultTarget, err := resolveCatalogModel(ctx, store, "")
@@ -92,6 +93,14 @@ func TestIntegrationApplyModelCatalogResolvesLiteralModelsDefaultsAndBehavior(t 
 	}
 	if defaultTarget.Provider.ID != "baizhi" || defaultTarget.Model.ID != "deepseek-v4-flash" {
 		t.Fatalf("catalog default target = %#v", defaultTarget)
+	}
+	window = 0
+	if err := store.ApplyModelCatalog(ctx, catalog); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := resolveCatalogModel(ctx, store, "deepseek-v4-flash")
+	if err != nil || cleared.ContextWindow != 0 || cleared.MaxOutputTokens != limit {
+		t.Fatalf("cleared catalog target = %#v, err = %v", cleared, err)
 	}
 }
 
