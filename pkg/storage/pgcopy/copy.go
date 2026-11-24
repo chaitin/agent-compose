@@ -56,6 +56,13 @@ func Copy(ctx context.Context, sourcePath string, target *sql.DB, options Option
 		return Result{}, err
 	}
 	defer func() { _ = source.Close() }()
+	// SQLite AUTOINCREMENT keeps its high-water mark in sqlite_sequence even
+	// after rows are deleted. MAX(sequence) alone would reissue identities that
+	// clients have already observed.
+	sourceSequence, err := sourceEventSequence(ctx, source)
+	if err != nil {
+		return Result{}, err
+	}
 
 	if err := verifyTargetMigrated(ctx, target); err != nil {
 		return Result{}, err
@@ -86,7 +93,7 @@ func Copy(ctx context.Context, sourcePath string, target *sql.DB, options Option
 		}
 		result.Tables = append(result.Tables, TableResult{Table: table, Rows: rows})
 	}
-	eventSequence, err := resetEventSequence(ctx, tx)
+	eventSequence, err := resetEventSequence(ctx, tx, sourceSequence)
 	if err != nil {
 		return Result{}, err
 	}
@@ -329,22 +336,31 @@ func insertBatch(ctx context.Context, tx *sql.Tx, table string, columns []string
 	return nil
 }
 
-func resetEventSequence(ctx context.Context, tx *sql.Tx) (int64, error) {
+func sourceEventSequence(ctx context.Context, source *sql.DB) (int64, error) {
+	var sequence int64
+	if err := source.QueryRowContext(ctx, `SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'event'), 0)`).Scan(&sequence); err != nil {
+		return 0, fmt.Errorf("read SQLite event sequence: %w", err)
+	}
+	return sequence, nil
+}
+
+func resetEventSequence(ctx context.Context, tx *sql.Tx, sourceSequence int64) (int64, error) {
 	var maxSequence int64
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence), 0) FROM event`).Scan(&maxSequence); err != nil {
 		return 0, fmt.Errorf("read copied event sequence: %w", err)
 	}
+	targetSequence := max(maxSequence, sourceSequence)
 	var setValue int64
-	if maxSequence == 0 {
+	if targetSequence == 0 {
 		if err := tx.QueryRowContext(ctx, `SELECT setval(pg_get_serial_sequence('event', 'sequence'), 1, false)`).Scan(&setValue); err != nil {
 			return 0, fmt.Errorf("reset empty event sequence: %w", err)
 		}
 		return 0, nil
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT setval(pg_get_serial_sequence('event', 'sequence'), $1, true)`, maxSequence).Scan(&setValue); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT setval(pg_get_serial_sequence('event', 'sequence'), $1, true)`, targetSequence).Scan(&setValue); err != nil {
 		return 0, fmt.Errorf("advance event sequence: %w", err)
 	}
-	return maxSequence, nil
+	return targetSequence, nil
 }
 
 func quoteIdentifier(value string) string {

@@ -165,3 +165,78 @@ func openCopyTarget(t *testing.T, ctx context.Context, dsn string) *postgres.Dat
 	t.Cleanup(func() { _ = target.Close() })
 	return target
 }
+
+// TestPostgresCopyPreservesDeletedEventSequenceIntegration covers SQLite's
+// AUTOINCREMENT high-water mark: deleting the newest events must not let the
+// PostgreSQL copy reissue sequence values clients have already seen.
+func TestPostgresCopyPreservesDeletedEventSequenceIntegration(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv(copyTestDSNEnv))
+	if dsn == "" {
+		t.Skipf("set %s to run PostgreSQL integration tests", copyTestDSNEnv)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	for _, test := range []struct {
+		name      string
+		deleteAll bool
+		wantSeq   int64
+	}{
+		{name: "trailing events deleted", wantSeq: 3},
+		{name: "all events deleted", deleteAll: true, wantSeq: 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sourcePath := seedSQLiteSourceWithDeletedEvents(t, ctx, test.deleteAll)
+			target := openCopyTarget(t, ctx, dsn)
+			result, err := Copy(ctx, sourcePath, target.DB(), Options{})
+			if err != nil {
+				t.Fatalf("copy: %v", err)
+			}
+			if result.EventSequence != test.wantSeq {
+				t.Fatalf("event sequence = %d, want %d", result.EventSequence, test.wantSeq)
+			}
+			store := configstore.FromDBWithDialect(target.DB(), dialect.Postgres())
+			event, err := store.CreateEvent(ctx, domain.TopicEventRecord{
+				ID: "event-after-copy", Topic: "copy.test", Source: domain.TopicEventSourceWebhook,
+				CorrelationID: "corr-after-copy", PayloadHash: "hash", PayloadJSON: `{}`,
+				DispatchStatus: domain.TopicEventDispatchPending,
+			})
+			if err != nil {
+				t.Fatalf("create event after copy: %v", err)
+			}
+			if event.Sequence != test.wantSeq+1 {
+				t.Fatalf("next event sequence = %d, want %d", event.Sequence, test.wantSeq+1)
+			}
+		})
+	}
+}
+
+func seedSQLiteSourceWithDeletedEvents(t *testing.T, ctx context.Context, deleteAll bool) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "data.db")
+	db, err := storagesqlite.Open(path, 5*time.Second)
+	if err != nil {
+		t.Fatalf("open source database: %v", err)
+	}
+	store := configstore.FromDB(db.DB())
+	for index := 1; index <= 3; index++ {
+		if _, err := store.CreateEvent(ctx, domain.TopicEventRecord{
+			ID: fmt.Sprintf("deleted-event-%d", index), Topic: "copy.test",
+			Source: domain.TopicEventSourceWebhook, CorrelationID: fmt.Sprintf("corr-%d", index),
+			PayloadHash: "hash", PayloadJSON: `{}`, DispatchStatus: domain.TopicEventDispatchPending,
+		}); err != nil {
+			t.Fatalf("seed event %d: %v", index, err)
+		}
+	}
+	query := `DELETE FROM event WHERE sequence > 1`
+	if deleteAll {
+		query = `DELETE FROM event`
+	}
+	if _, err := db.DB().ExecContext(ctx, query); err != nil {
+		t.Fatalf("delete seeded events: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close source database: %v", err)
+	}
+	return path
+}
