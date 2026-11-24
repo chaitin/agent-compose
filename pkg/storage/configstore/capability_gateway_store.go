@@ -3,12 +3,14 @@ package configstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"github.com/chaitin/agent-compose/ent/dao"
 	"strings"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/capabilitygateway"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -24,25 +26,32 @@ const capabilityGatewayRowID = 1
 // GetCapabilityGateway returns the stored OctoBus connection. An empty addr
 // means the gateway is not configured.
 func (s *capabilityGatewayStore) GetCapabilityGateway(ctx context.Context) (domain.CapabilityGatewaySettings, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT addr, token FROM capability_gateway WHERE id = ?`, capabilityGatewayRowID)
-	var settings domain.CapabilityGatewaySettings
-	switch err := row.Scan(&settings.Addr, &settings.Token); {
-	case errors.Is(err, sql.ErrNoRows):
-		return domain.CapabilityGatewaySettings{}, nil
-	case err != nil:
+	entity, err := s.client.CapabilityGateway.Query().
+		Select(capabilitygateway.FieldAddr, capabilitygateway.FieldToken).
+		Where(capabilitygateway.IDEQ(capabilityGatewayRowID)).
+		Only(ctx)
+	if err != nil {
+		if dao.IsNotFound(err) {
+			return domain.CapabilityGatewaySettings{}, nil
+		}
 		return domain.CapabilityGatewaySettings{}, fmt.Errorf("query capability gateway: %w", err)
 	}
-	return settings, nil
+	return domain.CapabilityGatewaySettings{Addr: entity.Addr, Token: entity.Token}, nil
 }
 
 // SaveCapabilityGateway upserts the OctoBus connection settings.
 func (s *capabilityGatewayStore) SaveCapabilityGateway(ctx context.Context, settings domain.CapabilityGatewaySettings) (domain.CapabilityGatewaySettings, error) {
 	settings.Addr = strings.TrimSpace(settings.Addr)
 	settings.Token = strings.TrimSpace(settings.Token)
-	if _, err := s.db.ExecContext(ctx,
-		`INSERT INTO capability_gateway(id, addr, token, updated_at) VALUES(?, ?, ?, ?)
-		 ON CONFLICT(id) DO UPDATE SET addr = excluded.addr, token = excluded.token, updated_at = excluded.updated_at`,
-		capabilityGatewayRowID, settings.Addr, settings.Token, time.Now().UTC().Unix()); err != nil {
+	updatedAt := time.Now().UTC().Unix()
+	if err := s.client.CapabilityGateway.Create().
+		SetID(capabilityGatewayRowID).
+		SetAddr(settings.Addr).
+		SetToken(settings.Token).
+		SetUpdatedAt(updatedAt).
+		OnConflict(entsql.ConflictColumns(capabilitygateway.FieldID), entsql.ResolveWithNewValues()).
+		UpdateNewValues().
+		Exec(ctx); err != nil {
 		return domain.CapabilityGatewaySettings{}, fmt.Errorf("save capability gateway: %w", err)
 	}
 	return settings, nil

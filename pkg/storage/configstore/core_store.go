@@ -11,7 +11,11 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 
 	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/globalenv"
+	"github.com/chaitin/agent-compose/ent/dao/workspaceconfig"
+	"github.com/chaitin/agent-compose/ent/helper"
 	"github.com/chaitin/agent-compose/pkg/storage/dialect"
+	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
 type (
@@ -90,82 +94,76 @@ func (s *ConfigStore) DB() *sql.DB {
 }
 
 func (s *coreStore) ListGlobalEnv(ctx context.Context) ([]domain.SandboxEnvVar, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, value, secret FROM global_env ORDER BY name ASC`)
+	entities, err := s.client.GlobalEnv.Query().
+		Select(globalenv.FieldID, globalenv.FieldValue, globalenv.FieldSecret).
+		Order(globalenv.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query global env: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	items := make([]domain.SandboxEnvVar, 0)
-	for rows.Next() {
-		var item domain.SandboxEnvVar
-		var secret int
-		if err := rows.Scan(&item.Name, &item.Value, &secret); err != nil {
-			return nil, fmt.Errorf("scan global env: %w", err)
-		}
-		item.Secret = secret != 0
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate global env: %w", err)
+	items := make([]domain.SandboxEnvVar, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, domain.SandboxEnvVar{
+			Name:   entity.ID,
+			Value:  entity.Value,
+			Secret: entity.Secret != 0,
+		})
 	}
 	return items, nil
 }
 
 func (s *coreStore) ReplaceGlobalEnv(ctx context.Context, items []domain.SandboxEnvVar) ([]domain.SandboxEnvVar, error) {
 	normalized := domain.NormalizeEnvItems(items)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin global env tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.ExecContext(ctx, `DELETE FROM global_env`); err != nil {
-		return nil, fmt.Errorf("reset global env: %w", err)
-	}
-	for _, item := range normalized {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO global_env(name, value, secret, updated_at) VALUES(?, ?, ?, ?)`, item.Name, item.Value, BoolToInt(item.Secret), time.Now().UTC().Unix()); err != nil {
-			return nil, fmt.Errorf("insert global env %s: %w", item.Name, err)
+	err := helper.WithTx(ctx, s.client, func(tx *dao.Tx) error {
+		client := tx.Client()
+		if _, err := client.GlobalEnv.Delete().Exec(ctx); err != nil {
+			return fmt.Errorf("reset global env: %w", err)
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit global env tx: %w", err)
+		for _, item := range normalized {
+			if _, err := client.GlobalEnv.Create().
+				SetID(item.Name).
+				SetValue(item.Value).
+				SetSecret(BoolToInt(item.Secret)).
+				SetUpdatedAt(time.Now().UTC().Unix()).
+				Save(ctx); err != nil {
+				return fmt.Errorf("insert global env %s: %w", item.Name, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return normalized, nil
 }
 
 func (s *coreStore) ListWorkspaceConfigs(ctx context.Context) ([]WorkspaceConfig, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, type, config_json, comment, created_at, updated_at FROM workspace_config ORDER BY name ASC, id ASC`)
+	entities, err := s.client.WorkspaceConfig.Query().
+		Order(workspaceconfig.ByName(), workspaceconfig.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query workspace configs: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	items := make([]WorkspaceConfig, 0)
-	for rows.Next() {
-		item, err := ScanWorkspaceConfig(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate workspace configs: %w", err)
+	items := make([]WorkspaceConfig, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, workspaceConfigFromEntity(entity))
 	}
 	return items, nil
 }
 
 func (s *coreStore) GetWorkspaceConfig(ctx context.Context, id string) (WorkspaceConfig, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, type, config_json, comment, created_at, updated_at FROM workspace_config WHERE id = ?`, strings.TrimSpace(id))
-	item, err := ScanWorkspaceConfig(row.Scan)
+	trimmedID := strings.TrimSpace(id)
+	entity, err := s.client.WorkspaceConfig.Query().
+		Where(workspaceconfig.IDEQ(trimmedID)).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			message := fmt.Sprintf("workspace config %s not found", strings.TrimSpace(id))
-			return WorkspaceConfig{}, domain.ResourceError(domain.ErrNotFound, "workspace config", strings.TrimSpace(id), message, err)
+		if dao.IsNotFound(err) {
+			message := fmt.Sprintf("workspace config %s not found", trimmedID)
+			return WorkspaceConfig{}, domain.ResourceError(domain.ErrNotFound, "workspace config", trimmedID, message, sql.ErrNoRows)
 		}
 		return WorkspaceConfig{}, err
 	}
-	return item, nil
+	return workspaceConfigFromEntity(entity), nil
 }
 
 func (s *coreStore) CreateWorkspaceConfig(ctx context.Context, item WorkspaceConfig) (WorkspaceConfig, error) {
@@ -176,7 +174,15 @@ func (s *coreStore) CreateWorkspaceConfig(ctx context.Context, item WorkspaceCon
 	now := time.Now().UTC()
 	normalized.CreatedAt = now
 	normalized.UpdatedAt = now
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO workspace_config(id, name, type, config_json, comment, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, normalized.ID, normalized.Name, normalized.Type, normalized.ConfigJSON, normalized.Comment, normalized.CreatedAt.Unix(), normalized.UpdatedAt.Unix()); err != nil {
+	if _, err := s.client.WorkspaceConfig.Create().
+		SetID(normalized.ID).
+		SetName(normalized.Name).
+		SetType(normalized.Type).
+		SetConfigJSON(normalized.ConfigJSON).
+		SetComment(normalized.Comment).
+		SetCreatedAt(normalized.CreatedAt.Unix()).
+		SetUpdatedAt(normalized.UpdatedAt.Unix()).
+		Save(ctx); err != nil {
 		return WorkspaceConfig{}, fmt.Errorf("insert workspace config %s: %w", normalized.ID, err)
 	}
 	return normalized, nil
@@ -193,11 +199,18 @@ func (s *coreStore) UpdateWorkspaceConfig(ctx context.Context, item WorkspaceCon
 	}
 	normalized.CreatedAt = existing.CreatedAt
 	normalized.UpdatedAt = time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE workspace_config SET name = ?, type = ?, config_json = ?, comment = ?, updated_at = ? WHERE id = ?`, normalized.Name, normalized.Type, normalized.ConfigJSON, normalized.Comment, normalized.UpdatedAt.Unix(), normalized.ID)
+	affected, err := s.client.WorkspaceConfig.Update().
+		Where(workspaceconfig.IDEQ(normalized.ID)).
+		SetName(normalized.Name).
+		SetType(normalized.Type).
+		SetConfigJSON(normalized.ConfigJSON).
+		SetComment(normalized.Comment).
+		SetUpdatedAt(normalized.UpdatedAt.Unix()).
+		Save(ctx)
 	if err != nil {
 		return WorkspaceConfig{}, fmt.Errorf("update workspace config %s: %w", normalized.ID, err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		return WorkspaceConfig{}, domain.ResourceError(domain.ErrNotFound, "workspace config", normalized.ID, fmt.Sprintf("workspace config %s not found", normalized.ID), nil)
 	}
 	return normalized, nil
@@ -208,11 +221,13 @@ func (s *coreStore) DeleteWorkspaceConfig(ctx context.Context, id string) error 
 	if trimmedID == "" {
 		return fmt.Errorf("workspace config id is required")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM workspace_config WHERE id = ?`, trimmedID)
+	affected, err := s.client.WorkspaceConfig.Delete().
+		Where(workspaceconfig.IDEQ(trimmedID)).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("delete workspace config %s: %w", trimmedID, err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		return domain.ResourceError(domain.ErrNotFound, "workspace config", trimmedID, fmt.Sprintf("workspace config %s not found", trimmedID), nil)
 	}
 	return nil
@@ -235,4 +250,17 @@ func (s *coreStore) GetAgentDefinitionIfExists(ctx context.Context, id string, i
 		return domain.AgentDefinition{}, false, err
 	}
 	return item, true, nil
+}
+
+// workspaceConfigFromEntity maps one workspace_config row to its domain shape.
+func workspaceConfigFromEntity(entity *dao.WorkspaceConfig) WorkspaceConfig {
+	return WorkspaceConfig{
+		ID:         entity.ID,
+		Name:       entity.Name,
+		Type:       entity.Type,
+		ConfigJSON: entity.ConfigJSON,
+		Comment:    entity.Comment,
+		CreatedAt:  storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt:  storedtime.ParseStoredTime(entity.UpdatedAt),
+	}
 }

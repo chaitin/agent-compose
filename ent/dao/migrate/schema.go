@@ -484,7 +484,7 @@ var (
 		{Name: "error", Type: field.TypeString, Nullable: true},
 		{Name: "result_json", Type: field.TypeString, Nullable: true},
 		{Name: "payload_json", Type: field.TypeString, Nullable: true},
-		{Name: "source_script_sha256", Type: field.TypeString},
+		{Name: "source_script_sha256", Type: field.TypeString, Nullable: true},
 		{Name: "artifacts_dir", Type: field.TypeString, Nullable: true},
 	}
 	// SchedulerRunTable holds the schema information for the "scheduler_run" table.

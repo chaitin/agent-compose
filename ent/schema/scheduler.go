@@ -53,7 +53,7 @@ func (SchedulerRun) Fields() []ent.Field {
 		field.String("error").Optional(),
 		field.String("result_json").Optional(),
 		field.String("payload_json").Optional(),
-		field.String("source_script_sha256"),
+		field.String("source_script_sha256").Optional(),
 		field.String("artifacts_dir").Optional(),
 	}
 }

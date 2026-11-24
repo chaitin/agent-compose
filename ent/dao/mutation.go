@@ -25210,9 +25210,22 @@ func (m *SchedulerRunMutation) OldSourceScriptSha256(ctx context.Context) (v str
 	return oldValue.SourceScriptSha256, nil
 }
 
+// ClearSourceScriptSha256 clears the value of the "source_script_sha256" field.
+func (m *SchedulerRunMutation) ClearSourceScriptSha256() {
+	m.source_script_sha256 = nil
+	m.clearedFields[schedulerrun.FieldSourceScriptSha256] = struct{}{}
+}
+
+// SourceScriptSha256Cleared returns if the "source_script_sha256" field was cleared in this mutation.
+func (m *SchedulerRunMutation) SourceScriptSha256Cleared() bool {
+	_, ok := m.clearedFields[schedulerrun.FieldSourceScriptSha256]
+	return ok
+}
+
 // ResetSourceScriptSha256 resets all changes to the "source_script_sha256" field.
 func (m *SchedulerRunMutation) ResetSourceScriptSha256() {
 	m.source_script_sha256 = nil
+	delete(m.clearedFields, schedulerrun.FieldSourceScriptSha256)
 }
 
 // SetArtifactsDir sets the "artifacts_dir" field.
@@ -25603,6 +25616,9 @@ func (m *SchedulerRunMutation) ClearedFields() []string {
 	if m.FieldCleared(schedulerrun.FieldPayloadJSON) {
 		fields = append(fields, schedulerrun.FieldPayloadJSON)
 	}
+	if m.FieldCleared(schedulerrun.FieldSourceScriptSha256) {
+		fields = append(fields, schedulerrun.FieldSourceScriptSha256)
+	}
 	if m.FieldCleared(schedulerrun.FieldArtifactsDir) {
 		fields = append(fields, schedulerrun.FieldArtifactsDir)
 	}
@@ -25646,6 +25662,9 @@ func (m *SchedulerRunMutation) ClearField(name string) error {
 		return nil
 	case schedulerrun.FieldPayloadJSON:
 		m.ClearPayloadJSON()
+		return nil
+	case schedulerrun.FieldSourceScriptSha256:
+		m.ClearSourceScriptSha256()
 		return nil
 	case schedulerrun.FieldArtifactsDir:
 		m.ClearArtifactsDir()

@@ -77,6 +77,18 @@ jobs:
             echo "::error::generated protobuf sources are out of date - run 'task generate:proto' and commit the result"
             exit 1
           fi
+      # ent/dao is generated from ent/schema and committed, exactly like the
+      # protobuf sources above. A schema change that was not regenerated would
+      # make every store query a model the database no longer has.
+      - name: Verify generated ent DAO is current
+        run: |
+          task generate:ent
+          drift="$(git status --porcelain -- ent/dao)"
+          if [ -n "$drift" ]; then
+            echo "$drift"
+            echo "::error::generated ent DAO is out of date - run 'task generate:ent' and commit the result"
+            exit 1
+          fi
       - name: Run lint
         run: task lint
       # The daily upstream scan is the only thing that reports a provider or

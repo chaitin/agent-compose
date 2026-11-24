@@ -13,7 +13,7 @@ vars:
   GO_TOOLCHAIN_ENV: '{{.TASKFILE_DIR}}/scripts/with-go-toolchain.sh'
   GOLANGCI_LINT_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/golangci-lint'
   GO_BUILD_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/go-build'
-  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./internal/...
+  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./internal/... ./ent/...
   GOHOSTOS:
     sh: ./scripts/with-go-toolchain.sh go env GOHOSTOS
   GOHOSTARCH:
@@ -105,6 +105,25 @@ tasks:
     desc: Generate source artifacts
     cmds:
       - task: generate:proto
+      - task: generate:ent
+
+  generate:ent:
+    desc: Generate the ent DAO from ent/schema
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go generate ./ent/...
+
+  check:ent:
+    desc: Fail when the committed ent DAO does not match ent/schema
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - task: generate:ent
+      - |
+        if [ -n "$(git status --porcelain -- ent/dao)" ]; then
+          echo "ent/dao is out of date; run 'task generate:ent' and commit the regenerated files" >&2
+          git status --porcelain -- ent/dao >&2
+          exit 1
+        fi
 
   docs:build:
     desc: Render the GitHub Pages documentation site

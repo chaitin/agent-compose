@@ -912,6 +912,16 @@ func SourceScriptSha256HasSuffix(v string) predicate.SchedulerRun {
 	return predicate.SchedulerRun(sql.FieldHasSuffix(FieldSourceScriptSha256, v))
 }
 
+// SourceScriptSha256IsNil applies the IsNil predicate on the "source_script_sha256" field.
+func SourceScriptSha256IsNil() predicate.SchedulerRun {
+	return predicate.SchedulerRun(sql.FieldIsNull(FieldSourceScriptSha256))
+}
+
+// SourceScriptSha256NotNil applies the NotNil predicate on the "source_script_sha256" field.
+func SourceScriptSha256NotNil() predicate.SchedulerRun {
+	return predicate.SchedulerRun(sql.FieldNotNull(FieldSourceScriptSha256))
+}
+
 // SourceScriptSha256EqualFold applies the EqualFold predicate on the "source_script_sha256" field.
 func SourceScriptSha256EqualFold(v string) predicate.SchedulerRun {
 	return predicate.SchedulerRun(sql.FieldEqualFold(FieldSourceScriptSha256, v))

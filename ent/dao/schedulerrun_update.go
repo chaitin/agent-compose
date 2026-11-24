@@ -271,6 +271,12 @@ func (_u *SchedulerRunUpdate) SetNillableSourceScriptSha256(v *string) *Schedule
 	return _u
 }
 
+// ClearSourceScriptSha256 clears the value of the "source_script_sha256" field.
+func (_u *SchedulerRunUpdate) ClearSourceScriptSha256() *SchedulerRunUpdate {
+	_u.mutation.ClearSourceScriptSha256()
+	return _u
+}
+
 // SetArtifactsDir sets the "artifacts_dir" field.
 func (_u *SchedulerRunUpdate) SetArtifactsDir(v string) *SchedulerRunUpdate {
 	_u.mutation.SetArtifactsDir(v)
@@ -409,6 +415,9 @@ func (_u *SchedulerRunUpdate) sqlSave(ctx context.Context) (_node int, err error
 	}
 	if value, ok := _u.mutation.SourceScriptSha256(); ok {
 		_spec.SetField(schedulerrun.FieldSourceScriptSha256, field.TypeString, value)
+	}
+	if _u.mutation.SourceScriptSha256Cleared() {
+		_spec.ClearField(schedulerrun.FieldSourceScriptSha256, field.TypeString)
 	}
 	if value, ok := _u.mutation.ArtifactsDir(); ok {
 		_spec.SetField(schedulerrun.FieldArtifactsDir, field.TypeString, value)
@@ -681,6 +690,12 @@ func (_u *SchedulerRunUpdateOne) SetNillableSourceScriptSha256(v *string) *Sched
 	return _u
 }
 
+// ClearSourceScriptSha256 clears the value of the "source_script_sha256" field.
+func (_u *SchedulerRunUpdateOne) ClearSourceScriptSha256() *SchedulerRunUpdateOne {
+	_u.mutation.ClearSourceScriptSha256()
+	return _u
+}
+
 // SetArtifactsDir sets the "artifacts_dir" field.
 func (_u *SchedulerRunUpdateOne) SetArtifactsDir(v string) *SchedulerRunUpdateOne {
 	_u.mutation.SetArtifactsDir(v)
@@ -849,6 +864,9 @@ func (_u *SchedulerRunUpdateOne) sqlSave(ctx context.Context) (_node *SchedulerR
 	}
 	if value, ok := _u.mutation.SourceScriptSha256(); ok {
 		_spec.SetField(schedulerrun.FieldSourceScriptSha256, field.TypeString, value)
+	}
+	if _u.mutation.SourceScriptSha256Cleared() {
+		_spec.ClearField(schedulerrun.FieldSourceScriptSha256, field.TypeString)
 	}
 	if value, ok := _u.mutation.ArtifactsDir(); ok {
 		_spec.SetField(schedulerrun.FieldArtifactsDir, field.TypeString, value)

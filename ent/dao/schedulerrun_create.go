@@ -166,6 +166,14 @@ func (_c *SchedulerRunCreate) SetSourceScriptSha256(v string) *SchedulerRunCreat
 	return _c
 }
 
+// SetNillableSourceScriptSha256 sets the "source_script_sha256" field if the given value is not nil.
+func (_c *SchedulerRunCreate) SetNillableSourceScriptSha256(v *string) *SchedulerRunCreate {
+	if v != nil {
+		_c.SetSourceScriptSha256(*v)
+	}
+	return _c
+}
+
 // SetArtifactsDir sets the "artifacts_dir" field.
 func (_c *SchedulerRunCreate) SetArtifactsDir(v string) *SchedulerRunCreate {
 	_c.mutation.SetArtifactsDir(v)
@@ -225,9 +233,6 @@ func (_c *SchedulerRunCreate) check() error {
 	}
 	if _, ok := _c.mutation.StartedAt(); !ok {
 		return &ValidationError{Name: "started_at", err: errors.New(`dao: missing required field "SchedulerRun.started_at"`)}
-	}
-	if _, ok := _c.mutation.SourceScriptSha256(); !ok {
-		return &ValidationError{Name: "source_script_sha256", err: errors.New(`dao: missing required field "SchedulerRun.source_script_sha256"`)}
 	}
 	return nil
 }
@@ -585,6 +590,12 @@ func (u *SchedulerRunUpsert) UpdateSourceScriptSha256() *SchedulerRunUpsert {
 	return u
 }
 
+// ClearSourceScriptSha256 clears the value of the "source_script_sha256" field.
+func (u *SchedulerRunUpsert) ClearSourceScriptSha256() *SchedulerRunUpsert {
+	u.SetNull(schedulerrun.FieldSourceScriptSha256)
+	return u
+}
+
 // SetArtifactsDir sets the "artifacts_dir" field.
 func (u *SchedulerRunUpsert) SetArtifactsDir(v string) *SchedulerRunUpsert {
 	u.Set(schedulerrun.FieldArtifactsDir, v)
@@ -900,6 +911,13 @@ func (u *SchedulerRunUpsertOne) SetSourceScriptSha256(v string) *SchedulerRunUps
 func (u *SchedulerRunUpsertOne) UpdateSourceScriptSha256() *SchedulerRunUpsertOne {
 	return u.Update(func(s *SchedulerRunUpsert) {
 		s.UpdateSourceScriptSha256()
+	})
+}
+
+// ClearSourceScriptSha256 clears the value of the "source_script_sha256" field.
+func (u *SchedulerRunUpsertOne) ClearSourceScriptSha256() *SchedulerRunUpsertOne {
+	return u.Update(func(s *SchedulerRunUpsert) {
+		s.ClearSourceScriptSha256()
 	})
 }
 
@@ -1387,6 +1405,13 @@ func (u *SchedulerRunUpsertBulk) SetSourceScriptSha256(v string) *SchedulerRunUp
 func (u *SchedulerRunUpsertBulk) UpdateSourceScriptSha256() *SchedulerRunUpsertBulk {
 	return u.Update(func(s *SchedulerRunUpsert) {
 		s.UpdateSourceScriptSha256()
+	})
+}
+
+// ClearSourceScriptSha256 clears the value of the "source_script_sha256" field.
+func (u *SchedulerRunUpsertBulk) ClearSourceScriptSha256() *SchedulerRunUpsertBulk {
+	return u.Update(func(s *SchedulerRunUpsert) {
+		s.ClearSourceScriptSha256()
 	})
 }
 

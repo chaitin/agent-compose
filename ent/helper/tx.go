@@ -25,7 +25,7 @@ func WithTx(ctx context.Context, client *dao.Client, fn func(tx *dao.Tx) error) 
 	}()
 	if err := fn(tx); err != nil {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
-			return fmt.Errorf("%w: rolling back transaction: %v", err, rollbackErr)
+			return fmt.Errorf("%w: rolling back transaction: %w", err, rollbackErr)
 		}
 		return err
 	}
