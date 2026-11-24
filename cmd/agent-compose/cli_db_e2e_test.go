@@ -56,7 +56,7 @@ func TestE2ECLIDatabasePostgresWorkflow(t *testing.T) {
 	t.Setenv("DB_URL", postgresURLWithSearchPath(dsn, schema))
 
 	status := runDatabaseStatusJSON(t, "db", "status", "--json")
-	if status.Driver != "postgres" || status.Applied != 0 || status.Pending != 1 || status.Latest == 0 {
+	if status.Driver != "postgres" || status.Applied != 0 || status.Pending != 2 || status.Latest != 21 {
 		t.Fatalf("db status before migrate = %+v", status)
 	}
 	if status.SQLitePath != "" || status.Target == "" {
@@ -67,7 +67,7 @@ func TestE2ECLIDatabasePostgresWorkflow(t *testing.T) {
 	if migrateCode != 0 || migrateErr != "" {
 		t.Fatalf("db migrate code/stderr = %d / %q", migrateCode, migrateErr)
 	}
-	if !strings.Contains(migrateOut, "database migrated: driver=postgres applied=1 latest=1") {
+	if !strings.Contains(migrateOut, "database migrated: driver=postgres applied=21 latest=21") {
 		t.Fatalf("db migrate output = %q", migrateOut)
 	}
 
@@ -75,7 +75,7 @@ func TestE2ECLIDatabasePostgresWorkflow(t *testing.T) {
 	if statusCode != 0 || statusErr != "" {
 		t.Fatalf("db status text code/stderr = %d / %q", statusCode, statusErr)
 	}
-	if !strings.Contains(statusOut, "driver: postgres") || !strings.Contains(statusOut, "schema: applied=1 latest=1 pending=0") {
+	if !strings.Contains(statusOut, "driver: postgres") || !strings.Contains(statusOut, "schema: applied=21 latest=21 pending=0") {
 		t.Fatalf("db status text = %q", statusOut)
 	}
 
