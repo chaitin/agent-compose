@@ -76,6 +76,23 @@ source of truth rather than remove one.
   Mark each kept statement with `// Kept as SQL: <reason>` so the remaining
   handwritten SQL stays visible in review.
 
+## What remains SQL
+
+Raw SQL that survived the conversion falls into these documented groups. Every
+statement outside the migration/copy/lock infrastructure carries a
+`// Kept as SQL:` comment; `grep -rn "Kept as SQL" pkg/storage` is the current
+inventory.
+
+| Group | Examples | Why it stays SQL |
+|---|---|---|
+| Released DDL and data steps | `pkg/storage/sqlite/migrations.go`, `sqlite/project_name_migration.go`, `postgres/migrations.go` | The migration runner owns checksums, `BEGIN IMMEDIATE`, advisory locks, and versioned data rewrites. |
+| PostgreSQL machinery | `postgres/database.go`, `postgres/connector.go` | Instance advisory locks and the `?`-to-`$n` rebinding driver are not model queries. |
+| SQLite-to-PostgreSQL copy | `pkg/storage/pgcopy` | `COPY`, `sqlite_sequence`, and `pg_get_serial_sequence` are bulk-transfer primitives. |
+| Read models | event listing/descendant CTEs, project list pages, scheduler run/event pages, run-history scope, per-agent aggregates | Joins, `GROUP BY`/`SUM(CASE)`, recursive CTEs, window functions, and dialect-specific `instr`/`strpos` filters. |
+| Conditional writes | project upsert (`spec_hash` CASE), revision allocator (write reservation + `MAX`), run completion transition, event-delivery upsert, credential revocation-preserving upsert, LLM catalog conditional upserts/sweeps | The update depends on the stored row or must stay in one reserved transaction; ent's upsert setters only take literals. |
+| Locked run-event append | `run_history_removal.go`, `appendProjectRunEventsTx`, `Insert ... SELECT MAX(seq) ... RETURNING` | Row/table locks and sequence allocation interact with the raw transaction the surrounding code already holds. |
+| Sandbox listing | `sandboxWhere`, page/count query, `PRAGMA quick_check` | Dynamic multi-filter SQL plus a physical-column probe. |
+
 ## Adding a store method
 
 1. Add the field/entity to `ent/schema` if the model changed and regenerate.

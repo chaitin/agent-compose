@@ -8,10 +8,10 @@
 // runtime never runs ent's automatic migration and existing data roots must
 // keep working without an upgrade step.
 //
-// ent/schema/schema_parity_test.go enforces the mirror: it compares every ent
-// entity and field with the SQLite schema produced by the released migrations.
-// A table or column change therefore needs both an ent schema change and a
-// paired SQL migration; see AGENTS.md.
+// pkg/storage/database/ent_schema_test.go enforces the mirror: it compares every
+// ent entity and field with the SQLite schema produced by the released
+// migrations. A table or column change therefore needs both an ent schema
+// change and a paired SQL migration; see ent/README.md and AGENTS.md.
 //
 // Do not declare ent edges. Foreign keys are enforced by the SQL schema, and
 // several relationships use composite keys that ent cannot model as edges; the

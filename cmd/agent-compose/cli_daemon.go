@@ -592,6 +592,7 @@ func newDaemonBaseRoundTripper(clientConfig cliClientConfig) http.RoundTripper {
 	if !clientConfig.UseUnixSocket && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(clientConfig.BaseURL)), "http://") {
 		return transport
 	}
+	//nolint:staticcheck // The attach RPC client needs an explicit h2c transport; migrating it to the net/http HTTP/2 client is a separate change.
 	h2cTransport := &http2.Transport{
 		AllowHTTP: true,
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
