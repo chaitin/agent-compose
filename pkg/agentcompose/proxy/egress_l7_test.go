@@ -537,7 +537,6 @@ func TestEgressProxyFailsClosedWhenInjectedCredentialIsMissing(t *testing.T) {
 	}
 }
 
-//nolint:staticcheck // x/net v0.59 deprecates the low-level HTTP/2 client types; this helper drives the MITM client side until it migrates to the net/http equivalents.
 func connectInterceptedHTTP2(t *testing.T, proxyServer *httptest.Server, proxyRoots *x509.CertPool) *http2.ClientConn {
 	t.Helper()
 	connection := dialProxy(t, proxyServer)

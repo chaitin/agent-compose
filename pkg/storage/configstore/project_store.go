@@ -607,14 +607,6 @@ func (s *projectStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecor
 	return s.GetProjectRun(ctx, run.RunID)
 }
 
-func nullableSchedulerRunID(id string) any {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return nil
-	}
-	return id
-}
-
 // schedulerRunIDPtr is the ent form of nullableSchedulerRunID: nil leaves the
 // nillable scheduler_run_id column unset on insert, or clears it on update.
 func schedulerRunIDPtr(id string) *string {
@@ -740,7 +732,7 @@ func (s *projectStore) projectRunFilterWithEventScope(ctx context.Context, optio
 	if eventID == "" {
 		return where, args, false, nil
 	}
-	schedulerRunIDs, eventScopeTruncated, err := eventRunScope(ctx, s.db, eventID)
+	schedulerRunIDs, eventScopeTruncated, err := eventRunScope(ctx, s.client, s.db, eventID)
 	if err != nil {
 		return nil, nil, false, err
 	}

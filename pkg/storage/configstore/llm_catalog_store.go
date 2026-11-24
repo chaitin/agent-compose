@@ -45,11 +45,26 @@ func (s *llmStore) ApplyModelCatalog(ctx context.Context, catalog llms.ModelCata
 	// id over — the environment bootstrap reclaims the openai/anthropic ids, and
 	// that path is supported — must not inherit models it never declared.
 	//
-	// Kept as SQL: the release is a DELETE whose predicate is a subquery over
-	// llm_provider; ent cannot express the correlated id set without first
-	// materializing it outside the statement.
-	if _, err := client.ExecContext(ctx, `DELETE FROM llm_provider_model WHERE provider_id IN (SELECT id FROM llm_provider WHERE scope = ?)`, llms.ProviderScopeCatalog); err != nil {
-		return fmt.Errorf("release stale model catalog bindings: %w", err)
+	// Materialize the released connection ids first, then delete their model
+	// bindings. Both statements share the catalog transaction, so the id set
+	// cannot change between them.
+	catalogProviders, err := client.LLMProvider.Query().
+		Select(llmprovider.FieldID).
+		Where(llmprovider.ScopeEQ(llms.ProviderScopeCatalog)).
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("read released model catalog providers: %w", err)
+	}
+	if len(catalogProviders) > 0 {
+		releasedIDs := make([]string, 0, len(catalogProviders))
+		for _, provider := range catalogProviders {
+			releasedIDs = append(releasedIDs, provider.ID)
+		}
+		if _, err := client.LLMProviderModel.Delete().
+			Where(llmprovidermodel.IDIn(releasedIDs...)).
+			Exec(ctx); err != nil {
+			return fmt.Errorf("release stale model catalog bindings: %w", err)
+		}
 	}
 	if _, err := client.LLMProvider.Update().
 		Where(llmprovider.ScopeEQ(llms.ProviderScopeCatalog)).

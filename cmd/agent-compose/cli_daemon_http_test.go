@@ -109,7 +109,7 @@ func TestDaemonHTTPClientUsesH2COnlyForAttachRPCs(t *testing.T) {
 	server := httptest.NewServer(h2c.NewHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { //nolint:staticcheck // Tests required h2c transport compatibility.
 		seen <- r.URL.Path + " " + r.Proto
 		w.WriteHeader(http.StatusOK)
-	}), &http2.Server{})) //nolint:staticcheck // The h2c test server needs x/net's HTTP/2 server to exercise the attach transport.
+	}), &http2.Server{}))
 	defer server.Close()
 
 	client := newDaemonHTTPClient(cliClientConfig{BaseURL: server.URL})
@@ -156,7 +156,7 @@ func TestDaemonHTTPClientAttachAgentRunBidiUsesH2C(t *testing.T) {
 			seen <- r.Proto
 		}
 		mux.ServeHTTP(w, r)
-	}), &http2.Server{})) //nolint:staticcheck // The h2c test server needs x/net's HTTP/2 server to exercise the attach transport.
+	}), &http2.Server{}))
 	defer server.Close()
 
 	client := agentcomposev2connect.NewRunServiceClient(newDaemonHTTPClient(cliClientConfig{BaseURL: server.URL}), server.URL)

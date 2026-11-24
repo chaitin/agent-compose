@@ -38,7 +38,7 @@ func (s *ConfigStore) runHistorySnapshot(ctx context.Context, id runhistory.Iden
 		return runhistory.Scope{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := loadRunHistoryScope(ctx, newEntTxClient(s.dialect, tx), tx, id)
+	scope, err := loadRunHistoryScope(ctx, newEntTxClient(s.dialect, tx), id)
 	if err != nil {
 		return scope, err
 	}
@@ -101,7 +101,7 @@ func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Ide
 	if _, err := tx.ExecContext(ctx, "UPDATE project SET updated_at=updated_at WHERE id=?", id.ProjectID); err != nil {
 		return err
 	}
-	current, err := loadRunHistoryScope(ctx, newEntTxClient(s.dialect, tx), tx, id)
+	current, err := loadRunHistoryScope(ctx, newEntTxClient(s.dialect, tx), id)
 	if err != nil {
 		return err
 	}

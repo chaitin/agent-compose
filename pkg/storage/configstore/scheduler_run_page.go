@@ -15,49 +15,45 @@ import (
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
 
-// Kept as SQL: the run_id filter is a dynamically built resource-ID prefix
-// clause (resourceIDClause); ent predicates would duplicate that identity logic.
 func (s *schedulerStore) GetSchedulerRunForSchedulers(ctx context.Context, schedulerIDs []string, runID string) (domain.SchedulerRunSummary, error) {
 	schedulerIDs = idset.Normalize(schedulerIDs)
 	runID = strings.TrimSpace(runID)
 	if len(schedulerIDs) == 0 {
 		return domain.SchedulerRunSummary{}, schedulerRunPageNotFound(runID, nil)
 	}
-	refClause, refArgs, ok := resourceIDClause("run_id", runID)
-	if !ok {
-		refClause = `run_id = ?`
-		refArgs = []any{runID}
+	query := s.client.SchedulerRun.Query().Where(
+		schedulerrun.SchedulerIDIn(schedulerIDs...),
+		schedulerrun.TriggerIDNEQ(""),
+	)
+	if match, ok := parseResourceIDMatch(runID); ok {
+		if match.exact {
+			query = query.Where(schedulerrun.Or(
+				schedulerrun.IDEQ(match.values[0]),
+				schedulerrun.IDEQ(match.values[1]),
+			))
+		} else {
+			query = query.Where(schedulerrun.Or(
+				schedulerrun.And(schedulerrun.IDGTE(match.values[0]), schedulerrun.IDLT(match.values[1])),
+				schedulerrun.And(schedulerrun.IDGTE(match.values[2]), schedulerrun.IDLT(match.values[3])),
+			))
+		}
+	} else {
+		query = query.Where(schedulerrun.IDEQ(runID))
 	}
-	placeholders := make([]string, len(schedulerIDs))
-	args := make([]any, 0, len(schedulerIDs)+len(refArgs))
-	args = append(args, refArgs...)
-	for index, schedulerID := range schedulerIDs {
-		placeholders[index] = "?"
-		args = append(args, schedulerID)
-	}
-	rows, err := s.db.QueryContext(ctx, schedulers.SelectSchedulerRunSQL()+` WHERE `+refClause+` AND scheduler_id IN (`+strings.Join(placeholders, ",")+`) AND trigger_id <> '' ORDER BY scheduler_id ASC, run_id ASC LIMIT 2`, args...)
+	entities, err := query.
+		Order(schedulerrun.BySchedulerID(), schedulerrun.ByID()).
+		Limit(2).
+		All(ctx)
 	if err != nil {
 		return domain.SchedulerRunSummary{}, err
 	}
-	defer func() { _ = rows.Close() }()
-	items := make([]domain.SchedulerRunSummary, 0, 2)
-	for rows.Next() {
-		item, scanErr := schedulers.ScanSchedulerRun(rows.Scan)
-		if scanErr != nil {
-			return domain.SchedulerRunSummary{}, scanErr
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return domain.SchedulerRunSummary{}, err
-	}
-	if len(items) == 0 {
+	if len(entities) == 0 {
 		return domain.SchedulerRunSummary{}, schedulerRunPageNotFound(runID, sql.ErrNoRows)
 	}
-	if len(items) > 1 {
+	if len(entities) > 1 {
 		return domain.SchedulerRunSummary{}, domain.ResourceError(domain.ErrAmbiguous, "scheduler run", runID, fmt.Sprintf("scheduler run reference %s is ambiguous", runID), nil)
 	}
-	return items[0], nil
+	return schedulerRunFromEntity(entities[0]), nil
 }
 
 func schedulerRunPageNotFound(runID string, cause error) error {

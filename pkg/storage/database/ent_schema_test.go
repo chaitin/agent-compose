@@ -9,26 +9,24 @@ import (
 	"testing"
 	"time"
 
-	"entgo.io/ent/entc"
-	"entgo.io/ent/entc/gen"
 	"entgo.io/ent/schema/field"
 
+	"github.com/chaitin/agent-compose/ent/dao/migrate"
 	storagesqlite "github.com/chaitin/agent-compose/pkg/storage/sqlite"
 )
 
 // TestSchemaMatchesReleasedDatabase is the contract that lets the storage layer
-// treat ent/schema as the model of record: every ent entity must map to a table
-// produced by the released migrations, every ent field to one of its columns
-// with a compatible type, and the Optional marker to the column's database
-// default (the runtime never applies ent's own DDL).
+// treat ent/schema (through the generated DAO) as the model of record: every
+// generated ent table must map to a table produced by the released migrations,
+// every generated column to one of its columns with a compatible type, and the
+// Optional marker to the column's database default (the runtime never applies
+// ent's own DDL).
+//
+// It reads the generated migrate schema instead of loading ent/schema through
+// entc: the generated package is what the stores query, and it keeps the test
+// runnable on every supported Go toolchain. `task check:ent` is what guarantees
+// ent/schema and ent/dao agree.
 func TestSchemaMatchesReleasedDatabase(t *testing.T) {
-	graph, err := entc.LoadGraph("../../../ent/schema", &gen.Config{
-		Package: "github.com/chaitin/agent-compose/ent/dao",
-	})
-	if err != nil {
-		t.Fatalf("load ent graph: %v", err)
-	}
-
 	db, err := storagesqlite.Open(filepath.Join(t.TempDir(), "schema.db"), 5*time.Second)
 	if err != nil {
 		t.Fatalf("open migrated SQLite database: %v", err)
@@ -42,62 +40,60 @@ func TestSchemaMatchesReleasedDatabase(t *testing.T) {
 		t.Fatalf("read SQLite schema: %v", err)
 	}
 
-	entTables := make(map[string]struct{}, len(graph.Nodes))
-	for _, node := range graph.Nodes {
-		table := node.Table()
-		entTables[table] = struct{}{}
-		tableColumns, ok := columns[table]
+	entTables := make(map[string]struct{}, len(migrate.Tables))
+	for _, table := range migrate.Tables {
+		entTables[table.Name] = struct{}{}
+		tableColumns, ok := columns[table.Name]
 		if !ok {
-			t.Errorf("ent entity %s maps to table %q, which the released migrations do not create", node.Name, table)
+			t.Errorf("ent table %q is not created by the released migrations", table.Name)
 			continue
 		}
 		byName := make(map[string]columnInfo, len(tableColumns))
 		for _, column := range tableColumns {
 			byName[column.name] = column
 		}
-		entFields := append([]*gen.Field{}, node.Fields...)
-		if node.ID != nil {
-			entFields = append(entFields, node.ID)
+		var idColumn string
+		if len(table.PrimaryKey) > 0 {
+			idColumn = table.PrimaryKey[0].Name
 		}
-		for _, f := range entFields {
-			storageKey := f.StorageKey()
-			column, ok := byName[storageKey]
+		for _, column := range table.Columns {
+			released, ok := byName[column.Name]
 			if !ok {
-				t.Errorf("entity %s field %q maps to missing column %s.%s", node.Name, f.Name, table, storageKey)
+				t.Errorf("ent table %s column %s is missing from the released migrations", table.Name, column.Name)
 				continue
 			}
-			wantType := sqliteTypeForEnt(f.Type.Type)
-			if wantType != "" && !strings.EqualFold(column.typ, wantType) {
-				t.Errorf("entity %s field %q: column %s.%s is %s, want %s", node.Name, f.Name, table, storageKey, column.typ, wantType)
+			wantType := sqliteTypeForEnt(column.Type)
+			if wantType != "" && !strings.EqualFold(released.typ, wantType) {
+				t.Errorf("ent table %s column %s is %s, want %s", table.Name, column.Name, released.typ, wantType)
 			}
-			isID := node.ID != nil && f.Name == node.ID.Name
-			if isID {
+			if column.Name == idColumn {
 				// project_run_label is the one released table without any
 				// primary key; ent still needs one ID field, so run_id is the
 				// query identity and every statement also constrains key.
-				if !column.pk && hasPrimaryKey(tableColumns) {
-					t.Errorf("entity %s ID field %q maps to non-primary-key column %s.%s", node.Name, f.Name, table, storageKey)
+				if !released.pk && hasPrimaryKey(tableColumns) {
+					t.Errorf("ent table %s ID column %s is not a primary key in the released schema", table.Name, column.Name)
 				}
 				continue
 			}
-			// A field is Optional when the database supplies a default (or the
-			// column is nullable); ent would otherwise require the field on
-			// every Create even though the released INSERT omitted it.
-			wantOptional := column.defaultValue != "" || !column.notNull
-			if f.Optional != wantOptional {
-				t.Errorf("entity %s field %q: Optional=%v, but column %s.%s has default %q / notNull=%v", node.Name, f.Name, f.Optional, table, storageKey, column.defaultValue, column.notNull)
+			// A column is Optional (nullable for ent) when the database supplies
+			// a default or the column is nullable; ent would otherwise require
+			// the field on every Create even though the released INSERT omitted
+			// it.
+			wantOptional := released.defaultValue != "" || !released.notNull
+			if column.Nullable != wantOptional {
+				t.Errorf("ent table %s column %s: Nullable=%v, but the released column has default %q / notNull=%v", table.Name, column.Name, column.Nullable, released.defaultValue, released.notNull)
 			}
 		}
-		for _, column := range tableColumns {
+		for _, released := range tableColumns {
 			found := false
-			for _, f := range entFields {
-				if f.StorageKey() == column.name {
+			for _, column := range table.Columns {
+				if column.Name == released.name {
 					found = true
 					break
 				}
 			}
 			if !found {
-				t.Errorf("table %s column %s has no ent field on %s", table, column.name, node.Name)
+				t.Errorf("released table %s column %s has no ent column on the generated model", table.Name, released.name)
 			}
 		}
 	}
@@ -110,7 +106,7 @@ func TestSchemaMatchesReleasedDatabase(t *testing.T) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Errorf("released tables without an ent entity: %v", missing)
+		t.Errorf("released tables without an ent table: %v", missing)
 	}
 }
 

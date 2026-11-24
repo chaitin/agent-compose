@@ -2,28 +2,16 @@ package configstore
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
-	entsql "entgo.io/ent/dialect/sql"
-
 	"github.com/chaitin/agent-compose/ent/dao"
 	"github.com/chaitin/agent-compose/ent/dao/event"
 	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
-	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
-
-// newEntTxClient binds a dao client to an in-flight SQL transaction. The event
-// insert and its sequenced-payload rewrite must stay in the caller's
-// transaction together with the dialect's sequence lock, so the ent builders
-// run over that *sql.Tx instead of opening a separate ent transaction.
-func newEntTxClient(d dialect.Dialect, tx *sql.Tx) *dao.Client {
-	return dao.NewClient(dao.Driver(entsql.NewDriver(d.EntDialect(), entsql.Conn{ExecQuerier: tx})))
-}
 
 func (s *eventStore) CreateEvent(ctx context.Context, item domain.TopicEventRecord) (domain.TopicEventRecord, error) {
 	normalized, err := normalizeTopicEventRecord(item, true)

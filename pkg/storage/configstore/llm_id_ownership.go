@@ -8,6 +8,7 @@ import (
 	"github.com/chaitin/agent-compose/ent/dao"
 	"github.com/chaitin/agent-compose/ent/dao/llmmodel"
 	"github.com/chaitin/agent-compose/ent/dao/llmprovider"
+	"github.com/chaitin/agent-compose/ent/dao/llmprovidermodel"
 	"github.com/chaitin/agent-compose/pkg/llms"
 )
 
@@ -153,27 +154,37 @@ func servingModelOwner(ctx context.Context, client *dao.Client, id string) (*llm
 // servedByAnotherSource reports whether an enabled connection a source other than
 // this bootstrap owns binds modelID.
 func servedByAnotherSource(ctx context.Context, client *dao.Client, modelID string) (bool, error) {
-	// Kept as SQL: the check joins llm_provider_model and llm_provider and must
-	// read both tables as one consistent statement inside the projection
-	// transaction; the schema declares no ent edge to traverse.
-	rows, err := client.QueryContext(ctx, `SELECT connection.scope FROM llm_provider_model binding
-		JOIN llm_provider connection ON connection.id = binding.provider_id
-		WHERE binding.model_id = ? AND connection.enabled != 0`, modelID)
+	// Bindings carry the provider id as their key, so the join becomes two
+	// reads inside the projection transaction; each provider serves the model
+	// at most once.
+	bindings, err := client.LLMProviderModel.Query().
+		Select(llmprovidermodel.FieldID).
+		Where(llmprovidermodel.ModelIDEQ(modelID)).
+		All(ctx)
 	if err != nil {
 		return false, fmt.Errorf("read the connections serving model %q: %w", modelID, err)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var scope string
-		if err := rows.Scan(&scope); err != nil {
-			return false, fmt.Errorf("read the connections serving model %q: %w", modelID, err)
-		}
-		if !llms.EnvProjectionOwnsScope(scope) {
+	if len(bindings) == 0 {
+		return false, nil
+	}
+	providerIDs := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		providerIDs = append(providerIDs, binding.ID)
+	}
+	providers, err := client.LLMProvider.Query().
+		Select(llmprovider.FieldScope).
+		Where(
+			llmprovider.IDIn(providerIDs...),
+			llmprovider.EnabledNEQ(0),
+		).
+		All(ctx)
+	if err != nil {
+		return false, fmt.Errorf("read the connections serving model %q: %w", modelID, err)
+	}
+	for _, provider := range providers {
+		if !llms.EnvProjectionOwnsScope(provider.Scope) {
 			return true, nil
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("read the connections serving model %q: %w", modelID, err)
 	}
 	return false, nil
 }

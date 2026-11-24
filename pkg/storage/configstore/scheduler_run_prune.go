@@ -55,9 +55,10 @@ func (s *schedulerStore) ListSchedulerRunsForPrune(ctx context.Context, filter s
 	return result, nil
 }
 
-// Kept as SQL: four correlated COUNT subqueries across scheduler_event,
-// event_delivery, event_sandbox_link, and scheduler_run; ent cannot express
-// this as one consistent read.
+// CountSchedulerRunPruneData reports the rows a prune would remove. The four
+// counts are read one after another from the shared client; the released
+// statement bundled them into one round trip, and the preview is advisory (the
+// delete recomputes every count under its transaction).
 func (s *schedulerStore) CountSchedulerRunPruneData(ctx context.Context, keys []schedulers.SchedulerRunKey) (schedulers.SchedulerRunPruneDatabaseStats, error) {
 	keys = normalizedSchedulerRunKeys(keys)
 	var stats schedulers.SchedulerRunPruneDatabaseStats
@@ -69,26 +70,60 @@ func (s *schedulerStore) CountSchedulerRunPruneData(ctx context.Context, keys []
 		if !eligible {
 			continue
 		}
-		var schedulerEvents, deliveries, sandboxLinks, runs int64
-		err = s.db.QueryRowContext(ctx, `SELECT
-			(SELECT COUNT(*) FROM scheduler_event WHERE scheduler_id = ? AND scheduler_run_id = ?),
-			(SELECT COUNT(*) FROM event_delivery WHERE scheduler_id = ? AND scheduler_run_id = ?),
-			(SELECT COUNT(*) FROM event_sandbox_link WHERE scheduler_id = ? AND scheduler_run_id = ?),
-			(SELECT COUNT(*) FROM scheduler_run WHERE scheduler_id = ? AND run_id = ? AND trigger_id <> '')`,
-			key.SchedulerID, key.RunID,
-			key.SchedulerID, key.RunID,
-			key.SchedulerID, key.RunID,
-			key.SchedulerID, key.RunID,
-		).Scan(&schedulerEvents, &deliveries, &sandboxLinks, &runs)
+		counts, err := pruneDataCounts(ctx, s.client, key)
 		if err != nil {
 			return schedulers.SchedulerRunPruneDatabaseStats{}, fmt.Errorf("count scheduler run prune data %s/%s: %w", key.SchedulerID, key.RunID, err)
 		}
-		stats.SchedulerEvents += uint64(schedulerEvents)
-		stats.EventDeliveries += uint64(deliveries)
-		stats.EventSandboxLinks += uint64(sandboxLinks)
-		stats.Runs += uint64(runs)
+		stats.SchedulerEvents += counts.schedulerEvents
+		stats.EventDeliveries += counts.deliveries
+		stats.EventSandboxLinks += counts.sandboxLinks
+		stats.Runs += counts.runs
 	}
 	return stats, nil
+}
+
+type pruneDataCount struct {
+	schedulerEvents uint64
+	deliveries      uint64
+	sandboxLinks    uint64
+	runs            uint64
+}
+
+func pruneDataCounts(ctx context.Context, client *dao.Client, key schedulers.SchedulerRunKey) (pruneDataCount, error) {
+	schedulerEvents, err := client.SchedulerEvent.Query().
+		Where(schedulerevent.IDEQ(key.SchedulerID), schedulerevent.SchedulerRunIDEQ(key.RunID)).
+		Count(ctx)
+	if err != nil {
+		return pruneDataCount{}, err
+	}
+	deliveries, err := client.EventDelivery.Query().
+		Where(eventdelivery.SchedulerIDEQ(key.SchedulerID), eventdelivery.SchedulerRunIDEQ(key.RunID)).
+		Count(ctx)
+	if err != nil {
+		return pruneDataCount{}, err
+	}
+	sandboxLinks, err := client.EventSandboxLink.Query().
+		Where(eventsandboxlink.SchedulerIDEQ(key.SchedulerID), eventsandboxlink.SchedulerRunIDEQ(key.RunID)).
+		Count(ctx)
+	if err != nil {
+		return pruneDataCount{}, err
+	}
+	runs, err := client.SchedulerRun.Query().
+		Where(
+			schedulerrun.IDEQ(key.RunID),
+			schedulerrun.SchedulerIDEQ(key.SchedulerID),
+			schedulerrun.TriggerIDNEQ(""),
+		).
+		Count(ctx)
+	if err != nil {
+		return pruneDataCount{}, err
+	}
+	return pruneDataCount{
+		schedulerEvents: uint64(schedulerEvents),
+		deliveries:      uint64(deliveries),
+		sandboxLinks:    uint64(sandboxLinks),
+		runs:            uint64(runs),
+	}, nil
 }
 
 func (s *schedulerStore) DeleteSchedulerRunPruneData(ctx context.Context, keys []schedulers.SchedulerRunKey) (schedulers.SchedulerRunPruneDatabaseResult, error) {

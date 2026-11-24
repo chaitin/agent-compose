@@ -56,22 +56,3 @@ func ScanSchedulerBinding(scan func(dest ...any) error) (domain.SchedulerBinding
 	item.UpdatedAt = storedtime.ParseStoredTime(updatedAtRaw)
 	return item, nil
 }
-
-func SelectSchedulerTriggerSQL() string {
-	return `SELECT scheduler_id, trigger_id, kind, topic, interval_ms, enabled, auto_id, spec_json, next_fire_at, last_fired_at
-        FROM scheduler_trigger`
-}
-
-func SelectSchedulerRunSQL() string {
-	return `SELECT scheduler_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at, completed_at, duration_ms, error, result_json, payload_json, source_script_sha256, artifacts_dir
-        FROM scheduler_run`
-}
-
-func SelectSchedulerEventSQL() string {
-	return `SELECT scheduler_id, event_id, scheduler_run_id, trigger_id, type, level, message, payload_json, linked_sandbox_id, linked_cell_id, linked_agent_thread_id, created_at
-        FROM scheduler_event`
-}
-
-func SelectSchedulerBindingSQL() string {
-	return `SELECT scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, scheduler_config_hash, created_at, updated_at FROM scheduler_sandbox_binding`
-}

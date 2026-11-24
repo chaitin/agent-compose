@@ -6,10 +6,12 @@ import (
 	"slices"
 
 	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/eventsandboxlink"
 	"github.com/chaitin/agent-compose/ent/dao/project"
 	"github.com/chaitin/agent-compose/ent/dao/projectrun"
 	"github.com/chaitin/agent-compose/ent/dao/projectruncompletion"
 	"github.com/chaitin/agent-compose/ent/dao/projectscheduler"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerevent"
 	"github.com/chaitin/agent-compose/ent/dao/schedulerrun"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -21,7 +23,7 @@ import (
 // fence transaction. The single-table reads go through the ent client bound to
 // that transaction; the locking, the no-op write fence, and the multi-table
 // reference probes stay raw SQL in the callers/helpers.
-func loadRunHistoryScope(ctx context.Context, client *dao.Client, tx *sql.Tx, id runhistory.Identity) (runhistory.Scope, error) {
+func loadRunHistoryScope(ctx context.Context, client *dao.Client, id runhistory.Identity) (runhistory.Scope, error) {
 	scope := runhistory.Scope{}
 	projectExists, err := client.Project.Query().Where(project.IDEQ(id.ProjectID)).Exist(ctx)
 	if err != nil {
@@ -138,27 +140,39 @@ func loadRunHistoryScope(ctx context.Context, client *dao.Client, tx *sql.Tx, id
 		}
 	}
 	if id.Kind == runhistory.SchedulerRun {
-		// Kept as SQL: UNION of scheduler_event and event_sandbox_link
-		// sandbox links that ent cannot express as one read.
-		links, err := tx.QueryContext(ctx, "SELECT linked_sandbox_id FROM scheduler_event WHERE scheduler_id=? AND scheduler_run_id=? AND linked_sandbox_id<>'' UNION SELECT sandbox_id FROM event_sandbox_link WHERE scheduler_id=? AND scheduler_run_id=? AND sandbox_id<>''", id.SchedulerID, id.RunID, id.SchedulerID, id.RunID)
+		// Both link tables feed the same sandbox set; the caller canonicalizes
+		// and de-duplicates afterwards, so the two typed reads are equivalent to
+		// the released UNION.
+		eventLinks, err := client.SchedulerEvent.Query().
+			Select(schedulerevent.FieldLinkedSandboxID).
+			Where(
+				schedulerevent.IDEQ(id.SchedulerID),
+				schedulerevent.SchedulerRunIDEQ(id.RunID),
+				schedulerevent.LinkedSandboxIDNEQ(""),
+			).
+			All(ctx)
 		if err != nil {
 			return scope, err
 		}
-		defer func() { _ = links.Close() }()
-		for links.Next() {
-			var sandboxID string
-			if err := links.Scan(&sandboxID); err != nil {
-				return scope, err
-			}
-			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(sandboxID))
+		for _, event := range eventLinks {
+			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(event.LinkedSandboxID))
 		}
-		err = links.Err()
-		_ = links.Close()
+		linkedSandboxes, err := client.EventSandboxLink.Query().
+			Select(eventsandboxlink.FieldSandboxID).
+			Where(
+				eventsandboxlink.SchedulerIDEQ(id.SchedulerID),
+				eventsandboxlink.SchedulerRunIDEQ(id.RunID),
+				eventsandboxlink.SandboxIDNEQ(""),
+			).
+			All(ctx)
 		if err != nil {
 			return scope, err
+		}
+		for _, link := range linkedSandboxes {
+			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(link.SandboxID))
 		}
 	}
-	if err := protectRunHistoryReferences(ctx, tx, id, &scope); err != nil {
+	if err := protectRunHistoryReferences(ctx, client, id, &scope); err != nil {
 		return scope, err
 	}
 	slices.Sort(scope.SandboxIDs)

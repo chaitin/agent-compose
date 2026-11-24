@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/eventdelivery"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -15,48 +17,41 @@ import (
 // MaxEventScopeEvents like GetEventTrace; truncated reports that the cap was
 // hit, so runs recorded only against events beyond it are missing from the
 // filter.
-//
-// Kept as SQL: the scope walk reuses event_query.go's recursive-CTE and dynamic
-// NOT IN helpers, which take the plain *sql.DB that project_store.go passes.
-func eventRunScope(ctx context.Context, db *sql.DB, eventID string) (schedulerRunIDs []string, truncated bool, err error) {
-	_, scope, truncated, err := eventScopeIDs(ctx, db, eventID, domain.MaxEventScopeEvents)
+func eventRunScope(ctx context.Context, client *dao.Client, db *sql.DB, eventID string) (schedulerRunIDs []string, truncated bool, err error) {
+	_, scope, truncated, err := eventScopeIDs(ctx, client, db, eventID, domain.MaxEventScopeEvents)
 	if err != nil {
 		return nil, false, err
 	}
-	schedulerRunIDs, err = eventScopeSchedulerRunIDs(ctx, db, scope)
+	schedulerRunIDs, err = eventScopeSchedulerRunIDs(ctx, client, scope)
 	return schedulerRunIDs, truncated, err
 }
 
 // eventScopeSchedulerRunIDs collects the distinct non-empty scheduler run ids
 // recorded in event_delivery rows for the given event ids.
-func eventScopeSchedulerRunIDs(ctx context.Context, db *sql.DB, eventIDs []string) ([]string, error) {
+func eventScopeSchedulerRunIDs(ctx context.Context, client *dao.Client, eventIDs []string) ([]string, error) {
 	if len(eventIDs) == 0 {
 		return nil, nil
 	}
-	args := make([]any, len(eventIDs))
-	for index, id := range eventIDs {
-		args[index] = id
-	}
-	rows, err := db.QueryContext(ctx,
-		// Kept as SQL: SELECT DISTINCT with a dynamic IN list; the helper
-		// receives only the shared *sql.DB, not an ent client.
-		`SELECT DISTINCT scheduler_run_id FROM event_delivery
-		WHERE scheduler_run_id <> '' AND event_id IN (`+placeholders(len(eventIDs))+`)`,
-		args...)
+	entities, err := client.EventDelivery.Query().
+		Select(eventdelivery.FieldSchedulerRunID).
+		Where(
+			eventdelivery.SchedulerRunIDNEQ(""),
+			eventdelivery.IDIn(eventIDs...),
+		).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query event delivery scheduler runs: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	schedulerRunIDs := make([]string, 0, len(eventIDs))
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan event delivery scheduler run: %w", err)
+	// The released query was SELECT DISTINCT; the delivery primary key spans
+	// event/scheduler/trigger, so one run id can repeat across rows.
+	seen := make(map[string]struct{}, len(entities))
+	schedulerRunIDs := make([]string, 0, len(entities))
+	for _, entity := range entities {
+		if _, ok := seen[entity.SchedulerRunID]; ok {
+			continue
 		}
-		schedulerRunIDs = append(schedulerRunIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate event delivery scheduler runs: %w", err)
+		seen[entity.SchedulerRunID] = struct{}{}
+		schedulerRunIDs = append(schedulerRunIDs, entity.SchedulerRunID)
 	}
 	return schedulerRunIDs, nil
 }

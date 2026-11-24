@@ -28,8 +28,9 @@ Existing data roots are upgraded only by the released migration chains, and they
 must keep working without a data rewrite. Because of that:
 
 - `ent/schema` mirrors the physical schema one-to-one. `pkg/storage/database/ent_schema_test.go`
-  fails when an entity, field, storage key, primary key, or Optional/default
-  marker drifts from the migrated SQLite schema.
+  fails when a generated table, column, primary key, or Optional/default marker
+  drifts from the migrated SQLite schema; `task check:ent` keeps `ent/schema`
+  and the generated model in sync before that test runs.
 - `pkg/storage/postgres/schema_parity_integration_test.go` covers the other half:
   the SQLite and PostgreSQL chains must produce the same table/column/index
   shape.
@@ -49,9 +50,11 @@ must keep working without a data rewrite. Because of that:
    integration tests when a test database is available).
 
 `task generate:ent` requires the Go toolchain declared by `go.mod` (currently
-1.26.x). ent v0.14.6's schema loader depends on `golang.org/x/tools`; the module
-pins a version that can read export data produced by newer toolchains as well,
-but the supported build toolchain is the one in `go.mod` and CI.
+1.26.x), which is also what CI installs. ent v0.14.6's schema loader links a
+`golang.org/x/tools` version that cannot read export data produced by newer Go
+toolchains, so the task checks the toolchain up front and fails with a clear
+message instead of downloading/upgrading the project's Go dependencies. Keep the
+upstream Go version when regenerating.
 
 ent's Atlas-based migration generator is deliberately not used: the project ships
 two paired, checksummed SQL migration chains for existing deployments and does
@@ -79,9 +82,11 @@ source of truth rather than remove one.
 ## What remains SQL
 
 Raw SQL that survived the conversion falls into these documented groups. Every
-statement outside the migration/copy/lock infrastructure carries a
+business statement outside the migration/copy/lock infrastructure carries a
 `// Kept as SQL:` comment; `grep -rn "Kept as SQL" pkg/storage` is the current
-inventory.
+inventory. The migration runners (`sqlite`, `postgres`), the PostgreSQL
+locking/rebinding machinery, and `pgcopy` contain SQL by design and are not
+tracked statement by statement.
 
 | Group | Examples | Why it stays SQL |
 |---|---|---|

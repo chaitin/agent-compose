@@ -9,6 +9,7 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 
 	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/llmcatalogdefault"
 	"github.com/chaitin/agent-compose/ent/dao/llmfacadetoken"
 	"github.com/chaitin/agent-compose/ent/dao/llmmodel"
 	"github.com/chaitin/agent-compose/ent/dao/llmprovider"
@@ -338,12 +339,41 @@ func replaceProviderModels(ctx context.Context, client *dao.Client, providerID, 
 // projection, which releases what it no longer declares, and an environment row
 // belongs to the environment projection.
 func sweepUnreferencedAPIModels(ctx context.Context, client *dao.Client) error {
-	// Kept as SQL: the sweep is a single DELETE with two NOT IN subqueries, which
-	// is what makes it evaluate the fully projected reference state atomically.
-	if _, err := client.ExecContext(ctx, `DELETE FROM llm_model
-		WHERE scope = ?
-		  AND id NOT IN (SELECT model_id FROM llm_provider_model)
-		  AND id NOT IN (SELECT model_id FROM llm_catalog_default)`, llms.ProviderScopeAPI); err != nil {
+	// Collect the referenced model ids in the same transaction as the delete so
+	// the sweep sees the fully projected reference state.
+	bindings, err := client.LLMProviderModel.Query().
+		Select(llmprovidermodel.FieldModelID).
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("read bound model identities: %w", err)
+	}
+	defaults, err := client.LLMCatalogDefault.Query().
+		Select(llmcatalogdefault.FieldModelID).
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("read default model identities: %w", err)
+	}
+	referenced := make([]string, 0, len(bindings)+len(defaults))
+	seen := make(map[string]struct{}, len(bindings)+len(defaults))
+	for _, binding := range bindings {
+		if _, ok := seen[binding.ModelID]; ok {
+			continue
+		}
+		seen[binding.ModelID] = struct{}{}
+		referenced = append(referenced, binding.ModelID)
+	}
+	for _, entity := range defaults {
+		if _, ok := seen[entity.ModelID]; ok {
+			continue
+		}
+		seen[entity.ModelID] = struct{}{}
+		referenced = append(referenced, entity.ModelID)
+	}
+	deleteQuery := client.LLMModel.Delete().Where(llmmodel.ScopeEQ(llms.ProviderScopeAPI))
+	if len(referenced) > 0 {
+		deleteQuery = deleteQuery.Where(llmmodel.IDNotIn(referenced...))
+	}
+	if _, err := deleteQuery.Exec(ctx); err != nil {
 		return fmt.Errorf("sweep unreferenced api model identities: %w", err)
 	}
 	return nil

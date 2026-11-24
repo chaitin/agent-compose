@@ -13,11 +13,11 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/projectagent"
 	"github.com/chaitin/agent-compose/ent/dao/projectvolume"
 	"github.com/chaitin/agent-compose/ent/dao/volume"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/storage/dialect"
-	"github.com/chaitin/agent-compose/pkg/storage/storeutil"
 	"github.com/chaitin/agent-compose/pkg/storedtime"
 	"github.com/chaitin/agent-compose/pkg/volumes"
 )
@@ -363,47 +363,17 @@ func (s *volumeStore) findProjectVolumeReferences(ctx context.Context, volumeID 
 }
 
 func (s *volumeStore) findVolumeSpecReferences(ctx context.Context, volumeName string) ([]domain.VolumeReference, error) {
-	var refs []domain.VolumeReference
-	for _, query := range []struct {
-		resourceType string
-		sql          string
-	}{
-		{resourceType: "project_agent", sql: `SELECT id, name, spec_json FROM project_agent`},
-	} {
-		queryRefs, err := s.findVolumeSpecReferencesIn(ctx, query.resourceType, query.sql, volumeName)
-		if err != nil {
-			return nil, err
-		}
-		refs = append(refs, queryRefs...)
-	}
-	return refs, nil
-}
-
-// findVolumeSpecReferencesIn scans one spec-bearing table for mounts of
-// volumeName. It owns its cursor so the caller can loop over several tables
-// without holding every cursor open until the walk finishes.
-func (s *volumeStore) findVolumeSpecReferencesIn(ctx context.Context, resourceType, query, volumeName string) (_ []domain.VolumeReference, err error) {
-	// Kept as SQL: callers iterate several spec-bearing tables through one
-	// row-scanning path, and the query text is chosen by this package.
-	rows, err := s.db.QueryContext(ctx, query)
+	agents, err := s.client.ProjectAgent.Query().
+		Select(projectagent.FieldID, projectagent.FieldName, projectagent.FieldSpecJSON).
+		All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("query %s volume references: %w", resourceType, err)
+		return nil, fmt.Errorf("query project_agent volume references: %w", err)
 	}
-	defer func() { storeutil.ReportClose(rows.Close(), &err, resourceType+" volume references") }()
-	var refs []domain.VolumeReference
-	for rows.Next() {
-		var id string
-		var name string
-		var raw string
-		if scanErr := rows.Scan(&id, &name, &raw); scanErr != nil {
-			return nil, fmt.Errorf("scan %s volume reference: %w", resourceType, scanErr)
+	refs := make([]domain.VolumeReference, 0)
+	for _, agent := range agents {
+		if volumeSpecsReferenceSpec(agent.SpecJSON, volumeName) {
+			refs = append(refs, domain.VolumeReference{ResourceType: "project_agent", ResourceID: agent.ID, Name: agent.Name})
 		}
-		if volumeSpecsReferenceSpec(raw, volumeName) {
-			refs = append(refs, domain.VolumeReference{ResourceType: resourceType, ResourceID: id, Name: name})
-		}
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return nil, rowsErr
 	}
 	return refs, nil
 }
