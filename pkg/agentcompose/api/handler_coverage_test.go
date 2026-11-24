@@ -500,9 +500,9 @@ func TestExecHandlerRunSelectorAndStreamSenderWorkflow(t *testing.T) {
 			t.Fatalf("stream event leaked command payload: %#v", event)
 		}
 	}
-	transcript, err := os.ReadFile(filepath.Join(sandboxRoot, "state", "exec", "exec-run", "transcript.txt"))
-	if err != nil || !strings.Contains(string(transcript), "hi\n") || strings.Contains(string(transcript), execution.CommandResultPrefix) {
-		t.Fatalf("transcript = %q err=%v", string(transcript), err)
+	// Exec is non-persistent: streamed output must not be written to disk.
+	if _, err := os.Stat(filepath.Join(sandboxRoot, "state", "exec", "exec-run", "transcript.txt")); !os.IsNotExist(err) {
+		t.Fatalf("exec transcript should not be persisted, stat err=%v", err)
 	}
 
 	if _, err := handler.executeProjectCommand(ctx, &agentcomposev2.ExecRequest{
