@@ -14,6 +14,7 @@ import (
 // of the log. State belongs to the consumer; runlog does not interpret it.
 type Recovery struct {
 	merger       *mergerCheckpoint
+	writer       *writerCheckpoint
 	SourceOffset uint64          `json:"src_offset"`
 	State        json.RawMessage `json:"state"`
 	LogBytes     int64           `json:"log_bytes"`
@@ -46,7 +47,7 @@ func recoverCheckpoint(path string) (*Recovery, error) {
 	if err := json.Unmarshal(state, &saved); err != nil {
 		return nil, fmt.Errorf("decode run log checkpoint state: %w", err)
 	}
-	recovery := Recovery{SourceOffset: header.SourceOffset, LogBytes: header.LogBytes, State: saved.State, merger: saved.Merger}
+	recovery := Recovery{SourceOffset: header.SourceOffset, LogBytes: header.LogBytes, State: saved.State, merger: saved.Merger, writer: saved.Writer}
 	if saved.Merger == nil {
 		return nil, errors.New("invalid run log checkpoint: missing merger state")
 	}
@@ -111,7 +112,8 @@ func (w *Writer) Checkpoint(offset uint64, state json.RawMessage) error {
 	if err != nil {
 		return fmt.Errorf("encode run log checkpoint: %w", err)
 	}
-	saved, err := json.Marshal(checkpointState{State: state, Merger: w.merger.checkpoint()})
+	saved, err := json.Marshal(checkpointState{State: state, Merger: w.merger.checkpoint(),
+		Writer: &writerCheckpoint{Truncated: w.truncated, Dropped: w.dropped}})
 	if err != nil {
 		return fmt.Errorf("encode run log merge checkpoint: %w", err)
 	}
@@ -241,4 +243,13 @@ func checkpointLogBytes(path string) (int64, bool, error) {
 type checkpointState struct {
 	State  json.RawMessage   `json:"state"`
 	Merger *mergerCheckpoint `json:"merger"`
+	Writer *writerCheckpoint `json:"writer,omitempty"`
+}
+
+// writerCheckpoint is the cap state a log's lines do not show: whether the
+// cap is reached when no marker has been written yet, and the rendered bytes
+// dropped since the last marker.
+type writerCheckpoint struct {
+	Truncated bool   `json:"truncated,omitempty"`
+	Dropped   uint64 `json:"dropped,omitempty"`
 }

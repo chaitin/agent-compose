@@ -108,6 +108,12 @@ func Open(path string, opts Options) (*Writer, error) {
 	if recovery != nil && recovery.merger != nil {
 		w.merger.restoreCheckpoint(recovery.merger)
 	}
+	if recovery != nil && recovery.writer != nil {
+		// Entries dropped by the cap before the checkpoint leave no line
+		// until their marker is written; only the checkpoint remembers them.
+		w.truncated = w.truncated || recovery.writer.Truncated
+		w.dropped = recovery.writer.Dropped
+	}
 	return w, nil
 }
 
@@ -190,7 +196,8 @@ func (w *Writer) appendUser(text string, initial bool) (Entry, error) {
 }
 
 // AppendOutput records process output. stream is stdout, stderr or tty.
-// data is kept byte for byte, so filtering a log by stream reproduces it.
+// Valid UTF-8 is kept byte for byte, so filtering a log by stream reproduces
+// it; a JSON string cannot carry invalid sequences, which become U+FFFD.
 func (w *Writer) AppendOutput(stream, data string) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -311,6 +318,15 @@ func (w *Writer) writeLocked(entry Entry) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
+	// Position the text view by the entry as readers will decode it. JSON
+	// does not store every string as given: invalid UTF-8 becomes U+FFFD and
+	// tool input is compacted and escaped. Rendering the in-memory entry
+	// would shift every later text offset by the difference.
+	var stored Entry
+	if err := json.Unmarshal(line, &stored); err != nil {
+		return Entry{}, fmt.Errorf("decode run log entry: %w", err)
+	}
+	entry = stored
 	line = append(line, '\n')
 	if _, err := w.file.Write(line); err != nil {
 		return Entry{}, fmt.Errorf("append run log: %w", err)

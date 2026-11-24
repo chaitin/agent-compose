@@ -31,7 +31,9 @@ func (m *Merger) checkpoint() *mergerCheckpoint {
 func (m *Merger) restoreCheckpoint(state *mergerCheckpoint) {
 	m.pendingText.Reset()
 	m.pendingText.WriteString(state.PendingText)
-	m.turnProse, m.turnEvents, m.turn = state.TurnProse, state.TurnEvents, state.Turn
+	// A checkpoint from an older daemon may hold a longer prefix.
+	m.turnProse = keepTail(state.TurnProse, maxTurnProseBytes)
+	m.turnEvents, m.turn = state.TurnEvents, state.Turn
 	// A checkpoint from an older daemon may hold a longer prefix.
 	m.legacyOutput = ""
 	if !state.TurnEvents {
@@ -39,6 +41,10 @@ func (m *Merger) restoreCheckpoint(state *mergerCheckpoint) {
 	}
 	m.tools = make(map[string]*toolState, len(state.Tools))
 	for id, tool := range state.Tools {
-		m.tools[id] = &toolState{tool: tool.Tool, callWritten: tool.CallWritten, resultWritten: tool.ResultWritten}
+		saved := tool.Tool
+		if tool.CallWritten {
+			saved = writtenCall(saved)
+		}
+		m.tools[id] = &toolState{tool: saved, callWritten: tool.CallWritten, resultWritten: tool.ResultWritten}
 	}
 }

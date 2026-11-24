@@ -81,7 +81,7 @@ func (m *Merger) Recover(entry Entry) {
 			m.tools = map[string]*toolState{}
 		}
 	case EntryText:
-		m.turnProse += entry.Text
+		m.rememberProse(entry.Text)
 		m.sawTurnEvent()
 	case EntryOutput:
 		m.rememberLegacyOutput(entry.Data)
@@ -95,7 +95,7 @@ func (m *Merger) Recover(entry Entry) {
 	switch entry.Type {
 	case EntryToolCall:
 		state.callWritten = true
-		state.tool = *entry.Tool
+		state.tool = writtenCall(*entry.Tool)
 	case EntryToolResult:
 		state.resultWritten = true
 	}
@@ -137,6 +137,18 @@ func (m *Merger) EndTurn(stopReason, finalText string) []Pending {
 	m.turnEvents = false
 	m.legacyOutput = ""
 	return append(out, Pending{Entry: Entry{Type: EntryTurnEnd, StopReason: stopReason, FinalText: finalText}, Essential: true})
+}
+
+// maxTurnProseBytes bounds the tail of a turn's prose the merger keeps to
+// find how much of a final answer was already streamed. The overlap is a
+// suffix of the prose, so the tail is what matters; an answer longer than this
+// that was fully streamed is recorded again rather than tracked without limit.
+// The tail is part of every journal checkpoint, so it must stay small.
+const maxTurnProseBytes = 64 << 10
+
+// rememberProse keeps the tail of the turn's prose; see maxTurnProseBytes.
+func (m *Merger) rememberProse(text string) {
+	m.turnProse = keepTail(m.turnProse+text, maxTurnProseBytes)
 }
 
 // maxLegacyOutputBytes bounds the tail of a turn's process output the merger
@@ -182,7 +194,7 @@ func (m *Merger) FlushText() []Pending {
 
 // text records prose, split into entries of at most maxEntryTextBytes.
 func (m *Merger) text(text string) []Pending {
-	m.turnProse += text
+	m.rememberProse(text)
 	parts := splitText(text, maxEntryTextBytes)
 	out := make([]Pending, 0, len(parts))
 	for _, part := range parts {
@@ -318,6 +330,18 @@ func (m *Merger) toolCall(event agentEvent) []Pending {
 	}
 	state := m.tool(event.ID)
 	tool := &state.tool
+	if state.callWritten {
+		// Only what the result entry repeats is still needed; the
+		// arguments are already in the log.
+		if event.ParentToolUseID != "" {
+			tool.ParentID = event.ParentToolUseID
+		}
+		if event.ExitCode != nil {
+			code := *event.ExitCode
+			tool.ExitCode = &code
+		}
+		return nil
+	}
 	if event.Name != "" {
 		tool.Name = event.Name
 	}
@@ -340,9 +364,6 @@ func (m *Merger) toolCall(event agentEvent) []Pending {
 		code := *event.ExitCode
 		tool.ExitCode = &code
 	}
-	if state.callWritten {
-		return nil
-	}
 	if tool.Command == "" && toolInputText(tool.Input) == "" && len(tool.Changes) == 0 && event.Status == "in_progress" {
 		// Arguments are still streaming; wait for the completed re-emit or
 		// the result, whichever comes first.
@@ -355,7 +376,15 @@ func (m *Merger) emitToolCall(state *toolState) []Pending {
 	call := state.tool
 	call.ExitCode = nil
 	state.callWritten = true
+	state.tool = writtenCall(state.tool)
 	return append(m.FlushText(), Pending{Entry: Entry{Type: EntryToolCall, Tool: &call}, Essential: true})
+}
+
+// writtenCall keeps what a tool's result entry repeats from its call. Once
+// the call is in the log its arguments, which may be large, are not needed,
+// and dropping them keeps every journal checkpoint small.
+func writtenCall(tool Tool) Tool {
+	return Tool{ID: tool.ID, ParentID: tool.ParentID, Name: tool.Name, ExitCode: tool.ExitCode}
 }
 
 // clampToolInput keeps a tool call's arguments within limit bytes while
@@ -380,6 +409,10 @@ func (m *Merger) toolResult(event agentEvent) []Pending {
 	state := m.tool(event.ID)
 	if state.resultWritten {
 		return nil
+	}
+	// claude reports a subagent's tool calls' parent on their results only.
+	if event.ParentToolUseID != "" {
+		state.tool.ParentID = event.ParentToolUseID
 	}
 	var out []Pending
 	if !state.callWritten {
