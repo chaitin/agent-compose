@@ -8,16 +8,14 @@ plus a second SQLite daemon used to seed data for the offline copy test.
 From the repository root:
 
 ```bash
-PROXY=http://proxy.in.chaitin.net:8123
-REGISTRY_MIRROR=registry-mirrors.dev.in.chaitin.net \
-HTTP_PROXY=$PROXY HTTPS_PROXY=$PROXY http_proxy=$PROXY https_proxy=$PROXY \
-IMAGE_TAG=agent-compose:postgres-test \
-task image:agent-compose
+# Optional: set these only when the build host needs an egress proxy or a
+# registry mirror. The values below are placeholders; use your environment's.
+# export HTTP_PROXY=http://proxy.example.invalid:8080
+# export HTTPS_PROXY=$HTTP_PROXY http_proxy=$HTTP_PROXY https_proxy=$HTTP_PROXY
+# export REGISTRY_MIRROR=registry.example.invalid
 
-REGISTRY_MIRROR=registry-mirrors.dev.in.chaitin.net \
-HTTP_PROXY=$PROXY HTTPS_PROXY=$PROXY http_proxy=$PROXY https_proxy=$PROXY \
-IMAGE_TAG=agent-compose-guest:local \
-task image:agent-compose-guest
+IMAGE_TAG=agent-compose:postgres-test task image:agent-compose
+IMAGE_TAG=agent-compose-guest:local task image:agent-compose-guest
 ```
 
 `agent-compose-guest:local` is also used by the daemon's Docker sandboxes, so it
