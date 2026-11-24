@@ -22,9 +22,8 @@ func CellExecSpec(cellType, guestCellDir string) (scriptName, command string, ar
 	}
 }
 
-func WriteCellArtifacts(cellDir, source string, result domain.ExecResult) error {
+func WriteCellArtifacts(cellDir string, result domain.ExecResult) error {
 	files := map[string]string{
-		"source.txt":   source,
 		"stdout.txt":   result.Stdout,
 		"stderr.txt":   result.Stderr,
 		"output.txt":   result.Output,

@@ -178,7 +178,7 @@ func (e *CellExecutor) executeCell(ctx context.Context, req CellExecutionRequest
 		return domain.NotebookCell{}, err
 	}
 
-	if err := execution.WriteCellArtifacts(hostCellDir, source, result); err != nil {
+	if err := execution.WriteCellArtifacts(hostCellDir, result); err != nil {
 		return domain.NotebookCell{}, err
 	}
 

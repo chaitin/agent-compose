@@ -8,7 +8,6 @@ import (
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
-	"path/filepath"
 	"strings"
 )
 
@@ -28,7 +27,6 @@ func transitionFromCommandResult(run domain.ProjectRunRecord, sandbox *domain.Sa
 		ExitCode:     outcome.Result.ExitCode,
 		Output:       outcome.Result.Output,
 		ArtifactsDir: artifactsDir,
-		LogsPath:     filepath.Join(artifactsDir, "output.txt"),
 	}
 	resultJSON, err := json.Marshal(map[string]any{
 		"mode":     "command",
