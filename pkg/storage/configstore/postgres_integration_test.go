@@ -267,3 +267,78 @@ func assertSchedulerRuns(t *testing.T, ctx context.Context, store *ConfigStore, 
 		t.Fatalf("add scheduler event: %v", err)
 	}
 }
+
+// TestPostgresEventTraceIntegration pins the recursive descendant query on
+// PostgreSQL. SQLite accepts ORDER BY/LIMIT inside a recursive CTE, PostgreSQL
+// rejects it, so the walk must be limited by the outer SELECT.
+func TestPostgresEventTraceIntegration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	store := openPostgresStore(t, ctx)
+
+	root, err := store.CreateEvent(ctx, domain.TopicEventRecord{
+		ID: "event-trace-root", Topic: "trace.test", Source: domain.TopicEventSourceWebhook,
+		CorrelationID: "trace-corr", PayloadHash: "hash", PayloadJSON: `{}`,
+		DispatchStatus: domain.TopicEventDispatchPending,
+	})
+	if err != nil {
+		t.Fatalf("create root event: %v", err)
+	}
+	child, err := store.CreateEvent(ctx, domain.TopicEventRecord{
+		ID: "event-trace-child", Topic: "trace.test", Source: domain.TopicEventSourceWebhook,
+		CorrelationID: "trace-corr", PayloadHash: "hash", PayloadJSON: `{}`,
+		DispatchStatus: domain.TopicEventDispatchPending, ParentEventID: root.ID,
+	})
+	if err != nil {
+		t.Fatalf("create child event: %v", err)
+	}
+	grandchild, err := store.CreateEvent(ctx, domain.TopicEventRecord{
+		ID: "event-trace-grandchild", Topic: "trace.test", Source: domain.TopicEventSourceWebhook,
+		CorrelationID: "trace-corr", PayloadHash: "hash", PayloadJSON: `{}`,
+		DispatchStatus: domain.TopicEventDispatchPending, ParentEventID: child.ID,
+	})
+	if err != nil {
+		t.Fatalf("create grandchild event: %v", err)
+	}
+
+	for index, eventID := range []string{child.ID, grandchild.ID} {
+		if err := store.UpsertEventDelivery(ctx, domain.EventDelivery{
+			EventID: eventID, SchedulerID: fmt.Sprintf("scheduler-trace-%d", index),
+			TriggerID: "trigger-trace", RunID: fmt.Sprintf("run-trace-%d", index),
+			Status: domain.EventDeliveryStatusRunSucceeded,
+		}); err != nil {
+			t.Fatalf("create delivery for %s: %v", eventID, err)
+		}
+	}
+
+	trace, err := store.GetEventTrace(ctx, root.ID, domain.MaxEventScopeEvents)
+	if err != nil {
+		t.Fatalf("get event trace: %v", err)
+	}
+	traced := make(map[string]bool, len(trace.Runs))
+	for _, run := range trace.Runs {
+		traced[run.Delivery.EventID] = true
+	}
+	for _, id := range []string{child.ID, grandchild.ID} {
+		if !traced[id] {
+			t.Fatalf("trace runs %+v do not include descendant %s", trace.Runs, id)
+		}
+	}
+	if trace.DescendantsTruncated {
+		t.Fatalf("trace unexpectedly truncated: %+v", trace)
+	}
+	// ListRuns shares the same event-scope walk as GetEventTrace.
+	if _, err := store.ListProjectRunsByOptions(ctx, ProjectRunListOptions{
+		ProjectID: "no-such-project", EventID: root.ID, Limit: 10,
+	}); err != nil {
+		t.Fatalf("list runs by event scope: %v", err)
+	}
+
+	truncated, err := store.GetEventTrace(ctx, root.ID, 1)
+	if err != nil {
+		t.Fatalf("get truncated event trace: %v", err)
+	}
+	if !truncated.DescendantsTruncated {
+		t.Fatalf("trace with limit 1 was not truncated: %+v", truncated)
+	}
+}

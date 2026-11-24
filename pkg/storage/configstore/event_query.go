@@ -305,10 +305,8 @@ func listEventDescendantIDs(ctx context.Context, db *sql.DB, eventID string, lim
 		UNION
 		SELECT child.id, child.sequence FROM event child
 		JOIN descendants parent ON child.parent_event_id = parent.id
-		ORDER BY sequence ASC
-		LIMIT ?
 	)
-	SELECT id FROM descendants ORDER BY sequence ASC`, eventID, limit+1)
+	SELECT id FROM descendants ORDER BY sequence ASC LIMIT ?`, eventID, limit+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("query event descendants: %w", err)
 	}
