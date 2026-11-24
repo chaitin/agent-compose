@@ -1,3 +1,4 @@
+import { providerEnv } from "../env.js";
 import { providerTelemetryEnv } from "../telemetry.js";
 import { existsSync } from "node:fs";
 import { flattenEnvMap } from "../mcp-config.js";
@@ -39,7 +40,7 @@ function claudeExecutable(): string | undefined {
 }
 
 function claudeEnvironment(options: RunnerOptions): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...providerTelemetryEnv("claude", options.telemetry, process.env), IS_SANDBOX: "1" };
+  const env: NodeJS.ProcessEnv = { ...providerTelemetryEnv("claude", options.telemetry, providerEnv(process.env)), IS_SANDBOX: "1" };
   if (!env.ANTHROPIC_API_KEY && env.LLM_API_KEY) {
     env.ANTHROPIC_API_KEY = env.LLM_API_KEY;
   }

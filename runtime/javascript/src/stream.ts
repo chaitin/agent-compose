@@ -1,7 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
 import { runRuntimeCommand, type RuntimeCommandRequest } from "./command.js";
-import { decodeFrame, encodeFrame, FRAME_VERSION, type StreamFrame } from "./frame.js";
+import { createFrameEmitter, decodeFrame, type StreamFrame } from "./frame.js";
 import { createInteractiveSession, UnsupportedProviderError, type InteractiveSession } from "./interactive.js";
 
 export interface RunStreamOptions {
@@ -15,13 +15,10 @@ export async function runStreamCommand(options: RunStreamOptions = {}): Promise<
   const stdin = options.stdin || process.stdin;
   const stdout = options.stdout || process.stdout;
   const stderr = options.stderr || process.stderr;
-  let outputSeq = 0;
   let session: InteractiveSession | undefined;
   let finished = false;
 
-  const emit = (type: string, fields: object = {}) => {
-    stdout.write(encodeFrame({ v: FRAME_VERSION, seq: outputSeq++, type, ...fields }));
-  };
+  const emit = createFrameEmitter((line) => { stdout.write(line); });
   const emitError = (error: unknown, inputSeq?: number) => {
     emit("error", structuredError(error, inputSeq));
   };

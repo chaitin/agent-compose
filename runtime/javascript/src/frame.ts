@@ -41,6 +41,14 @@ export function encodeFrame(frame: StreamFrame): string {
   return `${JSON.stringify(frame)}\n`;
 }
 
+/** Each runtime invocation owns its frame sequence, independent of transport. */
+export function createFrameEmitter(write: (line: string) => void) {
+  let seq = 0;
+  return (type: string, fields: object = {}) => {
+    write(encodeFrame({ ...fields, v: FRAME_VERSION, seq: seq++, type }));
+  };
+}
+
 export function decodeFrame(line: string): StreamFrame {
   let parsed: unknown;
   try {

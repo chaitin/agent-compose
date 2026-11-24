@@ -7,7 +7,7 @@ import {
   decideCodexThreadResume,
   hashSystemContext,
 } from "./codex-thread-resume.js";
-import { stringEnv } from "./env.js";
+import { providerEnv, stringEnv } from "./env.js";
 import { warn } from "./mpi.js";
 import { buildPromptRuntimeOptions } from "./prompt.js";
 import type { AgentEvent } from "./agent-event.js";
@@ -83,7 +83,7 @@ export class CodexInteractiveSession implements InteractiveSession {
     const stored = await readStoredThread(this.options.sessionRoot, "codex");
     const codex = new Codex({
       codexPathOverride: resolveCodexPath(),
-      env: stringEnv(providerTelemetryEnv("codex", this.options.telemetry, process.env)),
+      env: stringEnv(providerTelemetryEnv("codex", this.options.telemetry, providerEnv(process.env))),
       config: {
         ...codexTelemetryConfig(this.options.telemetry),
         ...codexModelConfig(process.env),

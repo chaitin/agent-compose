@@ -5,12 +5,12 @@ import path from "node:path";
 import process from "node:process";
 import { pathToFileURL } from "node:url";
 import { runExecCommand } from "./command.js";
-import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, WORKFLOW_RESULT_PREFIX } from "./constants.js";
+import { COMMAND_RESULT_PREFIX, WORKFLOW_RESULT_PREFIX } from "./constants.js";
 import { formatError } from "./errors.js";
 import { attachExecution, capabilities, cleanupDetached, resolveCliPath, startDetached, stopExecution } from "./detach/command.js";
 import { runSupervisor } from "./detach/supervisor.js";
 import { GUEST_ABI_MANIFEST_PATH, readGuestAbiReport, type GuestAbiReport } from "./guest-abi.js";
-import { runPromptCommand } from "./prompt.js";
+import { runPromptWithOutput } from "./prompt-output.js";
 import { runStreamCommand } from "./stream.js";
 import { RuntimeShutdownController } from "./shutdown.js";
 import { runWorkflowCommand } from "./workflow/command.js";
@@ -51,8 +51,11 @@ export function createProgram(options: { exitOverride?: boolean } = {}): Command
       const { skill, ...promptOptions } = options;
       const shutdown = new RuntimeShutdownController();
       try {
-        const result = await runPromptCommand({ ...promptOptions, skills: skill, abortController: shutdown.abortController });
-        process.stdout.write(`${RESULT_PREFIX}${JSON.stringify(result)}\n`);
+        await runPromptWithOutput({
+          ...promptOptions,
+          skills: skill,
+          abortController: shutdown.abortController,
+        });
       } finally {
         shutdown.dispose();
       }

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createProgram } from "../src/cli.js";
-import { RESULT_PREFIX } from "../src/constants.js";
+import { AGENT_OUTPUT_ENV, RESULT_PREFIX } from "../src/constants.js";
 import { captureStdio, withTempSession } from "./helpers.js";
 
 afterEach(() => {
@@ -11,7 +11,11 @@ afterEach(() => {
 });
 
 describe("Codex CLI integration", () => {
-  it.each(["128000", "0"])("surfaces MCP tool calls with context window %s through the real Codex SDK subprocess path", async (window) => {
+  it.each([
+    { format: "legacy", window: "128000" },
+    { format: "legacy", window: "0" },
+    { format: "frames", window: "128000" },
+  ])("surfaces MCP tool calls through the real Codex SDK using $format output and context window $window", async ({ format, window }) => {
     await withTempSession(async (root) => {
       const binDir = path.join(root, "bin");
       const fakeCodex = path.join(binDir, "codex");
@@ -23,6 +27,10 @@ describe("Codex CLI integration", () => {
       await fs.writeFile(fakeCodex, `#!/usr/bin/env node
 require("node:fs").writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));
 process.stdin.resume();
+if (process.env.AGENT_COMPOSE_RUNTIME_OUTPUT) {
+  process.stderr.write("runtime protocol selection leaked into provider");
+  process.exit(1);
+}
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "codex-cli-thread" }) + "\\n");
 process.stdout.write(JSON.stringify({
   type: "item.completed",
@@ -47,6 +55,7 @@ process.stdout.write(JSON.stringify({
       await fs.chmod(fakeCodex, 0o755);
       vi.stubEnv("CODEX_BIN", fakeCodex);
       vi.stubEnv("AGENT_COMPOSE_CODEX_CONTEXT_WINDOW", window);
+      vi.stubEnv(AGENT_OUTPUT_ENV, format === "frames" ? "frames" : "");
 
       const stdio = captureStdio();
       try {
@@ -75,14 +84,25 @@ process.stdout.write(JSON.stringify({
       if (window === "0") {
         expect(args.some((arg: string) => /^model_(context_window|auto_compact_token_limit)=/.test(arg))).toBe(false);
       }
-      expect(stdio.stderr).toContain("[mcp:srv/lookup]");
-      expect(stdio.stderr).toContain("\"query\": \"docs\"");
-      expect(stdio.stderr).toContain("lookup result");
-      expect(stdio.stderr).toContain("done");
-      expect(stdio.stderr).not.toContain("[tool:srv/lookup]");
-      expect(stdio.stdout).toContain(`${RESULT_PREFIX}{`);
-      expect(stdio.stdout).toContain("\"threadId\":\"codex-cli-thread\"");
-      expect(stdio.stdout).toContain("\"finalText\":\"done\"");
+      if (format === "frames") {
+        const frames = stdio.stdout.trim().split("\n").map((line) => JSON.parse(line));
+        expect(frames.every((frame, seq) => frame.v === 1 && frame.seq === seq)).toBe(true);
+        expect(frames[0]).toMatchObject({ type: "started" });
+        expect(frames.filter((frame) => frame.type === "agent_event").map((frame) => frame.event.kind))
+          .toEqual(expect.arrayContaining(["tool_call", "tool_result", "text_delta"]));
+        expect(frames.at(-1)).toMatchObject({ type: "result", threadId: "codex-cli-thread", finalText: "done" });
+        expect(stdio.stdout).not.toContain(RESULT_PREFIX);
+        expect(stdio.stderr).not.toContain("lookup result");
+      } else {
+        expect(stdio.stderr).toContain("[mcp:srv/lookup]");
+        expect(stdio.stderr).toContain('"query": "docs"');
+        expect(stdio.stderr).toContain("lookup result");
+        expect(stdio.stderr).toContain("done");
+        expect(stdio.stderr).not.toContain("[tool:srv/lookup]");
+        expect(stdio.stdout).toContain(`${RESULT_PREFIX}{`);
+        expect(stdio.stdout).toContain('"threadId":"codex-cli-thread"');
+        expect(stdio.stdout).toContain('"finalText":"done"');
+      }
     });
   });
 });
