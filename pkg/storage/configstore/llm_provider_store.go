@@ -2,6 +2,7 @@ package configstore
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -183,19 +184,9 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 	if err != nil {
 		return llms.Provider{}, fmt.Errorf("update llm provider: %w", err)
 	}
-	if !rows.Next() {
-		queryErr := rows.Err()
-		_ = rows.Close()
-		if queryErr != nil {
-			return llms.Provider{}, fmt.Errorf("update llm provider: %w", queryErr)
-		}
-		// The row was readable and API-managed moments ago, so it changed under us.
-		return llms.Provider{}, fmt.Errorf("%w: provider changed during update", domain.ErrConflict)
-	}
-	provider, err := llms.ScanProvider(rows.Scan)
-	_ = rows.Close()
+	provider, err := scanUpdatedLLMProvider(rows)
 	if err != nil {
-		return llms.Provider{}, fmt.Errorf("update llm provider: %w", err)
+		return llms.Provider{}, err
 	}
 	if err := ensureRetainedModelProtocols(ctx, client, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
 		return llms.Provider{}, err
@@ -222,6 +213,25 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 	}
 	if err := tx.Commit(); err != nil {
 		return llms.Provider{}, fmt.Errorf("commit provider update: %w", err)
+	}
+	return provider, nil
+}
+
+// scanUpdatedLLMProvider reads the row returned by the kept conditional UPDATE
+// and closes the cursor before the caller issues further queries (SQLite runs
+// with one connection, so an open cursor would block them).
+func scanUpdatedLLMProvider(rows *sql.Rows) (llms.Provider, error) {
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if queryErr := rows.Err(); queryErr != nil {
+			return llms.Provider{}, fmt.Errorf("update llm provider: %w", queryErr)
+		}
+		// The row was readable and API-managed moments ago, so it changed under us.
+		return llms.Provider{}, fmt.Errorf("%w: provider changed during update", domain.ErrConflict)
+	}
+	provider, err := llms.ScanProvider(rows.Scan)
+	if err != nil {
+		return llms.Provider{}, fmt.Errorf("update llm provider: %w", err)
 	}
 	return provider, nil
 }

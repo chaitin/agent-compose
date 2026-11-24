@@ -288,6 +288,8 @@ func (s *volumeStore) ListProjectVolumes(ctx context.Context, projectID string) 
 	if projectID == "" {
 		return nil, fmt.Errorf("project id is required")
 	}
+	// Kept as SQL: one join returns the link and its volume as a single
+	// consistent snapshot; two ent queries could interleave with a delete.
 	rows, err := s.db.QueryContext(ctx, `SELECT v.id, v.name, v.driver, v.path, v.labels_json, v.options_json, v.project_id, v.created_at, v.updated_at, pv.volume_key
 		FROM project_volumes pv JOIN volumes v ON v.id = pv.volume_id
 		WHERE pv.project_id = ? ORDER BY pv.volume_key ASC`, projectID)
@@ -381,6 +383,8 @@ func (s *volumeStore) findVolumeSpecReferences(ctx context.Context, volumeName s
 // volumeName. It owns its cursor so the caller can loop over several tables
 // without holding every cursor open until the walk finishes.
 func (s *volumeStore) findVolumeSpecReferencesIn(ctx context.Context, resourceType, query, volumeName string) (_ []domain.VolumeReference, err error) {
+	// Kept as SQL: callers iterate several spec-bearing tables through one
+	// row-scanning path, and the query text is chosen by this package.
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query %s volume references: %w", resourceType, err)

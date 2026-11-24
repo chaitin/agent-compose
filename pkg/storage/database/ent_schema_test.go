@@ -134,40 +134,8 @@ func sqliteColumns(ctx context.Context, db *sql.DB) (map[string][]columnInfo, er
 		if err := rows.Scan(&table); err != nil {
 			return nil, err
 		}
-		info, err := db.QueryContext(ctx, `PRAGMA table_info("`+strings.ReplaceAll(table, `"`, `""`)+`")`)
+		tableColumns, err := sqliteTableColumns(ctx, db, table)
 		if err != nil {
-			return nil, err
-		}
-		var tableColumns []columnInfo
-		for info.Next() {
-			var (
-				cid        int
-				name       string
-				typ        string
-				notNull    int
-				defaultV   any
-				primaryKey int
-			)
-			if err := info.Scan(&cid, &name, &typ, &notNull, &defaultV, &primaryKey); err != nil {
-				_ = info.Close()
-				return nil, err
-			}
-			defaultText := ""
-			if defaultV != nil {
-				defaultText = strings.TrimSpace(toString(defaultV))
-			}
-			tableColumns = append(tableColumns, columnInfo{
-				name:         name,
-				typ:          typ,
-				notNull:      notNull != 0,
-				defaultValue: defaultText,
-				pk:           primaryKey > 0,
-			})
-		}
-		if err := info.Close(); err != nil {
-			return nil, err
-		}
-		if err := info.Err(); err != nil {
 			return nil, err
 		}
 		result[table] = tableColumns
@@ -176,6 +144,43 @@ func sqliteColumns(ctx context.Context, db *sql.DB) (map[string][]columnInfo, er
 		return nil, err
 	}
 	return result, nil
+}
+
+func sqliteTableColumns(ctx context.Context, db *sql.DB, table string) ([]columnInfo, error) {
+	info, err := db.QueryContext(ctx, `PRAGMA table_info("`+strings.ReplaceAll(table, `"`, `""`)+`")`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = info.Close() }()
+	var tableColumns []columnInfo
+	for info.Next() {
+		var (
+			cid        int
+			name       string
+			typ        string
+			notNull    int
+			defaultV   any
+			primaryKey int
+		)
+		if err := info.Scan(&cid, &name, &typ, &notNull, &defaultV, &primaryKey); err != nil {
+			return nil, err
+		}
+		defaultText := ""
+		if defaultV != nil {
+			defaultText = strings.TrimSpace(toString(defaultV))
+		}
+		tableColumns = append(tableColumns, columnInfo{
+			name:         name,
+			typ:          typ,
+			notNull:      notNull != 0,
+			defaultValue: defaultText,
+			pk:           primaryKey > 0,
+		})
+	}
+	if err := info.Err(); err != nil {
+		return nil, err
+	}
+	return tableColumns, nil
 }
 
 func hasPrimaryKey(columns []columnInfo) bool {

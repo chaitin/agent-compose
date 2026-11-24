@@ -195,7 +195,7 @@ func (p *EgressProxy) decideAndForwardL7(ctx context.Context, conn net.Conn, req
 // decided on its own method/path and forwarded through the pinned upstream
 // address; response bodies are streamed without buffering.
 //
-//nolint:revive // the L7 relay threads the request identity and destination through the call boundary
+//nolint:revive,staticcheck // The L7 relay threads request identity and destination through the call boundary, and x/net deprecates its low-level HTTP/2 server while the MITM relay still needs ServeConn to decide each stream.
 func (p *EgressProxy) serveL7HTTP2(ctx context.Context, conn net.Conn, sandboxID string, identity egressIdentity, destination egressDestination, target net.IP) error {
 	server := &http2.Server{}
 	server.ServeConn(conn, &http2.ServeConnOpts{
