@@ -19,6 +19,8 @@ func protectRunHistoryReferences(ctx context.Context, tx *sql.Tx, id runhistory.
 		// scheduler_sandbox_binding holds one row per trigger and stays small.
 		legacy := "sha256:" + sandboxID
 		var referenced bool
+		// Kept as SQL: four EXISTS probes over different tables plus the
+		// legacy sandbox-id form, which ent cannot express as one read.
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM scheduler_event WHERE linked_sandbox_id IN (?, ?) AND linked_sandbox_id<>'' AND NOT(scheduler_id=? AND scheduler_run_id=?))
 			OR EXISTS(SELECT 1 FROM event_sandbox_link WHERE sandbox_id IN (?, ?) AND NOT(scheduler_id=? AND scheduler_run_id=?))
 			OR EXISTS(SELECT 1 FROM scheduler_sandbox_binding WHERE sandbox_id IN (?, ?))

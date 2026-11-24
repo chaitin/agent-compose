@@ -15,6 +15,9 @@ import (
 // MaxEventScopeEvents like GetEventTrace; truncated reports that the cap was
 // hit, so runs recorded only against events beyond it are missing from the
 // filter.
+//
+// Kept as SQL: the scope walk reuses event_query.go's recursive-CTE and dynamic
+// NOT IN helpers, which take the plain *sql.DB that project_store.go passes.
 func eventRunScope(ctx context.Context, db *sql.DB, eventID string) (schedulerRunIDs []string, truncated bool, err error) {
 	_, scope, truncated, err := eventScopeIDs(ctx, db, eventID, domain.MaxEventScopeEvents)
 	if err != nil {
@@ -35,6 +38,8 @@ func eventScopeSchedulerRunIDs(ctx context.Context, db *sql.DB, eventIDs []strin
 		args[index] = id
 	}
 	rows, err := db.QueryContext(ctx,
+		// Kept as SQL: SELECT DISTINCT with a dynamic IN list; the helper
+		// receives only the shared *sql.DB, not an ent client.
 		`SELECT DISTINCT scheduler_run_id FROM event_delivery
 		WHERE scheduler_run_id <> '' AND event_id IN (`+placeholders(len(eventIDs))+`)`,
 		args...)

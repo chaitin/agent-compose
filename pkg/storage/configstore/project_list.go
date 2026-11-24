@@ -33,6 +33,7 @@ func (s *projectStore) ListProjects(ctx context.Context, options ProjectListOpti
 	defer func() { _ = tx.Rollback() }()
 
 	var total int
+	// Kept as SQL: dynamic WHERE built from the dialect's contains expression.
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM project p WHERE `+where, args...).Scan(&total); err != nil {
 		return ProjectListResult{}, fmt.Errorf("count projects: %w", err)
 	}
@@ -50,6 +51,8 @@ func (s *projectStore) ListProjects(ctx context.Context, options ProjectListOpti
 	}
 
 	pageArgs := append(append([]any(nil), args...), limit, offset)
+	// Kept as SQL: CTE page joined with per-project agent/scheduler count
+	// aggregates so the page and its counts share one read snapshot.
 	rows, err := tx.QueryContext(ctx, `WITH page AS (
 		SELECT p.id, p.name, p.short_id, p.source_path, p.source_json,
 			p.current_revision, p.spec_hash, p.created_at, p.updated_at, p.removed_at
