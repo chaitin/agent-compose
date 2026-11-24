@@ -8,6 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/projectrun"
+	"github.com/chaitin/agent-compose/ent/dao/projectruncompletion"
 	"github.com/chaitin/agent-compose/internal/projects"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -31,12 +34,17 @@ func (s *projectStore) StageProjectRunCompletion(ctx context.Context, completion
 	// re-attach racing the completion of the first writer's row) would
 	// otherwise finalize over the first writer's result.
 	var currentStatus string
+	// Kept as SQL: the rest of this function shares this *sql.Tx with
+	// appendProjectRunEventsTx and the affected-row INSERT below, which an ent
+	// transaction cannot carry.
 	if err := tx.QueryRowContext(ctx, `SELECT status FROM project_run WHERE run_id = ?`, completion.RunID).Scan(&currentStatus); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("load project run %s for completion: %w", completion.RunID, err)
 	}
 	if projectRunStatusTerminal(currentStatus) {
 		return domain.ProjectRunCompletionRecord{RunID: completion.RunID}, false, nil
 	}
+	// Kept as SQL: INSERT ... ON CONFLICT(run_id) DO NOTHING must report whether
+	// this writer created the row, which ent's ignore upsert does not expose.
 	result, err := tx.ExecContext(ctx, `INSERT INTO project_run_completion(
 		run_id, target_status, transition_json, cleanup_action, attempt, last_error, next_attempt_at, created_at, updated_at
 	) VALUES(?, ?, ?, ?, 0, '', 0, ?, ?) ON CONFLICT(run_id) DO NOTHING`,
@@ -53,6 +61,8 @@ func (s *projectStore) StageProjectRunCompletion(ctx context.Context, completion
 		if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
 			return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("append staged project run completion events: %w", err)
 		}
+		// Kept as SQL: the update guards started_at with CASE over the existing
+		// row, which ent's update setters cannot express.
 		if _, err := tx.ExecContext(ctx, `UPDATE project_run SET status = 'running', cleanup_error = '',
 			started_at = CASE WHEN started_at = 0 THEN ? ELSE started_at END, updated_at = ?
 			WHERE run_id = ? AND status IN ('pending', 'running')`, now.UnixMilli(), now.Unix(), completion.RunID); err != nil {
@@ -79,40 +89,59 @@ func projectRunStatusTerminal(status string) bool {
 }
 
 func (s *projectStore) GetProjectRunCompletion(ctx context.Context, runID string) (domain.ProjectRunCompletionRecord, error) {
-	return scanProjectRunCompletion(s.db.QueryRowContext(ctx, projectRunCompletionSelect+` WHERE run_id = ?`, strings.TrimSpace(runID)).Scan)
+	entity, err := s.client.ProjectRunCompletion.Query().
+		Where(projectruncompletion.IDEQ(strings.TrimSpace(runID))).
+		Only(ctx)
+	if err != nil {
+		if dao.IsNotFound(err) {
+			return domain.ProjectRunCompletionRecord{}, sql.ErrNoRows
+		}
+		return domain.ProjectRunCompletionRecord{}, err
+	}
+	return projectRunCompletionFromEntity(entity), nil
 }
 
 func (s *projectStore) ListDueProjectRunCompletions(ctx context.Context, now time.Time, limit int) ([]domain.ProjectRunCompletionRecord, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, projectRunCompletionSelect+` WHERE next_attempt_at <= ? ORDER BY next_attempt_at, created_at LIMIT ?`, now.UTC().UnixMilli(), limit)
+	entities, err := s.client.ProjectRunCompletion.Query().
+		Where(projectruncompletion.NextAttemptAtLTE(now.UTC().UnixMilli())).
+		Order(projectruncompletion.ByNextAttemptAt(), projectruncompletion.ByCreatedAt()).
+		Limit(limit).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query due project run completions: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	var items []domain.ProjectRunCompletionRecord
-	for rows.Next() {
-		item, scanErr := scanProjectRunCompletion(rows.Scan)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		items = append(items, item)
+	for _, entity := range entities {
+		items = append(items, projectRunCompletionFromEntity(entity))
 	}
-	return items, rows.Err()
+	return items, nil
 }
 
 func (s *projectStore) RecordProjectRunCompletionFailure(ctx context.Context, failure domain.ProjectRunCompletionFailure) error {
 	runID, message, attempt, next := failure.RunID, failure.Message, failure.Attempt, failure.NextAttemptAt
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin record project run completion failure: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `UPDATE project_run_completion SET attempt = ?, last_error = ?, next_attempt_at = ?, updated_at = ? WHERE run_id = ?`, attempt, message, next.UTC().UnixMilli(), time.Now().UTC().UnixMilli(), runID); err != nil {
+	client := tx.Client()
+	if _, err := client.ProjectRunCompletion.Update().
+		Where(projectruncompletion.IDEQ(runID)).
+		SetAttempt(attempt).
+		SetLastError(message).
+		SetNextAttemptAt(next.UTC().UnixMilli()).
+		SetUpdatedAt(time.Now().UTC().UnixMilli()).
+		Save(ctx); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE project_run SET cleanup_error = ?, updated_at = ? WHERE run_id = ?`, message, time.Now().UTC().Unix(), runID); err != nil {
+	if _, err := client.ProjectRun.Update().
+		Where(projectrun.IDEQ(runID)).
+		SetCleanupError(message).
+		SetUpdatedAt(time.Now().UTC().Unix()).
+		Save(ctx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -143,10 +172,14 @@ func (s *projectStore) finalizeProjectRunCompletion(ctx context.Context, run dom
 		return domain.ProjectRunRecord{}, fmt.Errorf("begin finalize project run completion: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Kept as SQL: this transaction also carries appendProjectRunEventsTx, and
+	// the completion delete must commit with the run update, so it stays on the
+	// raw *sql.Tx rather than an ent transaction.
 	if _, err := getProjectRunCompletionTx(ctx, tx, run.RunID); err != nil {
 		return domain.ProjectRunRecord{}, err
 	}
 	run.CleanupError = cleanupError
+	// Kept as SQL: shares the transaction that appends the terminal event.
 	result, err := tx.ExecContext(ctx, `UPDATE project_run SET
 		project_id=?, project_name=?, project_revision=?, agent_name=?, agent_id=?, source=?, scheduler_id=?, scheduler_run_id=?, trigger_id=?, status=?,
 		sandbox_id=?, exit_code=?, error=?, error_stack=?, prompt=?, output=?, result_json=?, logs_path=?, artifacts_dir=?, cleanup_error=?, cleanup_policy=?, sandbox_created=?, driver=?, image_ref=?,
@@ -163,6 +196,7 @@ func (s *projectStore) finalizeProjectRunCompletion(ctx context.Context, run dom
 	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, []domain.ProjectRunEventRecord{statusEvent}); err != nil {
 		return domain.ProjectRunRecord{}, fmt.Errorf("append terminal project run status event: %w", err)
 	}
+	// Kept as SQL: runs in the same raw transaction as the terminal run update.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM project_run_completion WHERE run_id = ?`, run.RunID); err != nil {
 		return domain.ProjectRunRecord{}, err
 	}
@@ -178,6 +212,7 @@ func (s *projectStore) finalizeProjectRunCompletion(ctx context.Context, run dom
 
 func (s *projectStore) ProjectRunCompletionForSandbox(ctx context.Context, sandboxID string) (string, bool, error) {
 	var runID string
+	// Kept as SQL: joins project_run_completion with project_run.
 	err := s.db.QueryRowContext(ctx, `SELECT c.run_id FROM project_run_completion c JOIN project_run r ON r.run_id=c.run_id WHERE r.sandbox_id=? LIMIT 1`, strings.TrimSpace(sandboxID)).Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
@@ -187,7 +222,11 @@ func (s *projectStore) ProjectRunCompletionForSandbox(ctx context.Context, sandb
 
 const projectRunCompletionSelect = `SELECT run_id, target_status, transition_json, cleanup_action, attempt, last_error, next_attempt_at, created_at, updated_at FROM project_run_completion`
 
+// getProjectRunCompletionTx reads a completion through the caller's raw
+// transaction, which the staging and finalize paths share with the run-event
+// writer.
 func getProjectRunCompletionTx(ctx context.Context, tx *sql.Tx, runID string) (domain.ProjectRunCompletionRecord, error) {
+	// Kept as SQL: bound to the caller's *sql.Tx.
 	return scanProjectRunCompletion(tx.QueryRowContext(ctx, projectRunCompletionSelect+` WHERE run_id = ?`, runID).Scan)
 }
 
@@ -203,4 +242,23 @@ func scanProjectRunCompletion(scan func(...any) error) (domain.ProjectRunComplet
 	item.CreatedAt = time.UnixMilli(created).UTC()
 	item.UpdatedAt = time.UnixMilli(updated).UTC()
 	return item, nil
+}
+
+// projectRunCompletionFromEntity maps a completion row exactly like
+// scanProjectRunCompletion.
+func projectRunCompletionFromEntity(entity *dao.ProjectRunCompletion) domain.ProjectRunCompletionRecord {
+	item := domain.ProjectRunCompletionRecord{
+		RunID:          entity.ID,
+		TargetStatus:   entity.TargetStatus,
+		TransitionJSON: entity.TransitionJSON,
+		CleanupAction:  entity.CleanupAction,
+		Attempt:        entity.Attempt,
+		LastError:      entity.LastError,
+		CreatedAt:      time.UnixMilli(entity.CreatedAt).UTC(),
+		UpdatedAt:      time.UnixMilli(entity.UpdatedAt).UTC(),
+	}
+	if entity.NextAttemptAt > 0 {
+		item.NextAttemptAt = time.UnixMilli(entity.NextAttemptAt).UTC()
+	}
+	return item
 }

@@ -14,6 +14,8 @@ import (
 // GetProjectSchedulerByID returns an active project scheduler by its globally unique native ID.
 func (s *projectStore) GetProjectSchedulerByID(ctx context.Context, schedulerID string) (domain.ProjectSchedulerRecord, error) {
 	schedulerID = strings.TrimSpace(schedulerID)
+	// Kept as SQL: joins project_scheduler with project to require the active
+	// project revision, which ent cannot express without a schema edge.
 	row := s.db.QueryRowContext(ctx, `SELECT s.id, s.short_id, s.project_id, s.id, s.agent_name, s.revision, s.enabled, s.trigger_count, s.spec_json, s.created_at, s.updated_at
 		FROM project_scheduler s
 		JOIN project p ON p.id = s.project_id

@@ -5,6 +5,10 @@ import (
 	"database/sql"
 	"fmt"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/projectrunlabel"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -26,6 +30,8 @@ type rowQueryer interface {
 // ListProjectRunsByOptions never calls this: labels live on RunDetail, not
 // RunSummary, so the high-frequency list/stream path stays free of it.
 func loadProjectRunLabels(ctx context.Context, q rowQueryer, runID string) (map[string]string, error) {
+	// Kept as SQL: reads labels through a *sql.Tx that the run-event writer
+	// owns, which an ent client cannot join.
 	rows, err := q.QueryContext(ctx, `SELECT key, value FROM project_run_label WHERE run_id = ?`, runID)
 	if err != nil {
 		return nil, fmt.Errorf("load project run labels %s: %w", runID, err)
@@ -48,6 +54,25 @@ func loadProjectRunLabels(ctx context.Context, q rowQueryer, runID string) (map[
 	return labels, nil
 }
 
+// loadProjectRunLabelsByClient is the ent form of loadProjectRunLabels for
+// callers reading through the shared client or its transaction.
+func loadProjectRunLabelsByClient(ctx context.Context, client *dao.Client, runID string) (map[string]string, error) {
+	entities, err := client.ProjectRunLabel.Query().
+		Where(projectrunlabel.IDEQ(runID)).
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load project run labels %s: %w", runID, err)
+	}
+	var labels map[string]string
+	for _, entity := range entities {
+		if labels == nil {
+			labels = make(map[string]string, 4)
+		}
+		labels[entity.Key] = entity.Value
+	}
+	return labels, nil
+}
+
 // insertProjectRunLabelsTx validates and persists labels into
 // project_run_label inside an already-open transaction. This is the single
 // write path for run labels: every caller, whether it reached here through
@@ -59,8 +84,33 @@ func insertProjectRunLabelsTx(ctx context.Context, tx *sql.Tx, runID string, lab
 		return err
 	}
 	for key, value := range normalized {
+		// Kept as SQL: writes through the *sql.Tx shared with the run-event
+		// writer, which an ent client cannot join.
 		if _, err := tx.ExecContext(ctx, `INSERT INTO project_run_label(run_id, key, value) VALUES(?, ?, ?)
 			ON CONFLICT(run_id, key) DO UPDATE SET value = excluded.value`, runID, key, value); err != nil {
+			return fmt.Errorf("insert project run label %q for run %s: %w", key, runID, err)
+		}
+	}
+	return nil
+}
+
+// insertProjectRunLabels is the ent form of insertProjectRunLabelsTx for
+// callers writing through the shared client or its transaction.
+func insertProjectRunLabels(ctx context.Context, client *dao.Client, runID string, labels map[string]string) error {
+	normalized, err := domain.NormalizeProjectRunLabels(labels)
+	if err != nil {
+		return err
+	}
+	for key, value := range normalized {
+		if err := client.ProjectRunLabel.Create().
+			SetID(runID).
+			SetKey(key).
+			SetValue(value).
+			OnConflict(entsql.ConflictColumns(projectrunlabel.FieldID, projectrunlabel.FieldKey)).
+			Update(func(u *dao.ProjectRunLabelUpsert) {
+				u.SetValue(value)
+			}).
+			Exec(ctx); err != nil {
 			return fmt.Errorf("insert project run label %q for run %s: %w", key, runID, err)
 		}
 	}

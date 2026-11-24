@@ -29,6 +29,9 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 	if err := validateRunEventBatch(run.RunID, events); err != nil {
 		return ProjectRunRecord{}, err
 	}
+	// Kept as SQL: this transaction also appends run events through
+	// appendProjectRunEventsTx, which requires the same *sql.Tx; an ent
+	// transaction could not carry that write atomically.
 	result, err := tx.ExecContext(ctx, `INSERT INTO project_run(
 		run_id, project_id, project_name, project_revision, agent_name, agent_id, source, scheduler_id, scheduler_run_id, trigger_id, status,
 		sandbox_id, exit_code, error, error_stack, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, cleanup_policy, sandbox_created, driver, image_ref,
@@ -84,6 +87,8 @@ func (s *projectStore) UpdateProjectRunWithEvents(ctx context.Context, run Proje
 		return ProjectRunRecord{}, fmt.Errorf("begin update project run transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Kept as SQL: the run update must commit together with the event append
+	// below, which runs on this *sql.Tx.
 	result, err := tx.ExecContext(ctx, `UPDATE project_run SET
 		project_id = ?, project_name = ?, project_revision = ?, agent_name = ?, agent_id = ?, source = ?, scheduler_id = ?, scheduler_run_id = ?, trigger_id = ?, status = ?,
 		sandbox_id = ?, exit_code = ?, error = ?, error_stack = ?, prompt = ?, output = ?, result_json = ?, logs_path = ?, artifacts_dir = ?, cleanup_error = ?, cleanup_policy = ?, sandbox_created = ?, driver = ?, image_ref = ?,
@@ -124,6 +129,8 @@ func validateRunEventBatch(runID string, events []domain.ProjectRunEventRecord) 
 }
 
 func getProjectRunTx(ctx context.Context, tx *sql.Tx, runID string) (ProjectRunRecord, error) {
+	// Kept as SQL: reads through the raw transaction shared with run-event
+	// writes.
 	item, err := projects.ScanProjectRun(tx.QueryRowContext(ctx, projects.SelectProjectRunSQL()+` WHERE run_id = ?`, runID).Scan)
 	if err != nil {
 		return ProjectRunRecord{}, err

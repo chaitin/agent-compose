@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/chaitin/agent-compose/ent/dao/project"
+	"github.com/chaitin/agent-compose/ent/dao/projectrun"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	"github.com/chaitin/agent-compose/pkg/resources"
 )
@@ -14,8 +16,7 @@ func (s *ConfigStore) FindResourceIDs(ctx context.Context, options resources.Res
 	if s == nil || s.db == nil {
 		return nil, fmt.Errorf("config store is required")
 	}
-	clause, args, ok := resourceIDClause("id", options.ID)
-	if !ok {
+	if _, _, ok := resourceIDClause("id", options.ID); !ok {
 		return nil, nil
 	}
 	allowed := make(map[resources.Kind]bool, len(options.Kinds))
@@ -24,20 +25,28 @@ func (s *ConfigStore) FindResourceIDs(ctx context.Context, options resources.Res
 	}
 	var result []resources.Target
 	if allowed[resources.KindProject] {
-		items, err := queryResourceIDs(ctx, s.db, resourceIDQuery{
-			Statement: `SELECT id, name FROM project WHERE removed_at = 0 AND ` + clause,
-			Args:      args,
-			Build: func(values []string) resources.Target {
-				return resources.Target{Kind: resources.KindProject, ID: values[0], ShortID: identity.ShortID(values[0]), ProjectID: values[0], ProjectName: values[1]}
-			},
-		})
+		match, _ := parseResourceIDMatch(options.ID)
+		query := s.projectStore.client.Project.Query().Where(project.RemovedAtEQ(0))
+		if match.exact {
+			query.Where(project.Or(project.IDEQ(match.values[0]), project.IDEQ(match.values[1])))
+		} else {
+			query.Where(project.Or(
+				project.And(project.IDGTE(match.values[0]), project.IDLT(match.values[1])),
+				project.And(project.IDGTE(match.values[2]), project.IDLT(match.values[3])),
+			))
+		}
+		entities, err := query.All(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("find project ids: %w", err)
 		}
-		result = append(result, items...)
+		for _, entity := range entities {
+			result = append(result, resources.Target{Kind: resources.KindProject, ID: entity.ID, ShortID: identity.ShortID(entity.ID), ProjectID: entity.ID, ProjectName: entity.Name})
+		}
 	}
 	if allowed[resources.KindAgent] {
 		agentClause, agentArgs, _ := resourceIDClause("pa.id", options.ID)
+		// Kept as SQL: joins project_agent with project to resolve the active
+		// project's name.
 		items, err := queryResourceIDs(ctx, s.db, resourceIDQuery{
 			Statement: `SELECT pa.id, pa.agent_name, pa.project_id, p.name FROM project_agent pa JOIN project p ON p.id = pa.project_id WHERE p.removed_at = 0 AND ` + agentClause,
 			Args:      agentArgs,
@@ -51,20 +60,44 @@ func (s *ConfigStore) FindResourceIDs(ctx context.Context, options resources.Res
 		result = append(result, items...)
 	}
 	if allowed[resources.KindRun] {
-		runClause, runArgs, _ := resourceIDClause("run_id", options.ID)
-		items, err := queryResourceIDs(ctx, s.db, resourceIDQuery{
-			Statement: `SELECT run_id, agent_name, project_id, project_name FROM project_run WHERE ` + runClause,
-			Args:      runArgs,
-			Build: func(values []string) resources.Target {
-				return resources.Target{Kind: resources.KindRun, ID: values[0], ShortID: identity.ShortID(values[0]), AgentName: values[1], ProjectID: values[2], ProjectName: values[3]}
-			},
-		})
+		match, _ := parseResourceIDMatch(options.ID)
+		query := s.projectStore.client.ProjectRun.Query()
+		if match.exact {
+			query.Where(projectrun.Or(projectrun.IDEQ(match.values[0]), projectrun.IDEQ(match.values[1])))
+		} else {
+			query.Where(projectrun.Or(
+				projectrun.And(projectrun.IDGTE(match.values[0]), projectrun.IDLT(match.values[1])),
+				projectrun.And(projectrun.IDGTE(match.values[2]), projectrun.IDLT(match.values[3])),
+			))
+		}
+		entities, err := query.All(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("find run ids: %w", err)
 		}
-		result = append(result, items...)
+		for _, entity := range entities {
+			result = append(result, resources.Target{Kind: resources.KindRun, ID: entity.ID, ShortID: identity.ShortID(entity.ID), AgentName: entity.AgentName, ProjectID: entity.ProjectID, ProjectName: entity.ProjectName})
+		}
 	}
 	return result, nil
+}
+
+// resourceIDMatch describes the stored identity values a user-supplied prefix
+// selects. It mirrors resourceIDClause without emitting SQL.
+type resourceIDMatch struct {
+	exact  bool
+	values []string
+}
+
+func parseResourceIDMatch(ref string) (resourceIDMatch, bool) {
+	ref = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ref)), identity.Prefix)
+	if !identity.IsIDPrefix(ref) {
+		return resourceIDMatch{}, false
+	}
+	if identity.IsID(ref) {
+		return resourceIDMatch{exact: true, values: []string{ref, identity.Prefix + ref}}, true
+	}
+	upper := nextResourceIDPrefix(ref)
+	return resourceIDMatch{values: []string{ref, upper, identity.Prefix + ref, identity.Prefix + upper}}, true
 }
 
 func resourceIDClause(column, ref string) (string, []any, bool) {
