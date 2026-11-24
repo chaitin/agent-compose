@@ -17,6 +17,8 @@ func (s *coreStore) loadRevisionAgentDefinition(ctx context.Context, agentID str
 	if agentID == "" {
 		return domain.AgentDefinition{}, fmt.Errorf("agent id is required")
 	}
+	// Kept as SQL: joins project_agent, project, and project_revision as one
+	// consistent read, which needs a multi-table join.
 	row := s.db.QueryRowContext(ctx, `SELECT
 		p.id, p.name, p.short_id, p.source_path, p.source_json,
 		p.current_revision, p.spec_hash, p.created_at, p.updated_at, p.removed_at,

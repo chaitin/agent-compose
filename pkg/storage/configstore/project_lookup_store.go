@@ -3,10 +3,13 @@ package configstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/project"
 	"github.com/chaitin/agent-compose/internal/projects"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -16,20 +19,18 @@ func (s *projectStore) GetProjectByName(ctx context.Context, name string, includ
 	if name == "" {
 		return ProjectRecord{}, fmt.Errorf("project name is required")
 	}
-	where := "name = ? AND removed_at = 0"
-	if includeRemoved {
-		where = "name = ?"
+	query := s.client.Project.Query().Where(project.NameEQ(name))
+	if !includeRemoved {
+		query.Where(project.RemovedAtEQ(0))
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, short_id, source_path, source_json, current_revision, spec_hash, created_at, updated_at, removed_at
-		FROM project WHERE `+where, name)
-	item, err := projects.ScanProject(row.Scan)
+	entity, err := query.Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return ProjectRecord{}, domain.ResourceError(domain.ErrNotFound, "project", name, fmt.Sprintf("project with name %s not found", name), err)
+		if dao.IsNotFound(err) {
+			return ProjectRecord{}, domain.ResourceError(domain.ErrNotFound, "project", name, fmt.Sprintf("project with name %s not found", name), scanNotFound("project"))
 		}
 		return ProjectRecord{}, err
 	}
-	return item, nil
+	return projectFromEntity(entity), nil
 }
 
 func (s *projectStore) GetProjectBySourcePath(ctx context.Context, sourcePath string, includeRemoved bool) (ProjectRecord, error) {
@@ -37,26 +38,24 @@ func (s *projectStore) GetProjectBySourcePath(ctx context.Context, sourcePath st
 	if sourcePath == "" {
 		return ProjectRecord{}, fmt.Errorf("project source path is required")
 	}
-	where := "source_path = ? AND removed_at = 0"
-	if includeRemoved {
-		where = "source_path = ?"
+	query := s.client.Project.Query().Where(project.SourcePathEQ(sourcePath))
+	if !includeRemoved {
+		query.Where(project.RemovedAtEQ(0))
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, short_id, source_path, source_json, current_revision, spec_hash, created_at, updated_at, removed_at
-		FROM project WHERE `+where+` ORDER BY updated_at DESC, created_at DESC, id ASC LIMIT 2`, sourcePath)
+	entities, err := query.
+		Order(
+			project.ByUpdatedAt(entsql.OrderDesc()),
+			project.ByCreatedAt(entsql.OrderDesc()),
+			project.ByID(),
+		).
+		Limit(2).
+		All(ctx)
 	if err != nil {
 		return ProjectRecord{}, fmt.Errorf("query project by source path %s: %w", sourcePath, err)
 	}
-	defer func() { _ = rows.Close() }()
 	items := make([]ProjectRecord, 0, 2)
-	for rows.Next() {
-		item, err := projects.ScanProject(rows.Scan)
-		if err != nil {
-			return ProjectRecord{}, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return ProjectRecord{}, fmt.Errorf("iterate projects by source path %s: %w", sourcePath, err)
+	for _, entity := range entities {
+		items = append(items, projectFromEntity(entity))
 	}
 	if len(items) == 0 {
 		return ProjectRecord{}, domain.ResourceError(domain.ErrNotFound, "project", sourcePath, fmt.Sprintf("project with source path %s not found", sourcePath), sql.ErrNoRows)
