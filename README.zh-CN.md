@@ -313,6 +313,7 @@ Daemon 还会以只读方式挂载 Linux 宿主机的 `/etc/localtime`，因此�
 - `AGENT_COMPOSE_AUTH_TOKEN` —— daemon HTTP(S) 控制面可选的共享 Bearer Token。
 - `AGENT_COMPOSE_HTTP_PORT` —— 启用 `with-ui` 时 Web UI / 反向代理的宿主机端口。
 - `RUNTIME_DRIVER` —— 默认 runtime driver。
+- `DB_DRIVER`、`DB_URL` —— 可选的外置 PostgreSQL 后端；默认仍为 SQLite。
 
 ## Web UI
 

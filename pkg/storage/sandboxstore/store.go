@@ -16,6 +16,8 @@ import (
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	storagesqlite "github.com/chaitin/agent-compose/pkg/storage/sqlite"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 const (
@@ -76,7 +78,7 @@ func NewWithConfig(config *appconfig.Config) (*Store, error) {
 	if err != nil {
 		return newStoreWithIndex(config, storeIndexInit{DBPath: dbPath, IndexErr: err})
 	}
-	index, _, indexErr := openSandboxCacheDB(context.Background(), database.DB())
+	index, _, indexErr := openSandboxCacheDBWithDialect(context.Background(), database.DB(), dialect.SQLite())
 	store, err := newStoreWithIndex(config, storeIndexInit{Index: index, DBPath: dbPath, IndexErr: indexErr})
 	if err != nil {
 		return nil, errors.Join(err, database.Close())
@@ -97,7 +99,13 @@ func NewWithConfig(config *appconfig.Config) (*Store, error) {
 // opened with storage/sqlite.Open or successfully passed through
 // storage/sqlite.Migrate before this function is called.
 func NewWithDatabase(config *appconfig.Config, db *sql.DB, projectResolvers ...SandboxProjectResolver) (*Store, error) {
-	index, _, err := openSandboxCacheDB(context.Background(), db)
+	return NewWithDatabaseWithDialect(config, db, dialect.SQLite(), projectResolvers...)
+}
+
+// NewWithDatabaseWithDialect constructs a Store over a shared database using
+// the backend's SQL dialect. The caller owns db.
+func NewWithDatabaseWithDialect(config *appconfig.Config, db *sql.DB, d dialect.Dialect, projectResolvers ...SandboxProjectResolver) (*Store, error) {
+	index, _, err := openSandboxCacheDBWithDialect(context.Background(), db, d)
 	var projectResolver SandboxProjectResolver
 	if len(projectResolvers) > 0 {
 		projectResolver = projectResolvers[0]

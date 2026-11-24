@@ -11,11 +11,14 @@ import (
 	"github.com/chaitin/agent-compose/pkg/storedtime"
 	"strings"
 	"time"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 // eventStore owns topic events, webhook sources, deliveries, and session links.
 type eventStore struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect dialect.Dialect
 }
 
 func (s *eventStore) GetEvent(ctx context.Context, eventID string) (domain.TopicEventRecord, error) {
@@ -301,8 +304,9 @@ func (s *eventStore) AddEventSandboxLink(ctx context.Context, link domain.EventS
 	if link.CreatedAt.IsZero() {
 		link.CreatedAt = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO event_sandbox_link(event_id, sandbox_id, relation, scheduler_id, scheduler_run_id, trigger_id, scheduler_event_id, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err := s.db.ExecContext(ctx, `INSERT INTO event_sandbox_link(event_id, sandbox_id, relation, scheduler_id, scheduler_run_id, trigger_id, scheduler_event_id, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT DO NOTHING`,
 		link.EventID,
 		link.SandboxID,
 		link.Relation,

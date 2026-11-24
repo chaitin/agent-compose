@@ -23,8 +23,8 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	storagedb "github.com/chaitin/agent-compose/pkg/storage/database"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
-	storagesqlite "github.com/chaitin/agent-compose/pkg/storage/sqlite"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 	"github.com/chaitin/agent-compose/proto/agentcompose/v2/agentcomposev2connect"
@@ -168,7 +168,7 @@ func newSkillsPublicE2EService(t *testing.T) skillsPublicE2EService {
 	runtime := &skillsPublicE2ERuntime{alive: make(map[string]bool)}
 	do.Override(di, func(do.Injector) (adapters.RuntimeProvider, error) { return runtime, nil })
 	RegisterRoutes(di)
-	database := do.MustInvoke[*storagesqlite.Database](di)
+	database := do.MustInvoke[*storagedb.Database](di)
 	t.Cleanup(func() {
 		if err := database.Close(); err != nil {
 			t.Error(err)

@@ -3,6 +3,7 @@ package configstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -304,10 +305,8 @@ func listEventDescendantIDs(ctx context.Context, db *sql.DB, eventID string, lim
 		UNION
 		SELECT child.id, child.sequence FROM event child
 		JOIN descendants parent ON child.parent_event_id = parent.id
-		ORDER BY sequence ASC
-		LIMIT ?
 	)
-	SELECT id FROM descendants ORDER BY sequence ASC`, eventID, limit+1)
+	SELECT id FROM descendants ORDER BY sequence ASC LIMIT ?`, eventID, limit+1)
 	if err != nil {
 		return nil, false, fmt.Errorf("query event descendants: %w", err)
 	}
@@ -342,7 +341,7 @@ func (s *eventStore) listEventRunTraces(ctx context.Context, eventIDs []string) 
 		d.event_id, d.scheduler_id, d.trigger_id, d.scheduler_run_id,
 		d.status, d.error, d.created_at, d.updated_at,
 		COALESCE(s.id, ''), COALESCE(s.project_id, ''), COALESCE(s.agent_name, ''),
-		CASE WHEN json_valid(s.spec_json) THEN CAST(COALESCE(json_extract(s.spec_json, '$.display_name'), '') AS TEXT) ELSE '' END,
+		COALESCE(s.spec_json, ''),
 		COALESCE(r.run_id, ''), COALESCE(r.status, ''), COALESCE(r.started_at, 0),
 		COALESCE(r.completed_at, 0), COALESCE(r.duration_ms, 0), COALESCE(r.error, '')
 		FROM event_delivery d
@@ -358,13 +357,13 @@ func (s *eventStore) listEventRunTraces(ctx context.Context, eventIDs []string) 
 	indexesByRun := make(map[string][]int)
 	for rows.Next() {
 		var item domain.EventRunTrace
-		var schedulerID, projectID, agentName, schedulerDisplayName string
+		var schedulerID, projectID, agentName, schedulerSpecJSON string
 		var run domain.EventSchedulerRunSummary
 		var deliveryCreatedAt, deliveryUpdatedAt, runStartedAt, runCompletedAt any
 		if err := rows.Scan(
 			&item.Delivery.EventID, &item.Delivery.SchedulerID, &item.Delivery.TriggerID, &item.Delivery.RunID,
 			&item.Delivery.Status, &item.Delivery.Error, &deliveryCreatedAt, &deliveryUpdatedAt,
-			&schedulerID, &projectID, &agentName, &schedulerDisplayName,
+			&schedulerID, &projectID, &agentName, &schedulerSpecJSON,
 			&run.ID, &run.Status, &runStartedAt, &runCompletedAt, &run.DurationMs, &run.Error,
 		); err != nil {
 			return nil, fmt.Errorf("scan event run trace: %w", err)
@@ -376,7 +375,7 @@ func (s *eventStore) listEventRunTraces(ctx context.Context, eventIDs []string) 
 				ID:        schedulerID,
 				ProjectID: projectID,
 				AgentName: agentName,
-				Name:      eventSchedulerName(schedulerDisplayName, agentName),
+				Name:      eventSchedulerName(eventSchedulerDisplayName(schedulerSpecJSON), agentName),
 			}
 		}
 		if run.ID != "" {
@@ -443,6 +442,27 @@ func eventSchedulerName(displayName, fallback string) string {
 		return name
 	}
 	return strings.TrimSpace(fallback)
+}
+
+// eventSchedulerDisplayName reads display_name from a scheduler spec without
+// asking the database to parse JSON, which keeps SQL portable across SQLite
+// and PostgreSQL. Invalid or legacy specs fall back to the agent name.
+func eventSchedulerDisplayName(specJSON string) string {
+	var spec map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(strings.TrimSpace(specJSON)), &spec); err != nil {
+		return ""
+	}
+	raw, ok := spec["display_name"]
+	if !ok || len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return value
+	}
+	// Match the previous json_extract(... ) CAST AS TEXT behavior for a
+	// non-string scalar or structured value.
+	return strings.TrimSpace(string(raw))
 }
 
 func eventRunTraceKey(schedulerID, runID string) string {

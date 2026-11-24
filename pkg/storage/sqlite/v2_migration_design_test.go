@@ -211,7 +211,7 @@ func TestV2MigrationDesignBuildsCleanDatabaseThroughHistoricalChain(t *testing.T
 func TestV2MigrationDesignUpgradesEveryHistoricalPrefix(t *testing.T) {
 	chain := loadV2MigrationDesignChain(t)
 	for prefix := 1; prefix <= 4; prefix++ {
-		t.Run(chain[prefix-1].name, func(t *testing.T) {
+		t.Run(chain[prefix-1].Name, func(t *testing.T) {
 			db := newMemoryDB(t)
 			if err := applyMigrationSet(context.Background(), db, chain[:prefix]); err != nil {
 				t.Fatalf("apply historical prefix: %v", err)
@@ -374,8 +374,8 @@ func TestHistoricalMigrationChecksumsRemainImmutable(t *testing.T) {
 	}
 	chain := loadV2MigrationDesignChain(t)
 	for index, checksum := range want {
-		if chain[index].checksum != checksum {
-			t.Fatalf("historical migration %d checksum = %s, want %s", index+1, chain[index].checksum, checksum)
+		if chain[index].Checksum != checksum {
+			t.Fatalf("historical migration %d checksum = %s, want %s", index+1, chain[index].Checksum, checksum)
 		}
 	}
 }

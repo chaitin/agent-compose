@@ -10,17 +10,20 @@ import (
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 // sandboxWhere builds the WHERE clause and bound arguments for a sandbox list
 // query from the list options. It returns an empty clause when no filter is
 // set. Every SandboxListOptions filter field is covered, including the keyset
 // cursor (BeforeUpdatedAt / BeforeID).
-func sandboxWhere(o domain.SandboxListOptions) (string, []any) {
+func sandboxWhere(o domain.SandboxListOptions, d dialect.Dialect) (string, []any) {
 	var conds []string
 	var args []any
+	d = dialect.OrSQLite(d)
 	contains := func(col, v string) {
-		conds = append(conds, "instr("+col+", ?) > 0")
+		conds = append(conds, d.Contains(col))
 		args = append(args, strings.ToLower(strings.TrimSpace(v)))
 	}
 	if v := strings.TrimSpace(o.SandboxType); v != "" {
@@ -39,7 +42,7 @@ func sandboxWhere(o domain.SandboxListOptions) (string, []any) {
 	}
 	if v := strings.TrimSpace(o.WorkspaceQuery); v != "" {
 		value := strings.ToLower(v)
-		conds = append(conds, "(instr(workspace_path_search, ?) > 0 OR instr(workspace_id_search, ?) > 0 OR instr(nested_workspace_id_search, ?) > 0 OR instr(workspace_name_search, ?) > 0 OR instr(workspace_type_search, ?) > 0)")
+		conds = append(conds, "("+d.Contains("workspace_path_search")+" OR "+d.Contains("workspace_id_search")+" OR "+d.Contains("nested_workspace_id_search")+" OR "+d.Contains("workspace_name_search")+" OR "+d.Contains("workspace_type_search")+")")
 		args = append(args, value, value, value, value, value)
 	}
 	if v := strings.TrimSpace(o.Driver); v != "" {
@@ -100,7 +103,7 @@ const sandboxSelectCols = `id, short_id, title, trigger_source, driver, vm_statu
 // count of matching rows. sandboxDir recomputes each result's WorkspacePath to
 // match the historical loadSandbox behavior.
 func (x *sandboxCache) list(ctx context.Context, o domain.SandboxListOptions, sandboxDir func(string) string) ([]*domain.Sandbox, int, error) {
-	where, args := sandboxWhere(o)
+	where, args := sandboxWhere(o, x.dialect)
 
 	var total int
 	if err := x.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sandboxes`+where, args...).Scan(&total); err != nil {

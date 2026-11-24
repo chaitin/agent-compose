@@ -1,0 +1,32 @@
+name: pg-functional
+
+volumes:
+  data: {}
+
+agents:
+  worker:
+    provider: codex
+    driver:
+      docker: {}
+    volumes:
+      - data:/mnt/data
+    scheduler:
+      enabled: true
+      script: |
+        function main(payload) {
+          const shell = scheduler.shell(
+            "echo pg-scheduler-ok && uname -s && echo scheduler-probe > /mnt/data/scheduler-probe",
+            { cwd: "/workspace" }
+          );
+          const published = scheduler.event.publish("runtime.pg.functional.event", {
+            source: "scheduler",
+            shellExitCode: shell.exitCode,
+          });
+          return {
+            shellOutput: shell.output.trim(),
+            shellExitCode: shell.exitCode,
+            eventId: published.eventId,
+            eventSequence: published.sequence,
+            payload: payload ?? null,
+          };
+        }

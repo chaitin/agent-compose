@@ -2,50 +2,31 @@ package sqlite
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
 	"embed"
-	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"regexp"
 	"sort"
-	"strconv"
-	"strings"
+
+	"github.com/chaitin/agent-compose/pkg/storage/migrations"
 )
 
 const baselineMigrationVersion int64 = 1
 
 const legacyMigratorHint = "this data root requires migration; see the agent-compose documentation for the required procedure"
 
-var migrationFilenamePattern = regexp.MustCompile(`^([0-9]{6})_([a-z0-9]+(?:_[a-z0-9]+)*)\.sql$`)
-
 //go:embed migrations/*.sql
 var embeddedMigrations embed.FS
 
-type migration struct {
-	version   int64
-	name      string
-	statement string
-	checksum  string
-}
+type migration = migrations.Asset
 
 // EmbeddedMigration is a read-only view of an immutable migration asset.
 // Copy-migration tools use it to adopt an unversioned historical schema
 // without duplicating the released SQL files.
-type EmbeddedMigration struct {
-	Version   int64
-	Name      string
-	Statement string
-	Checksum  string
-}
+type EmbeddedMigration = migrations.Asset
 
-type appliedMigration struct {
-	version  int64
-	name     string
-	checksum string
-}
+type appliedMigration = migrations.Applied
 
 type migrationConn interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
@@ -73,7 +54,7 @@ func MigrateThrough(ctx context.Context, db *sql.DB, maxVersion int64) error {
 	if err != nil {
 		return err
 	}
-	end := sort.Search(len(migrations), func(index int) bool { return migrations[index].version > maxVersion })
+	end := sort.Search(len(migrations), func(index int) bool { return migrations[index].Version > maxVersion })
 	if end == 0 {
 		return fmt.Errorf("no embedded SQLite migrations through version %d", maxVersion)
 	}
@@ -87,8 +68,8 @@ func EmbeddedMigrationAt(version int64) (EmbeddedMigration, bool, error) {
 		return EmbeddedMigration{}, false, err
 	}
 	for _, item := range migrations {
-		if item.version == version {
-			return EmbeddedMigration{Version: item.version, Name: item.name, Statement: item.statement, Checksum: item.checksum}, true, nil
+		if item.Version == version {
+			return EmbeddedMigration(item), true, nil
 		}
 	}
 	return EmbeddedMigration{}, false, nil
@@ -99,7 +80,7 @@ func applyMigrations(ctx context.Context, db *sql.DB, migrationFS fs.FS) error {
 	if err != nil {
 		return err
 	}
-	if migrations[0].version != baselineMigrationVersion {
+	if migrations[0].Version != baselineMigrationVersion {
 		return fmt.Errorf("first SQLite migration must be version %06d", baselineMigrationVersion)
 	}
 	return applyMigrationSet(ctx, db, migrations)
@@ -169,15 +150,15 @@ func applyMigrationSet(ctx context.Context, db *sql.DB, migrations []migration) 
 	pending := migrations[len(applied):]
 	for _, item := range pending {
 		if err := applyMigrationDataStep(ctx, conn, item); err != nil {
-			return fmt.Errorf("prepare SQLite migration %s: %w", item.name, err)
+			return fmt.Errorf("prepare SQLite migration %s: %w", item.Name, err)
 		}
-		if _, err := conn.ExecContext(ctx, item.statement); err != nil {
-			return fmt.Errorf("apply SQLite migration %s: %w", item.name, err)
+		if _, err := conn.ExecContext(ctx, item.Statement); err != nil {
+			return fmt.Errorf("apply SQLite migration %s: %w", item.Name, err)
 		}
 		if _, err := conn.ExecContext(ctx,
 			`INSERT INTO schema_migrations(version, name, checksum) VALUES(?, ?, ?)`,
-			item.version, item.name, item.checksum); err != nil {
-			return fmt.Errorf("record SQLite migration %s: %w", item.name, err)
+			item.Version, item.Name, item.Checksum); err != nil {
+			return fmt.Errorf("record SQLite migration %s: %w", item.Name, err)
 		}
 	}
 
@@ -186,7 +167,7 @@ func applyMigrationSet(ctx context.Context, db *sql.DB, migrations []migration) 
 	}
 	committed = true
 	for _, item := range pending {
-		slog.Info("SQLite migration applied", "version", item.version, "name", item.name)
+		slog.Info("SQLite migration applied", "version", item.Version, "name", item.Name)
 	}
 	return nil
 }
@@ -210,90 +191,42 @@ func hasApplicationSchema(ctx context.Context, conn migrationConn) (bool, error)
 }
 
 func loadMigrations(migrationFS fs.FS) ([]migration, error) {
-	entries, err := fs.ReadDir(migrationFS, "migrations")
-	if err != nil {
-		return nil, fmt.Errorf("read embedded SQLite migrations: %w", err)
-	}
-
-	items := make([]migration, 0, len(entries))
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
-			continue
-		}
-		match := migrationFilenamePattern.FindStringSubmatch(entry.Name())
-		if match == nil {
-			return nil, fmt.Errorf("invalid SQLite migration filename %q", entry.Name())
-		}
-		version, err := strconv.ParseInt(match[1], 10, 64)
-		if err != nil || version <= 0 {
-			return nil, fmt.Errorf("invalid SQLite migration version in %q", entry.Name())
-		}
-		data, err := fs.ReadFile(migrationFS, "migrations/"+entry.Name())
-		if err != nil {
-			return nil, fmt.Errorf("read SQLite migration %q: %w", entry.Name(), err)
-		}
-		if strings.TrimSpace(string(data)) == "" {
-			return nil, fmt.Errorf("SQLite migration %q is empty", entry.Name())
-		}
-		sum := sha256.Sum256(data)
-		items = append(items, migration{
-			version:   version,
-			name:      strings.TrimSuffix(entry.Name(), ".sql"),
-			statement: string(data),
-			checksum:  hex.EncodeToString(sum[:]),
-		})
-	}
-	if len(items) == 0 {
-		return nil, fmt.Errorf("no embedded SQLite migrations found")
-	}
-
-	sort.Slice(items, func(i, j int) bool { return items[i].version < items[j].version })
-	for index := 1; index < len(items); index++ {
-		if items[index-1].version == items[index].version {
-			return nil, fmt.Errorf("duplicate SQLite migration version %06d", items[index].version)
-		}
-	}
-	return items, nil
+	return migrations.Load(migrationFS, "SQLite")
 }
 
 func loadAppliedMigrations(ctx context.Context, conn migrationConn) ([]appliedMigration, error) {
-	rows, err := conn.QueryContext(ctx, `SELECT version, name, checksum FROM schema_migrations ORDER BY version ASC`)
+	rows, err := conn.QueryContext(ctx, `SELECT version, name, checksum FROM schema_migrations ORDER BY version ASC`) //nolint:rowserrcheck // migrations.ScanApplied checks rows.Err before returning.
 	if err != nil {
 		return nil, fmt.Errorf("load applied SQLite migrations: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-
-	var items []appliedMigration
-	for rows.Next() {
-		var item appliedMigration
-		if err := rows.Scan(&item.version, &item.name, &item.checksum); err != nil {
-			return nil, fmt.Errorf("scan applied SQLite migration: %w", err)
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate applied SQLite migrations: %w", err)
-	}
-	return items, nil
+	return migrations.ScanApplied(rows, "SQLite")
 }
 
 func validateAppliedMigrations(available []migration, applied []appliedMigration) error {
-	if len(applied) > len(available) {
-		return fmt.Errorf("SQLite schema is newer than this binary: database has %d migrations, binary has %d", len(applied), len(available))
+	return migrations.ValidateApplied("SQLite", available, applied)
+}
+
+// LatestMigrationVersion returns the highest embedded SQLite migration
+// version. Offline copy tools use it to reject a source database that has not
+// been upgraded by a matching daemon yet.
+func LatestMigrationVersion() (int64, error) {
+	migrations, err := loadMigrations(embeddedMigrations)
+	if err != nil {
+		return 0, err
 	}
-	// An exact prefix check makes released files immutable: removing, reordering,
-	// renaming, or editing any applied migration fails before schema work starts.
-	for index, actual := range applied {
-		expected := available[index]
-		if actual.version != expected.version {
-			return fmt.Errorf("SQLite migration history is not an embedded prefix: database version %06d, expected %06d", actual.version, expected.version)
-		}
-		if actual.name != expected.name {
-			return fmt.Errorf("SQLite migration %06d name mismatch: database %q, binary %q", actual.version, actual.name, expected.name)
-		}
-		if actual.checksum != expected.checksum {
-			return fmt.Errorf("SQLite migration %s checksum mismatch", actual.name)
-		}
+	return migrations[len(migrations)-1].Version, nil
+}
+
+// AppliedMigrationVersion returns the highest recorded migration version, or
+// zero when the database has no migration history.
+func AppliedMigrationVersion(ctx context.Context, db *sql.DB) (int64, error) {
+	if db == nil {
+		return 0, fmt.Errorf("SQLite database is required")
 	}
-	return nil
+	var version int64
+	if err := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return 0, fmt.Errorf("read SQLite migration version: %w", err)
+	}
+	return version, nil
 }

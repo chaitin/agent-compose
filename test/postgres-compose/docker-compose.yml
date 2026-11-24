@@ -1,0 +1,102 @@
+name: acpg
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine}
+    environment:
+      POSTGRES_USER: agent_compose
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: agent_compose
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent_compose -d agent_compose"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  agent-compose:
+    image: ${AGENT_COMPOSE_IMAGE:-agent-compose:postgres-test}
+    container_name: acpg-daemon
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_DRIVER: postgres
+      DB_URL: postgres://agent_compose:${POSTGRES_PASSWORD}@postgres:5432/agent_compose?sslmode=disable
+      DATA_ROOT: /data
+      HTTP_LISTEN: 0.0.0.0:7410
+      RUNTIME_DRIVER: docker
+      DEFAULT_IMAGE: ${GUEST_IMAGE:-agent-compose-guest:local}
+      AGENT_COMPOSE_RUNTIME_BASE_URL: http://acpg-daemon:7410
+      SANDBOX_INIT_SOCKET_DIR: /data/run/agent-compose
+      LLM_API_ENDPOINT: ${LLM_API_ENDPOINT:-}
+      LLM_API_PROTOCOL: ${LLM_API_PROTOCOL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      LLM_TIMEOUT: ${LLM_TIMEOUT:-60s}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+      - ./projects:/projects:ro
+    ports:
+      - "127.0.0.1:${DAEMON_PORT:-7411}:7410"
+    healthcheck:
+      test: ["CMD", "/app/agent-compose", "status", "--host", "http://127.0.0.1:7410"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  # A second daemon on SQLite, used to seed data.db for the offline copy test.
+  agent-compose-sqlite:
+    image: ${AGENT_COMPOSE_IMAGE:-agent-compose:postgres-test}
+    container_name: acpg-sqlite
+    restart: on-failure
+    profiles: ["sqlite"]
+    environment:
+      DB_DRIVER: sqlite
+      DATA_ROOT: /data
+      HTTP_LISTEN: 0.0.0.0:7410
+      RUNTIME_DRIVER: docker
+      DEFAULT_IMAGE: ${GUEST_IMAGE:-agent-compose-guest:local}
+      AGENT_COMPOSE_RUNTIME_BASE_URL: http://acpg-sqlite:7410
+      SANDBOX_INIT_SOCKET_DIR: /data/run/agent-compose
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - sqlite_data:/data
+      - ./projects:/projects:ro
+    ports:
+      - "127.0.0.1:${SQLITE_DAEMON_PORT:-7412}:7410"
+    healthcheck:
+      test: ["CMD", "/app/agent-compose", "status", "--host", "http://127.0.0.1:7410"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+
+  # One-shot copy from the SQLite daemon's data.db into copy_target.
+  copy:
+    image: ${AGENT_COMPOSE_IMAGE:-agent-compose:postgres-test}
+    profiles: ["copy"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATA_ROOT: /tmp/ac-copy
+    entrypoint: ["/app/agent-compose"]
+    command:
+      - db
+      - copy
+      - --source
+      - /source/data.db
+      - --to
+      - postgres://agent_compose:${POSTGRES_PASSWORD}@postgres:5432/agent_compose?sslmode=disable&search_path=copy_target
+    volumes:
+      - sqlite_data:/source:ro
+
+volumes:
+  pgdata:
+  sqlite_data:

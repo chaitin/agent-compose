@@ -6,7 +6,7 @@
       "type": "integer",
       "minimum": 1,
       "maximum": 1,
-      "description": "Agent-Compose currently requires a single daemon replica because its SQLite state is single-writer."
+      "description": "Agent-Compose currently requires a single daemon replica: SQLite is single-writer, and PostgreSQL mode enforces a single-daemon advisory lock."
     },
     "image": {
       "type": "object",

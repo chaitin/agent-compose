@@ -1360,7 +1360,7 @@ Script schedulers can run host calls in parallel with `scheduler.llm.async` and 
 | `LLM_MAX_CONCURRENCY` | `8` | Concurrent `scheduler.llm.async` calls. |
 | `AGENT_MAX_CONCURRENCY` | `3` | Concurrent `scheduler.agent.async` runs. |
 
-The agent limit is much lower because every parallel agent run creates its own sandbox, sandbox creation has no ceiling of its own, and each run writes through the SQLite pool (`SQLITE_MAX_OPEN_CONNS`, four connections by default). A value that is not a positive integer is ignored and the default applies. `scheduler.agent.async` always uses the `new` sandbox policy: parallel agents cannot share one.
+The agent limit is much lower because every parallel agent run creates its own sandbox, sandbox creation has no ceiling of its own, and each run writes through the SQLite pool in SQLite mode (`SQLITE_MAX_OPEN_CONNS`, four connections by default). A value that is not a positive integer is ignored and the default applies. `scheduler.agent.async` always uses the `new` sandbox policy: parallel agents cannot share one.
 
 #### Declarative triggers
 

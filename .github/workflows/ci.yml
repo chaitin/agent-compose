@@ -218,6 +218,20 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: Coverage gate
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: agent_compose
+          POSTGRES_PASSWORD: agent_compose
+          POSTGRES_DB: agent_compose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent_compose -d agent_compose"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -243,7 +257,40 @@ jobs:
       - name: Validate coverage contract
         run: ./scripts/tests/test-coverage-contract.sh
       - name: Run coverage thresholds
+        env:
+          # The PostgreSQL integration tests are skipped without this; running
+          # them here keeps the new backend code inside the coverage gate.
+          AGENT_COMPOSE_TEST_POSTGRES_DSN: postgres://agent_compose:agent_compose@127.0.0.1:5432/agent_compose?sslmode=disable
         run: ./scripts/test-coverage.sh
+
+  postgres-integration:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    name: PostgreSQL integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: agent_compose
+          POSTGRES_PASSWORD: agent_compose
+          POSTGRES_DB: agent_compose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agent_compose -d agent_compose"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run PostgreSQL storage integration tests
+        env:
+          AGENT_COMPOSE_TEST_POSTGRES_DSN: postgres://agent_compose:agent_compose@127.0.0.1:5432/agent_compose?sslmode=disable
+        run: go test -count=1 -timeout=20m ./pkg/storage/... -run 'Postgres.*Integration'
 
   binary-matrix:
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false

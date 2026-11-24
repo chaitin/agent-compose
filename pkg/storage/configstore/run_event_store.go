@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 func (s *projectStore) AppendProjectRunEvent(ctx context.Context, event domain.ProjectRunEventRecord) (domain.ProjectRunEventRecord, bool, error) {
@@ -28,7 +31,7 @@ func (s *projectStore) AppendProjectRunEvents(ctx context.Context, events []doma
 		return nil, nil, fmt.Errorf("begin run event transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	results, created, err := appendProjectRunEventsTx(ctx, tx, events)
+	results, created, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -38,7 +41,45 @@ func (s *projectStore) AppendProjectRunEvents(ctx context.Context, events []doma
 	return results, created, nil
 }
 
-func appendProjectRunEventsTx(ctx context.Context, tx *sql.Tx, events []domain.ProjectRunEventRecord) ([]domain.ProjectRunEventRecord, []bool, error) {
+// lockProjectRunRows serializes sequence allocation for one run. SQLite's
+// write transaction already excludes other writers; PostgreSQL needs the
+// parent row locked because READ COMMITTED gives concurrent appends the same
+// MAX(seq) value.
+func lockProjectRunRows(ctx context.Context, tx *sql.Tx, d dialect.Dialect, events []domain.ProjectRunEventRecord) error {
+	if d == nil || d.Name() != dialect.NamePostgres {
+		return nil
+	}
+	runIDs := make([]string, 0, len(events))
+	seen := make(map[string]struct{}, len(events))
+	for _, event := range events {
+		runID := strings.TrimSpace(event.RunID)
+		if runID == "" {
+			continue
+		}
+		if _, ok := seen[runID]; ok {
+			continue
+		}
+		seen[runID] = struct{}{}
+		runIDs = append(runIDs, runID)
+	}
+	sort.Strings(runIDs)
+	for _, runID := range runIDs {
+		var existing string
+		err := tx.QueryRowContext(ctx, `SELECT run_id FROM project_run WHERE run_id = ?`+d.ForUpdateClause(), runID).Scan(&existing)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("lock project run %s for event append: %w", runID, err)
+		}
+	}
+	return nil
+}
+
+func appendProjectRunEventsTx(ctx context.Context, tx *sql.Tx, d dialect.Dialect, events []domain.ProjectRunEventRecord) ([]domain.ProjectRunEventRecord, []bool, error) {
+	if err := lockProjectRunRows(ctx, tx, d, events); err != nil {
+		return nil, nil, err
+	}
 	results := make([]domain.ProjectRunEventRecord, 0, len(events))
 	created := make([]bool, 0, len(events))
 	for _, event := range events {
@@ -51,16 +92,29 @@ func appendProjectRunEventsTx(ctx context.Context, tx *sql.Tx, events []domain.P
 		if event.CreatedAt.IsZero() {
 			event.CreatedAt = time.Now().UTC()
 		}
+		// ON CONFLICT keeps the transaction usable on PostgreSQL: a duplicate
+		// primary key aborts the whole transaction, so a follow-up SELECT in
+		// the old error path could never observe the existing row.
 		err := tx.QueryRowContext(ctx, `INSERT INTO project_run_event (id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at)
 			SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM project_run_event WHERE run_id = ?
+			ON CONFLICT (id) DO NOTHING
 			RETURNING seq`, event.ID, event.RunID, string(event.Kind), event.Text, event.Agent, event.Name, event.PayloadJSON, BoolToInt(event.Success), event.ExitCode, event.StopReason, event.CreatedAt.UTC().UnixMilli(), event.RunID).Scan(&event.Sequence)
-		if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			existing, found, findErr := getRunEventByID(ctx, tx, event.ID)
-			if findErr == nil && found && existing.RunID == event.RunID {
-				results = append(results, existing)
-				created = append(created, false)
-				continue
+			if findErr != nil {
+				return nil, nil, fmt.Errorf("read conflicting run event %s: %w", event.ID, findErr)
 			}
+			if !found {
+				return nil, nil, fmt.Errorf("insert run event %s: conflict without an existing row", event.ID)
+			}
+			if existing.RunID != event.RunID {
+				return nil, nil, fmt.Errorf("insert run event: event %s already belongs to run %s", event.ID, existing.RunID)
+			}
+			results = append(results, existing)
+			created = append(created, false)
+			continue
+		}
+		if err != nil {
 			return nil, nil, fmt.Errorf("insert run event: %w", err)
 		}
 		results = append(results, event)

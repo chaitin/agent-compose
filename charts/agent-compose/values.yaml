@@ -26,7 +26,8 @@ persistence:
   enabled: true
   existingClaim: ""
   storageClass: ""
-  # The daemon writes SQLite state; read-only access modes are invalid here.
+  # The daemon keeps node-local state (SQLite data.db by default, workspaces,
+  # sandboxes, and image caches); read-only access modes are invalid here.
   accessMode: ReadWriteOnce
   size: 10Gi
 

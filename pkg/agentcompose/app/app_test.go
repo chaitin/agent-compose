@@ -254,7 +254,9 @@ func TestRegisterUsesSandboxRootAndInitializesConfigStoreSchema(t *testing.T) {
 	do.ProvideValue(di, slog.Default())
 	do.ProvideValue(di, echo.New())
 
-	Register(di)
+	if err := Register(di); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
 	cancel()
 	config := do.MustInvoke[*appconfig.Config](di)
 	wantRoot := legacyRoot
@@ -292,7 +294,9 @@ func TestCacheServiceRouteUsesRuntimeCacheController(t *testing.T) {
 	do.ProvideValue(di, ctx)
 	do.ProvideValue(di, slog.Default())
 	do.ProvideValue(di, echo.New())
-	Register(di)
+	if err := Register(di); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
 
 	server := httptest.NewServer(do.MustInvoke[*echo.Echo](di))
 	defer server.Close()

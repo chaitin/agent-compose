@@ -246,7 +246,7 @@ Later files override earlier files, and the environment inherited by the CLI ove
 
 ### Daemon database concurrency
 
-The daemon uses one SQLite connection while applying startup migrations. After
+In SQLite mode the daemon uses one connection while applying startup migrations. After
 migration succeeds, a file-backed database uses up to four runtime connections
 by default so WAL readers can make progress alongside a writer. Set
 `SQLITE_MAX_OPEN_CONNS` to an integer from `1` through `32` to override that
@@ -256,7 +256,62 @@ regardless of the configured value.
 Increasing the limit enables more concurrent database operations but does not
 create additional SQLite writers: WAL still permits only one active writer.
 Values above the default should therefore be justified by observed connection
-wait time and tested under the deployment's write workload.
+wait time and tested under the deployment's write workload. These limits do not
+apply when `DB_DRIVER=postgres`.
+
+### PostgreSQL backend (single instance)
+
+SQLite remains the default and the daemon keeps using `DATA_ROOT/data.db` when
+`DB_DRIVER` is unset. To use an external PostgreSQL database, set both values:
+
+```dotenv
+DB_DRIVER=postgres
+DB_URL=postgres://user:password@db.example.com:5432/agent_compose?sslmode=verify-full
+```
+
+`DB_URL` is read only in PostgreSQL mode and must be a `postgres://` or
+`postgresql://` URL; TLS settings such as `sslmode` live in the URL. The
+connection pool is configured with `DB_MAX_OPEN_CONNS` (default 10, minimum 2),
+`DB_MAX_IDLE_CONNS` (default 5), `DB_CONN_MAX_LIFETIME` (default 30m), and
+`DB_CONNECT_TIMEOUT` (default 10s). One connection is reserved for the
+single-instance lock. The daemon never writes the URL or its
+password to logs or errors. `SQLITE_MAX_OPEN_CONNS` has no effect in
+PostgreSQL mode.
+
+PostgreSQL 17 is the tested server version. PostgreSQL mode is intentionally
+single-instance. At startup the daemon takes a
+session-scoped advisory lock on the database; a second daemon on the same
+database exits with an error instead of running. If PostgreSQL restarts, the
+daemon tries to reacquire the lock for up to 30 seconds; if another instance
+takes it or the outage exceeds that window, the daemon stops rather than serving
+without the lock. This protects the current scheduler, run-recovery,
+sandbox-projection, runtime-callback, and streaming models, which still assume
+one daemon process and one node-local `DATA_ROOT`.
+PostgreSQL does not make those capabilities cluster-safe; multi-replica
+deployment remains unsupported.
+
+The daemon applies PostgreSQL migrations automatically under a
+transaction-scoped advisory lock, so concurrent starts are safe. Operators can
+inspect and apply them explicitly:
+
+```bash
+agent-compose db status
+agent-compose db migrate
+```
+
+To move existing state, stop the daemon and copy the SQLite database into an
+empty, migrated PostgreSQL target:
+
+```bash
+agent-compose db copy --source /data/data.db --to 'postgres://.../agent_compose?sslmode=require'
+```
+
+`db copy` opens the SQLite source read-only, requires the current SQLite schema,
+refuses a non-empty target, and verifies row counts per table. The SQLite file is
+never modified, so rollback means stopping the daemon and removing
+`DB_DRIVER`/`DB_URL`; data written to PostgreSQL after cutover is not copied back
+automatically. Keep `DATA_ROOT` on the node even in PostgreSQL mode: sandboxes,
+workspaces, run inputs, image caches, and scheduler artifacts still live there.
 
 ## Common Workflows
 

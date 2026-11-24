@@ -37,8 +37,9 @@ import (
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
+	storagedb "github.com/chaitin/agent-compose/pkg/storage/database"
+	"github.com/chaitin/agent-compose/pkg/storage/postgres"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
-	storagesqlite "github.com/chaitin/agent-compose/pkg/storage/sqlite"
 	"github.com/chaitin/agent-compose/pkg/telemetry"
 	"github.com/chaitin/agent-compose/pkg/volumes"
 	"github.com/chaitin/agent-compose/pkg/workspaces"
@@ -46,15 +47,25 @@ import (
 )
 
 func Setup(di do.Injector) {
-	Register(di)
+	if err := Register(di); err != nil {
+		slog.Error("failed to open agent-compose storage", "error", err)
+		return
+	}
 	if err := StartBackground(di); err != nil {
 		slog.Error("failed to start agent-compose background managers", "error", err)
 	}
 }
 
-func Register(di do.Injector) {
+func Register(di do.Injector) error {
 	RegisterDependencies(di)
+	// Resolve the database before routes: a rejected connection, migration, or
+	// instance lease must surface as a startup error instead of a MustInvoke
+	// panic. Routes then reuse the resolved provider.
+	if _, err := do.Invoke[*storagedb.Database](di); err != nil {
+		return fmt.Errorf("open database: %w", err)
+	}
 	RegisterRoutes(di)
+	return nil
 }
 
 func RegisterDependencies(di do.Injector) {
@@ -622,24 +633,41 @@ func NewSandboxRPCBridge(di do.Injector) (*adapters.SandboxRPCBridge, error) {
 	}, do.MustInvoke[*sandboxes.LifecycleLocks](di)), nil
 }
 
-func NewDatabase(di do.Injector) (*storagesqlite.Database, error) {
+func NewDatabase(di do.Injector) (*storagedb.Database, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
 	if err := os.MkdirAll(config.DataRoot, 0o755); err != nil {
 		return nil, fmt.Errorf("create agent-compose data root: %w", err)
 	}
-	return storagesqlite.OpenWithMaxOpenConns(config.DbAddr, config.DbTimeout, config.EffectiveSQLiteMaxOpenConns())
+	ctx := context.Background()
+	if provided, err := do.Invoke[context.Context](di); err == nil && provided != nil {
+		ctx = provided
+	}
+	return storagedb.Open(ctx, storagedb.Config{
+		Driver:             storagedb.Driver(config.DBDriver),
+		SQLitePath:         config.DbAddr,
+		SQLiteBusyTimeout:  config.DbTimeout,
+		SQLiteMaxOpenConns: config.EffectiveSQLiteMaxOpenConns(),
+		Postgres: postgres.Config{
+			URL:             config.DBURL,
+			MaxOpenConns:    config.DBMaxOpenConns,
+			MaxIdleConns:    config.DBMaxIdleConns,
+			ConnMaxLifetime: config.DBConnMaxLifetime,
+			ConnectTimeout:  config.DBConnectTimeout,
+		},
+		AcquirePostgresLock: true,
+	})
 }
 
 func NewConfigStore(di do.Injector) (*configstore.ConfigStore, error) {
-	database := do.MustInvoke[*storagesqlite.Database](di)
-	return configstore.FromDB(database.DB()), nil
+	database := do.MustInvoke[*storagedb.Database](di)
+	return configstore.FromDBWithDialect(database.DB(), database.Dialect()), nil
 }
 
 func NewSandboxStore(di do.Injector) (*sandboxstore.Store, error) {
 	config := do.MustInvoke[*appconfig.Config](di)
-	database := do.MustInvoke[*storagesqlite.Database](di)
+	database := do.MustInvoke[*storagedb.Database](di)
 	resolver := sandboxProjectProjectionResolver{resolver: do.MustInvoke[*runs.SandboxRunTargetResolver](di)}
-	return sandboxstore.NewWithDatabase(config, database.DB(), resolver)
+	return sandboxstore.NewWithDatabaseWithDialect(config, database.DB(), database.Dialect(), resolver)
 }
 
 type sandboxProjectProjectionResolver struct {

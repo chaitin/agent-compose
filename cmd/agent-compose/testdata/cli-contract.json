@@ -630,6 +630,157 @@
       ]
     },
     {
+      "path": "agent-compose db",
+      "use": "db",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose db copy",
+      "use": "copy",
+      "flags": [
+        {
+          "name": "batch-size",
+          "type": "int",
+          "default": "0"
+        },
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        },
+        {
+          "name": "to",
+          "type": "string",
+          "default": ""
+        }
+      ]
+    },
+    {
+      "path": "agent-compose db migrate",
+      "use": "migrate",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
+      "path": "agent-compose db status",
+      "use": "status",
+      "flags": [
+        {
+          "name": "file",
+          "shorthand": "f",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "host",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "json",
+          "type": "bool",
+          "default": "false",
+          "optional": "true"
+        },
+        {
+          "name": "project-name",
+          "shorthand": "p",
+          "type": "string",
+          "default": ""
+        },
+        {
+          "name": "timeout",
+          "type": "duration",
+          "default": "0s"
+        }
+      ]
+    },
+    {
       "path": "agent-compose down",
       "use": "down",
       "flags": [

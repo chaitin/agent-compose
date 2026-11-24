@@ -22,7 +22,7 @@ type projectNameMigrationRow struct {
 
 func applyMigrationDataStep(ctx context.Context, conn migrationConn, item migration) error {
 	// Released cases are immutable migration steps, just like their SQL asset.
-	if item.version != uniqueProjectNameMigrationVersion || item.name != uniqueProjectNameMigration {
+	if item.Version != uniqueProjectNameMigrationVersion || item.Name != uniqueProjectNameMigration {
 		return nil
 	}
 	return renameDuplicateProjects(ctx, conn)

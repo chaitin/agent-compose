@@ -15,10 +15,13 @@ import (
 	"github.com/chaitin/agent-compose/pkg/storage/storeutil"
 	"github.com/chaitin/agent-compose/pkg/storedtime"
 	"github.com/chaitin/agent-compose/pkg/volumes"
+
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 type volumeStore struct {
-	db *sql.DB
+	db      *sql.DB
+	dialect dialect.Dialect
 }
 
 type VolumeListOptions = domain.VolumeListOptions
@@ -47,7 +50,7 @@ func (s *volumeStore) CreateVolume(ctx context.Context, item domain.VolumeRecord
 		id, name, driver, path, labels_json, options_json, project_id, created_at, updated_at
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.ID, normalized.Name, normalized.Driver, normalized.Path, labelsJSON, optionsJSON, normalized.ProjectID, now.Unix(), now.Unix()); err != nil {
-		if isSQLiteDuplicateRow(err) {
+		if s.dialect.IsDuplicateRow(err) {
 			return domain.VolumeRecord{}, domain.ResourceError(domain.ErrAlreadyExists, "volume", normalized.Name, fmt.Sprintf("volume %s already exists", normalized.Name), err)
 		}
 		return domain.VolumeRecord{}, fmt.Errorf("insert volume %s: %w", normalized.Name, err)
@@ -328,7 +331,7 @@ func (s *volumeStore) findVolumeSpecReferences(ctx context.Context, volumeName s
 		resourceType string
 		sql          string
 	}{
-		{resourceType: "project_agent", sql: `SELECT id, name, COALESCE(json_extract(spec_json, '$.volumes'), '[]') FROM project_agent`},
+		{resourceType: "project_agent", sql: `SELECT id, name, COALESCE(spec_json, '{}') FROM project_agent`},
 	} {
 		queryRefs, err := s.findVolumeSpecReferencesIn(ctx, query.resourceType, query.sql, volumeName)
 		if err != nil {
@@ -356,7 +359,7 @@ func (s *volumeStore) findVolumeSpecReferencesIn(ctx context.Context, resourceTy
 		if scanErr := rows.Scan(&id, &name, &raw); scanErr != nil {
 			return nil, fmt.Errorf("scan %s volume reference: %w", resourceType, scanErr)
 		}
-		if volumeSpecsReference(raw, volumeName) {
+		if volumeSpecsReferenceSpec(raw, volumeName) {
 			refs = append(refs, domain.VolumeReference{ResourceType: resourceType, ResourceID: id, Name: name})
 		}
 	}
@@ -366,11 +369,17 @@ func (s *volumeStore) findVolumeSpecReferencesIn(ctx context.Context, resourceTy
 	return refs, nil
 }
 
-func volumeSpecsReference(raw, volumeName string) bool {
-	var specs []domain.VolumeMountSpec
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &specs); err != nil {
+func volumeSpecsReferenceSpec(raw, volumeName string) bool {
+	var spec struct {
+		Volumes []domain.VolumeMountSpec `json:"volumes"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &spec); err != nil {
 		return false
 	}
+	return volumeSpecsReferenceParts(spec.Volumes, volumeName)
+}
+
+func volumeSpecsReferenceParts(specs []domain.VolumeMountSpec, volumeName string) bool {
 	for _, spec := range specs {
 		if spec.Type == "" || strings.EqualFold(spec.Type, domain.VolumeMountTypeVolume) {
 			if strings.TrimSpace(spec.Source) == volumeName {
