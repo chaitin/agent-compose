@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	sandboxdao "github.com/chaitin/agent-compose/ent/dao/sandbox"
 	"github.com/chaitin/agent-compose/pkg/idset"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -107,34 +108,46 @@ func (x *sandboxCache) listSummaries(ctx context.Context, ids []string, sandboxD
 	for start := 0; start < len(ids); start += sandboxSummaryQueryBatchSize {
 		end := min(start+sandboxSummaryQueryBatchSize, len(ids))
 		batch := ids[start:end]
-		args := make([]any, len(batch))
-		for index, id := range batch {
-			args[index] = id
-		}
-		rows, err := x.db.QueryContext(ctx, `SELECT `+sandboxSelectCols+` FROM sandboxes WHERE id IN (`+sandboxSummaryPlaceholders(len(batch))+`)`, args...)
+		entities, err := x.client.Sandbox.Query().
+			Select(sandboxSummarySelectFields...).
+			Where(sandboxdao.IDIn(batch...)).
+			All(ctx)
 		if err != nil {
 			return nil, sandboxCacheError("query sandbox summaries", err)
 		}
-		for rows.Next() {
-			item, err := scanSandboxCacheRow(rows.Scan)
-			if err != nil {
-				return nil, errors.Join(err, closeSandboxCacheRows(rows))
-			}
+		for _, entity := range entities {
+			item := sandboxFromEntity(entity)
 			if sandboxDir != nil {
 				item.Summary.WorkspacePath = filepath.Join(sandboxDir(item.Summary.ID), "workspace")
 			}
 			summaries[item.Summary.ID] = item.Summary
 		}
-		if err := rows.Err(); err != nil {
-			return nil, errors.Join(fmt.Errorf("iterate sandbox summaries: %w", err), closeSandboxCacheRows(rows))
-		}
-		if err := closeSandboxCacheRows(rows); err != nil {
-			return nil, err
-		}
 	}
 	return summaries, nil
 }
 
-func sandboxSummaryPlaceholders(count int) string {
-	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
+// sandboxFromEntity maps the sandboxes columns selected by
+// sandboxSummarySelectFields to the same domain shape scanSandboxCacheRow
+// returns for the SQL listing path. Timestamps keep the cache's nanosecond
+// representation.
+func sandboxFromEntity(entity *dao.Sandbox) *domain.Sandbox {
+	return &domain.Sandbox{
+		Summary: domain.SandboxSummary{
+			ID:            entity.ID,
+			ShortID:       entity.ShortID,
+			Title:         entity.Title,
+			TriggerSource: entity.TriggerSource,
+			Driver:        entity.Driver,
+			VMStatus:      entity.VMStatus,
+			WorkspacePath: entity.WorkspacePath,
+			CreatedAt:     sandboxCacheTime(entity.CreatedAt),
+			UpdatedAt:     sandboxCacheTime(entity.UpdatedAt),
+		},
+		WorkspaceID: entity.WorkspaceID,
+		Workspace: &domain.SandboxWorkspace{
+			ID:   entity.NestedWorkspaceID,
+			Name: entity.WorkspaceName,
+			Type: entity.WorkspaceType,
+		},
+	}
 }

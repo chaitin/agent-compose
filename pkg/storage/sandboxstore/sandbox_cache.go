@@ -8,6 +8,11 @@ import (
 	"strings"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	sandboxdao "github.com/chaitin/agent-compose/ent/dao/sandbox"
+	"github.com/chaitin/agent-compose/ent/dao/sandboxprojectionmeta"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/storage/storeutil"
@@ -26,7 +31,15 @@ var errSandboxCache = errors.New("sandbox listing cache failure")
 type sandboxCache struct {
 	db      *sql.DB
 	dialect dialect.Dialect
+	client  *dao.Client
 	ownsDB  bool
+}
+
+// newEntClient builds an ent client over the shared application connection.
+// The client is a thin dialect-aware view of the caller-owned pool: it is never
+// closed, and the sandbox listing cache owns no resources through it.
+func newEntClient(db *sql.DB, d dialect.Dialect) *dao.Client {
+	return dao.NewClient(dao.Driver(entsql.OpenDB(d.EntDialect(), db)))
 }
 
 func openSandboxCacheDB(ctx context.Context, db *sql.DB) (*sandboxCache, bool, error) {
@@ -37,12 +50,19 @@ func openSandboxCacheDBWithDialect(ctx context.Context, db *sql.DB, d dialect.Di
 	if db == nil {
 		return nil, false, fmt.Errorf("sandbox listing database is required")
 	}
-	idx := &sandboxCache{db: db, dialect: dialect.OrSQLite(d)}
+	d = dialect.OrSQLite(d)
+	idx := &sandboxCache{db: db, dialect: d, client: newEntClient(db, d)}
 	if err := idx.quickCheck(ctx); err != nil {
 		return nil, false, err
 	}
 	var version int
-	if err := db.QueryRowContext(ctx, `SELECT COALESCE((SELECT version FROM sandbox_projection_meta WHERE id = 1), 0)`).Scan(&version); err != nil {
+	meta, err := idx.client.SandboxProjectionMeta.Query().
+		Where(sandboxprojectionmeta.IDEQ(1)).
+		Only(ctx)
+	switch {
+	case err == nil:
+		version = meta.Version
+	case !dao.IsNotFound(err):
 		return nil, false, sandboxCacheError("read schema version", err)
 	}
 	if err := idx.validateSchema(ctx); err != nil {
@@ -63,7 +83,7 @@ func openSandboxCacheDBWithDialect(ctx context.Context, db *sql.DB, d dialect.Di
 }
 
 func (x *sandboxCache) invalidate(ctx context.Context) (operationErr error) {
-	tx, err := x.db.BeginTx(ctx, nil)
+	tx, err := x.client.Tx(ctx)
 	if err != nil {
 		return sandboxCacheError("begin invalidation", err)
 	}
@@ -72,10 +92,11 @@ func (x *sandboxCache) invalidate(ctx context.Context) (operationErr error) {
 			_ = tx.Rollback()
 		}
 	}()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sandboxes`); err != nil {
+	client := tx.Client()
+	if _, err := client.Sandbox.Delete().Exec(ctx); err != nil {
 		return sandboxCacheError("clear projection", err)
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sandbox_projection_meta`); err != nil {
+	if _, err := client.SandboxProjectionMeta.Delete().Exec(ctx); err != nil {
 		return sandboxCacheError("clear schema version", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -100,6 +121,8 @@ func (x *sandboxCache) Close() error {
 
 func (x *sandboxCache) quickCheck(ctx context.Context) error {
 	var quickCheck string
+	// Kept as SQL: the health probe is backend-specific DDL/PRAGMA that ent does
+	// not model.
 	if err := x.db.QueryRowContext(ctx, x.dialect.QuickCheckQuery()).Scan(&quickCheck); err != nil {
 		return sandboxCacheError("quick check", err)
 	}
@@ -112,6 +135,8 @@ func (x *sandboxCache) quickCheck(ctx context.Context) error {
 func (x *sandboxCache) validateSchema(ctx context.Context) (err error) {
 	// LIMIT 0 executes the column list without producing rows, so the query
 	// fails exactly when the cache schema has drifted from the expected columns.
+	// Kept as SQL: this intentionally probes the physical column list, which an
+	// ent query would rewrite into its generated column set.
 	rows, err := x.db.QueryContext(ctx, `SELECT `+sandboxCacheValidationCols+` FROM sandboxes LIMIT 0`)
 	if err != nil {
 		return sandboxCacheError("validate schema", err)
@@ -156,35 +181,73 @@ func (x *sandboxCache) upsert(ctx context.Context, sb *domain.Sandbox, projectID
 	// Search columns use Go's Unicode case mapping so indexed filtering
 	// preserves SandboxMatchesListOptions semantics; SQLite's LOWER only folds
 	// ASCII characters.
-	query := `
-INSERT INTO sandboxes (id, short_id, title, trigger_source, driver, vm_status, project_id,
-	workspace_path, workspace_id, nested_workspace_id, workspace_name, workspace_type, created_at, updated_at,
-	sandbox_type, title_search, trigger_source_search, driver_search, vm_status_search, project_id_search,
-	workspace_path_search, workspace_id_search, nested_workspace_id_search, workspace_name_search, workspace_type_search)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-	short_id=excluded.short_id, title=excluded.title, trigger_source=excluded.trigger_source,
-	driver=excluded.driver, vm_status=excluded.vm_status, project_id=excluded.project_id, workspace_path=excluded.workspace_path,
-	workspace_id=excluded.workspace_id, nested_workspace_id=excluded.nested_workspace_id,
-	workspace_name=excluded.workspace_name,
-	workspace_type=excluded.workspace_type, created_at=excluded.created_at, updated_at=excluded.updated_at,
-	sandbox_type=excluded.sandbox_type, title_search=excluded.title_search,
-	trigger_source_search=excluded.trigger_source_search, driver_search=excluded.driver_search,
-	vm_status_search=excluded.vm_status_search, project_id_search=excluded.project_id_search, workspace_path_search=excluded.workspace_path_search,
-	workspace_id_search=excluded.workspace_id_search,
-	nested_workspace_id_search=excluded.nested_workspace_id_search,
-	workspace_name_search=excluded.workspace_name_search, workspace_type_search=excluded.workspace_type_search
-`
-	_, err := x.db.ExecContext(ctx, query,
-		s.ID, s.ShortID, s.Title, s.TriggerSource, s.Driver, s.VMStatus, projectID,
-		s.WorkspacePath, wsID, nestedWSID, wsName, wsType,
-		sandboxCacheUnixNano(s.CreatedAt), sandboxCacheUnixNano(s.UpdatedAt),
-		sandboxes.TypeFromTriggerSource(s.TriggerSource), strings.ToLower(s.Title), strings.ToLower(s.TriggerSource),
-		strings.ToLower(strings.TrimSpace(s.Driver)), strings.ToUpper(strings.TrimSpace(s.VMStatus)), strings.ToLower(projectID),
-		strings.ToLower(strings.TrimSpace(s.WorkspacePath)), strings.ToLower(strings.TrimSpace(wsID)),
-		strings.ToLower(strings.TrimSpace(nestedWSID)), strings.ToLower(strings.TrimSpace(wsName)),
-		strings.ToLower(strings.TrimSpace(wsType)))
-	if err != nil {
+	sandboxType := sandboxes.TypeFromTriggerSource(s.TriggerSource)
+	titleSearch := strings.ToLower(s.Title)
+	triggerSourceSearch := strings.ToLower(s.TriggerSource)
+	driverSearch := strings.ToLower(strings.TrimSpace(s.Driver))
+	vmStatusSearch := strings.ToUpper(strings.TrimSpace(s.VMStatus))
+	projectIDSearch := strings.ToLower(projectID)
+	workspacePathSearch := strings.ToLower(strings.TrimSpace(s.WorkspacePath))
+	workspaceIDSearch := strings.ToLower(strings.TrimSpace(wsID))
+	nestedWorkspaceIDSearch := strings.ToLower(strings.TrimSpace(nestedWSID))
+	workspaceNameSearch := strings.ToLower(strings.TrimSpace(wsName))
+	workspaceTypeSearch := strings.ToLower(strings.TrimSpace(wsType))
+	// All projected columns take the inserted value on conflict, matching the
+	// previous INSERT ... ON CONFLICT(id) DO UPDATE SET <col> = excluded.<col>.
+	if err := x.client.Sandbox.Create().
+		SetID(s.ID).
+		SetShortID(s.ShortID).
+		SetTitle(s.Title).
+		SetTriggerSource(s.TriggerSource).
+		SetDriver(s.Driver).
+		SetVMStatus(s.VMStatus).
+		SetProjectID(projectID).
+		SetWorkspacePath(s.WorkspacePath).
+		SetWorkspaceID(wsID).
+		SetNestedWorkspaceID(nestedWSID).
+		SetWorkspaceName(wsName).
+		SetWorkspaceType(wsType).
+		SetCreatedAt(sandboxCacheUnixNano(s.CreatedAt)).
+		SetUpdatedAt(sandboxCacheUnixNano(s.UpdatedAt)).
+		SetSandboxType(sandboxType).
+		SetTitleSearch(titleSearch).
+		SetTriggerSourceSearch(triggerSourceSearch).
+		SetDriverSearch(driverSearch).
+		SetVMStatusSearch(vmStatusSearch).
+		SetProjectIDSearch(projectIDSearch).
+		SetWorkspacePathSearch(workspacePathSearch).
+		SetWorkspaceIDSearch(workspaceIDSearch).
+		SetNestedWorkspaceIDSearch(nestedWorkspaceIDSearch).
+		SetWorkspaceNameSearch(workspaceNameSearch).
+		SetWorkspaceTypeSearch(workspaceTypeSearch).
+		OnConflict(entsql.ConflictColumns(sandboxdao.FieldID)).
+		Update(func(u *dao.SandboxUpsert) {
+			u.UpdateShortID()
+			u.UpdateTitle()
+			u.UpdateTriggerSource()
+			u.UpdateDriver()
+			u.UpdateVMStatus()
+			u.UpdateProjectID()
+			u.UpdateWorkspacePath()
+			u.UpdateWorkspaceID()
+			u.UpdateNestedWorkspaceID()
+			u.UpdateWorkspaceName()
+			u.UpdateWorkspaceType()
+			u.UpdateCreatedAt()
+			u.UpdateUpdatedAt()
+			u.UpdateSandboxType()
+			u.UpdateTitleSearch()
+			u.UpdateTriggerSourceSearch()
+			u.UpdateDriverSearch()
+			u.UpdateVMStatusSearch()
+			u.UpdateProjectIDSearch()
+			u.UpdateWorkspacePathSearch()
+			u.UpdateWorkspaceIDSearch()
+			u.UpdateNestedWorkspaceIDSearch()
+			u.UpdateWorkspaceNameSearch()
+			u.UpdateWorkspaceTypeSearch()
+		}).
+		Exec(ctx); err != nil {
 		return sandboxCacheError("upsert sandbox listing cache "+s.ID, err)
 	}
 	return nil
@@ -205,7 +268,7 @@ func sandboxCacheTime(value int64) time.Time {
 }
 
 func (x *sandboxCache) Delete(ctx context.Context, id string) error {
-	if _, err := x.db.ExecContext(ctx, `DELETE FROM sandboxes WHERE id = ?`, id); err != nil {
+	if _, err := x.client.Sandbox.Delete().Where(sandboxdao.IDEQ(id)).Exec(ctx); err != nil {
 		return sandboxCacheError("delete sandbox listing cache "+id, err)
 	}
 	return nil
@@ -216,11 +279,17 @@ func (x *sandboxCache) Delete(ctx context.Context, id string) error {
 // so that an interrupted rebuild (crash, shutdown, transient error) is retried
 // on the next startup instead of leaving the index permanently missing rows.
 func (x *sandboxCache) markComplete(ctx context.Context) error {
-	if x == nil || x.db == nil {
+	if x == nil || x.db == nil || x.client == nil {
 		return nil
 	}
-	if _, err := x.db.ExecContext(ctx, `INSERT INTO sandbox_projection_meta(id, version) VALUES(1, ?)
-		ON CONFLICT(id) DO UPDATE SET version = excluded.version`, sandboxCacheVersion); err != nil {
+	if err := x.client.SandboxProjectionMeta.Create().
+		SetID(1).
+		SetVersion(sandboxCacheVersion).
+		OnConflict(entsql.ConflictColumns(sandboxprojectionmeta.FieldID)).
+		Update(func(u *dao.SandboxProjectionMetaUpsert) {
+			u.UpdateVersion()
+		}).
+		Exec(ctx); err != nil {
 		return sandboxCacheError("mark sandbox listing cache complete", err)
 	}
 	return nil
