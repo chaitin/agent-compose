@@ -51,7 +51,6 @@ type Store struct {
 	layout                *sandboxLayout
 	now                   func() time.Time
 	database              *storagesqlite.Database
-	dialect               dialect.Dialect
 	sandboxLocks          sync.Map
 	cacheDependencyMu     sync.RWMutex
 	cacheDependencyLocker CacheDependencyLocker
@@ -111,7 +110,7 @@ func NewWithDatabaseWithDialect(config *appconfig.Config, db *sql.DB, d dialect.
 	if len(projectResolvers) > 0 {
 		projectResolver = projectResolvers[0]
 	}
-	return newStoreWithIndex(config, storeIndexInit{Index: index, DBPath: config.DbAddr, IndexErr: err, ProjectResolver: projectResolver, Dialect: d})
+	return newStoreWithIndex(config, storeIndexInit{Index: index, DBPath: config.DbAddr, IndexErr: err, ProjectResolver: projectResolver})
 }
 
 // storeIndexInit bundles the sandbox listing cache and the outcome of trying to open it.
@@ -120,7 +119,6 @@ type storeIndexInit struct {
 	DBPath          string
 	IndexErr        error
 	ProjectResolver SandboxProjectResolver
-	Dialect         dialect.Dialect
 }
 
 func newStoreWithIndex(config *appconfig.Config, init storeIndexInit) (*Store, error) {
@@ -133,7 +131,6 @@ func newStoreWithIndex(config *appconfig.Config, init storeIndexInit) (*Store, e
 		layout:          newSandboxLayout(config.SandboxRoot),
 		now:             time.Now,
 		projectResolver: projectResolver,
-		dialect:         dialect.OrSQLite(init.Dialect),
 	}
 	if _, err := store.layout.discover(); err != nil {
 		return nil, closeSandboxCacheAfterStoreInitFailure(index, fmt.Errorf("discover sandbox directories: %w", err))
