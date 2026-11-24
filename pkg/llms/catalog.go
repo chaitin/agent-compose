@@ -57,6 +57,7 @@ type CatalogModel struct {
 	Protocol        *string           `json:"protocol,omitempty"`
 	Headers         map[string]string `json:"headers,omitempty"`
 	MaxOutputTokens *int              `json:"maxOutputTokens,omitempty"`
+	ContextWindow   *int              `json:"contextWindow,omitempty"`
 }
 
 // ProviderModelConfig is the stored behavior for one provider/model binding.
@@ -65,6 +66,7 @@ type ProviderModelConfig struct {
 	BaseURL         string
 	HeadersJSON     string
 	MaxOutputTokens int
+	ContextWindow   int
 	DisplayName     string
 }
 
@@ -200,6 +202,10 @@ func mergeCatalogModel(base, overlay CatalogModel) CatalogModel {
 		value := *overlay.MaxOutputTokens
 		base.MaxOutputTokens = &value
 	}
+	if overlay.ContextWindow != nil {
+		value := *overlay.ContextWindow
+		base.ContextWindow = &value
+	}
 	return base
 }
 
@@ -244,6 +250,9 @@ func validateCatalogProvider(id string, provider CatalogProvider) error {
 		// different number than the catalog declares.
 		if model.MaxOutputTokens != nil && *model.MaxOutputTokens > MaxModelOutputTokens {
 			return fmt.Errorf("provider %q model %q maxOutputTokens must not exceed %d", id, modelID, MaxModelOutputTokens)
+		}
+		if model.ContextWindow != nil && (*model.ContextWindow < 0 || *model.ContextWindow > MaxModelContextWindow) {
+			return fmt.Errorf("provider %q model %q contextWindow must be between 0 and %d", id, modelID, MaxModelContextWindow)
 		}
 	}
 	return nil
@@ -383,6 +392,10 @@ func cloneCatalogModel(model CatalogModel) CatalogModel {
 	if model.MaxOutputTokens != nil {
 		value := *model.MaxOutputTokens
 		clone.MaxOutputTokens = &value
+	}
+	if model.ContextWindow != nil {
+		value := *model.ContextWindow
+		clone.ContextWindow = &value
 	}
 	return clone
 }

@@ -60,6 +60,7 @@ type ResolvedTarget struct {
 	Endpoint        string
 	Headers         http.Header
 	MaxOutputTokens int
+	ContextWindow   int
 }
 
 type FacadeToken struct {

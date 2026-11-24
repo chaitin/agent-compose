@@ -246,9 +246,9 @@ func replaceProviderModels(ctx context.Context, tx *sql.Tx, providerID, provider
 			return fmt.Errorf("record provider %q model %q identity: %w", providerID, model.ID, err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider_model(
-			provider_id, model_id, wire_api, weight, base_url, headers_json, max_output_tokens, display_name)
-			VALUES(?, ?, ?, 10, ?, ?, ?, ?)`,
-			providerID, model.ID, protocol, model.BaseURL, headersJSON, model.MaxOutputTokens, model.Name); err != nil {
+			provider_id, model_id, wire_api, weight, base_url, headers_json, max_output_tokens, display_name, context_window)
+			VALUES(?, ?, ?, 10, ?, ?, ?, ?, ?)`,
+			providerID, model.ID, protocol, model.BaseURL, headersJSON, model.MaxOutputTokens, model.Name, model.ContextWindow); err != nil {
 			return fmt.Errorf("bind provider %q model %q: %w", providerID, model.ID, err)
 		}
 	}

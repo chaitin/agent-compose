@@ -52,7 +52,11 @@ type ModelSpec struct {
 	Headers map[string]string
 	// MaxOutputTokens caps the model's output. Zero inherits.
 	MaxOutputTokens int
+	// ContextWindow is the total model window. Zero keeps runtime defaults.
+	ContextWindow int
 }
+
+const MaxModelContextWindow = 1<<31 - 1
 
 // MaxModelOutputTokens is the largest output cap a model may declare. The public
 // contract carries the cap as a 32-bit integer, so a larger declared value could
@@ -258,6 +262,9 @@ func normalizeModelSpec(model ModelSpec) (ModelSpec, error) {
 	}
 	if model.MaxOutputTokens > MaxModelOutputTokens {
 		return ModelSpec{}, fmt.Errorf("%w: model %q max_output_tokens must not exceed %d", domain.ErrInvalidArgument, model.ID, MaxModelOutputTokens)
+	}
+	if model.ContextWindow < 0 || model.ContextWindow > MaxModelContextWindow {
+		return ModelSpec{}, fmt.Errorf("%w: model %q context_window must be between 0 and %d", domain.ErrInvalidArgument, model.ID, MaxModelContextWindow)
 	}
 	if err := checkHeaderNames(model.Headers); err != nil {
 		return ModelSpec{}, fmt.Errorf("%w: model %q: %w", domain.ErrInvalidArgument, model.ID, err)

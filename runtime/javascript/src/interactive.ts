@@ -1,5 +1,6 @@
 import { codexTelemetryConfig, providerTelemetryEnv } from "./telemetry.js";
 import { resolveCodexPath } from "./codex-path.js";
+import { codexModelConfig } from "./codex-model-config.js";
 import {
   codexThreadStateMetadata,
   codexThreadStartWarning,
@@ -85,6 +86,7 @@ export class CodexInteractiveSession implements InteractiveSession {
       env: stringEnv(providerTelemetryEnv("codex", this.options.telemetry, process.env)),
       config: {
         ...codexTelemetryConfig(this.options.telemetry),
+        ...codexModelConfig(process.env),
         ...(this.options.systemContext ? { developer_instructions: this.options.systemContext } : {}),
       },
     });
