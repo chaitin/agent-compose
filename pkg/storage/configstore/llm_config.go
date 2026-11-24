@@ -3,13 +3,20 @@ package configstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"github.com/chaitin/agent-compose/ent/dao"
-	"github.com/chaitin/agent-compose/pkg/llms"
-	domain "github.com/chaitin/agent-compose/pkg/model"
 	"strings"
 	"time"
+
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/llmfacadetoken"
+	"github.com/chaitin/agent-compose/ent/dao/llmmodel"
+	"github.com/chaitin/agent-compose/ent/dao/llmprovider"
+	"github.com/chaitin/agent-compose/ent/dao/llmprovidermodel"
+	"github.com/chaitin/agent-compose/pkg/llms"
+	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
 // llmStore owns LLM provider/model configuration and facade tokens.
@@ -19,16 +26,18 @@ type llmStore struct {
 }
 
 func (s *llmStore) HasLLMProviders(ctx context.Context) (bool, error) {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(1) FROM llm_provider`).Scan(&count); err != nil {
+	count, err := s.client.LLMProvider.Query().Count(ctx)
+	if err != nil {
 		return false, fmt.Errorf("count llm providers: %w", err)
 	}
 	return count > 0, nil
 }
 
 func (s *llmStore) HasLLMProvider(ctx context.Context, providerID string) (bool, error) {
-	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM llm_provider WHERE id = ?)`, strings.TrimSpace(providerID)).Scan(&exists); err != nil {
+	exists, err := s.client.LLMProvider.Query().
+		Where(llmprovider.IDEQ(strings.TrimSpace(providerID))).
+		Exist(ctx)
+	if err != nil {
 		return false, fmt.Errorf("query llm provider %q: %w", providerID, err)
 	}
 	return exists, nil
@@ -46,17 +55,18 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 	if !ok {
 		return nil
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin llm default config tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
 	// The environment is a bootstrap fallback, not an owner of last resort: a
 	// connection or model another source declared (models.json, an API-managed
 	// connection) keeps its id and its metadata. Without this guard the
 	// projection rewrote the scope of a same-id catalog row and silently
 	// replaced the operator's configuration.
-	if conflict, err := envProjectionConflict(ctx, tx, provider.ID, model.ID); err != nil {
+	if conflict, err := envProjectionConflict(ctx, client, provider.ID, model.ID); err != nil {
 		return err
 	} else if conflict != nil {
 		// The projection yields, so the connection this bootstrap materialized in
@@ -66,7 +76,7 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 		// env_default, or the legacy system scope it wrote before that value
 		// existed — is released; an id another source owns is not the bootstrap's
 		// to release.
-		if err := releaseEnvProjectionConnection(ctx, tx, provider.ID, now); err != nil {
+		if err := releaseEnvProjectionConnection(ctx, client, provider.ID, now); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -79,22 +89,54 @@ func (s *llmStore) UpsertDefaultLLMConfig(ctx context.Context, provider llms.Pro
 	// migration used: only a presentation that differs from the protocol
 	// convention is an override worth preserving.
 	authIntent := llms.InferLegacyProviderAuth(provider.DefaultWireAPI, provider.AuthHeader, provider.AuthScheme)
-	if err := upsertLLMProvider(ctx, tx, provider, authIntent, now); err != nil {
+	if err := upsertLLMProvider(ctx, client, provider, authIntent, now); err != nil {
 		return err
 	}
 	if model.DefaultModel {
-		if _, err := tx.ExecContext(ctx, `UPDATE llm_model SET default_model = 0 WHERE default_model != 0`); err != nil {
+		if _, err := client.LLMModel.Update().
+			Where(llmmodel.DefaultModelNEQ(0)).
+			SetDefaultModel(0).
+			Save(ctx); err != nil {
 			return fmt.Errorf("reset default llm models: %w", err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_model(id, name, description, default_model, enabled, scope, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name, description = excluded.description, default_model = excluded.default_model, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, model.ID, model.Name, model.Description, BoolToInt(model.DefaultModel), BoolToInt(model.Enabled), model.Scope, now, now); err != nil {
+	// The old INSERT's conflict update set covered name, description,
+	// default_model, enabled, scope, and updated_at: every column except the id
+	// and created_at, so created_at keeps its stored value.
+	description := model.Description
+	defaultModel := BoolToInt(model.DefaultModel)
+	enabled := BoolToInt(model.Enabled)
+	if err := client.LLMModel.Create().
+		SetID(model.ID).
+		SetName(model.Name).
+		SetDescription(description).
+		SetDefaultModel(defaultModel).
+		SetEnabled(enabled).
+		SetScope(model.Scope).
+		SetCreatedAt(now).
+		SetUpdatedAt(now).
+		OnConflict(entsql.ConflictColumns(llmmodel.FieldID)).
+		Update(func(u *dao.LLMModelUpsert) {
+			u.SetName(model.Name)
+			u.SetDescription(description)
+			u.SetDefaultModel(defaultModel)
+			u.SetEnabled(enabled)
+			u.SetScope(model.Scope)
+			u.SetUpdatedAt(now)
+		}).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("insert default llm model: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider_model(provider_id, model_id, wire_api, weight)
-		VALUES(?, ?, '', 10)
-		ON CONFLICT(provider_id, model_id) DO NOTHING`, provider.ID, model.ID); err != nil {
+	if err := client.LLMProviderModel.Create().
+		SetID(provider.ID).
+		SetModelID(model.ID).
+		SetWireAPI("").
+		SetWeight(10).
+		OnConflict(
+			entsql.ConflictColumns(llmprovidermodel.FieldID, llmprovidermodel.FieldModelID),
+			entsql.ResolveWithIgnore(),
+		).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("insert default llm provider model: %w", err)
 	}
 	return tx.Commit()
@@ -117,13 +159,14 @@ func (s *llmStore) UpsertDeclaredConnection(ctx context.Context, provider llms.P
 		return fmt.Errorf("declared connection %q requires a credential and a base URL", provider.ID)
 	}
 	now := time.Now().UTC().Unix()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin declared llm connection tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
 	authIntent := llms.InferLegacyProviderAuth(provider.DefaultWireAPI, provider.AuthHeader, provider.AuthScheme)
-	if err := upsertLLMProvider(ctx, tx, provider, authIntent, now); err != nil {
+	if err := upsertLLMProvider(ctx, client, provider, authIntent, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -139,80 +182,115 @@ func (s *llmStore) UpsertDeclaredConnection(ctx context.Context, provider llms.P
 // the scope first also keeps the update a compare-and-swap: a row another writer
 // re-scoped in the meantime no longer matches, so its configuration stays with
 // the source that now owns it.
-func releaseEnvProjectionConnection(ctx context.Context, tx *sql.Tx, providerID string, now int64) error {
-	scope, err := storedProviderScope(ctx, tx, providerID)
+func releaseEnvProjectionConnection(ctx context.Context, client *dao.Client, providerID string, now int64) error {
+	scope, err := storedProviderScope(ctx, client, providerID)
 	if err != nil {
 		return err
 	}
 	if !llms.EnvProjectionOwnsScope(scope) {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE llm_provider SET enabled = 0, scope = '', updated_at = ? WHERE id = ? AND scope = ?`,
-		now, providerID, scope); err != nil {
+	if _, err := client.LLMProvider.Update().
+		Where(llmprovider.IDEQ(providerID), llmprovider.ScopeEQ(scope)).
+		SetEnabled(0).
+		SetScope("").
+		SetUpdatedAt(now).
+		Save(ctx); err != nil {
 		return fmt.Errorf("release environment connection %q: %w", providerID, err)
 	}
 	return nil
 }
 
-func upsertLLMProvider(ctx context.Context, tx *sql.Tx, provider llms.Provider, auth llms.ProviderAuth, now int64) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider(id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, auth, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name, provider_type = excluded.provider_type, default_wire_api = excluded.default_wire_api, base_url = excluded.base_url, api_key = excluded.api_key, auth_header = excluded.auth_header, auth_scheme = excluded.auth_scheme, auth = excluded.auth, headers_json = excluded.headers_json, use_generic_responses_text_parts = excluded.use_generic_responses_text_parts, weight = excluded.weight, enabled = excluded.enabled, scope = excluded.scope, updated_at = excluded.updated_at`, provider.ID, provider.Name, provider.ProviderType, provider.DefaultWireAPI, provider.BaseURL, provider.APIKey, provider.AuthHeader, provider.AuthScheme, string(auth), provider.HeadersJSON, BoolToInt(provider.UseGenericResponsesTextParts), provider.Weight, provider.Scope, now, now); err != nil {
+func upsertLLMProvider(ctx context.Context, client *dao.Client, provider llms.Provider, auth llms.ProviderAuth, now int64) error {
+	authValue := string(auth)
+	genericResponsesTextParts := BoolToInt(provider.UseGenericResponsesTextParts)
+	// The old INSERT's conflict update set covered every non-key column except
+	// created_at, which keeps the value stored when the row first appeared.
+	if err := client.LLMProvider.Create().
+		SetID(provider.ID).
+		SetName(provider.Name).
+		SetProviderType(provider.ProviderType).
+		SetDefaultWireAPI(provider.DefaultWireAPI).
+		SetBaseURL(provider.BaseURL).
+		SetAPIKey(provider.APIKey).
+		SetAuthHeader(provider.AuthHeader).
+		SetAuthScheme(provider.AuthScheme).
+		SetAuth(authValue).
+		SetHeadersJSON(provider.HeadersJSON).
+		SetUseGenericResponsesTextParts(genericResponsesTextParts).
+		SetWeight(provider.Weight).
+		SetEnabled(1).
+		SetScope(provider.Scope).
+		SetCreatedAt(now).
+		SetUpdatedAt(now).
+		OnConflict(entsql.ConflictColumns(llmprovider.FieldID)).
+		Update(func(u *dao.LLMProviderUpsert) {
+			u.SetName(provider.Name)
+			u.SetProviderType(provider.ProviderType)
+			u.SetDefaultWireAPI(provider.DefaultWireAPI)
+			u.SetBaseURL(provider.BaseURL)
+			u.SetAPIKey(provider.APIKey)
+			u.SetAuthHeader(provider.AuthHeader)
+			u.SetAuthScheme(provider.AuthScheme)
+			u.SetAuth(authValue)
+			u.SetHeadersJSON(provider.HeadersJSON)
+			u.SetUseGenericResponsesTextParts(genericResponsesTextParts)
+			u.SetWeight(provider.Weight)
+			u.SetEnabled(1)
+			u.SetScope(provider.Scope)
+			u.SetUpdatedAt(now)
+		}).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("upsert llm provider %q: %w", provider.ID, err)
 	}
 	return nil
 }
 
 func (s *llmStore) ListEnabledLLMProviders(ctx context.Context) ([]llms.Provider, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+providerColumns+` FROM llm_provider WHERE enabled != 0 ORDER BY weight ASC, id ASC`)
+	entities, err := s.client.LLMProvider.Query().
+		Where(llmprovider.EnabledNEQ(0)).
+		Order(llmprovider.ByWeight(), llmprovider.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query llm providers: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	var providers []llms.Provider
-	for rows.Next() {
-		item, err := llms.ScanProvider(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		providers = append(providers, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate llm providers: %w", err)
+	for _, entity := range entities {
+		providers = append(providers, llmProviderFromEntity(entity))
 	}
 	return providers, nil
 }
 
 func (s *llmStore) ListEnabledLLMModels(ctx context.Context) ([]llms.Model, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, default_model, enabled, scope, created_at, updated_at FROM llm_model WHERE enabled != 0 ORDER BY default_model DESC, id ASC`)
+	entities, err := s.client.LLMModel.Query().
+		Where(llmmodel.EnabledNEQ(0)).
+		Order(llmmodel.ByDefaultModel(entsql.OrderDesc()), llmmodel.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query llm models: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	var models []llms.Model
-	for rows.Next() {
-		item, err := llms.ScanModel(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		models = append(models, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate llm models: %w", err)
+	for _, entity := range entities {
+		models = append(models, llmModelFromEntity(entity))
 	}
 	return models, nil
 }
 
 func (s *llmStore) LLMProviderModelWireAPI(ctx context.Context, providerID, modelID string) (string, bool, error) {
-	var wireAPI string
-	err := s.db.QueryRowContext(ctx, `SELECT wire_api FROM llm_provider_model WHERE provider_id = ? AND model_id = ?`, strings.TrimSpace(providerID), strings.TrimSpace(modelID)).Scan(&wireAPI)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
-	}
+	entity, err := s.client.LLMProviderModel.Query().
+		Where(
+			llmprovidermodel.IDEQ(strings.TrimSpace(providerID)),
+			llmprovidermodel.ModelIDEQ(strings.TrimSpace(modelID)),
+		).
+		Select(llmprovidermodel.FieldWireAPI).
+		Only(ctx)
 	if err != nil {
+		if dao.IsNotFound(err) {
+			return "", false, nil
+		}
 		return "", false, fmt.Errorf("query llm provider model: %w", err)
 	}
-	wireAPI = strings.TrimSpace(wireAPI)
+	wireAPI := strings.TrimSpace(entity.WireAPI)
 	if wireAPI == "" {
 		return "", true, nil
 	}
@@ -234,11 +312,23 @@ func (s *llmStore) SaveLLMFacadeToken(ctx context.Context, token llms.FacadeToke
 	if !token.ExpiresAt.IsZero() {
 		expiresAt = token.ExpiresAt.Unix()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO llm_facade_token(token_hash, sandbox_id, token_fingerprint, model, provider_id, wire_api, guest_model, source, run_id, issued_at, expires_at, revoked_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(token_hash) DO UPDATE SET sandbox_id = excluded.sandbox_id, token_fingerprint = excluded.token_fingerprint, model = excluded.model, provider_id = excluded.provider_id, wire_api = excluded.wire_api, guest_model = excluded.guest_model, source = excluded.source, run_id = excluded.run_id, issued_at = excluded.issued_at, expires_at = excluded.expires_at, revoked_at = excluded.revoked_at`,
-		token.TokenHash, token.SandboxID, token.TokenFingerprint, token.Model, token.ProviderID, token.WireAPI, token.GuestModel, token.Source, token.RunID, token.IssuedAt.Unix(), expiresAt, revokedAt)
-	if err != nil {
+	// The old conflict update set covered every non-key column, so the generated
+	// new values reproduce it exactly (token_hash stays the stored key).
+	if err := s.client.LLMFacadeToken.Create().
+		SetID(token.TokenHash).
+		SetSandboxID(token.SandboxID).
+		SetTokenFingerprint(token.TokenFingerprint).
+		SetModel(token.Model).
+		SetProviderID(token.ProviderID).
+		SetWireAPI(token.WireAPI).
+		SetGuestModel(token.GuestModel).
+		SetSource(token.Source).
+		SetRunID(token.RunID).
+		SetIssuedAt(token.IssuedAt.Unix()).
+		SetExpiresAt(expiresAt).
+		SetRevokedAt(revokedAt).
+		OnConflict(entsql.ConflictColumns(llmfacadetoken.FieldID), entsql.ResolveWithNewValues()).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("save llm facade token: %w", err)
 	}
 	return nil
@@ -264,7 +354,9 @@ func (s *llmStore) DeleteLLMFacadeTokenHash(ctx context.Context, tokenHash strin
 	if tokenHash == "" {
 		return nil
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_facade_token WHERE token_hash = ?`, tokenHash); err != nil {
+	if _, err := s.client.LLMFacadeToken.Delete().
+		Where(llmfacadetoken.IDEQ(tokenHash)).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("delete llm facade token: %w", err)
 	}
 	return nil
@@ -279,7 +371,12 @@ func (s *llmStore) DeleteLLMFacadeTokensForRun(ctx context.Context, runID, sourc
 	if runID == "" {
 		return nil
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_facade_token WHERE run_id = ? AND source = ?`, runID, strings.TrimSpace(source)); err != nil {
+	if _, err := s.client.LLMFacadeToken.Delete().
+		Where(
+			llmfacadetoken.RunIDEQ(runID),
+			llmfacadetoken.SourceEQ(strings.TrimSpace(source)),
+		).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("delete llm facade tokens for run: %w", err)
 	}
 	return nil
@@ -287,15 +384,16 @@ func (s *llmStore) DeleteLLMFacadeTokensForRun(ctx context.Context, runID, sourc
 
 func (s *llmStore) GetLLMFacadeToken(ctx context.Context, rawToken string) (llms.FacadeToken, error) {
 	hash, fingerprint := llms.HashFacadeToken(rawToken)
-	row := s.db.QueryRowContext(ctx, `SELECT `+llms.FacadeTokenColumns+` FROM llm_facade_token WHERE token_hash = ?`, hash)
-	token, err := llms.ScanFacadeToken(row.Scan)
+	entity, err := s.client.LLMFacadeToken.Query().
+		Where(llmfacadetoken.IDEQ(hash)).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			return llms.FacadeToken{}, domain.ResourceError(domain.ErrNotFound, "llm facade token", fingerprint, fmt.Sprintf("llm facade token %s not found", fingerprint), err)
 		}
 		return llms.FacadeToken{}, err
 	}
-	return token, nil
+	return llmFacadeTokenFromEntity(entity), nil
 }
 
 // llmFacadeTokenRetention is how long a revoked facade token row is kept before
@@ -312,27 +410,104 @@ const LLMFacadeTokenRetention = llmFacadeTokenRetention
 func (s *llmStore) RevokeLLMFacadeTokensForSandbox(ctx context.Context, sandboxID string) error {
 	sandboxID = strings.TrimSpace(sandboxID)
 	now := time.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `UPDATE llm_facade_token SET revoked_at = ? WHERE sandbox_id = ? AND revoked_at = 0`, now.Unix(), sandboxID); err != nil {
+	if _, err := s.client.LLMFacadeToken.Update().
+		Where(
+			llmfacadetoken.SandboxIDEQ(sandboxID),
+			llmfacadetoken.RevokedAtEQ(0),
+		).
+		SetRevokedAt(now.Unix()).
+		Save(ctx); err != nil {
 		return fmt.Errorf("revoke llm facade tokens for sandbox: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_provider WHERE id LIKE ? ESCAPE '\'`, declaredConnectionIDPattern(sandboxID)); err != nil {
+	// The old statement matched "declared:<sandbox>:%" with an explicit escape
+	// character; the prefix predicate escapes the same metacharacters and keeps
+	// the same case-insensitive LIKE behaviour on SQLite.
+	if _, err := s.client.LLMProvider.Delete().
+		Where(entsql.FieldHasPrefix(llmprovider.FieldID, declaredConnectionIDPrefix(sandboxID))).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("delete declared llm connections for sandbox: %w", err)
 	}
 	// Opportunistically prune long-dead rows (revoked beyond the retention grace,
 	// or expired) so the table stays bounded across sandboxes. Both states already
 	// fail closed at the handler, so deleting them changes nothing observable.
 	cutoff := now.Add(-llmFacadeTokenRetention).Unix()
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM llm_facade_token WHERE (revoked_at != 0 AND revoked_at < ?) OR (expires_at != 0 AND expires_at < ?)`, cutoff, now.Unix()); err != nil {
+	if _, err := s.client.LLMFacadeToken.Delete().
+		Where(llmfacadetoken.Or(
+			llmfacadetoken.And(
+				llmfacadetoken.RevokedAtNEQ(0),
+				llmfacadetoken.RevokedAtLT(cutoff),
+			),
+			llmfacadetoken.And(
+				llmfacadetoken.ExpiresAtNEQ(0),
+				llmfacadetoken.ExpiresAtLT(now.Unix()),
+			),
+		)).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("prune llm facade tokens: %w", err)
 	}
 	return nil
 }
 
-// declaredConnectionIDPattern is the LIKE pattern that matches every declared
-// connection of one sandbox. Because an identifier may contain LIKE
-// metacharacters, they are escaped and the statement uses an explicit escape
-// character.
-func declaredConnectionIDPattern(sandboxID string) string {
-	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(sandboxID)
-	return llms.DeclaredConnectionPrefix + escaped + ":%"
+// declaredConnectionIDPrefix is the literal id prefix every declared connection
+// of one sandbox shares. The stored ids continue with ":" and a run-scoped
+// suffix, so the prefix matches exactly the set the old LIKE pattern did.
+func declaredConnectionIDPrefix(sandboxID string) string {
+	return llms.DeclaredConnectionPrefix + sandboxID + ":"
+}
+
+// llmProviderFromEntity maps a stored connection row to the domain provider. It
+// reproduces llms.ScanProvider's normalization and timestamp parsing.
+func llmProviderFromEntity(entity *dao.LLMProvider) llms.Provider {
+	return llms.Provider{
+		ID:                           entity.ID,
+		Name:                         entity.Name,
+		ProviderType:                 llms.NormalizeProviderType(entity.ProviderType),
+		DefaultWireAPI:               llms.NormalizeWireAPI(entity.DefaultWireAPI),
+		BaseURL:                      entity.BaseURL,
+		APIKey:                       entity.APIKey,
+		AuthHeader:                   entity.AuthHeader,
+		AuthScheme:                   entity.AuthScheme,
+		HeadersJSON:                  entity.HeadersJSON,
+		UseGenericResponsesTextParts: entity.UseGenericResponsesTextParts != 0,
+		Weight:                       entity.Weight,
+		Enabled:                      entity.Enabled != 0,
+		Scope:                        entity.Scope,
+		CreatedAt:                    storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt:                    storedtime.ParseStoredTime(entity.UpdatedAt),
+		Auth:                         llms.ProviderAuth(strings.TrimSpace(entity.Auth)),
+	}
+}
+
+// llmModelFromEntity maps a stored model row to the domain model. It reproduces
+// llms.ScanModel's normalization and timestamp parsing.
+func llmModelFromEntity(entity *dao.LLMModel) llms.Model {
+	return llms.Model{
+		ID:           entity.ID,
+		Name:         entity.Name,
+		Description:  entity.Description,
+		DefaultModel: entity.DefaultModel != 0,
+		Enabled:      entity.Enabled != 0,
+		Scope:        entity.Scope,
+		CreatedAt:    storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt:    storedtime.ParseStoredTime(entity.UpdatedAt),
+	}
+}
+
+// llmFacadeTokenFromEntity maps a stored facade token row to the domain token.
+// It reproduces llms.ScanFacadeToken's timestamp parsing.
+func llmFacadeTokenFromEntity(entity *dao.LLMFacadeToken) llms.FacadeToken {
+	return llms.FacadeToken{
+		SandboxID:        entity.SandboxID,
+		TokenHash:        entity.ID,
+		TokenFingerprint: entity.TokenFingerprint,
+		Model:            entity.Model,
+		ProviderID:       entity.ProviderID,
+		WireAPI:          entity.WireAPI,
+		GuestModel:       entity.GuestModel,
+		Source:           entity.Source,
+		RunID:            entity.RunID,
+		IssuedAt:         storedtime.ParseStoredTime(entity.IssuedAt),
+		ExpiresAt:        storedtime.ParseStoredTime(entity.ExpiresAt),
+		RevokedAt:        storedtime.ParseStoredTime(entity.RevokedAt),
+	}
 }
