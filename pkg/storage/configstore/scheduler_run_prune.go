@@ -156,7 +156,7 @@ type schedulerRunPruneQueryRower interface {
 }
 
 func schedulerRunPruneKeyIsEligible(ctx context.Context, queryer schedulerRunPruneQueryRower, key schedulers.SchedulerRunKey) (bool, error) {
-	var eligible int
+	var eligible bool
 	err := queryer.QueryRowContext(ctx, `SELECT EXISTS(
 		SELECT 1 FROM scheduler_run
 		WHERE scheduler_id = ? AND run_id = ? AND trigger_id <> ''
@@ -171,7 +171,7 @@ func schedulerRunPruneKeyIsEligible(ctx context.Context, queryer schedulerRunPru
 	if err != nil {
 		return false, fmt.Errorf("recheck scheduler run prune candidate %s/%s: %w", key.SchedulerID, key.RunID, err)
 	}
-	return eligible != 0, nil
+	return eligible, nil
 }
 
 func normalizedSchedulerRunKeys(keys []schedulers.SchedulerRunKey) []schedulers.SchedulerRunKey {

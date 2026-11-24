@@ -92,16 +92,29 @@ func appendProjectRunEventsTx(ctx context.Context, tx *sql.Tx, d dialect.Dialect
 		if event.CreatedAt.IsZero() {
 			event.CreatedAt = time.Now().UTC()
 		}
+		// ON CONFLICT keeps the transaction usable on PostgreSQL: a duplicate
+		// primary key aborts the whole transaction, so a follow-up SELECT in
+		// the old error path could never observe the existing row.
 		err := tx.QueryRowContext(ctx, `INSERT INTO project_run_event (id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at)
 			SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM project_run_event WHERE run_id = ?
+			ON CONFLICT (id) DO NOTHING
 			RETURNING seq`, event.ID, event.RunID, string(event.Kind), event.Text, event.Agent, event.Name, event.PayloadJSON, BoolToInt(event.Success), event.ExitCode, event.StopReason, event.CreatedAt.UTC().UnixMilli(), event.RunID).Scan(&event.Sequence)
-		if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
 			existing, found, findErr := getRunEventByID(ctx, tx, event.ID)
-			if findErr == nil && found && existing.RunID == event.RunID {
-				results = append(results, existing)
-				created = append(created, false)
-				continue
+			if findErr != nil {
+				return nil, nil, fmt.Errorf("read conflicting run event %s: %w", event.ID, findErr)
 			}
+			if !found {
+				return nil, nil, fmt.Errorf("insert run event %s: conflict without an existing row", event.ID)
+			}
+			if existing.RunID != event.RunID {
+				return nil, nil, fmt.Errorf("insert run event: event %s already belongs to run %s", event.ID, existing.RunID)
+			}
+			results = append(results, existing)
+			created = append(created, false)
+			continue
+		}
+		if err != nil {
 			return nil, nil, fmt.Errorf("insert run event: %w", err)
 		}
 		results = append(results, event)

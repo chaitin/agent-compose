@@ -370,7 +370,7 @@ func (s *projectStore) ListProjectSchedulersPage(ctx context.Context, query stri
 	query = strings.ToLower(strings.TrimSpace(query))
 	likeQuery := "%" + query + "%"
 	rows, err := s.db.QueryContext(ctx, `WITH page AS (
-		SELECT s.id, s.short_id, s.project_id, s.id, s.agent_name, s.revision, s.enabled, s.trigger_count, s.spec_json, s.created_at, s.updated_at, s.last_error
+		SELECT s.id, s.short_id, s.project_id, s.agent_name, s.revision, s.enabled, s.trigger_count, s.spec_json, s.created_at, s.updated_at, s.last_error
 		FROM project_scheduler s JOIN project p ON p.id = s.project_id
 		WHERE p.removed_at = 0
 		AND s.revision = p.current_revision

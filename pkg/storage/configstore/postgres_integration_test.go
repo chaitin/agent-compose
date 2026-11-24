@@ -14,6 +14,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 	"github.com/chaitin/agent-compose/pkg/storage/postgres"
 )
@@ -340,5 +341,138 @@ func TestPostgresEventTraceIntegration(t *testing.T) {
 	}
 	if !truncated.DescendantsTruncated {
 		t.Fatalf("trace with limit 1 was not truncated: %+v", truncated)
+	}
+}
+
+func TestPostgresSchedulerPageIntegration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	store := openPostgresStore(t, ctx)
+
+	project, err := store.UpsertProject(ctx, domain.ProjectRecord{
+		ID: "project-scheduler-page", Name: "scheduler-page", SourcePath: "/tmp/scheduler-page",
+		SourceJSON: `{}`, CurrentRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	createRunEventTestAgent(t, runEventTestAgentSpec{Ctx: ctx, Store: store, ProjectID: project.ID, AgentName: "worker"})
+	scheduler, err := store.UpsertProjectScheduler(ctx, domain.ProjectSchedulerRecord{
+		ProjectID: project.ID, SchedulerID: "scheduler-page", AgentName: "worker",
+		Revision: 1, Enabled: true, SpecJSON: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create scheduler: %v", err)
+	}
+
+	page, err := store.ListProjectSchedulersPage(ctx, "", 0, 10)
+	if err != nil {
+		t.Fatalf("list scheduler page: %v", err)
+	}
+	if len(page) != 1 || page[0].SchedulerID != scheduler.SchedulerID {
+		t.Fatalf("scheduler page = %+v, want %s", page, scheduler.SchedulerID)
+	}
+	total, err := store.CountProjectSchedulers(ctx, "")
+	if err != nil {
+		t.Fatalf("count schedulers: %v", err)
+	}
+	if total != 1 {
+		t.Fatalf("scheduler count = %d, want 1", total)
+	}
+}
+
+func TestPostgresSchedulerRunPruneIntegration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	store := openPostgresStore(t, ctx)
+
+	project, err := store.UpsertProject(ctx, domain.ProjectRecord{
+		ID: "project-prune", Name: "prune", SourcePath: "/tmp/prune",
+		SourceJSON: `{}`, CurrentRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	createRunEventTestAgent(t, runEventTestAgentSpec{Ctx: ctx, Store: store, ProjectID: project.ID, AgentName: "worker"})
+	scheduler, err := store.UpsertProjectScheduler(ctx, domain.ProjectSchedulerRecord{
+		ProjectID: project.ID, SchedulerID: "scheduler-prune", AgentName: "worker",
+		Revision: 1, Enabled: true, SpecJSON: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("create scheduler: %v", err)
+	}
+	startedAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	run := domain.SchedulerRunSummary{
+		ID: "scheduler-run-prune", SchedulerID: scheduler.SchedulerID,
+		TriggerID: "trigger-prune", TriggerKind: "cron", Status: domain.SchedulerRunStatusSucceeded,
+		StartedAt: startedAt, CompletedAt: startedAt.Add(time.Second), PayloadJSON: `{}`,
+	}
+	if err := store.CreateSchedulerRun(ctx, run); err != nil {
+		t.Fatalf("create scheduler run: %v", err)
+	}
+
+	key := schedulers.SchedulerRunKey{SchedulerID: scheduler.SchedulerID, RunID: run.ID}
+	counted, err := store.CountSchedulerRunPruneData(ctx, []schedulers.SchedulerRunKey{key})
+	if err != nil {
+		t.Fatalf("count scheduler run prune data: %v", err)
+	}
+	if counted.Runs != 1 {
+		t.Fatalf("prune count = %+v, want one run", counted)
+	}
+	removed, err := store.DeleteSchedulerRunPruneData(ctx, []schedulers.SchedulerRunKey{key})
+	if err != nil {
+		t.Fatalf("delete scheduler run prune data: %v", err)
+	}
+	if removed.Stats.Runs != 1 || len(removed.RemovedKeys) != 1 {
+		t.Fatalf("prune removal = %+v, want one run", removed)
+	}
+}
+
+func TestPostgresRunEventIdempotencyIntegration(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	store := openPostgresStore(t, ctx)
+
+	project, err := store.UpsertProject(ctx, domain.ProjectRecord{
+		ID: "project-run-event-idempotent", Name: "run-event-idempotent",
+		SourcePath: "/tmp/run-event-idempotent", SourceJSON: `{}`, CurrentRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	agentID := createRunEventTestAgent(t, runEventTestAgentSpec{
+		Ctx: ctx, Store: store, ProjectID: project.ID, AgentName: "worker",
+	})
+	run, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{
+		RunID: "run-event-idempotent", ProjectID: project.ID, AgentName: "worker",
+		AgentID: agentID, Status: domain.ProjectRunStatusRunning,
+	})
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+	event := domain.ProjectRunEventRecord{
+		ID: "event-pg-idempotent", RunID: run.RunID,
+		Kind: domain.ProjectRunEventKindUserMessage, Text: "hello",
+	}
+	first, created, err := store.AppendProjectRunEvent(ctx, event)
+	if err != nil || !created || first.Sequence != 1 {
+		t.Fatalf("append first=%#v created=%v err=%v", first, created, err)
+	}
+	event.Text = "changed"
+	repeated, created, err := store.AppendProjectRunEvent(ctx, event)
+	if err != nil || created || repeated.ID != first.ID || repeated.Text != "hello" || repeated.Sequence != first.Sequence {
+		t.Fatalf("repeat=%#v created=%v err=%v", repeated, created, err)
+	}
+
+	other, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{
+		RunID: "run-event-other", ProjectID: project.ID, AgentName: "worker",
+		AgentID: agentID, Status: domain.ProjectRunStatusRunning,
+	})
+	if err != nil {
+		t.Fatalf("create other run: %v", err)
+	}
+	event.RunID = other.RunID
+	if _, _, err := store.AppendProjectRunEvent(ctx, event); err == nil || !strings.Contains(err.Error(), "already belongs to run") {
+		t.Fatalf("cross-run event id conflict = %v, want a conflict rejection", err)
 	}
 }

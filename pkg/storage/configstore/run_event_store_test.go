@@ -61,8 +61,8 @@ func TestProjectRunEventsAreOrderedIdempotentAndCascade(t *testing.T) {
 	if _, err := store.CreateProjectRun(ctx, domain.ProjectRunRecord{RunID: "run-other-events", ProjectID: project.ID, AgentName: "worker", AgentID: agentID, Status: domain.ProjectRunStatusRunning}); err != nil {
 		t.Fatalf("create other run: %v", err)
 	}
-	if _, _, err := store.AppendProjectRunEvent(ctx, domain.ProjectRunEventRecord{ID: first.ID, RunID: "run-other-events", Kind: domain.ProjectRunEventKindUserMessage, Text: "other"}); err == nil || !strings.Contains(err.Error(), "UNIQUE constraint failed") {
-		t.Fatalf("cross-run event id conflict = %v, want original unique constraint", err)
+	if _, _, err := store.AppendProjectRunEvent(ctx, domain.ProjectRunEventRecord{ID: first.ID, RunID: "run-other-events", Kind: domain.ProjectRunEventKindUserMessage, Text: "other"}); err == nil || !strings.Contains(err.Error(), "already belongs to run") {
+		t.Fatalf("cross-run event id conflict = %v, want a conflict rejection", err)
 	}
 	second, created, err := store.AppendProjectRunEvent(ctx, domain.ProjectRunEventRecord{ID: "event-terminal", RunID: "run-events", Kind: domain.ProjectRunEventKindStatus})
 	if err != nil || !created || second.Sequence != 2 {
