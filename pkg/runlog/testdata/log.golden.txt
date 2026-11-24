@@ -1,0 +1,15 @@
+Let me look.
+One moment
+[tool:Bash]
+$ ls
+bash: warning
+a.go
+b.go
+Two files: a.go and b.go.
+and the tests?
+
+[tool:Read]
+{"path":"a_test.go"}
+[tool error] no such file
+
+[error] read failed

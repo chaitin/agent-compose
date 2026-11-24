@@ -189,6 +189,11 @@ func pathSegment(name, id string) (string, error) {
 // Render is the entry's contribution to the run's text view. It keeps the
 // shape of the legacy transcript: prose as-is, tool calls as a [tool:name]
 // header with the command or arguments, then the tool's output.
+//
+// Render is part of the on-disk format. Each entry stores the text offset its
+// rendering starts at, and readers re-render stored entries to serve the text
+// view, so changing what Render returns for an existing entry shifts the text
+// view of logs already written. testdata/render.golden pins it.
 func Render(e Entry) string {
 	switch e.Type {
 	case EntryUser:
