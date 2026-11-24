@@ -364,7 +364,8 @@ func TestExecHandlerSandboxTargetWorkflow(t *testing.T) {
 	sandboxRoot := t.TempDir()
 	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{ID: "sandbox-1", VMStatus: domain.VMStatusRunning, WorkspacePath: filepath.Join(sandboxRoot, "workspace")}}
 	store := &apiExecSandboxStore{sandbox: sandbox, vm: domain.VMState{Driver: "docker"}}
-	runtime := &apiExecRuntime{}
+	execRoot := filepath.Join(sandboxRoot, "state", "exec")
+	runtime := &apiExecRuntime{requestGlob: filepath.Join(execRoot, "*", "command-request.json")}
 	handler := NewExecHandler(ExecHandlerDeps{
 		Config:   &appconfig.Config{},
 		Store:    store,
@@ -384,14 +385,15 @@ func TestExecHandlerSandboxTargetWorkflow(t *testing.T) {
 	if !resp.Msg.GetResult().GetSuccess() || resp.Msg.GetResult().GetStdout() != "hi\n" || runtime.spec.Command != "sh" || !strings.Contains(strings.Join(runtime.spec.Args, " "), "agent-compose-runtime exec") {
 		t.Fatalf("exec resp=%#v spec=%#v", resp.Msg.GetResult(), runtime.spec)
 	}
-	requestFiles, err := filepath.Glob(filepath.Join(sandboxRoot, "state", "exec", "*", "command-request.json"))
-	if err != nil || len(requestFiles) != 1 {
-		t.Fatalf("command request files=%#v err=%v", requestFiles, err)
+	if len(runtime.requestFiles) != 1 {
+		t.Fatalf("command request files during exec=%#v", runtime.requestFiles)
 	}
 	var commandRequest execution.RuntimeCommandRequest
-	data, err := os.ReadFile(requestFiles[0])
-	if err != nil || json.Unmarshal(data, &commandRequest) != nil {
-		t.Fatalf("read command request data=%q err=%v", string(data), err)
+	if err := json.Unmarshal(runtime.requestData, &commandRequest); err != nil {
+		t.Fatalf("read command request data=%q err=%v", string(runtime.requestData), err)
+	}
+	if _, err := os.Stat(filepath.Dir(runtime.requestFiles[0])); !os.IsNotExist(err) {
+		t.Fatalf("exec dir should be removed after exec: err=%v", err)
 	}
 	if commandRequest.Env["FOO"] != "bar" || commandRequest.Command != "echo" || len(commandRequest.Args) != 1 || commandRequest.Args[0] != "hi" {
 		t.Fatalf("command request = %#v", commandRequest)
@@ -404,13 +406,8 @@ func TestExecHandlerSandboxTargetWorkflow(t *testing.T) {
 	if connect.CodeOf(err) != connect.CodeInvalidArgument || strings.Contains(err.Error(), "do-not-leak") {
 		t.Fatalf("secret exec env error = %v, want invalid argument without value", err)
 	}
-	requestFiles, err = filepath.Glob(filepath.Join(sandboxRoot, "state", "exec", "*", "command-request.json"))
-	if err != nil || len(requestFiles) != 1 {
-		t.Fatalf("secret exec env created an artifact: files=%#v err=%v", requestFiles, err)
-	}
-	outputData, err := os.ReadFile(filepath.Join(filepath.Dir(requestFiles[0]), "output.txt"))
-	if err != nil || string(outputData) != "hi\n" {
-		t.Fatalf("exec output artifact = %q err=%v", string(outputData), err)
+	if entries, err := os.ReadDir(execRoot); err != nil || len(entries) != 0 {
+		t.Fatalf("exec dirs left behind: entries=%v err=%v", entries, err)
 	}
 	if _, err := handler.Exec(ctx, connect.NewRequest(&agentcomposev2.ExecRequest{Target: &agentcomposev2.ExecRequest_SandboxId{SandboxId: "sandbox-1"}})); connect.CodeOf(err) != connect.CodeInvalidArgument {
 		t.Fatalf("expected missing command error, got %v", err)
@@ -1376,10 +1373,21 @@ func (d *apiExecPromptRunAttachDelegate) RunProjectCommandAttach(_ context.Conte
 
 type apiExecRuntime struct {
 	spec domain.ExecSpec
+	// requestGlob, when set, is matched while the command runs so a test can
+	// inspect command-request.json before the handler removes the exec dir.
+	requestGlob  string
+	requestFiles []string
+	requestData  []byte
 }
 
 func (r *apiExecRuntime) ExecStream(_ context.Context, _ *domain.Sandbox, _ domain.VMState, spec domain.ExecSpec, writer domain.ExecStreamWriter) (domain.ExecResult, error) {
 	r.spec = spec
+	if r.requestGlob != "" {
+		r.requestFiles, _ = filepath.Glob(r.requestGlob)
+		if len(r.requestFiles) == 1 {
+			r.requestData, _ = os.ReadFile(r.requestFiles[0])
+		}
+	}
 	writer(domain.ExecChunk{Text: "$ echo hi\n"})
 	writer(domain.ExecChunk{Text: "hi\n"})
 	payload := apiRuntimeCommandPayload(domain.RuntimeCommandResult{Stdout: "hi\n", Output: "hi\n", ExitCode: 0, Success: true})

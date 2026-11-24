@@ -37,7 +37,7 @@ type execPreparation struct {
 	GuestExecDir string
 }
 
-func (h *ExecHandler) prepareExecCommand(ctx context.Context, sandbox *domain.Sandbox, req *agentcomposev2.ExecRequest, execID string) (execPreparation, error) {
+func (h *ExecHandler) prepareExecCommand(ctx context.Context, sandbox *domain.Sandbox, req *agentcomposev2.ExecRequest, execID string) (prep execPreparation, err error) {
 	if err := runs.ValidateCommandEnv(req.GetEnv()); err != nil {
 		return execPreparation{}, ConnectErrorForDomain(err)
 	}
@@ -58,6 +58,11 @@ func (h *ExecHandler) prepareExecCommand(ctx context.Context, sandbox *domain.Sa
 	if err := os.MkdirAll(hostExecDir, 0o755); err != nil {
 		return execPreparation{}, connect.NewError(connect.CodeInternal, fmt.Errorf("create exec artifact dir: %w", err))
 	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(hostExecDir)
+		}
+	}()
 	guestExecDir := filepath.Join(h.config.GuestStateRoot, "exec", execID)
 	runtimeRequest := execution.RuntimeCommandRequestPayloadFromCommand(h.config, execution.RuntimeCommandSpec{
 		Mode:           "exec",
@@ -163,6 +168,10 @@ func (h *ExecHandler) executeProjectCommand(ctx context.Context, req *agentcompo
 	if err != nil {
 		return nil, err
 	}
+	// Exec is non-persistent: the result is returned to the caller, so the
+	// request, result and output files the runtime leaves behind are removed
+	// once the command finishes.
+	defer func() { _ = os.RemoveAll(prep.HostExecDir) }()
 	writer, sendErr := newExecStreamWriter(execStreamWriterRequest{
 		ExecID:    execID,
 		SandboxID: sandbox.Summary.ID,
@@ -193,9 +202,6 @@ func (h *ExecHandler) executeProjectCommand(ctx context.Context, req *agentcompo
 	}
 	commandResult, err := execution.ParseCommandExecResult(result)
 	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
-	if err := execution.MirrorRuntimeCommandArtifacts(prep.HostExecDir, commandResult); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return ExecResultToProto(ExecResultProtoRequest{

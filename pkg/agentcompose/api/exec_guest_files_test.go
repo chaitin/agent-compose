@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,12 +20,13 @@ type recordingGuestFileRuntime struct {
 	apiExecRuntime
 	guestPath string
 	content   []byte
+	writeErr  error
 }
 
 func (r *recordingGuestFileRuntime) WriteGuestFile(_ context.Context, _ *domain.Sandbox, _ domain.VMState, guestPath string, content []byte) error {
 	r.guestPath = guestPath
 	r.content = append([]byte(nil), content...)
-	return nil
+	return r.writeErr
 }
 
 // The exec command request is persisted on the daemon and then read back by the
@@ -91,5 +93,38 @@ func TestPrepareExecCommandSkipsGuestPushForSharedMountDrivers(t *testing.T) {
 		Command: &agentcomposev2.ExecCommand{Command: "echo"},
 	}, "exec-shared"); err != nil {
 		t.Fatalf("prepareExecCommand: %v", err)
+	}
+}
+
+// Exec is non-persistent, so a request that fails before the command starts
+// must not leave its exec dir (and the env in command-request.json) behind.
+func TestPrepareExecCommandRemovesExecDirOnFailure(t *testing.T) {
+	sandboxRoot := t.TempDir()
+	sandbox := &domain.Sandbox{Summary: domain.SandboxSummary{
+		ID: "sandbox-guest-file-fail", VMStatus: domain.VMStatusRunning, WorkspacePath: filepath.Join(sandboxRoot, "workspace"),
+	}}
+	runtime := &recordingGuestFileRuntime{writeErr: errors.New("push failed")}
+	handler := NewExecHandler(ExecHandlerDeps{
+		Config: &appconfig.Config{DataRoot: t.TempDir()},
+		Store:  &apiExecSandboxStore{sandbox: sandbox, vm: domain.VMState{Driver: "k8s"}},
+		Runtime: func(*domain.Sandbox) (ExecRuntime, error) {
+			return runtime, nil
+		},
+	})
+
+	if _, err := handler.prepareExecCommand(context.Background(), sandbox, &agentcomposev2.ExecRequest{
+		Command: &agentcomposev2.ExecCommand{Command: "echo", Args: []string{"hi"}},
+	}, "exec-guest-file-fail"); err == nil {
+		t.Fatal("prepareExecCommand succeeded, want the guest push error")
+	}
+	if runtime.guestPath == "" {
+		t.Fatal("guest push was not attempted")
+	}
+	entries, err := os.ReadDir(filepath.Join(sandboxRoot, "state", "exec"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatalf("read exec root: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("exec dir left behind after failure: %v", entries)
 	}
 }
