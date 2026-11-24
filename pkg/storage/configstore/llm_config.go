@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/chaitin/agent-compose/ent/dao"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"strings"
@@ -13,7 +14,8 @@ import (
 
 // llmStore owns LLM provider/model configuration and facade tokens.
 type llmStore struct {
-	db *sql.DB
+	db     *sql.DB
+	client *dao.Client
 }
 
 func (s *llmStore) HasLLMProviders(ctx context.Context) (bool, error) {

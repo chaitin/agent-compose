@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/chaitin/agent-compose/ent/dao"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 type projectStore struct {
 	db      *sql.DB
 	dialect dialect.Dialect
+	client  *dao.Client
 }
 
 func (s *projectStore) UpsertProject(ctx context.Context, project ProjectRecord) (ProjectRecord, error) {

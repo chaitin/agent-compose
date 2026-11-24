@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/chaitin/agent-compose/ent/dao"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storedtime"
@@ -15,7 +16,8 @@ import (
 
 // schedulerStore owns scheduler execution state, triggers, runs, and events.
 type schedulerStore struct {
-	db *sql.DB
+	db     *sql.DB
+	client *dao.Client
 }
 
 func (s *schedulerStore) ListSchedulerSummaries(ctx context.Context) ([]domain.SchedulerSummary, error) {

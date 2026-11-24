@@ -4,24 +4,28 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
+
 	"github.com/google/uuid"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/projectvolume"
+	"github.com/chaitin/agent-compose/ent/dao/volume"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 	"github.com/chaitin/agent-compose/pkg/storage/storeutil"
 	"github.com/chaitin/agent-compose/pkg/storedtime"
 	"github.com/chaitin/agent-compose/pkg/volumes"
-
-	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 type volumeStore struct {
 	db      *sql.DB
 	dialect dialect.Dialect
+	client  *dao.Client
 }
 
 type VolumeListOptions = domain.VolumeListOptions
@@ -46,10 +50,17 @@ func (s *volumeStore) CreateVolume(ctx context.Context, item domain.VolumeRecord
 	now := time.Now().UTC()
 	normalized.CreatedAt = now
 	normalized.UpdatedAt = now
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO volumes(
-		id, name, driver, path, labels_json, options_json, project_id, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		normalized.ID, normalized.Name, normalized.Driver, normalized.Path, labelsJSON, optionsJSON, normalized.ProjectID, now.Unix(), now.Unix()); err != nil {
+	if _, err := s.client.Volume.Create().
+		SetID(normalized.ID).
+		SetName(normalized.Name).
+		SetDriver(normalized.Driver).
+		SetPath(normalized.Path).
+		SetLabelsJSON(labelsJSON).
+		SetOptionsJSON(optionsJSON).
+		SetProjectID(normalized.ProjectID).
+		SetCreatedAt(now.Unix()).
+		SetUpdatedAt(now.Unix()).
+		Save(ctx); err != nil {
 		if s.dialect.IsDuplicateRow(err) {
 			return domain.VolumeRecord{}, domain.ResourceError(domain.ErrAlreadyExists, "volume", normalized.Name, fmt.Sprintf("volume %s already exists", normalized.Name), err)
 		}
@@ -77,14 +88,20 @@ func (s *volumeStore) UpdateVolume(ctx context.Context, item domain.VolumeRecord
 	}
 	normalized.CreatedAt = existing.CreatedAt
 	normalized.UpdatedAt = time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE volumes SET
-		name = ?, driver = ?, path = ?, labels_json = ?, options_json = ?, project_id = ?, updated_at = ?
-		WHERE id = ?`,
-		normalized.Name, normalized.Driver, normalized.Path, labelsJSON, optionsJSON, normalized.ProjectID, normalized.UpdatedAt.Unix(), normalized.ID)
+	affected, err := s.client.Volume.Update().
+		Where(volume.ID(normalized.ID)).
+		SetName(normalized.Name).
+		SetDriver(normalized.Driver).
+		SetPath(normalized.Path).
+		SetLabelsJSON(labelsJSON).
+		SetOptionsJSON(optionsJSON).
+		SetProjectID(normalized.ProjectID).
+		SetUpdatedAt(normalized.UpdatedAt.Unix()).
+		Save(ctx)
 	if err != nil {
 		return domain.VolumeRecord{}, fmt.Errorf("update volume %s: %w", normalized.ID, err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		return domain.VolumeRecord{}, domain.ResourceError(domain.ErrNotFound, "volume", normalized.ID, fmt.Sprintf("volume %s not found", normalized.ID), nil)
 	}
 	return normalized, nil
@@ -107,31 +124,35 @@ func (s *volumeStore) GetVolumeIfExists(ctx context.Context, nameOrID string) (d
 	if key == "" {
 		return domain.VolumeRecord{}, false, fmt.Errorf("volume name or id is required")
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, driver, path, labels_json, options_json, project_id, created_at, updated_at
-		FROM volumes WHERE id = ? OR name = ?`, key, key)
-	item, err := scanVolume(row.Scan)
+	entity, err := s.client.Volume.Query().
+		Where(volume.Or(volume.ID(key), volume.NameEQ(key))).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			return domain.VolumeRecord{}, false, nil
 		}
+		return domain.VolumeRecord{}, false, err
+	}
+	item, err := volumeFromEntity(entity)
+	if err != nil {
 		return domain.VolumeRecord{}, false, err
 	}
 	return item, true, nil
 }
 
 func (s *volumeStore) ListVolumes(ctx context.Context, options VolumeListOptions) ([]domain.VolumeRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, driver, path, labels_json, options_json, project_id, created_at, updated_at
-		FROM volumes ORDER BY name ASC, id ASC`)
+	entities, err := s.client.Volume.Query().
+		Order(volume.ByName(), volume.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query volumes: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	query := strings.ToLower(strings.TrimSpace(options.Query))
 	driver := strings.ToLower(strings.TrimSpace(options.Driver))
 	projectID := strings.TrimSpace(options.ProjectID)
-	var items []domain.VolumeRecord
-	for rows.Next() {
-		item, err := scanVolume(rows.Scan)
+	items := make([]domain.VolumeRecord, 0, len(entities))
+	for _, entity := range entities {
+		item, err := volumeFromEntity(entity)
 		if err != nil {
 			return nil, err
 		}
@@ -145,9 +166,6 @@ func (s *volumeStore) ListVolumes(ctx context.Context, options VolumeListOptions
 			continue
 		}
 		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate volumes: %w", err)
 	}
 	return items, nil
 }
@@ -172,19 +190,22 @@ func (s *volumeStore) DeleteVolume(ctx context.Context, nameOrID string) error {
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin delete volume %s: %w", item.Name, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_volumes WHERE volume_id = ?`, item.ID); err != nil {
+	client := tx.Client()
+	if _, err := client.ProjectVolume.Delete().
+		Where(projectvolume.VolumeIDEQ(item.ID)).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("delete project references for volume %s: %w", item.Name, err)
 	}
-	result, err := tx.ExecContext(ctx, `DELETE FROM volumes WHERE id = ?`, item.ID)
+	affected, err := client.Volume.Delete().Where(volume.ID(item.ID)).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("delete volume %s: %w", item.Name, err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		return domain.ResourceError(domain.ErrNotFound, "volume", item.Name, fmt.Sprintf("volume %s not found", item.Name), nil)
 	}
 	if err := tx.Commit(); err != nil {
@@ -201,11 +222,21 @@ func (s *volumeStore) UpsertProjectVolume(ctx context.Context, projectID, key st
 		return fmt.Errorf("project id, volume key, and volume id are required")
 	}
 	now := time.Now().UTC().Unix()
-	_, err := s.db.ExecContext(ctx, `INSERT INTO project_volumes(project_id, volume_key, volume_id, external, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?)
-		ON CONFLICT(project_id, volume_key) DO UPDATE SET volume_id = excluded.volume_id, external = excluded.external, updated_at = excluded.updated_at`,
-		projectID, key, volumeID, BoolToInt(link.External), now, now)
-	if err != nil {
+	external := BoolToInt(link.External)
+	if err := s.client.ProjectVolume.Create().
+		SetID(projectID).
+		SetVolumeKey(key).
+		SetVolumeID(volumeID).
+		SetExternal(external).
+		SetCreatedAt(now).
+		SetUpdatedAt(now).
+		OnConflict(entsql.ConflictColumns(projectvolume.FieldID, projectvolume.FieldVolumeKey)).
+		Update(func(u *dao.ProjectVolumeUpsert) {
+			u.SetVolumeID(volumeID)
+			u.SetExternal(external)
+			u.SetUpdatedAt(now)
+		}).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("upsert project volume %s/%s: %w", projectID, key, err)
 	}
 	return nil
@@ -216,12 +247,13 @@ func (s *volumeStore) ReplaceProjectVolumes(ctx context.Context, projectID strin
 	if projectID == "" {
 		return fmt.Errorf("project id is required")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin replace project volumes %s: %w", projectID, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_volumes WHERE project_id = ?`, projectID); err != nil {
+	client := tx.Client()
+	if _, err := client.ProjectVolume.Delete().Where(projectvolume.IDEQ(projectID)).Exec(ctx); err != nil {
 		return fmt.Errorf("clear project volumes %s: %w", projectID, err)
 	}
 	now := time.Now().UTC().Unix()
@@ -231,8 +263,14 @@ func (s *volumeStore) ReplaceProjectVolumes(ctx context.Context, projectID strin
 		if key == "" || volumeID == "" {
 			return fmt.Errorf("project volume key and volume id are required")
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO project_volumes(project_id, volume_key, volume_id, external, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?)`, projectID, key, volumeID, BoolToInt(link.External), now, now); err != nil {
+		if _, err := client.ProjectVolume.Create().
+			SetID(projectID).
+			SetVolumeKey(key).
+			SetVolumeID(volumeID).
+			SetExternal(BoolToInt(link.External)).
+			SetCreatedAt(now).
+			SetUpdatedAt(now).
+			Save(ctx); err != nil {
 			return fmt.Errorf("replace project volume %s/%s: %w", projectID, key, err)
 		}
 	}
@@ -242,6 +280,9 @@ func (s *volumeStore) ReplaceProjectVolumes(ctx context.Context, projectID strin
 	return nil
 }
 
+// ListProjectVolumes reads the project's volume links together with the volume
+// rows they point at. It stays a single join because callers expect one
+// consistent snapshot of both tables.
 func (s *volumeStore) ListProjectVolumes(ctx context.Context, projectID string) (map[string]domain.VolumeRecord, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
@@ -276,7 +317,7 @@ func (s *volumeStore) RemoveProjectVolumes(ctx context.Context, projectID string
 	if projectID == "" {
 		return fmt.Errorf("project id is required")
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM project_volumes WHERE project_id = ?`, projectID); err != nil {
+	if _, err := s.client.ProjectVolume.Delete().Where(projectvolume.IDEQ(projectID)).Exec(ctx); err != nil {
 		return fmt.Errorf("remove project volumes %s: %w", projectID, err)
 	}
 	return nil
@@ -287,15 +328,15 @@ func (s *volumeStore) FindVolumeConfigReferences(ctx context.Context, volumeID s
 	if volumeID == "" {
 		return nil, fmt.Errorf("volume id is required")
 	}
-	volume, err := s.GetVolume(ctx, volumeID)
+	volumeItem, err := s.GetVolume(ctx, volumeID)
 	if err != nil {
 		return nil, err
 	}
-	refs, err := s.findProjectVolumeReferences(ctx, volume.ID)
+	refs, err := s.findProjectVolumeReferences(ctx, volumeItem.ID)
 	if err != nil {
 		return nil, err
 	}
-	configRefs, err := s.findVolumeSpecReferences(ctx, volume.Name)
+	configRefs, err := s.findVolumeSpecReferences(ctx, volumeItem.Name)
 	if err != nil {
 		return nil, err
 	}
@@ -304,23 +345,17 @@ func (s *volumeStore) FindVolumeConfigReferences(ctx context.Context, volumeID s
 }
 
 // findProjectVolumeReferences lists the project bindings that hold this volume.
-func (s *volumeStore) findProjectVolumeReferences(ctx context.Context, volumeID string) (_ []domain.VolumeReference, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT project_id, volume_key FROM project_volumes WHERE volume_id = ? ORDER BY project_id, volume_key`, volumeID)
+func (s *volumeStore) findProjectVolumeReferences(ctx context.Context, volumeID string) ([]domain.VolumeReference, error) {
+	entities, err := s.client.ProjectVolume.Query().
+		Where(projectvolume.VolumeIDEQ(volumeID)).
+		Order(projectvolume.ByID(), projectvolume.ByVolumeKey()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query project volume references: %w", err)
 	}
-	defer func() { storeutil.ReportClose(rows.Close(), &err, "project volume references") }()
-	var refs []domain.VolumeReference
-	for rows.Next() {
-		var projectID string
-		var key string
-		if scanErr := rows.Scan(&projectID, &key); scanErr != nil {
-			return nil, fmt.Errorf("scan project volume reference: %w", scanErr)
-		}
-		refs = append(refs, domain.VolumeReference{ResourceType: "project_volume", ResourceID: projectID, Name: key})
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return nil, rowsErr
+	refs := make([]domain.VolumeReference, 0, len(entities))
+	for _, entity := range entities {
+		refs = append(refs, domain.VolumeReference{ResourceType: "project_volume", ResourceID: entity.ID, Name: entity.VolumeKey})
 	}
 	return refs, nil
 }
@@ -331,7 +366,7 @@ func (s *volumeStore) findVolumeSpecReferences(ctx context.Context, volumeName s
 		resourceType string
 		sql          string
 	}{
-		{resourceType: "project_agent", sql: `SELECT id, name, COALESCE(spec_json, '{}') FROM project_agent`},
+		{resourceType: "project_agent", sql: `SELECT id, name, spec_json FROM project_agent`},
 	} {
 		queryRefs, err := s.findVolumeSpecReferencesIn(ctx, query.resourceType, query.sql, volumeName)
 		if err != nil {
@@ -390,28 +425,42 @@ func volumeSpecsReferenceParts(specs []domain.VolumeMountSpec, volumeName string
 	return false
 }
 
-func scanVolume(scan func(dest ...any) error) (domain.VolumeRecord, error) {
-	var item domain.VolumeRecord
-	var labelsJSON string
-	var optionsJSON string
-	var createdAtRaw any
-	var updatedAtRaw any
-	if err := scan(&item.ID, &item.Name, &item.Driver, &item.Path, &labelsJSON, &optionsJSON, &item.ProjectID, &createdAtRaw, &updatedAtRaw); err != nil {
-		return domain.VolumeRecord{}, fmt.Errorf("scan volume: %w", err)
-	}
-	labels, err := decodeStringMapJSON(labelsJSON)
+// volumeFromEntity maps one row of volumes to the domain record. The JSON and
+// timestamp columns keep their released storage representation.
+func volumeFromEntity(entity *dao.Volume) (domain.VolumeRecord, error) {
+	labels, err := decodeStringMapJSON(entity.LabelsJSON)
 	if err != nil {
 		return domain.VolumeRecord{}, fmt.Errorf("decode volume labels: %w", err)
 	}
-	options, err := decodeStringMapJSON(optionsJSON)
+	options, err := decodeStringMapJSON(entity.OptionsJSON)
 	if err != nil {
 		return domain.VolumeRecord{}, fmt.Errorf("decode volume options: %w", err)
 	}
-	item.Labels = labels
-	item.Options = options
-	item.CreatedAt = storedtime.ParseStoredTime(createdAtRaw)
-	item.UpdatedAt = storedtime.ParseStoredTime(updatedAtRaw)
+	item := domain.VolumeRecord{
+		ID:        entity.ID,
+		Name:      entity.Name,
+		Driver:    entity.Driver,
+		Path:      entity.Path,
+		Labels:    labels,
+		Options:   options,
+		ProjectID: entity.ProjectID,
+		CreatedAt: storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt: storedtime.ParseStoredTime(entity.UpdatedAt),
+	}
 	return volumes.NormalizeRecord(item)
+}
+
+// scanVolume reads the volumes columns selected by ListProjectVolumes' join.
+func scanVolume(scan func(dest ...any) error) (domain.VolumeRecord, error) {
+	var entity dao.Volume
+	var createdAt int64
+	var updatedAt int64
+	if err := scan(&entity.ID, &entity.Name, &entity.Driver, &entity.Path, &entity.LabelsJSON, &entity.OptionsJSON, &entity.ProjectID, &createdAt, &updatedAt); err != nil {
+		return domain.VolumeRecord{}, fmt.Errorf("scan volume: %w", err)
+	}
+	entity.CreatedAt = createdAt
+	entity.UpdatedAt = updatedAt
+	return volumeFromEntity(&entity)
 }
 
 func encodeStringMapJSON(values map[string]string) (string, error) {

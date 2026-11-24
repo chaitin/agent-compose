@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/chaitin/agent-compose/ent/dao"
 	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/storage/storeutil"
@@ -19,6 +20,7 @@ import (
 type eventStore struct {
 	db      *sql.DB
 	dialect dialect.Dialect
+	client  *dao.Client
 }
 
 func (s *eventStore) GetEvent(ctx context.Context, eventID string) (domain.TopicEventRecord, error) {

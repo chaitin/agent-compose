@@ -10,6 +10,7 @@ import (
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 
+	"github.com/chaitin/agent-compose/ent/dao"
 	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
@@ -30,7 +31,8 @@ type (
 // coreStore owns the shared configuration domains: global env vars, workspace
 // configs.
 type coreStore struct {
-	db *sql.DB
+	db     *sql.DB
+	client *dao.Client
 }
 
 // ConfigStore is the composite persistence facade over DATA_ROOT/data.db. Each
@@ -65,17 +67,18 @@ func FromDB(db *sql.DB) *ConfigStore {
 
 func FromDBWithDialect(db *sql.DB, d dialect.Dialect) *ConfigStore {
 	d = dialect.OrSQLite(d)
+	client := newEntClient(db, d)
 	return &ConfigStore{
 		db:                     db,
 		dialect:                d,
-		coreStore:              &coreStore{db: db},
-		schedulerStore:         &schedulerStore{db: db},
-		eventStore:             &eventStore{db: db, dialect: d},
-		projectStore:           &projectStore{db: db, dialect: d},
-		llmStore:               &llmStore{db: db},
-		credentialStore:        &credentialStore{db: db},
-		capabilityGatewayStore: &capabilityGatewayStore{db: db},
-		volumeStore:            &volumeStore{db: db, dialect: d},
+		coreStore:              &coreStore{db: db, client: client},
+		schedulerStore:         &schedulerStore{db: db, client: client},
+		eventStore:             &eventStore{db: db, dialect: d, client: client},
+		projectStore:           &projectStore{db: db, dialect: d, client: client},
+		llmStore:               &llmStore{db: db, client: client},
+		credentialStore:        &credentialStore{db: db, client: client},
+		capabilityGatewayStore: &capabilityGatewayStore{db: db, client: client},
+		volumeStore:            &volumeStore{db: db, dialect: d, client: client},
 	}
 }
 

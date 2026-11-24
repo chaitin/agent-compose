@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/chaitin/agent-compose/ent/dao"
 	"strings"
 	"time"
 
@@ -16,7 +17,8 @@ import (
 // short-lived, narrowly scoped, revocable credential whose raw value is never
 // stored.
 type credentialStore struct {
-	db *sql.DB
+	db     *sql.DB
+	client *dao.Client
 }
 
 // SaveCredentialHandle persists a handle. Only the handle's hash is written, so

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/chaitin/agent-compose/ent/dao"
 	"strings"
 	"time"
 
@@ -13,7 +14,8 @@ import (
 
 // capabilityGatewayStore owns the capability gateway settings row.
 type capabilityGatewayStore struct {
-	db *sql.DB
+	db     *sql.DB
+	client *dao.Client
 }
 
 // capabilityGatewayRowID pins the settings to a single row.
