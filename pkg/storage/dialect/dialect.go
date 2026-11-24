@@ -28,6 +28,10 @@ type Dialect interface {
 	// LockRunHistoryTablesStatement gives run-history removal the same
 	// whole-writer-set exclusion SQLite gets from its write lock.
 	LockRunHistoryTablesStatement() string
+	// IsDuplicateRow reports whether err is the backend's unique or primary-key
+	// constraint violation, so callers can map it to a resource conflict
+	// without knowing which driver produced it.
+	IsDuplicateRow(err error) bool
 }
 
 func OrSQLite(value Dialect) Dialect {

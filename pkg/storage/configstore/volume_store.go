@@ -50,7 +50,7 @@ func (s *volumeStore) CreateVolume(ctx context.Context, item domain.VolumeRecord
 		id, name, driver, path, labels_json, options_json, project_id, created_at, updated_at
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		normalized.ID, normalized.Name, normalized.Driver, normalized.Path, labelsJSON, optionsJSON, normalized.ProjectID, now.Unix(), now.Unix()); err != nil {
-		if isDuplicateRow(s.dialect, err) {
+		if s.dialect.IsDuplicateRow(err) {
 			return domain.VolumeRecord{}, domain.ResourceError(domain.ErrAlreadyExists, "volume", normalized.Name, fmt.Sprintf("volume %s already exists", normalized.Name), err)
 		}
 		return domain.VolumeRecord{}, fmt.Errorf("insert volume %s: %w", normalized.Name, err)
