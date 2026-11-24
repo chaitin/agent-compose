@@ -50,6 +50,25 @@ describe("prompt output compatibility", () => {
     expect(frames[1]).toMatchObject({ code: "prompt_failed", message: expect.stringContaining("provider failed") });
   });
 
+  it("hands the error frame to stdout before failing", async () => {
+    const failure = new Error("provider failed");
+    vi.spyOn(prompt, "runPromptCommand").mockRejectedValue(failure);
+    const lines: string[] = [];
+    let release = () => {};
+    const flushed = new Promise<void>((resolve) => { release = resolve; });
+    let settled = false;
+    const run = runPromptWithOutput({ provider: "codex" }, { [AGENT_OUTPUT_ENV]: "frames" },
+      (line) => lines.push(line), () => flushed);
+    run.catch(() => {}).finally(() => { settled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The CLI exits right after a failure, so it must not see one before
+    // stdout has taken the error frame.
+    expect(lines.map(decodeFrame).at(-1)).toMatchObject({ type: "error" });
+    expect(settled).toBe(false);
+    release();
+    await expect(run).rejects.toBe(failure);
+  });
+
   it("preserves cancellation as an unsuccessful stop reason in result frames", async () => {
     vi.spyOn(prompt, "runPromptCommand").mockResolvedValue({ ...result, stopReason: "cancelled" });
     const lines: string[] = [];

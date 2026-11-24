@@ -9,6 +9,7 @@ export async function runPromptWithOutput(
   options: PromptCommandOptions,
   env: NodeJS.ProcessEnv = process.env,
   write: (line: string) => void = (line) => { process.stdout.write(line); },
+  flush: () => Promise<void> = flushStdout,
 ): Promise<void> {
   const format = env[AGENT_OUTPUT_ENV];
   if (format && format !== "frames") {
@@ -31,6 +32,16 @@ export async function runPromptWithOutput(
     emit("result", result);
   } catch (error) {
     emit("error", { code: "prompt_failed", message: formatError(error) });
+    // The CLI exits with process.exit on failure, which does not wait for
+    // pending stdout writes; on a pipe they can be asynchronous.
+    await flush();
     throw error;
   }
+}
+
+/** Resolves once every write queued on stdout so far has been handed off. */
+function flushStdout(): Promise<void> {
+  return new Promise((resolve) => {
+    process.stdout.write("", () => resolve());
+  });
 }

@@ -6,7 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { extractText, jsonString } from "../text.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
-import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
+import { TranscriptWriter, writeDiagnostic, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
 import { toolKindForName, toolOutputText } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
@@ -80,7 +80,7 @@ export class PiRunner {
       child.stderr?.on("data", (chunk) => {
         const text = String(chunk || "");
         stderrBytes = appendBounded(stderrBytes, Buffer.from(text), maxDiagnosticBytes);
-        this.writer.write(text);
+        writeDiagnostic(this.writer, text);
       });
 
       let protocolError: Error | null = null;
