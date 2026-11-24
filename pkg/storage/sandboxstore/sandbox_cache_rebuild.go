@@ -2,9 +2,10 @@ package sandboxstore
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+
+	sandboxdao "github.com/chaitin/agent-compose/ent/dao/sandbox"
 )
 
 func (s *Store) rebuildIndex(ctx context.Context) {
@@ -59,25 +60,17 @@ func (s *Store) runIndexRebuild(ctx context.Context) error {
 
 	// Rows are retained only for metadata that was successfully loaded. A
 	// directory with missing or malformed metadata is not a listable sandbox.
-	rows, err := s.index.db.QueryContext(ctx, `SELECT id FROM sandboxes`)
+	entities, err := s.index.client.Sandbox.Query().
+		Select(sandboxdao.FieldID).
+		All(ctx)
 	if err != nil {
 		return sandboxCacheError("query rows during reconcile", err)
 	}
 	var orphans []string
-	for rows.Next() {
-		var id string
-		if scanErr := rows.Scan(&id); scanErr != nil {
-			return sandboxCacheError("scan row during reconcile", errors.Join(scanErr, closeSandboxCacheRows(rows)))
+	for _, entity := range entities {
+		if _, ok := validIDs[entity.ID]; !ok {
+			orphans = append(orphans, entity.ID)
 		}
-		if _, ok := validIDs[id]; !ok {
-			orphans = append(orphans, id)
-		}
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return sandboxCacheError("iterate rows during reconcile", errors.Join(rowsErr, closeSandboxCacheRows(rows)))
-	}
-	if err := closeSandboxCacheRows(rows); err != nil {
-		return sandboxCacheError("close rows during reconcile", err)
 	}
 	for _, id := range orphans {
 		if delErr := s.index.Delete(ctx, id); delErr != nil {
