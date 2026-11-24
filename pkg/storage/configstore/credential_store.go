@@ -10,16 +10,13 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/credentials"
 	domain "github.com/chaitin/agent-compose/pkg/model"
-
-	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 // credentialStore owns generic credential handles: the persisted record of a
 // short-lived, narrowly scoped, revocable credential whose raw value is never
 // stored.
 type credentialStore struct {
-	db      *sql.DB
-	dialect dialect.Dialect
+	db *sql.DB
 }
 
 // SaveCredentialHandle persists a handle. Only the handle's hash is written, so

@@ -11,14 +11,11 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 // schedulerStore owns scheduler execution state, triggers, runs, and events.
 type schedulerStore struct {
-	db      *sql.DB
-	dialect dialect.Dialect
+	db *sql.DB
 }
 
 func (s *schedulerStore) ListSchedulerSummaries(ctx context.Context) ([]domain.SchedulerSummary, error) {

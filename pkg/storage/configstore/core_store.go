@@ -30,8 +30,7 @@ type (
 // coreStore owns the shared configuration domains: global env vars, workspace
 // configs.
 type coreStore struct {
-	db      *sql.DB
-	dialect dialect.Dialect
+	db *sql.DB
 }
 
 // ConfigStore is the composite persistence facade over DATA_ROOT/data.db. Each
@@ -69,13 +68,13 @@ func FromDBWithDialect(db *sql.DB, d dialect.Dialect) *ConfigStore {
 	return &ConfigStore{
 		db:                     db,
 		dialect:                d,
-		coreStore:              &coreStore{db: db, dialect: d},
-		schedulerStore:         &schedulerStore{db: db, dialect: d},
+		coreStore:              &coreStore{db: db},
+		schedulerStore:         &schedulerStore{db: db},
 		eventStore:             &eventStore{db: db, dialect: d},
 		projectStore:           &projectStore{db: db, dialect: d},
-		llmStore:               &llmStore{db: db, dialect: d},
-		credentialStore:        &credentialStore{db: db, dialect: d},
-		capabilityGatewayStore: &capabilityGatewayStore{db: db, dialect: d},
+		llmStore:               &llmStore{db: db},
+		credentialStore:        &credentialStore{db: db},
+		capabilityGatewayStore: &capabilityGatewayStore{db: db},
 		volumeStore:            &volumeStore{db: db, dialect: d},
 	}
 }
