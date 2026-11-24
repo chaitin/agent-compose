@@ -38,7 +38,7 @@ func (s *ConfigStore) runHistorySnapshot(ctx context.Context, id runhistory.Iden
 		return runhistory.Scope{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	scope, err := loadRunHistoryScope(ctx, tx, id)
+	scope, err := loadRunHistoryScope(ctx, newEntTxClient(s.dialect, tx), tx, id)
 	if err != nil {
 		return scope, err
 	}
@@ -85,6 +85,8 @@ func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Ide
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	// Kept as SQL: PostgreSQL needs a table lock so concurrent writers cannot
+	// change the scope between the re-read and the delete.
 	if lock := s.dialect.LockRunHistoryTablesStatement(); lock != "" {
 		if _, err := tx.ExecContext(ctx, lock); err != nil {
 			return fmt.Errorf("lock run history tables: %w", err)
@@ -94,10 +96,12 @@ func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Ide
 	// write can fail to upgrade once another writer commits. On PostgreSQL the
 	// table lock above supplies the same exclusion; the project row update is
 	// still a harmless write fence for the project itself.
+	// Kept as SQL: no-op write that upgrades the deferred SQLite transaction to
+	// a writer before it reads; it must not read or change the stored value.
 	if _, err := tx.ExecContext(ctx, "UPDATE project SET updated_at=updated_at WHERE id=?", id.ProjectID); err != nil {
 		return err
 	}
-	current, err := loadRunHistoryScope(ctx, tx, id)
+	current, err := loadRunHistoryScope(ctx, newEntTxClient(s.dialect, tx), tx, id)
 	if err != nil {
 		return err
 	}
@@ -137,6 +141,8 @@ func (s *ConfigStore) finishRunHistory(ctx context.Context, id runhistory.Identi
 		return err
 	}
 	return s.withRunHistoryFence(ctx, id, scope, func(tx *sql.Tx) error {
+		// Kept as SQL: the delete predicate and the table/key list are chosen
+		// from the identity kind at runtime.
 		query, args := "DELETE FROM project_run WHERE run_id=? AND project_id=?", []any{id.RunID, id.ProjectID}
 		if id.Kind == runhistory.SchedulerRun {
 			query, args = "DELETE FROM project_run WHERE scheduler_run_id=? AND scheduler_id=? AND project_id=?", []any{id.RunID, id.SchedulerID, id.ProjectID}
@@ -145,6 +151,7 @@ func (s *ConfigStore) finishRunHistory(ctx context.Context, id runhistory.Identi
 			return fmt.Errorf("delete project run history: %w", err)
 		}
 		if id.Kind == runhistory.SchedulerRun {
+			// Kept as SQL: the table and run-key column lists are dynamic.
 			for _, table := range []string{"event_sandbox_link", "event_delivery", "scheduler_event", "scheduler_run"} {
 				key := "scheduler_run_id"
 				if table == "scheduler_run" {

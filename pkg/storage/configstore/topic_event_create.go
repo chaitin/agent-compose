@@ -8,9 +8,22 @@ import (
 	"strconv"
 	"strings"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/event"
 	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
+
+// newEntTxClient binds a dao client to an in-flight SQL transaction. The event
+// insert and its sequenced-payload rewrite must stay in the caller's
+// transaction together with the dialect's sequence lock, so the ent builders
+// run over that *sql.Tx instead of opening a separate ent transaction.
+func newEntTxClient(d dialect.Dialect, tx *sql.Tx) *dao.Client {
+	return dao.NewClient(dao.Driver(entsql.NewDriver(d.EntDialect(), entsql.Conn{ExecQuerier: tx})))
+}
 
 func (s *eventStore) CreateEvent(ctx context.Context, item domain.TopicEventRecord) (domain.TopicEventRecord, error) {
 	normalized, err := normalizeTopicEventRecord(item, true)
@@ -22,23 +35,25 @@ func (s *eventStore) CreateEvent(ctx context.Context, item domain.TopicEventReco
 		return domain.TopicEventRecord{}, fmt.Errorf("begin event transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	client := newEntTxClient(s.dialect, tx)
 
 	// PostgreSQL sequences do not guarantee commit order; event pagination
 	// relies on sequence order matching visibility. SQLite's single writer
 	// already provides this, so its dialect returns an empty statement.
+	// Kept as SQL: ent has no table-lock statement.
 	if lock := s.dialect.LockEventSequenceStatement(); lock != "" {
 		if _, err := tx.ExecContext(ctx, lock); err != nil {
 			return domain.TopicEventRecord{}, fmt.Errorf("lock event sequence: %w", err)
 		}
 	}
 
-	sequence, err := insertTopicEvent(ctx, tx, normalized)
+	sequence, err := insertTopicEvent(ctx, client, normalized)
 	if err != nil {
 		_ = tx.Rollback()
 		return s.resolveTopicEventInsertError(ctx, normalized, err)
 	}
 	normalized.Sequence = sequence
-	if err := storeSequencedTopicEventPayload(ctx, tx, &normalized); err != nil {
+	if err := storeSequencedTopicEventPayload(ctx, client, &normalized); err != nil {
 		return domain.TopicEventRecord{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -47,44 +62,41 @@ func (s *eventStore) CreateEvent(ctx context.Context, item domain.TopicEventReco
 	return normalized, nil
 }
 
-func insertTopicEvent(ctx context.Context, tx *sql.Tx, item domain.TopicEventRecord) (int64, error) {
-	var sequence int64
-	err := tx.QueryRowContext(ctx, `INSERT INTO event(
-		id, topic, source, provider, intent, correlation_id, idempotency_key, delivery_id, payload_hash, payload_json,
-		dispatch_status, parent_event_id, publisher_type, publisher_id, publisher_run_id, publisher_project_id,
-		replay_of_event_id, claim_id, claim_until, attempt_count, next_attempt_at, last_error, dead_letter_at, created_at, dispatched_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	RETURNING sequence`,
-		item.ID,
-		item.Topic,
-		item.Source,
-		item.Provider,
-		item.Intent,
-		item.CorrelationID,
-		item.IdempotencyKey,
-		item.DeliveryID,
-		item.PayloadHash,
-		item.PayloadJSON,
-		item.DispatchStatus,
-		item.ParentEventID,
-		item.PublisherType,
-		item.PublisherID,
-		item.PublisherRunID,
-		item.PublisherProjectID,
-		item.ReplayOfEventID,
-		item.ClaimID,
-		domain.NonZeroTimeUnixMilli(item.ClaimUntil),
-		item.AttemptCount,
-		domain.NonZeroTimeUnixMilli(item.NextAttemptAt),
-		item.LastError,
-		domain.NonZeroTimeUnixMilli(item.DeadLetterAt),
-		item.CreatedAt.UnixMilli(),
-		domain.NonZeroTimeUnixMilli(item.DispatchedAt),
-	).Scan(&sequence)
+// insertTopicEvent inserts the event without its sequence and returns the
+// allocated sequence. Leaving the ID unset keeps the column's database default
+// (autoincrement / identity) and ent reads it back with RETURNING.
+func insertTopicEvent(ctx context.Context, client *dao.Client, item domain.TopicEventRecord) (int64, error) {
+	entity, err := client.Event.Create().
+		SetEventID(item.ID).
+		SetTopic(item.Topic).
+		SetSource(item.Source).
+		SetProvider(item.Provider).
+		SetIntent(item.Intent).
+		SetCorrelationID(item.CorrelationID).
+		SetIdempotencyKey(item.IdempotencyKey).
+		SetDeliveryID(item.DeliveryID).
+		SetPayloadHash(item.PayloadHash).
+		SetPayloadJSON(item.PayloadJSON).
+		SetDispatchStatus(item.DispatchStatus).
+		SetParentEventID(item.ParentEventID).
+		SetPublisherType(item.PublisherType).
+		SetPublisherID(item.PublisherID).
+		SetPublisherRunID(item.PublisherRunID).
+		SetPublisherProjectID(item.PublisherProjectID).
+		SetReplayOfEventID(item.ReplayOfEventID).
+		SetClaimID(item.ClaimID).
+		SetClaimUntil(domain.NonZeroTimeUnixMilli(item.ClaimUntil)).
+		SetAttemptCount(item.AttemptCount).
+		SetNextAttemptAt(domain.NonZeroTimeUnixMilli(item.NextAttemptAt)).
+		SetLastError(item.LastError).
+		SetDeadLetterAt(domain.NonZeroTimeUnixMilli(item.DeadLetterAt)).
+		SetCreatedAt(item.CreatedAt.UnixMilli()).
+		SetDispatchedAt(domain.NonZeroTimeUnixMilli(item.DispatchedAt)).
+		Save(ctx)
 	if err != nil {
 		return 0, err
 	}
-	return sequence, nil
+	return entity.ID, nil
 }
 
 func (s *eventStore) resolveTopicEventInsertError(ctx context.Context, item domain.TopicEventRecord, insertErr error) (domain.TopicEventRecord, error) {
@@ -105,7 +117,7 @@ func (s *eventStore) resolveTopicEventInsertError(ctx context.Context, item doma
 	return domain.TopicEventRecord{}, fmt.Errorf("insert event %s: %w", item.ID, insertErr)
 }
 
-func storeSequencedTopicEventPayload(ctx context.Context, tx *sql.Tx, item *domain.TopicEventRecord) error {
+func storeSequencedTopicEventPayload(ctx context.Context, client *dao.Client, item *domain.TopicEventRecord) error {
 	sequencedPayload, changed, err := topicEventPayloadWithSequence(item.PayloadJSON, item.Sequence)
 	if err != nil {
 		return fmt.Errorf("sequence event payload: %w", err)
@@ -115,13 +127,13 @@ func storeSequencedTopicEventPayload(ctx context.Context, tx *sql.Tx, item *doma
 	}
 	item.PayloadJSON = sequencedPayload
 	item.PayloadHash = events.PayloadSHA256(sequencedPayload)
-	update, err := tx.ExecContext(ctx, `UPDATE event SET payload_hash = ?, payload_json = ? WHERE id = ?`, item.PayloadHash, item.PayloadJSON, item.ID)
+	updated, err := client.Event.Update().
+		Where(event.EventIDEQ(item.ID)).
+		SetPayloadHash(item.PayloadHash).
+		SetPayloadJSON(item.PayloadJSON).
+		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("store sequenced event payload: %w", err)
-	}
-	updated, err := update.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read sequenced event update count: %w", err)
 	}
 	if updated != 1 {
 		return fmt.Errorf("updated %d sequenced events, want 1", updated)

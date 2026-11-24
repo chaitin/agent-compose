@@ -55,6 +55,7 @@ func (s *projectStore) ListProjectAgentRunStates(ctx context.Context, projectID 
 }
 
 func (s *projectStore) projectAgentRunningCounts(ctx context.Context, tx *sql.Tx, projectID string) (map[string]agentRunningCounts, error) {
+	// Kept as SQL: SUM(CASE ...) grouped by agent.
 	rows, err := tx.QueryContext(ctx, `SELECT agent_name,
 		SUM(CASE WHEN source = ? THEN 0 ELSE 1 END),
 		SUM(CASE WHEN source = ? THEN 1 ELSE 0 END)
@@ -82,6 +83,8 @@ func (s *projectStore) projectAgentRunningCounts(ctx context.Context, tx *sql.Tx
 }
 
 func (s *projectStore) projectAgentLatestRuns(ctx context.Context, tx *sql.Tx, projectID string) ([]domain.ProjectAgentRunState, error) {
+	// Kept as SQL: correlated latest-per-agent subquery plus a CASE that picks
+	// completed_at, started_at, or created_at.
 	rows, err := tx.QueryContext(ctx, `SELECT r.agent_name, 0, 0, r.run_id, r.status, r.source,
 		CASE WHEN r.completed_at != 0 THEN r.completed_at WHEN r.started_at != 0 THEN r.started_at ELSE r.created_at END
 	FROM project_run r
