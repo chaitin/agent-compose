@@ -93,10 +93,11 @@ tracked statement by statement.
 | Released DDL and data steps | `pkg/storage/sqlite/migrations.go`, `sqlite/project_name_migration.go`, `postgres/migrations.go` | The migration runner owns checksums, `BEGIN IMMEDIATE`, advisory locks, and versioned data rewrites. |
 | PostgreSQL machinery | `postgres/database.go`, `postgres/connector.go` | Instance advisory locks and the `?`-to-`$n` rebinding driver are not model queries. |
 | SQLite-to-PostgreSQL copy | `pkg/storage/pgcopy` | `COPY`, `sqlite_sequence`, and `pg_get_serial_sequence` are bulk-transfer primitives. |
-| Read models | event listing/descendant CTEs, project list pages, scheduler run/event pages, run-history scope, per-agent aggregates | Joins, `GROUP BY`/`SUM(CASE)`, recursive CTEs, window functions, and dialect-specific `instr`/`strpos` filters. |
-| Conditional writes | project upsert (`spec_hash` CASE), revision allocator (write reservation + `MAX`), run completion transition, event-delivery upsert, credential revocation-preserving upsert, LLM catalog conditional upserts/sweeps | The update depends on the stored row or must stay in one reserved transaction; ent's upsert setters only take literals. |
-| Locked run-event append | `run_history_removal.go`, `appendProjectRunEventsTx`, `Insert ... SELECT MAX(seq) ... RETURNING` | Row/table locks and sequence allocation interact with the raw transaction the surrounding code already holds. |
-| Sandbox listing | `sandboxWhere`, page/count query, `PRAGMA quick_check` | Dynamic multi-filter SQL plus a physical-column probe. |
+| Read models | event list/topic aggregates and descendant CTEs, run traces and scheduler-event joins, project list pages, scheduler run/event pages, per-agent aggregates, sandbox-filtered run-event pages | Joins, `GROUP BY`/`SUM(CASE)`, recursive CTEs, window functions, `DISTINCT`, and dialect-specific `instr`/`strpos` filters. |
+| Conditional writes | project upsert (`spec_hash` CASE), revision allocator (write reservation + `MAX`), completion staging (`started_at` CASE), event-delivery upsert, cancel-dispatch aggregate, credential revocation-preserving upsert, LLM catalog conditional upserts, LLM partial update (`COALESCE`/`RETURNING`) | The update depends on the stored row or must stay in one reserved transaction; ent's upsert setters only take literals. |
+| Locked writes | run-event append (`SELECT ... FOR UPDATE`, `INSERT ... SELECT MAX(seq) + 1 ... RETURNING`), event sequence table lock, run-history fence and dynamic table/column deletes | Row/table locks, sequence allocation, and schema-adaptive deletes that must stay on the raw transaction. |
+| Multi-table identity lookups | scheduler/agent definitions, project-scoped scheduler lookup, completion-by-sandbox, volume links | One consistent multi-table read; splitting it would allow the row set to change between queries. |
+| Sandbox listing | `sandboxWhere`, page/count query, `PRAGMA quick_check`, physical-column probe | Dynamic multi-filter SQL plus backend-specific health/column checks. |
 
 ## Adding a store method
 
