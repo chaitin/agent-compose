@@ -1,5 +1,7 @@
 package runlog
 
+import "slices"
+
 // Tool IDs are unique within a provider turn, rather than across the run.
 type toolIdentity struct {
 	turn uint32
@@ -22,7 +24,9 @@ type Summary struct {
 
 // Summarize folds entries into a Summary. Providers report usage at
 // different scopes (step, turn or run), and records of different scopes must
-// not be added together, so the totals come from the coarsest scope present.
+// not be added together, so each turn counts its coarsest scope present and
+// the totals add the turns up. A turn cut short never reports its coarse
+// total, so choosing one scope for the whole run would drop that turn's steps.
 func Summarize(entries []Entry) Summary {
 	s := newSummarizer()
 	for _, entry := range entries {
@@ -46,17 +50,18 @@ func SummarizeLog(path string) (Summary, error) {
 }
 
 type summarizer struct {
-	summary      Summary
-	turns        map[uint32]struct{}
-	tools        map[toolIdentity]struct{}
-	usageByScope map[string]*Usage
+	summary Summary
+	turns   map[uint32]struct{}
+	tools   map[toolIdentity]struct{}
+	// usage holds each turn's usage totals by scope.
+	usage map[uint32]map[string]*Usage
 }
 
 func newSummarizer() *summarizer {
 	return &summarizer{
-		turns:        map[uint32]struct{}{},
-		tools:        map[toolIdentity]struct{}{},
-		usageByScope: map[string]*Usage{},
+		turns: map[uint32]struct{}{},
+		tools: map[toolIdentity]struct{}{},
+		usage: map[uint32]map[string]*Usage{},
 	}
 }
 
@@ -77,11 +82,16 @@ func (s *summarizer) add(entry Entry) {
 		if entry.Usage == nil {
 			return
 		}
+		byScope := s.usage[entry.Turn]
+		if byScope == nil {
+			byScope = map[string]*Usage{}
+			s.usage[entry.Turn] = byScope
+		}
 		scope := entry.Usage.Scope
-		total := s.usageByScope[scope]
+		total := byScope[scope]
 		if total == nil {
 			total = &Usage{}
-			s.usageByScope[scope] = total
+			byScope[scope] = total
 		}
 		total.InputTokens += entry.Usage.InputTokens
 		total.OutputTokens += entry.Usage.OutputTokens
@@ -101,14 +111,22 @@ func (s *summarizer) result() Summary {
 	summary := s.summary
 	summary.Turns = len(s.turns)
 	summary.ToolCalls = len(s.tools)
-	for _, scope := range []string{"run", "turn", "step", ""} {
-		if total := s.usageByScope[scope]; total != nil {
-			summary.InputTokens = total.InputTokens
-			summary.OutputTokens = total.OutputTokens
-			summary.ReasoningTokens = total.ReasoningTokens
-			summary.CachedTokens = total.CachedTokens
-			summary.CostUSD = total.CostUSD
-			break
+	// Turns are added in order so the cost sums the same way every time.
+	turns := make([]uint32, 0, len(s.usage))
+	for turn := range s.usage {
+		turns = append(turns, turn)
+	}
+	slices.Sort(turns)
+	for _, turn := range turns {
+		for _, scope := range []string{"run", "turn", "step", ""} {
+			if total := s.usage[turn][scope]; total != nil {
+				summary.InputTokens += total.InputTokens
+				summary.OutputTokens += total.OutputTokens
+				summary.ReasoningTokens += total.ReasoningTokens
+				summary.CachedTokens += total.CachedTokens
+				summary.CostUSD += total.CostUSD
+				break
+			}
 		}
 	}
 	return summary

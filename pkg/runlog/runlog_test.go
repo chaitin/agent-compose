@@ -286,6 +286,46 @@ func TestSummaryUsesTheCoarsestUsageScope(t *testing.T) {
 	}
 }
 
+func TestSummaryChoosesTheUsageScopePerTurn(t *testing.T) {
+	w, path := openTest(t, Options{})
+	// Turn 1 ends normally: claude reports its steps and then the turn total.
+	if _, err := w.AppendUser("first"); err != nil {
+		t.Fatal(err)
+	}
+	mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":10,"outputTokens":1}`)
+	mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":20,"outputTokens":2}`)
+	mustEvent(t, w, `{"kind":"usage","scope":"run","inputTokens":30,"outputTokens":3,"costUsd":0.5}`)
+	if _, err := w.EndTurn("stop", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Turn 2 is cancelled before its total: only its steps were reported.
+	if _, err := w.AppendUser("second"); err != nil {
+		t.Fatal(err)
+	}
+	mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":50,"outputTokens":5,"costUsd":0.25}`)
+	mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":40,"outputTokens":4,"costUsd":0.25}`)
+	if _, err := w.EndTurn("cancelled", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Turn 3 comes from a provider that reports per turn.
+	if _, err := w.AppendUser("third"); err != nil {
+		t.Fatal(err)
+	}
+	mustEvent(t, w, `{"kind":"usage","scope":"turn","inputTokens":7,"outputTokens":7}`)
+	if _, err := w.EndTurn("stop", ""); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	entries, _ := ReadEntries(path, 0)
+	s := Summarize(entries)
+	if s.InputTokens != 127 || s.OutputTokens != 19 || s.CostUSD != 1 || s.Turns != 3 {
+		t.Fatalf("summary = %#v", s)
+	}
+	if got, err := SummarizeLog(path); err != nil || got != s {
+		t.Fatalf("SummarizeLog = %#v, %v", got, err)
+	}
+}
+
 func TestOnAppendSeesEntriesInOrder(t *testing.T) {
 	var seen []string
 	w, _ := openTest(t, Options{OnAppend: func(e Entry, rendered string) { seen = append(seen, string(e.Type)+":"+rendered) }})
