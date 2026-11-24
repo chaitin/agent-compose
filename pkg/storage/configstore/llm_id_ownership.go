@@ -2,11 +2,12 @@ package configstore
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/llmmodel"
+	"github.com/chaitin/agent-compose/ent/dao/llmprovider"
 	"github.com/chaitin/agent-compose/pkg/llms"
 )
 
@@ -46,15 +47,15 @@ import (
 // bootstrap maintains as well (see CatalogProjectionOwnsScope) — so an id the
 // environment materialized, including one it took over after a release, comes back
 // under the file the moment the file declares it again.
-func envProjectionConflict(ctx context.Context, tx *sql.Tx, providerID, modelID string) (*llms.DefaultConfigConflict, error) {
-	provider, err := servingProviderOwner(ctx, tx, providerID)
+func envProjectionConflict(ctx context.Context, client *dao.Client, providerID, modelID string) (*llms.DefaultConfigConflict, error) {
+	provider, err := servingProviderOwner(ctx, client, providerID)
 	if err != nil {
 		return nil, err
 	}
 	if provider != nil {
 		return provider.conflict(), nil
 	}
-	model, err := servingModelOwner(ctx, tx, modelID)
+	model, err := servingModelOwner(ctx, client, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -85,22 +86,23 @@ func (o *llmIDOwner) conflict() *llms.DefaultConfigConflict {
 // claiming the id cannot strand the file's own declaration: the next startup
 // rewrites the row from the file, and once the file can serve it the bootstrap
 // yields.
-func servingProviderOwner(ctx context.Context, tx *sql.Tx, id string) (*llmIDOwner, error) {
+func servingProviderOwner(ctx context.Context, client *dao.Client, id string) (*llmIDOwner, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, nil
 	}
-	var scope string
-	var enabled int
-	err := tx.QueryRowContext(ctx, `SELECT scope, enabled FROM llm_provider WHERE id = ?`, id).Scan(&scope, &enabled)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	entity, err := client.LLMProvider.Query().
+		Where(llmprovider.IDEQ(id)).
+		Select(llmprovider.FieldScope, llmprovider.FieldEnabled).
+		Only(ctx)
 	if err != nil {
+		if dao.IsNotFound(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("read provider %q ownership: %w", id, err)
 	}
-	scope = strings.TrimSpace(scope)
-	if llms.EnvProjectionOwnsScope(scope) || enabled == 0 {
+	scope := strings.TrimSpace(entity.Scope)
+	if llms.EnvProjectionOwnsScope(scope) || entity.Enabled == 0 {
 		return nil, nil
 	}
 	return &llmIDOwner{kind: "provider", id: id, scope: scope}, nil
@@ -119,24 +121,26 @@ func servingProviderOwner(ctx context.Context, tx *sql.Tx, id string) (*llmIDOwn
 // materialized enabled, so counting it made the bootstrap read its own connection
 // as the owner and release it — the deployment lost the only connection that could
 // serve the model on the second start.
-func servingModelOwner(ctx context.Context, tx *sql.Tx, id string) (*llmIDOwner, error) {
+func servingModelOwner(ctx context.Context, client *dao.Client, id string) (*llmIDOwner, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, nil
 	}
-	var scope string
-	err := tx.QueryRowContext(ctx, `SELECT scope FROM llm_model WHERE id = ? AND enabled != 0`, id).Scan(&scope)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
+	entity, err := client.LLMModel.Query().
+		Where(llmmodel.IDEQ(id), llmmodel.EnabledNEQ(0)).
+		Select(llmmodel.FieldScope).
+		Only(ctx)
 	if err != nil {
+		if dao.IsNotFound(err) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("read model %q ownership: %w", id, err)
 	}
-	scope = strings.TrimSpace(scope)
+	scope := strings.TrimSpace(entity.Scope)
 	if llms.EnvProjectionOwnsScope(scope) {
 		return nil, nil
 	}
-	served, err := servedByAnotherSource(ctx, tx, id)
+	served, err := servedByAnotherSource(ctx, client, id)
 	if err != nil {
 		return nil, err
 	}
@@ -148,8 +152,11 @@ func servingModelOwner(ctx context.Context, tx *sql.Tx, id string) (*llmIDOwner,
 
 // servedByAnotherSource reports whether an enabled connection a source other than
 // this bootstrap owns binds modelID.
-func servedByAnotherSource(ctx context.Context, tx *sql.Tx, modelID string) (bool, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT connection.scope FROM llm_provider_model binding
+func servedByAnotherSource(ctx context.Context, client *dao.Client, modelID string) (bool, error) {
+	// Kept as SQL: the check joins llm_provider_model and llm_provider and must
+	// read both tables as one consistent statement inside the projection
+	// transaction; the schema declares no ent edge to traverse.
+	rows, err := client.QueryContext(ctx, `SELECT connection.scope FROM llm_provider_model binding
 		JOIN llm_provider connection ON connection.id = binding.provider_id
 		WHERE binding.model_id = ? AND connection.enabled != 0`, modelID)
 	if err != nil {
