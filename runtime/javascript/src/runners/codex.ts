@@ -89,6 +89,10 @@ export class CodexRunner {
     promptText: string,
     result: AgentResult,
   ): Promise<void> {
+    // Each SDK turn starts a new CLI process whose item IDs can start over.
+    // Deduplicate updates within the turn, never against a previous turn.
+    this.itemState.clear();
+    this.emittedText.clear();
     this.reconnectMessage = undefined;
     this.reconnectAttempt = 0;
     this.turnCompleted = false;
