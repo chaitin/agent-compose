@@ -217,7 +217,12 @@ func (l *InstanceLock) reacquire(ctx context.Context, retryWindow time.Duration)
 	if old != nil {
 		_ = old.Close()
 	}
-	deadline := time.Now().Add(retryWindow)
+	// The retry window must bound the operations that can block, not just the
+	// pause between attempts: pool acquisition and the advisory-lock query can
+	// hang while another daemon or a saturated pool holds the database.
+	retryCtx, cancel := context.WithTimeout(ctx, retryWindow)
+	defer cancel()
+	var lastErr error
 	for {
 		select {
 		case <-ctx.Done():
@@ -226,9 +231,12 @@ func (l *InstanceLock) reacquire(ctx context.Context, retryWindow time.Duration)
 			return nil
 		default:
 		}
-		conn, err := l.db.Conn(ctx)
+		if retryCtx.Err() != nil {
+			return fmt.Errorf("PostgreSQL instance lock could not be reacquired within %s: %w", retryWindow, lastErr)
+		}
+		conn, err := l.db.Conn(retryCtx)
 		if err == nil {
-			acquired, lockErr := tryInstanceLock(ctx, conn, l.key)
+			acquired, lockErr := tryInstanceLock(retryCtx, conn, l.key)
 			if lockErr == nil && acquired {
 				l.mu.Lock()
 				select {
@@ -249,17 +257,17 @@ func (l *InstanceLock) reacquire(ctx context.Context, retryWindow time.Duration)
 				err = ErrInstanceLocked
 			}
 		}
+		lastErr = err
 		if errors.Is(err, ErrInstanceLocked) {
 			return fmt.Errorf("PostgreSQL instance lock was taken by another daemon while reconnecting: %w", err)
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("PostgreSQL instance lock could not be reacquired: %w", err)
 		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-l.closed:
 			return nil
+		case <-retryCtx.Done():
+			return fmt.Errorf("PostgreSQL instance lock could not be reacquired within %s: %w", retryWindow, lastErr)
 		case <-time.After(time.Second):
 		}
 	}

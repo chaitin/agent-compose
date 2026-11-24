@@ -299,3 +299,39 @@ func TestPostgresInstanceLockMonitorReacquiresIntegration(t *testing.T) {
 		t.Fatalf("lock after reacquire error = %v, want ErrInstanceLocked", err)
 	}
 }
+
+// TestPostgresInstanceLockReacquireHonorsRetryWindowIntegration pins the retry
+// window around the blocking operations. A saturated pool must not keep the
+// monitor stuck beyond the configured recovery window.
+func TestPostgresInstanceLockReacquireHonorsRetryWindowIntegration(t *testing.T) {
+	dsn := testPostgresDSN(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	pool, err := openDB(dsn)
+	if err != nil {
+		t.Fatalf("open pool: %v", err)
+	}
+	t.Cleanup(func() { _ = pool.Close() })
+	pool.SetMaxOpenConns(1)
+	pool.SetMaxIdleConns(0)
+	held, err := pool.Conn(ctx)
+	if err != nil {
+		t.Fatalf("hold pool connection: %v", err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+
+	lock := &InstanceLock{db: pool, key: advisoryKey("test-reacquire-window")}
+	started := time.Now()
+	err = lock.reacquire(ctx, 250*time.Millisecond)
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("reacquire returned nil while the pool was saturated")
+	}
+	if !strings.Contains(err.Error(), "could not be reacquired within") {
+		t.Fatalf("reacquire error = %v, want retry-window error", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("reacquire took %s, want it bounded by the retry window", elapsed)
+	}
+}
