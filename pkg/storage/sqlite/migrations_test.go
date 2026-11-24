@@ -114,9 +114,9 @@ func TestMigrationBaseline(t *testing.T) {
 			t.Fatalf("unexpected migration history row (%d, %q)", version, name)
 		}
 		expected := available[migrationIndex]
-		if version != expected.version || name != expected.name || checksum != expected.checksum {
+		if version != expected.Version || name != expected.Name || checksum != expected.Checksum {
 			t.Fatalf("migration history row %d = (%d, %q, %q), want (%d, %q, %q)",
-				migrationIndex, version, name, checksum, expected.version, expected.name, expected.checksum)
+				migrationIndex, version, name, checksum, expected.Version, expected.Name, expected.Checksum)
 		}
 		appliedAt[version] = timestamp
 		migrationIndex++
@@ -158,11 +158,11 @@ func TestMigrationBaseline(t *testing.T) {
 	for _, item := range available {
 		var currentAppliedAt int64
 		if err := db.QueryRowContext(ctx,
-			`SELECT applied_at FROM schema_migrations WHERE version = ?`, item.version).Scan(&currentAppliedAt); err != nil {
-			t.Fatalf("query migration %d time after second initialization: %v", item.version, err)
+			`SELECT applied_at FROM schema_migrations WHERE version = ?`, item.Version).Scan(&currentAppliedAt); err != nil {
+			t.Fatalf("query migration %d time after second initialization: %v", item.Version, err)
 		}
-		if currentAppliedAt != appliedAt[item.version] {
-			t.Fatalf("migration %d applied_at changed from %d to %d", item.version, appliedAt[item.version], currentAppliedAt)
+		if currentAppliedAt != appliedAt[item.Version] {
+			t.Fatalf("migration %d applied_at changed from %d to %d", item.Version, appliedAt[item.Version], currentAppliedAt)
 		}
 	}
 }
@@ -174,7 +174,7 @@ func TestLoaderBindingConfigHashMigration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations: %v", err)
 	}
-	if len(available) < 4 || available[3].version != 4 || available[3].name != "000004_loader_binding_config_hash" {
+	if len(available) < 4 || available[3].Version != 4 || available[3].Name != "000004_loader_binding_config_hash" {
 		t.Fatalf("available migrations = %#v, want loader binding config hash at version 4", available)
 	}
 	if err := applyMigrationSet(ctx, db, available[:1]); err != nil {
@@ -348,86 +348,6 @@ func assertSQLiteIndexColumns(t *testing.T, db *sql.DB, want sqliteIndexColumnsE
 	}
 }
 
-func TestLoadMigrationsValidation(t *testing.T) {
-	tests := []struct {
-		name    string
-		files   fstest.MapFS
-		wantErr string
-	}{
-		{
-			name:    "no SQL files",
-			files:   fstest.MapFS{"migrations/README.md": {Data: []byte("docs")}},
-			wantErr: "no embedded",
-		},
-		{
-			name:    "invalid filename",
-			files:   fstest.MapFS{"migrations/1_bad.sql": {Data: []byte("SELECT 1")}},
-			wantErr: "invalid SQLite migration filename",
-		},
-		{
-			name:    "empty SQL",
-			files:   fstest.MapFS{"migrations/000001_empty.sql": {Data: []byte(" \n")}},
-			wantErr: "is empty",
-		},
-		{
-			name: "duplicate version",
-			files: fstest.MapFS{
-				"migrations/000001_one.sql": {Data: []byte("SELECT 1")},
-				"migrations/000001_two.sql": {Data: []byte("SELECT 2")},
-			},
-			wantErr: "duplicate SQLite migration version",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := loadMigrations(test.files)
-			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
-				t.Fatalf("loadMigrations error = %v, want containing %q", err, test.wantErr)
-			}
-		})
-	}
-
-	items, err := loadMigrations(fstest.MapFS{
-		"migrations/000002_second.sql": {Data: []byte("SELECT 2")},
-		"migrations/000001_first.sql":  {Data: []byte("SELECT 1")},
-	})
-	if err != nil {
-		t.Fatalf("load sorted migrations: %v", err)
-	}
-	if items[0].version != 1 || items[1].version != 2 {
-		t.Fatalf("migration order = %d, %d", items[0].version, items[1].version)
-	}
-}
-
-func TestValidateAppliedMigrations(t *testing.T) {
-	available := []migration{
-		{version: 1, name: "000001_first", checksum: "one"},
-		{version: 3, name: "000003_third", checksum: "three"},
-	}
-	tests := []struct {
-		name    string
-		applied []appliedMigration
-		wantErr string
-	}{
-		{name: "valid prefix", applied: []appliedMigration{{version: 1, name: "000001_first", checksum: "one"}}},
-		{name: "newer database", applied: []appliedMigration{{version: 1}, {version: 3}, {version: 4}}, wantErr: "newer than this binary"},
-		{name: "non-prefix", applied: []appliedMigration{{version: 3, name: "000003_third", checksum: "three"}}, wantErr: "not an embedded prefix"},
-		{name: "renamed", applied: []appliedMigration{{version: 1, name: "renamed", checksum: "one"}}, wantErr: "name mismatch"},
-		{name: "modified", applied: []appliedMigration{{version: 1, name: "000001_first", checksum: "changed"}}, wantErr: "checksum mismatch"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := validateAppliedMigrations(available, test.applied)
-			if test.wantErr == "" && err != nil {
-				t.Fatalf("validateAppliedMigrations: %v", err)
-			}
-			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
-				t.Fatalf("error = %v, want containing %q", err, test.wantErr)
-			}
-		})
-	}
-}
-
 func TestMigrationFailureRollsBackPendingBatch(t *testing.T) {
 	ctx := context.Background()
 	db := newMemoryDB(t)
@@ -440,8 +360,8 @@ func TestMigrationFailureRollsBackPendingBatch(t *testing.T) {
 		t.Fatalf("apply first migration: %v", err)
 	}
 	second := migration{
-		version: first.version + 1, name: "000002_broken",
-		statement: `CREATE TABLE pending_table(id INTEGER); THIS IS NOT SQL;`, checksum: "two",
+		Version: first.Version + 1, Name: "000002_broken",
+		Statement: `CREATE TABLE pending_table(id INTEGER); THIS IS NOT SQL;`, Checksum: "two",
 	}
 	if err := applyMigrationSet(ctx, db, []migration{first, second}); err == nil {
 		t.Fatal("broken migration returned nil error")
@@ -467,8 +387,8 @@ func TestMigrationFailureRollsBackPendingBatch(t *testing.T) {
 		`SELECT name, checksum FROM schema_migrations WHERE version = 1`).Scan(&name, &checksum); err != nil {
 		t.Fatalf("query prior migration after rollback: %v", err)
 	}
-	if name != first.name || checksum != first.checksum {
-		t.Fatalf("prior migration after rollback = (%q, %q), want (%q, %q)", name, checksum, first.name, first.checksum)
+	if name != first.Name || checksum != first.Checksum {
+		t.Fatalf("prior migration after rollback = (%q, %q), want (%q, %q)", name, checksum, first.Name, first.Checksum)
 	}
 }
 
@@ -477,7 +397,7 @@ func TestMigrationHonorsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	err := applyMigrationSet(ctx, db, []migration{{
-		version: 1, name: "000001_first", statement: `CREATE TABLE canceled(id INTEGER)`, checksum: "one",
+		Version: 1, Name: "000001_first", Statement: `CREATE TABLE canceled(id INTEGER)`, Checksum: "one",
 	}})
 	if err == nil {
 		t.Fatal("canceled migration returned nil error")

@@ -14,22 +14,22 @@ func TestPostgresMigrationsPairWithSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load PostgreSQL migrations: %v", err)
 	}
-	if migrations[0].version != baselineMigrationVersion {
-		t.Fatalf("first migration version = %d", migrations[0].version)
+	if migrations[0].Version != baselineMigrationVersion {
+		t.Fatalf("first migration version = %d", migrations[0].Version)
 	}
 	for _, migration := range migrations {
-		if migration.version <= baselineMigrationVersion {
+		if migration.Version <= baselineMigrationVersion {
 			continue
 		}
-		sqliteMigration, ok, err := storagesqlite.EmbeddedMigrationAt(migration.version)
+		sqliteMigration, ok, err := storagesqlite.EmbeddedMigrationAt(migration.Version)
 		if err != nil {
-			t.Fatalf("read SQLite migration %d: %v", migration.version, err)
+			t.Fatalf("read SQLite migration %d: %v", migration.Version, err)
 		}
 		if !ok {
-			t.Fatalf("PostgreSQL migration %06d has no SQLite counterpart", migration.version)
+			t.Fatalf("PostgreSQL migration %06d has no SQLite counterpart", migration.Version)
 		}
-		if sqliteMigration.Name != migration.name {
-			t.Fatalf("migration %06d name = %q in SQLite, %q in PostgreSQL", migration.version, sqliteMigration.Name, migration.name)
+		if sqliteMigration.Name != migration.Name {
+			t.Fatalf("migration %06d name = %q in SQLite, %q in PostgreSQL", migration.Version, sqliteMigration.Name, migration.Name)
 		}
 	}
 }
