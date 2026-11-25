@@ -134,6 +134,7 @@ Choose tests based on the behavior changed and boundaries crossed. Do not run ex
 - Changes to Compose topology, installer behavior, images, volumes, networking, or runtime deployment must preserve existing deployment compatibility unless explicitly intended.
 - Follow existing Docker and KVM deployment boundaries. Do not introduce privileged access, host mounts, or networking changes without understanding their security and lifecycle implications.
 - Verify deployment changes against the actual Compose files, installer, and deployment tests.
+- `Dockerfile` and `Dockerfile.agent-compose-local` copy Go source roots explicitly (`cmd`, `internal`, `pkg`, `ent`). A new top-level Go package that the daemon imports must be added to both build stages, or the image build fails even though `go build ./...` passes.
 
 ## Database and ORM
 
