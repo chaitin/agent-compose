@@ -1,10 +1,11 @@
+import { providerEnv } from "../env.js";
 import { providerTelemetryEnv } from "../telemetry.js";
 import { existsSync } from "node:fs";
 import { flattenEnvMap } from "../mcp-config.js";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { jsonString } from "../text.js";
-import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
+import { lineDiagnostic, TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
 import { dominantUsageModel, toolKindForName, toolOutputText } from "../agent-event.js";
 import type { AgentResult, RunnerOptions, StoredThread } from "../types.js";
@@ -39,7 +40,7 @@ function claudeExecutable(): string | undefined {
 }
 
 function claudeEnvironment(options: RunnerOptions): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...providerTelemetryEnv("claude", options.telemetry, process.env), IS_SANDBOX: "1" };
+  const env: NodeJS.ProcessEnv = { ...providerTelemetryEnv("claude", options.telemetry, providerEnv(process.env)), IS_SANDBOX: "1" };
   if (!env.ANTHROPIC_API_KEY && env.LLM_API_KEY) {
     env.ANTHROPIC_API_KEY = env.LLM_API_KEY;
   }
@@ -423,15 +424,15 @@ export class ClaudeRunner {
             break;
           case "auth_status":
             if (Array.isArray(message.output) && message.output.length > 0) {
-              this.writer.line(message.output.join("\n"));
+              lineDiagnostic(this.writer, message.output.join("\n"));
             }
             if (message.error) {
-              this.writer.line(String(message.error));
+              lineDiagnostic(this.writer, String(message.error));
             }
             break;
           case "system":
             if (message.subtype === "local_command_output" && typeof message.content === "string") {
-              this.writer.line(message.content);
+              lineDiagnostic(this.writer, message.content);
             }
             break;
           case "result":

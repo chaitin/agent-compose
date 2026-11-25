@@ -6,6 +6,7 @@ import { createProgram, isMainModule, main } from "../src/cli.js";
 import { COMMAND_RESULT_PREFIX, RESULT_PREFIX, WORKFLOW_RESULT_PREFIX } from "../src/constants.js";
 import * as commandModule from "../src/command.js";
 import * as promptModule from "../src/prompt.js";
+import { TranscriptWriter } from "../src/transcript.js";
 import * as streamModule from "../src/stream.js";
 import * as workflowModule from "../src/workflow/command.js";
 import { captureStdio, withTempSession } from "./helpers.js";
@@ -346,7 +347,7 @@ describe("commander CLI", () => {
           systemContext: expect.stringContaining("system body"),
           runtimeRoot: path.join(root, "runtime"),
           outputSchema: { type: "object", properties: { answer: { type: "string" } } },
-        }));
+        }), expect.any(TranscriptWriter));
       } finally {
         if (oldWorkspace === undefined) {
           delete process.env.WORKSPACE;
@@ -393,7 +394,7 @@ describe("commander CLI", () => {
         stateRoot,
         sessionRoot,
         systemContext: expect.stringContaining("shared workflow identity"),
-      }));
+      }), expect.any(TranscriptWriter));
       await expect(fs.stat(sessionRoot)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });

@@ -7,7 +7,7 @@ import {
   decideCodexThreadResume,
   hashSystemContext,
 } from "../codex-thread-resume.js";
-import { stringEnv } from "../env.js";
+import { providerEnv, stringEnv } from "../env.js";
 import { warn } from "../mpi.js";
 import { uniqueDirectories } from "../paths.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
@@ -89,6 +89,10 @@ export class CodexRunner {
     promptText: string,
     result: AgentResult,
   ): Promise<void> {
+    // Each SDK turn starts a new CLI process whose item IDs can start over.
+    // Deduplicate updates within the turn, never against a previous turn.
+    this.itemState.clear();
+    this.emittedText.clear();
     this.reconnectMessage = undefined;
     this.reconnectAttempt = 0;
     this.turnCompleted = false;
@@ -421,7 +425,7 @@ export class CodexRunner {
     const stored = await readStoredThread(this.options.sessionRoot, "codex");
     const codex = new Codex({
       codexPathOverride: resolveCodexPath(),
-      env: stringEnv(providerTelemetryEnv("codex", this.options.telemetry, process.env)),
+      env: stringEnv(providerTelemetryEnv("codex", this.options.telemetry, providerEnv(process.env))),
       // `config` (the `--config key=value` overrides) is a CodexOptions field on the
       // constructor; it is NOT read from ThreadOptions/startThread. The resume decision below
       // prevents a changed override from being combined with stale model-visible instructions.

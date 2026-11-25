@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { SANDBOX_ROOT } from "./constants.js";
 import { readText } from "./fs.js";
+import { TranscriptWriter } from "./transcript.js";
 import { readMpiContext } from "./mpi.js";
 import { normalizeProvider } from "./provider.js";
 import { ClaudeRunner } from "./runners/claude.js";
@@ -12,6 +13,7 @@ import { OpenCodeRunner } from "./runners/opencode.js";
 import { PiRunner } from "./runners/pi.js";
 import { readMCPConfig } from "./mcp-config.js";
 import { agentSystemPromptPath, buildSystemContext, readSystemPromptFile } from "./system-context.js";
+import type { AgentEventSink } from "./agent-event.js";
 import type { AgentResult, RuntimeJsonSchema } from "./types.js";
 
 export interface PromptCommandOptions {
@@ -29,6 +31,8 @@ export interface PromptCommandOptions {
   skills?: string[];
   systemContextPrefix?: string;
   abortController?: AbortController;
+  /** Receives neutral agent events; see runPromptWithOutput. */
+  onEvent?: AgentEventSink;
 }
 
 export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptCommandOptions, "messageFile">) {
@@ -73,27 +77,30 @@ export async function buildPromptRuntimeOptions(commandOptions: Omit<PromptComma
 }
 
 export async function runPromptCommand(commandOptions: PromptCommandOptions): Promise<AgentResult> {
-  const options = await buildPromptRuntimeOptions(commandOptions);
+  const options = { ...await buildPromptRuntimeOptions(commandOptions), onEvent: commandOptions.onEvent };
   const messageFile = commandOptions.messageFile;
   if (!messageFile && commandOptions.promptText === undefined) {
     throw new Error("--message-file is required");
   }
   const promptText = commandOptions.promptText ?? await readText(path.resolve(messageFile as string));
   const provider = options.provider;
+  // With structured events the caller rebuilds the transcript itself; keep
+  // the text buffer for the result payload but stop mirroring it to stderr.
+  const writer = new TranscriptWriter({ mirror: !options.onEvent });
   if (provider === "codex") {
-    return await new CodexRunner(options).runPrompt(promptText);
+    return await new CodexRunner(options, writer).runPrompt(promptText);
   }
   if (provider === "claude") {
-    return await new ClaudeRunner(options).runPrompt(promptText);
+    return await new ClaudeRunner(options, writer).runPrompt(promptText);
   }
   if (provider === "opencode") {
-    return await new OpenCodeRunner(options).runPrompt(promptText);
+    return await new OpenCodeRunner(options, writer).runPrompt(promptText);
   }
   if (provider === "pi") {
-    return await new PiRunner(options).runPrompt(promptText);
+    return await new PiRunner(options, writer).runPrompt(promptText);
   }
   if (provider === "dsh") {
-    return await new DshRunner(options).runPrompt(promptText);
+    return await new DshRunner(options, writer).runPrompt(promptText);
   }
   // normalizeProvider accepts only the Provider union, so this guard is
   // unreachable; it keeps the dispatch total for the type checker.

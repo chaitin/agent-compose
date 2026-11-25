@@ -16,7 +16,11 @@ agent-compose-runtime prompt \
 
 `--skill` may be repeated to enable multiple agent skills.
 
-Successful runs write a single structured result line to stdout with the `__AGENT_RESULT__` prefix. Human-readable agent transcript output is written to stderr.
+By default, successful runs write a single structured result line to stdout with the `__AGENT_RESULT__` prefix. Human-readable agent transcript output is written to stderr. This default remains compatible with the runtime SDK and existing scripts.
+
+Setting `AGENT_COMPOSE_RUNTIME_OUTPUT=frames` switches stdout to version 1 NDJSON frames (`started`, `agent_event`, `agent_turn_completed`, `result`, or `error` on failure), using the same envelope as `stream`, so a caller receives the run's structured agent events rather than only its final result. Transcript text is then not mirrored to stderr; stderr remains available for diagnostics. Any other nonempty value is rejected before the agent starts.
+
+Older runtimes ignore this variable and write only the `__AGENT_RESULT__` line, so a caller that sets it must accept both formats. The variable is removed from provider subprocess environments so tool scripts and nested SDK calls keep the default output contract. The `exec` command's `__COMMAND_RESULT__` format is unchanged.
 
 `--output-schema-file` is optional. When set, the file must contain a JSON Schema object. The runtime passes it to the provider's native structured-output mechanism where supported. Codex and Claude support schema-based output; OpenCode, Pi, and DSH currently reject schema requests until a native provider mechanism is wired.
 

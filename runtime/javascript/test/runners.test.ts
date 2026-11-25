@@ -4,6 +4,7 @@ import path from "node:path";
 import { ClaudeRunner } from "../src/runners/claude.js";
 import { CodexRunner } from "../src/runners/codex.js";
 import { OpenCodeRunner } from "../src/runners/opencode.js";
+import { TranscriptWriter } from "../src/transcript.js";
 import { captureStdio, runnerOptions, withTempSession } from "./helpers.js";
 
 afterEach(() => {
@@ -464,6 +465,25 @@ describe("OpenCodeRunner", () => {
       }
       expect(stdio.stderr).toContain("[opencode cleanup]");
       expect(stdio.stderr).toContain("busy");
+    });
+  });
+
+  it("keeps OpenCode diagnostics on stderr when the transcript is not mirrored", async () => {
+    await withTempSession(async (root) => {
+      // Frames output turns mirroring off; diagnostics must still reach stderr.
+      const writer = new TranscriptWriter({ mirror: false });
+      const runner = new OpenCodeRunner({ ...runnerOptions(root, "", "opencode"), skills: ["pdf"] }, writer);
+      await runner.environment();
+      const rmSpy = vi.spyOn(fs, "rm").mockRejectedValueOnce(new Error("busy"));
+      const stdio = captureStdio();
+      try {
+        await runner.cleanupSkillsConfig();
+      } finally {
+        stdio.restore();
+        rmSpy.mockRestore();
+      }
+      expect(stdio.stderr).toContain("[opencode cleanup]");
+      expect(writer.transcript()).toContain("[opencode cleanup]");
     });
   });
 

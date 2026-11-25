@@ -1,3 +1,4 @@
+import { providerEnv } from "../env.js";
 import { providerTelemetryEnv } from "../telemetry.js";
 import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -5,7 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { extractText, jsonString } from "../text.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
-import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
+import { TranscriptWriter, writeDiagnostic, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
 import { toolKindForName, toolOutputText } from "../agent-event.js";
 import type { AgentResult, RunnerOptions } from "../types.js";
@@ -60,7 +61,7 @@ export class PiRunner {
       const child = spawn("pi", args, {
         cwd: this.options.workspace,
         env: {
-          ...providerTelemetryEnv("pi", this.options.telemetry, process.env),
+          ...providerTelemetryEnv("pi", this.options.telemetry, providerEnv(process.env)),
           HOME: this.options.home,
           PI_CODING_AGENT_DIR: agentDir,
           PI_OFFLINE: "1",
@@ -79,7 +80,7 @@ export class PiRunner {
       child.stderr?.on("data", (chunk) => {
         const text = String(chunk || "");
         stderrBytes = appendBounded(stderrBytes, Buffer.from(text), maxDiagnosticBytes);
-        this.writer.write(text);
+        writeDiagnostic(this.writer, text);
       });
 
       let protocolError: Error | null = null;
