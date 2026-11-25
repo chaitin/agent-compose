@@ -123,7 +123,7 @@ func TestRunHistorySchedulerDeletesOnlyExactRelationsAndChildren(t *testing.T) {
 }
 
 func TestRunHistoryRejectsUnsafeScopeBeforeArtifacts(t *testing.T) {
-	for _, name := range []string{"running", "child_running", "completion_pending", "wrong_project", "wrong_scheduler", "wrong_kind", "child_alone", "shared_sandbox", "shared_link", "legacy_shared_link", "binding"} {
+	for _, name := range []string{"running", "child_running", "completion_pending", "wrong_project", "wrong_scheduler", "wrong_kind", "child_alone", "shared_sandbox", "shared_link", "legacy_shared_link", "legacy_scheduler_run_id_null", "binding"} {
 		t.Run(name, func(t *testing.T) {
 			f := newRunHistoryFixture(t, nil)
 			id := f.scheduler
@@ -161,6 +161,12 @@ func TestRunHistoryRejectsUnsafeScopeBeforeArtifacts(t *testing.T) {
 				sandboxID := identity.NewID(identity.ResourceSandbox, "legacy")
 				exec("UPDATE project_run SET sandbox_id=? WHERE run_id=?", sandboxID, f.childID)
 				exec("INSERT INTO event_sandbox_link(event_id,sandbox_id,relation,scheduler_id,scheduler_run_id,created_at) VALUES('legacy-event',?,'used',?,'other-run',1)", "sha256:"+sandboxID, id.SchedulerID)
+			case "legacy_scheduler_run_id_null":
+				// Migration 000005 backfilled project_run.scheduler_run_id as NULL.
+				// A legacy row that names this scheduler and sandbox but is not
+				// this scheduler run must still count as an external reference.
+				exec("UPDATE project_run SET sandbox_id='shared'")
+				exec("UPDATE project_run SET scheduler_id=?, scheduler_run_id=NULL WHERE run_id=?", id.SchedulerID, f.standalone.RunID)
 			case "binding":
 				exec("UPDATE project_run SET sandbox_id='shared' WHERE run_id=?", f.childID)
 				exec("INSERT INTO scheduler_sandbox_binding(scheduler_id,trigger_id,sandbox_id,sandbox_config_hash,created_at,updated_at) VALUES(?,'trigger','shared','hash',1,1)", id.SchedulerID)

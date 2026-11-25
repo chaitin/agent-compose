@@ -86,7 +86,14 @@ func runHistorySandboxReferenced(ctx context.Context, client *dao.Client, id run
 			projectrun.IDNEQ(id.RunID),
 		)
 	if id.Kind == runhistory.SchedulerRun {
+		// The released predicate used COALESCE(scheduler_run_id,'') here.
+		// scheduler_run_id is nullable (legacy rows from migration 000005 store
+		// NULL), and SQL's NOT(NULL AND ...) is NULL, so comparing the nullable
+		// column directly would silently drop those rows instead of counting
+		// them as external references. Keep the old three-valued behaviour:
+		// only a non-NULL matching run id is the self-reference to exclude.
 		query = query.Where(projectrun.Not(projectrun.And(
+			projectrun.SchedulerRunIDNotNil(),
 			projectrun.SchedulerRunIDEQ(id.RunID),
 			projectrun.SchedulerIDEQ(id.SchedulerID),
 		)))
