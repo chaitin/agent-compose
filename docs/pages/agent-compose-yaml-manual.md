@@ -543,7 +543,7 @@ agents:
 | --- | --- | --- |
 | `server` | Required | Hostname or IP address of the NFS server, without a port. |
 | `export` | Required | Clean absolute export path on the server. |
-| `version` | `4` | Protocol version: `3`, `4`, `4.0`, `4.1` or `4.2`. |
+| `version` | `4` | Protocol version: `3`, `4`, `4.0`, `4.1` or `4.2`. The kernel client mounts `4` as NFSv4.0; set `4.1` or `4.2` explicitly to use a later minor version. |
 | `mount_options` | Empty | Comma-separated extra NFS mount options, such as `nolock,timeo=600` or `port=2049`. `addr`, `vers`, `nfsvers`, `ro`, `rw`, `suid`, `nosuid`, `dev` and `nodev` are set by agent-compose; read-only is chosen per agent mount with `:ro`, and every runtime that agent-compose mounts with uses `nosuid,nodev`. |
 
 Each runtime mounts the export itself when the sandbox starts, so the daemon needs neither mount privileges nor a route to the server, but the host that does the mount needs both:

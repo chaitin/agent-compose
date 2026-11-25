@@ -539,7 +539,7 @@ agents:
 | --- | --- | --- |
 | `server` | 必填 | NFS 服务器的主机名或 IP，不含端口。 |
 | `export` | 必填 | 服务器上规范的绝对 export 路径。 |
-| `version` | `4` | 协议版本：`3`、`4`、`4.0`、`4.1` 或 `4.2`。 |
+| `version` | `4` | 协议版本：`3`、`4`、`4.0`、`4.1` 或 `4.2`。内核客户端会把 `4` 挂载为 NFSv4.0；需要更高的次版本时请显式设置 `4.1` 或 `4.2`。 |
 | `mount_options` | 空 | 逗号分隔的额外 NFS 挂载选项，例如 `nolock,timeo=600` 或 `port=2049`。`addr`、`vers`、`nfsvers`、`ro`、`rw`、`suid`、`nosuid`、`dev`、`nodev` 由 agent-compose 设置；只读通过 agent 挂载上的 `:ro` 按挂载指定，由 agent-compose 执行挂载的 runtime 一律使用 `nosuid,nodev`。 |
 
 sandbox 启动时由各 runtime 自己挂载 export，因此 daemon 不需要挂载权限，也不需要能访问服务器；但实际执行挂载的主机两者都需要：
