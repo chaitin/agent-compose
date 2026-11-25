@@ -49,7 +49,7 @@ const textViewProbeBuffer = 4 << 10
 
 // OpenTextView opens the text view of the run log at path.
 func OpenTextView(path string) (*TextView, error) {
-	file, err := os.Open(path)
+	file, err := openLog(path)
 	if err != nil {
 		return nil, err
 	}

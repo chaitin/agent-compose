@@ -163,6 +163,16 @@ func waitForRunLog(ctx context.Context, sub *runs.RunLogSubscription, ticker *ti
 	}
 }
 
+// runLogReadError maps a failure to read a run's log onto the wire. An
+// archived log is a precondition, not a server fault: the log is in the
+// archive, and the run's conversation and summary are still served.
+func runLogReadError(err error) error {
+	if errors.Is(err, runlog.ErrArchived) {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%w; ListRunMessages and the run summary remain available", err))
+	}
+	return connect.NewError(connect.CodeInternal, err)
+}
+
 // runLogEntriesPerChunk bounds one structured chunk, and how many entries a
 // reader holds at a time while catching up on a long log.
 const runLogEntriesPerChunk = 200
@@ -176,7 +186,7 @@ func sendRunLogEntries(stream *connect.ServerStream[agentcomposev2.RunLogChunk],
 			if errors.Is(err, os.ErrNotExist) {
 				return nil
 			}
-			return connect.NewError(connect.CodeInternal, err)
+			return runLogReadError(err)
 		}
 		*consumed = next
 		if len(entries) == 0 {

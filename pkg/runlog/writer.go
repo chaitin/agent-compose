@@ -100,6 +100,11 @@ func Open(path string, opts Options) (*Writer, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create run log dir: %w", err)
 	}
+	// An archived log is finished: reopening it would start a new, empty log
+	// under the same run and hide that its history moved to the archive.
+	if archived := archivedError(path); archived != nil {
+		return nil, archived
+	}
 	w := &Writer{opts: opts, merger: NewMerger(opts.ToolOutputHalf), textEndsLine: true}
 	recovery, err := recoverCheckpoint(path)
 	if err != nil {

@@ -259,6 +259,8 @@ type Config struct {
 	WorkspaceCleanupTTL        time.Duration
 	SandboxRetentionTTL        time.Duration
 	SandboxArchiveRoot         string
+	RunLogRetentionTTL         time.Duration
+	RunLogArchiveRoot          string
 	ImageCacheCleanupTTL       time.Duration
 	ImagePullTimeout           time.Duration
 	GuestWorkspacePath         string
@@ -301,6 +303,7 @@ func NewConfig(di do.Injector) (*Config, error) {
 		DataRoot:              dataRoot,
 		SandboxRoot:           sources.Sandbox.Root,
 		SandboxArchiveRoot:    sources.Cleanup.SandboxArchiveRoot,
+		RunLogArchiveRoot:     sources.Cleanup.RunLogArchiveRoot,
 		BoxliteHome:           sources.Drivers.BoxliteHome,
 		BoxliteRuntimeDir:     sources.Drivers.BoxliteRuntimeDir,
 		DockerHome:            sources.Drivers.DockerHome,
@@ -580,6 +583,8 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		WorkspaceCleanupTTL:             cleanup.WorkspaceCleanupTTL,
 		SandboxRetentionTTL:             cleanup.SandboxRetentionTTL,
 		SandboxArchiveRoot:              normalized.SandboxArchiveRoot,
+		RunLogRetentionTTL:              cleanup.RunLogRetentionTTL,
+		RunLogArchiveRoot:               normalized.RunLogArchiveRoot,
 		ImageCacheCleanupTTL:            cleanup.ImageCacheCleanupTTL,
 		ImagePullTimeout:                timeouts.ImagePullTimeout,
 		GuestWorkspacePath:              guestPaths.GuestWorkspacePath,
@@ -1328,6 +1333,8 @@ type cleanupConfigValues struct {
 	WorkspaceCleanupTTL  time.Duration
 	SandboxRetentionTTL  time.Duration
 	SandboxArchiveRoot   string
+	RunLogRetentionTTL   time.Duration
+	RunLogArchiveRoot    string
 	ImageCacheCleanupTTL time.Duration
 }
 
@@ -1348,11 +1355,19 @@ func loadCleanupConfig(dataRoot string) (cleanupConfigValues, error) {
 	if sandboxArchiveRoot == "" {
 		sandboxArchiveRoot = filepath.Join(dataRoot, "archives", "sandboxes")
 	}
+	runLogRetentionTTL, err := cleanupDurationEnv("RUN_LOG_RETENTION_TTL", 0)
+	if err != nil {
+		return cleanupConfigValues{}, err
+	}
+	runLogArchiveRoot := strings.TrimSpace(os.Getenv("RUN_LOG_ARCHIVE_ROOT"))
+	if runLogArchiveRoot == "" {
+		runLogArchiveRoot = filepath.Join(dataRoot, "archives", "logs")
+	}
 	imageCacheCleanupTTL, err := cleanupDurationEnv("IMAGE_CACHE_CLEANUP_TTL", 0)
 	if err != nil {
 		return cleanupConfigValues{}, err
 	}
-	if (workspaceCleanupTTL > 0 || sandboxRetentionTTL > 0 || imageCacheCleanupTTL > 0) && cleanupInterval <= 0 {
+	if (workspaceCleanupTTL > 0 || sandboxRetentionTTL > 0 || runLogRetentionTTL > 0 || imageCacheCleanupTTL > 0) && cleanupInterval <= 0 {
 		return cleanupConfigValues{}, fmt.Errorf("CLEANUP_INTERVAL must be positive when automatic cleanup is enabled")
 	}
 	return cleanupConfigValues{
@@ -1360,6 +1375,8 @@ func loadCleanupConfig(dataRoot string) (cleanupConfigValues, error) {
 		WorkspaceCleanupTTL:  workspaceCleanupTTL,
 		SandboxRetentionTTL:  sandboxRetentionTTL,
 		SandboxArchiveRoot:   sandboxArchiveRoot,
+		RunLogRetentionTTL:   runLogRetentionTTL,
+		RunLogArchiveRoot:    runLogArchiveRoot,
 		ImageCacheCleanupTTL: imageCacheCleanupTTL,
 	}, nil
 }
@@ -1557,6 +1574,7 @@ type configPathsToNormalize struct {
 	DataRoot              string
 	SandboxRoot           string
 	SandboxArchiveRoot    string
+	RunLogArchiveRoot     string
 	BoxliteHome           string
 	BoxliteRuntimeDir     string
 	DockerHome            string
@@ -1574,6 +1592,10 @@ func normalizeConfigPaths(paths configPathsToNormalize) (configPathsToNormalize,
 	paths.SandboxRoot = mustAbs(paths.SandboxRoot)
 	paths.SandboxArchiveRoot = mustAbs(paths.SandboxArchiveRoot)
 	if err := validateSandboxArchiveRoot(paths.SandboxRoot, paths.SandboxArchiveRoot); err != nil {
+		return configPathsToNormalize{}, err
+	}
+	paths.RunLogArchiveRoot = mustAbs(paths.RunLogArchiveRoot)
+	if err := validateRunLogArchiveRoot(paths.DataRoot, paths.RunLogArchiveRoot); err != nil {
 		return configPathsToNormalize{}, err
 	}
 	paths.BoxliteHome = mustAbs(paths.BoxliteHome)

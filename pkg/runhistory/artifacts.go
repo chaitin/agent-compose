@@ -22,7 +22,10 @@ type FSArtifacts struct {
 	DataRoot           string
 	SandboxRoot        string
 	SandboxArchiveRoot string
-	SandboxDirs        SandboxDirs
+	// RunLogArchiveRoot is where LogArchiver moves run logs; removing a run's
+	// history removes its archived log too.
+	RunLogArchiveRoot string
+	SandboxDirs       SandboxDirs
 }
 
 func (a FSArtifacts) validate(ctx context.Context, scope Scope) error {

@@ -300,7 +300,7 @@ func (h *RunHandler) FollowRunLogs(ctx context.Context, req *connect.Request[age
 	}
 	offset, err := initialRunLogOffset(run.LogsPath, int(req.Msg.GetTailLines()), req.Msg.GetStartOffset(), req.Msg.GetTailSet() || req.Msg.GetTailLines() > 0)
 	if err != nil {
-		return connect.NewError(connect.CodeInternal, err)
+		return runLogReadError(err)
 	}
 	if req.Msg.GetIncludeMetadata() {
 		if err := stream.Send(&agentcomposev2.RunLogChunk{
@@ -423,7 +423,7 @@ func sendRunLogFileChunks(stream *connect.ServerStream[agentcomposev2.RunLogChun
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, nil
 			}
-			return nil, connect.NewError(connect.CodeInternal, err)
+			return nil, runLogReadError(err)
 		}
 	}
 	if err := text.refresh(); err != nil {

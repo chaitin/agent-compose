@@ -142,6 +142,7 @@ func RegisterRoutes(di do.Injector) {
 				DataRoot:           do.MustInvoke[*appconfig.Config](di).DataRoot,
 				SandboxRoot:        do.MustInvoke[*appconfig.Config](di).SandboxRoot,
 				SandboxArchiveRoot: do.MustInvoke[*appconfig.Config](di).SandboxArchiveRoot,
+				RunLogArchiveRoot:  do.MustInvoke[*appconfig.Config](di).RunLogArchiveRoot,
 				SandboxDirs:        do.MustInvoke[*sandboxstore.Store](di),
 			},
 		},
@@ -310,6 +311,10 @@ func NewCleanupRunner(di do.Injector) (*cleanup.Runner, error) {
 		{TTL: config.SandboxRetentionTTL, Cleaner: &sandboxes.SandboxRetentionCleaner{
 			Store: store, Locks: do.MustInvoke[*sandboxes.LifecycleLocks](di), ArchiveRoot: config.SandboxArchiveRoot,
 			Removal: do.MustInvoke[*sandboxes.RemovalCoordinator](di), SandboxRoot: config.SandboxRoot,
+		}},
+		{TTL: config.RunLogRetentionTTL, Cleaner: &runhistory.LogArchiver{
+			DataRoot: config.DataRoot, ArchiveRoot: config.RunLogArchiveRoot,
+			Store: do.MustInvoke[*configstore.ConfigStore](di),
 		}},
 		{TTL: config.ImageCacheCleanupTTL, Cleaner: &adapters.ImageCacheCleaner{Cache: imageCache, Sandboxes: store, SandboxRoot: config.SandboxRoot}},
 	}

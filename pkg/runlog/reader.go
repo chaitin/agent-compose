@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 )
 
 // ReadEntries returns the entries of the run log at path with Seq > afterSeq.
 // A torn trailing line, left by a crash mid-write, is skipped.
 func ReadEntries(path string, afterSeq uint64) ([]Entry, error) {
-	file, err := os.Open(path)
+	file, err := openLog(path)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +31,7 @@ func ReadEntries(path string, afterSeq uint64) ([]Entry, error) {
 // walking a large one a batch at a time, resumes there without re-reading.
 // A torn trailing line is not consumed; the next call reads it once complete.
 func ReadEntryBatch(path string, from int64, afterSeq uint64, limit int) ([]Entry, int64, error) {
-	file, err := os.Open(path)
+	file, err := openLog(path)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -62,7 +61,7 @@ func ReadEntryBatch(path string, from int64, afterSeq uint64, limit int) ([]Entr
 // without holding the log in memory. Scanning stops early when fn returns
 // false.
 func ScanEntries(path string, fn func(Entry) bool) error {
-	file, err := os.Open(path)
+	file, err := openLog(path)
 	if err != nil {
 		return err
 	}

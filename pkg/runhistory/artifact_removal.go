@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -35,6 +36,16 @@ func (a FSArtifacts) Prepare(ctx context.Context, scope Scope) (PreparedArtifact
 			return nil, err
 		}
 		set = append(set, p)
+		if strings.TrimSpace(a.RunLogArchiveRoot) == "" {
+			continue
+		}
+		// An archived log belongs to the run as much as the original did.
+		archive, err := prepareDirectoryUnder(a.RunLogArchiveRoot, false, []string{"runs"}, run.RunID, "run log archive")
+		if err != nil {
+			_ = set.Close() // Preserve the preparation error.
+			return nil, err
+		}
+		set = append(set, archive)
 	}
 	if scope.SchedulerRun != nil {
 		run := scope.SchedulerRun
@@ -61,8 +72,18 @@ func (a FSArtifacts) prepareDirectory(parentParts []string, name, kind string) (
 	// The data root always exists for a running daemon; a missing one means a
 	// misconfigured or unmounted root, where absence proves nothing. Missing
 	// directories below it are ordinary and mean there is nothing to remove.
-	root, err := os.OpenRoot(a.DataRoot)
+	return prepareDirectoryUnder(a.DataRoot, true, parentParts, name, kind)
+}
+
+// prepareDirectoryUnder prepares name below rootPath/parentParts. A root that
+// is created lazily, such as an archive root nothing was archived to yet, is
+// not required: its absence means there is nothing to remove.
+func prepareDirectoryUnder(rootPath string, requireRoot bool, parentParts []string, name, kind string) (*preparedDirectory, error) {
+	root, err := os.OpenRoot(rootPath)
 	if errors.Is(err, os.ErrNotExist) {
+		if !requireRoot {
+			return &preparedDirectory{name: name, pending: pendingHistoryName(name), kind: kind}, nil
+		}
 		return nil, artifactPrecondition(kind+" data root is unavailable", err)
 	}
 	if err != nil {
