@@ -3,6 +3,8 @@ import { AGENT_OUTPUT_ENV, RESULT_PREFIX } from "./constants.js";
 import { formatError } from "./errors.js";
 import { createFrameEmitter } from "./frame.js";
 import { runPromptCommand, type PromptCommandOptions } from "./prompt.js";
+import { normalizeProvider } from "./provider.js";
+import type { Provider } from "./types.js";
 
 /** Preserve prompt's public stdout contract unless the caller requests frames. */
 export async function runPromptWithOutput(
@@ -22,13 +24,21 @@ export async function runPromptWithOutput(
   }
 
   const emit = createFrameEmitter(write);
-  emit("started", { provider: options.provider });
+  emit("started", startedFields(options.provider));
   try {
     const result = await runPromptCommand({
       ...options,
       onEvent: (event) => emit("agent_event", { event }),
     });
-    emit("agent_turn_completed", result);
+    // Same fields as stream's agent_turn_completed; the full result, with its
+    // transcript, is carried once by the result frame.
+    emit("agent_turn_completed", {
+      provider: result.provider,
+      threadId: result.threadId,
+      finalText: result.finalText,
+      finalTextSource: result.finalTextSource,
+      stopReason: result.stopReason,
+    });
     emit("result", result);
   } catch (error) {
     emit("error", { code: "prompt_failed", message: formatError(error) });
@@ -36,6 +46,19 @@ export async function runPromptWithOutput(
     // pending stdout writes; on a pipe they can be asynchronous.
     await flush();
     throw error;
+  }
+}
+
+/**
+ * Reports the provider as the run will resolve it. An invalid or missing
+ * provider is left out here; runPromptCommand rejects it and the error frame
+ * reports why.
+ */
+function startedFields(raw: string | undefined): { provider?: Provider } {
+  try {
+    return { provider: normalizeProvider(raw) };
+  } catch {
+    return {};
   }
 }
 

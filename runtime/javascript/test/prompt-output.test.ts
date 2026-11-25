@@ -32,10 +32,23 @@ describe("prompt output compatibility", () => {
     expect(lines.map(decodeFrame)).toEqual([
       { v: 1, seq: 0, type: "started", provider: "codex" },
       { v: 1, seq: 1, type: "agent_event", event: { kind: "text_delta", text: "done" } },
-      { ...result, v: 1, seq: 2, type: "agent_turn_completed" },
+      {
+        v: 1, seq: 2, type: "agent_turn_completed", provider: "codex", threadId: "t1",
+        finalText: "done", finalTextSource: "provider_message", stopReason: "completed",
+      },
       { ...result, v: 1, seq: 3, type: "result" },
     ]);
     expect(lines.join("")).not.toContain("__AGENT_");
+  });
+
+  it("reports the normalized provider and omits a missing one", async () => {
+    vi.spyOn(prompt, "runPromptCommand").mockResolvedValue(result);
+    const aliased: string[] = [];
+    await runPromptWithOutput({ provider: " Claude-Code " }, { [AGENT_OUTPUT_ENV]: "frames" }, (line) => aliased.push(line));
+    expect(decodeFrame(aliased[0])).toEqual({ v: 1, seq: 0, type: "started", provider: "claude" });
+    const missing: string[] = [];
+    await runPromptWithOutput({}, { [AGENT_OUTPUT_ENV]: "frames" }, (line) => missing.push(line));
+    expect(decodeFrame(missing[0])).toEqual({ v: 1, seq: 0, type: "started" });
   });
 
   it("reports failure without emitting a successful terminal result", async () => {
