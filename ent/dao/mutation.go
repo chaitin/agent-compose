@@ -13781,56 +13781,62 @@ func (m *ProjectRevisionMutation) ResetEdge(name string) error {
 // ProjectRunMutation represents an operation that mutates the ProjectRun nodes in the graph.
 type ProjectRunMutation struct {
 	config
-	op                  Op
-	typ                 string
-	id                  *string
-	project_id          *string
-	project_name        *string
-	project_revision    *int64
-	addproject_revision *int64
-	agent_name          *string
-	agent_id            *string
-	source              *string
-	scheduler_id        *string
-	scheduler_run_id    *string
-	trigger_id          *string
-	status              *string
-	sandbox_id          *string
-	exit_code           *int
-	addexit_code        *int
-	error               *string
-	error_stack         *string
-	prompt              *string
-	output              *string
-	result_json         *string
-	logs_path           *string
-	artifacts_dir       *string
-	cleanup_error       *string
-	cleanup_policy      *string
-	sandbox_created     *int
-	addsandbox_created  *int
-	_driver             *string
-	image_ref           *string
-	started_at          *int64
-	addstarted_at       *int64
-	completed_at        *int64
-	addcompleted_at     *int64
-	duration_ms         *int64
-	addduration_ms      *int64
-	created_at          *int64
-	addcreated_at       *int64
-	updated_at          *int64
-	addupdated_at       *int64
-	execution_id        *string
-	detach              *int
-	adddetach           *int
-	deadline            *int64
-	adddeadline         *int64
-	detach_kind         *string
-	clearedFields       map[string]struct{}
-	done                bool
-	oldValue            func(context.Context) (*ProjectRun, error)
-	predicates          []predicate.ProjectRun
+	op                        Op
+	typ                       string
+	id                        *string
+	project_id                *string
+	project_name              *string
+	project_revision          *int64
+	addproject_revision       *int64
+	agent_name                *string
+	agent_id                  *string
+	source                    *string
+	scheduler_id              *string
+	scheduler_run_id          *string
+	trigger_id                *string
+	status                    *string
+	sandbox_id                *string
+	exit_code                 *int
+	addexit_code              *int
+	error                     *string
+	error_stack               *string
+	prompt                    *string
+	output                    *string
+	result_json               *string
+	logs_path                 *string
+	artifacts_dir             *string
+	cleanup_error             *string
+	cleanup_policy            *string
+	sandbox_created           *int
+	addsandbox_created        *int
+	_driver                   *string
+	image_ref                 *string
+	started_at                *int64
+	addstarted_at             *int64
+	completed_at              *int64
+	addcompleted_at           *int64
+	duration_ms               *int64
+	addduration_ms            *int64
+	created_at                *int64
+	addcreated_at             *int64
+	updated_at                *int64
+	addupdated_at             *int64
+	execution_id              *string
+	detach                    *int
+	adddetach                 *int
+	deadline                  *int64
+	adddeadline               *int64
+	detach_kind               *string
+	log_format                *string
+	summary_json              *string
+	agent_cell_id             *string
+	log_incomplete            *int
+	addlog_incomplete         *int
+	execution_checkpoint_json *string
+	clearedFields             map[string]struct{}
+	done                      bool
+	oldValue                  func(context.Context) (*ProjectRun, error)
+	predicates                []predicate.ProjectRun
 }
 
 var _ ent.Mutation = (*ProjectRunMutation)(nil)
@@ -15710,6 +15716,272 @@ func (m *ProjectRunMutation) ResetDetachKind() {
 	delete(m.clearedFields, projectrun.FieldDetachKind)
 }
 
+// SetLogFormat sets the "log_format" field.
+func (m *ProjectRunMutation) SetLogFormat(s string) {
+	m.log_format = &s
+}
+
+// LogFormat returns the value of the "log_format" field in the mutation.
+func (m *ProjectRunMutation) LogFormat() (r string, exists bool) {
+	v := m.log_format
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLogFormat returns the old "log_format" field's value of the ProjectRun entity.
+// If the ProjectRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectRunMutation) OldLogFormat(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLogFormat is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLogFormat requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLogFormat: %w", err)
+	}
+	return oldValue.LogFormat, nil
+}
+
+// ClearLogFormat clears the value of the "log_format" field.
+func (m *ProjectRunMutation) ClearLogFormat() {
+	m.log_format = nil
+	m.clearedFields[projectrun.FieldLogFormat] = struct{}{}
+}
+
+// LogFormatCleared returns if the "log_format" field was cleared in this mutation.
+func (m *ProjectRunMutation) LogFormatCleared() bool {
+	_, ok := m.clearedFields[projectrun.FieldLogFormat]
+	return ok
+}
+
+// ResetLogFormat resets all changes to the "log_format" field.
+func (m *ProjectRunMutation) ResetLogFormat() {
+	m.log_format = nil
+	delete(m.clearedFields, projectrun.FieldLogFormat)
+}
+
+// SetSummaryJSON sets the "summary_json" field.
+func (m *ProjectRunMutation) SetSummaryJSON(s string) {
+	m.summary_json = &s
+}
+
+// SummaryJSON returns the value of the "summary_json" field in the mutation.
+func (m *ProjectRunMutation) SummaryJSON() (r string, exists bool) {
+	v := m.summary_json
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSummaryJSON returns the old "summary_json" field's value of the ProjectRun entity.
+// If the ProjectRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectRunMutation) OldSummaryJSON(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSummaryJSON is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSummaryJSON requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSummaryJSON: %w", err)
+	}
+	return oldValue.SummaryJSON, nil
+}
+
+// ClearSummaryJSON clears the value of the "summary_json" field.
+func (m *ProjectRunMutation) ClearSummaryJSON() {
+	m.summary_json = nil
+	m.clearedFields[projectrun.FieldSummaryJSON] = struct{}{}
+}
+
+// SummaryJSONCleared returns if the "summary_json" field was cleared in this mutation.
+func (m *ProjectRunMutation) SummaryJSONCleared() bool {
+	_, ok := m.clearedFields[projectrun.FieldSummaryJSON]
+	return ok
+}
+
+// ResetSummaryJSON resets all changes to the "summary_json" field.
+func (m *ProjectRunMutation) ResetSummaryJSON() {
+	m.summary_json = nil
+	delete(m.clearedFields, projectrun.FieldSummaryJSON)
+}
+
+// SetAgentCellID sets the "agent_cell_id" field.
+func (m *ProjectRunMutation) SetAgentCellID(s string) {
+	m.agent_cell_id = &s
+}
+
+// AgentCellID returns the value of the "agent_cell_id" field in the mutation.
+func (m *ProjectRunMutation) AgentCellID() (r string, exists bool) {
+	v := m.agent_cell_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAgentCellID returns the old "agent_cell_id" field's value of the ProjectRun entity.
+// If the ProjectRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectRunMutation) OldAgentCellID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAgentCellID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAgentCellID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAgentCellID: %w", err)
+	}
+	return oldValue.AgentCellID, nil
+}
+
+// ClearAgentCellID clears the value of the "agent_cell_id" field.
+func (m *ProjectRunMutation) ClearAgentCellID() {
+	m.agent_cell_id = nil
+	m.clearedFields[projectrun.FieldAgentCellID] = struct{}{}
+}
+
+// AgentCellIDCleared returns if the "agent_cell_id" field was cleared in this mutation.
+func (m *ProjectRunMutation) AgentCellIDCleared() bool {
+	_, ok := m.clearedFields[projectrun.FieldAgentCellID]
+	return ok
+}
+
+// ResetAgentCellID resets all changes to the "agent_cell_id" field.
+func (m *ProjectRunMutation) ResetAgentCellID() {
+	m.agent_cell_id = nil
+	delete(m.clearedFields, projectrun.FieldAgentCellID)
+}
+
+// SetLogIncomplete sets the "log_incomplete" field.
+func (m *ProjectRunMutation) SetLogIncomplete(i int) {
+	m.log_incomplete = &i
+	m.addlog_incomplete = nil
+}
+
+// LogIncomplete returns the value of the "log_incomplete" field in the mutation.
+func (m *ProjectRunMutation) LogIncomplete() (r int, exists bool) {
+	v := m.log_incomplete
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLogIncomplete returns the old "log_incomplete" field's value of the ProjectRun entity.
+// If the ProjectRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectRunMutation) OldLogIncomplete(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLogIncomplete is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLogIncomplete requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLogIncomplete: %w", err)
+	}
+	return oldValue.LogIncomplete, nil
+}
+
+// AddLogIncomplete adds i to the "log_incomplete" field.
+func (m *ProjectRunMutation) AddLogIncomplete(i int) {
+	if m.addlog_incomplete != nil {
+		*m.addlog_incomplete += i
+	} else {
+		m.addlog_incomplete = &i
+	}
+}
+
+// AddedLogIncomplete returns the value that was added to the "log_incomplete" field in this mutation.
+func (m *ProjectRunMutation) AddedLogIncomplete() (r int, exists bool) {
+	v := m.addlog_incomplete
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearLogIncomplete clears the value of the "log_incomplete" field.
+func (m *ProjectRunMutation) ClearLogIncomplete() {
+	m.log_incomplete = nil
+	m.addlog_incomplete = nil
+	m.clearedFields[projectrun.FieldLogIncomplete] = struct{}{}
+}
+
+// LogIncompleteCleared returns if the "log_incomplete" field was cleared in this mutation.
+func (m *ProjectRunMutation) LogIncompleteCleared() bool {
+	_, ok := m.clearedFields[projectrun.FieldLogIncomplete]
+	return ok
+}
+
+// ResetLogIncomplete resets all changes to the "log_incomplete" field.
+func (m *ProjectRunMutation) ResetLogIncomplete() {
+	m.log_incomplete = nil
+	m.addlog_incomplete = nil
+	delete(m.clearedFields, projectrun.FieldLogIncomplete)
+}
+
+// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
+func (m *ProjectRunMutation) SetExecutionCheckpointJSON(s string) {
+	m.execution_checkpoint_json = &s
+}
+
+// ExecutionCheckpointJSON returns the value of the "execution_checkpoint_json" field in the mutation.
+func (m *ProjectRunMutation) ExecutionCheckpointJSON() (r string, exists bool) {
+	v := m.execution_checkpoint_json
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldExecutionCheckpointJSON returns the old "execution_checkpoint_json" field's value of the ProjectRun entity.
+// If the ProjectRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectRunMutation) OldExecutionCheckpointJSON(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldExecutionCheckpointJSON is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldExecutionCheckpointJSON requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldExecutionCheckpointJSON: %w", err)
+	}
+	return oldValue.ExecutionCheckpointJSON, nil
+}
+
+// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
+func (m *ProjectRunMutation) ClearExecutionCheckpointJSON() {
+	m.execution_checkpoint_json = nil
+	m.clearedFields[projectrun.FieldExecutionCheckpointJSON] = struct{}{}
+}
+
+// ExecutionCheckpointJSONCleared returns if the "execution_checkpoint_json" field was cleared in this mutation.
+func (m *ProjectRunMutation) ExecutionCheckpointJSONCleared() bool {
+	_, ok := m.clearedFields[projectrun.FieldExecutionCheckpointJSON]
+	return ok
+}
+
+// ResetExecutionCheckpointJSON resets all changes to the "execution_checkpoint_json" field.
+func (m *ProjectRunMutation) ResetExecutionCheckpointJSON() {
+	m.execution_checkpoint_json = nil
+	delete(m.clearedFields, projectrun.FieldExecutionCheckpointJSON)
+}
+
 // Where appends a list predicates to the ProjectRunMutation builder.
 func (m *ProjectRunMutation) Where(ps ...predicate.ProjectRun) {
 	m.predicates = append(m.predicates, ps...)
@@ -15744,7 +16016,7 @@ func (m *ProjectRunMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProjectRunMutation) Fields() []string {
-	fields := make([]string, 0, 33)
+	fields := make([]string, 0, 38)
 	if m.project_id != nil {
 		fields = append(fields, projectrun.FieldProjectID)
 	}
@@ -15844,6 +16116,21 @@ func (m *ProjectRunMutation) Fields() []string {
 	if m.detach_kind != nil {
 		fields = append(fields, projectrun.FieldDetachKind)
 	}
+	if m.log_format != nil {
+		fields = append(fields, projectrun.FieldLogFormat)
+	}
+	if m.summary_json != nil {
+		fields = append(fields, projectrun.FieldSummaryJSON)
+	}
+	if m.agent_cell_id != nil {
+		fields = append(fields, projectrun.FieldAgentCellID)
+	}
+	if m.log_incomplete != nil {
+		fields = append(fields, projectrun.FieldLogIncomplete)
+	}
+	if m.execution_checkpoint_json != nil {
+		fields = append(fields, projectrun.FieldExecutionCheckpointJSON)
+	}
 	return fields
 }
 
@@ -15918,6 +16205,16 @@ func (m *ProjectRunMutation) Field(name string) (ent.Value, bool) {
 		return m.Deadline()
 	case projectrun.FieldDetachKind:
 		return m.DetachKind()
+	case projectrun.FieldLogFormat:
+		return m.LogFormat()
+	case projectrun.FieldSummaryJSON:
+		return m.SummaryJSON()
+	case projectrun.FieldAgentCellID:
+		return m.AgentCellID()
+	case projectrun.FieldLogIncomplete:
+		return m.LogIncomplete()
+	case projectrun.FieldExecutionCheckpointJSON:
+		return m.ExecutionCheckpointJSON()
 	}
 	return nil, false
 }
@@ -15993,6 +16290,16 @@ func (m *ProjectRunMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldDeadline(ctx)
 	case projectrun.FieldDetachKind:
 		return m.OldDetachKind(ctx)
+	case projectrun.FieldLogFormat:
+		return m.OldLogFormat(ctx)
+	case projectrun.FieldSummaryJSON:
+		return m.OldSummaryJSON(ctx)
+	case projectrun.FieldAgentCellID:
+		return m.OldAgentCellID(ctx)
+	case projectrun.FieldLogIncomplete:
+		return m.OldLogIncomplete(ctx)
+	case projectrun.FieldExecutionCheckpointJSON:
+		return m.OldExecutionCheckpointJSON(ctx)
 	}
 	return nil, fmt.Errorf("unknown ProjectRun field %s", name)
 }
@@ -16233,6 +16540,41 @@ func (m *ProjectRunMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetDetachKind(v)
 		return nil
+	case projectrun.FieldLogFormat:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLogFormat(v)
+		return nil
+	case projectrun.FieldSummaryJSON:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSummaryJSON(v)
+		return nil
+	case projectrun.FieldAgentCellID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAgentCellID(v)
+		return nil
+	case projectrun.FieldLogIncomplete:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLogIncomplete(v)
+		return nil
+	case projectrun.FieldExecutionCheckpointJSON:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetExecutionCheckpointJSON(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun field %s", name)
 }
@@ -16271,6 +16613,9 @@ func (m *ProjectRunMutation) AddedFields() []string {
 	if m.adddeadline != nil {
 		fields = append(fields, projectrun.FieldDeadline)
 	}
+	if m.addlog_incomplete != nil {
+		fields = append(fields, projectrun.FieldLogIncomplete)
+	}
 	return fields
 }
 
@@ -16299,6 +16644,8 @@ func (m *ProjectRunMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedDetach()
 	case projectrun.FieldDeadline:
 		return m.AddedDeadline()
+	case projectrun.FieldLogIncomplete:
+		return m.AddedLogIncomplete()
 	}
 	return nil, false
 }
@@ -16377,6 +16724,13 @@ func (m *ProjectRunMutation) AddField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.AddDeadline(v)
+		return nil
+	case projectrun.FieldLogIncomplete:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLogIncomplete(v)
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun numeric field %s", name)
@@ -16472,6 +16826,21 @@ func (m *ProjectRunMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(projectrun.FieldDetachKind) {
 		fields = append(fields, projectrun.FieldDetachKind)
+	}
+	if m.FieldCleared(projectrun.FieldLogFormat) {
+		fields = append(fields, projectrun.FieldLogFormat)
+	}
+	if m.FieldCleared(projectrun.FieldSummaryJSON) {
+		fields = append(fields, projectrun.FieldSummaryJSON)
+	}
+	if m.FieldCleared(projectrun.FieldAgentCellID) {
+		fields = append(fields, projectrun.FieldAgentCellID)
+	}
+	if m.FieldCleared(projectrun.FieldLogIncomplete) {
+		fields = append(fields, projectrun.FieldLogIncomplete)
+	}
+	if m.FieldCleared(projectrun.FieldExecutionCheckpointJSON) {
+		fields = append(fields, projectrun.FieldExecutionCheckpointJSON)
 	}
 	return fields
 }
@@ -16573,6 +16942,21 @@ func (m *ProjectRunMutation) ClearField(name string) error {
 		return nil
 	case projectrun.FieldDetachKind:
 		m.ClearDetachKind()
+		return nil
+	case projectrun.FieldLogFormat:
+		m.ClearLogFormat()
+		return nil
+	case projectrun.FieldSummaryJSON:
+		m.ClearSummaryJSON()
+		return nil
+	case projectrun.FieldAgentCellID:
+		m.ClearAgentCellID()
+		return nil
+	case projectrun.FieldLogIncomplete:
+		m.ClearLogIncomplete()
+		return nil
+	case projectrun.FieldExecutionCheckpointJSON:
+		m.ClearExecutionCheckpointJSON()
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun nullable field %s", name)
@@ -16680,6 +17064,21 @@ func (m *ProjectRunMutation) ResetField(name string) error {
 		return nil
 	case projectrun.FieldDetachKind:
 		m.ResetDetachKind()
+		return nil
+	case projectrun.FieldLogFormat:
+		m.ResetLogFormat()
+		return nil
+	case projectrun.FieldSummaryJSON:
+		m.ResetSummaryJSON()
+		return nil
+	case projectrun.FieldAgentCellID:
+		m.ResetAgentCellID()
+		return nil
+	case projectrun.FieldLogIncomplete:
+		m.ResetLogIncomplete()
+		return nil
+	case projectrun.FieldExecutionCheckpointJSON:
+		m.ResetExecutionCheckpointJSON()
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun field %s", name)
@@ -17661,6 +18060,8 @@ type ProjectRunEventMutation struct {
 	stop_reason   *string
 	created_at    *int64
 	addcreated_at *int64
+	log_seq       *int64
+	addlog_seq    *int64
 	clearedFields map[string]struct{}
 	done          bool
 	oldValue      func(context.Context) (*ProjectRunEvent, error)
@@ -18340,6 +18741,76 @@ func (m *ProjectRunEventMutation) ResetCreatedAt() {
 	m.addcreated_at = nil
 }
 
+// SetLogSeq sets the "log_seq" field.
+func (m *ProjectRunEventMutation) SetLogSeq(i int64) {
+	m.log_seq = &i
+	m.addlog_seq = nil
+}
+
+// LogSeq returns the value of the "log_seq" field in the mutation.
+func (m *ProjectRunEventMutation) LogSeq() (r int64, exists bool) {
+	v := m.log_seq
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLogSeq returns the old "log_seq" field's value of the ProjectRunEvent entity.
+// If the ProjectRunEvent object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectRunEventMutation) OldLogSeq(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLogSeq is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLogSeq requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLogSeq: %w", err)
+	}
+	return oldValue.LogSeq, nil
+}
+
+// AddLogSeq adds i to the "log_seq" field.
+func (m *ProjectRunEventMutation) AddLogSeq(i int64) {
+	if m.addlog_seq != nil {
+		*m.addlog_seq += i
+	} else {
+		m.addlog_seq = &i
+	}
+}
+
+// AddedLogSeq returns the value that was added to the "log_seq" field in this mutation.
+func (m *ProjectRunEventMutation) AddedLogSeq() (r int64, exists bool) {
+	v := m.addlog_seq
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearLogSeq clears the value of the "log_seq" field.
+func (m *ProjectRunEventMutation) ClearLogSeq() {
+	m.log_seq = nil
+	m.addlog_seq = nil
+	m.clearedFields[projectrunevent.FieldLogSeq] = struct{}{}
+}
+
+// LogSeqCleared returns if the "log_seq" field was cleared in this mutation.
+func (m *ProjectRunEventMutation) LogSeqCleared() bool {
+	_, ok := m.clearedFields[projectrunevent.FieldLogSeq]
+	return ok
+}
+
+// ResetLogSeq resets all changes to the "log_seq" field.
+func (m *ProjectRunEventMutation) ResetLogSeq() {
+	m.log_seq = nil
+	m.addlog_seq = nil
+	delete(m.clearedFields, projectrunevent.FieldLogSeq)
+}
+
 // Where appends a list predicates to the ProjectRunEventMutation builder.
 func (m *ProjectRunEventMutation) Where(ps ...predicate.ProjectRunEvent) {
 	m.predicates = append(m.predicates, ps...)
@@ -18374,7 +18845,7 @@ func (m *ProjectRunEventMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProjectRunEventMutation) Fields() []string {
-	fields := make([]string, 0, 11)
+	fields := make([]string, 0, 12)
 	if m.run_id != nil {
 		fields = append(fields, projectrunevent.FieldRunID)
 	}
@@ -18408,6 +18879,9 @@ func (m *ProjectRunEventMutation) Fields() []string {
 	if m.created_at != nil {
 		fields = append(fields, projectrunevent.FieldCreatedAt)
 	}
+	if m.log_seq != nil {
+		fields = append(fields, projectrunevent.FieldLogSeq)
+	}
 	return fields
 }
 
@@ -18438,6 +18912,8 @@ func (m *ProjectRunEventMutation) Field(name string) (ent.Value, bool) {
 		return m.StopReason()
 	case projectrunevent.FieldCreatedAt:
 		return m.CreatedAt()
+	case projectrunevent.FieldLogSeq:
+		return m.LogSeq()
 	}
 	return nil, false
 }
@@ -18469,6 +18945,8 @@ func (m *ProjectRunEventMutation) OldField(ctx context.Context, name string) (en
 		return m.OldStopReason(ctx)
 	case projectrunevent.FieldCreatedAt:
 		return m.OldCreatedAt(ctx)
+	case projectrunevent.FieldLogSeq:
+		return m.OldLogSeq(ctx)
 	}
 	return nil, fmt.Errorf("unknown ProjectRunEvent field %s", name)
 }
@@ -18555,6 +19033,13 @@ func (m *ProjectRunEventMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetCreatedAt(v)
 		return nil
+	case projectrunevent.FieldLogSeq:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLogSeq(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ProjectRunEvent field %s", name)
 }
@@ -18575,6 +19060,9 @@ func (m *ProjectRunEventMutation) AddedFields() []string {
 	if m.addcreated_at != nil {
 		fields = append(fields, projectrunevent.FieldCreatedAt)
 	}
+	if m.addlog_seq != nil {
+		fields = append(fields, projectrunevent.FieldLogSeq)
+	}
 	return fields
 }
 
@@ -18591,6 +19079,8 @@ func (m *ProjectRunEventMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedExitCode()
 	case projectrunevent.FieldCreatedAt:
 		return m.AddedCreatedAt()
+	case projectrunevent.FieldLogSeq:
+		return m.AddedLogSeq()
 	}
 	return nil, false
 }
@@ -18628,6 +19118,13 @@ func (m *ProjectRunEventMutation) AddField(name string, value ent.Value) error {
 		}
 		m.AddCreatedAt(v)
 		return nil
+	case projectrunevent.FieldLogSeq:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddLogSeq(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ProjectRunEvent numeric field %s", name)
 }
@@ -18656,6 +19153,9 @@ func (m *ProjectRunEventMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(projectrunevent.FieldStopReason) {
 		fields = append(fields, projectrunevent.FieldStopReason)
+	}
+	if m.FieldCleared(projectrunevent.FieldLogSeq) {
+		fields = append(fields, projectrunevent.FieldLogSeq)
 	}
 	return fields
 }
@@ -18691,6 +19191,9 @@ func (m *ProjectRunEventMutation) ClearField(name string) error {
 		return nil
 	case projectrunevent.FieldStopReason:
 		m.ClearStopReason()
+		return nil
+	case projectrunevent.FieldLogSeq:
+		m.ClearLogSeq()
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRunEvent nullable field %s", name)
@@ -18732,6 +19235,9 @@ func (m *ProjectRunEventMutation) ResetField(name string) error {
 		return nil
 	case projectrunevent.FieldCreatedAt:
 		m.ResetCreatedAt()
+		return nil
+	case projectrunevent.FieldLogSeq:
+		m.ResetLogSeq()
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRunEvent field %s", name)

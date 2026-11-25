@@ -145,6 +145,7 @@ func NormalizeRunRecord(run domain.ProjectRunRecord) (domain.ProjectRunRecord, e
 	run.Driver = strings.TrimSpace(run.Driver)
 	run.ImageRef = strings.TrimSpace(run.ImageRef)
 	run.ExecutionID = strings.TrimSpace(run.ExecutionID)
+	run.AgentCellID = strings.TrimSpace(run.AgentCellID)
 	run.DetachKind = strings.TrimSpace(run.DetachKind)
 	if run.RunID == "" || run.ProjectID == "" {
 		return domain.ProjectRunRecord{}, fmt.Errorf("project run id and project id are required")

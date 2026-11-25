@@ -108,6 +108,7 @@ func openDetachedInteraction(ctx context.Context, opts detachedInteractionOption
 		follower:     newDetachFollower(nil, task.PersistCursor),
 		watchDone:    make(chan struct{}),
 	}
+	d.follower.journal = task.Journal
 	d.follower.forwardFrom = task.Cursor
 	d.follower.cursor = task.Cursor
 	go d.watch()
@@ -214,6 +215,11 @@ func (d *detachedInteraction) CloseSend() error {
 		return nil
 	}
 	d.closed = true
+	// A caller may abandon projection before consuming the queued result. Stop
+	// the watcher but retain the journal until its effects have been committed.
+	if d.ended.Load() {
+		d.finish(false)
+	}
 	if !d.disconnected() && !detachIsShutdown(d.runCtx) && !d.ended.Load() {
 		_ = d.underlying.Send(driverpkg.RuntimeInputFrame{Type: driverpkg.RuntimeInputStdin, Data: encodeDetachStdinFrame(detachStdinEOF, nil)})
 	}
@@ -225,6 +231,9 @@ func (d *detachedInteraction) Recv() (driverpkg.RuntimeOutputFrame, error) {
 		if len(d.pending) > 0 {
 			frame := d.pending[0]
 			d.pending = d.pending[1:]
+			if frame.Type == driverpkg.RuntimeOutputResult {
+				d.finish(true)
+			}
 			return frame, nil
 		}
 		if d.ended.Load() {
@@ -262,7 +271,7 @@ func (d *detachedInteraction) consumeAttachOutput(data []byte) {
 		if chunk.Stream == domain.StdioStderr {
 			frameType = driverpkg.RuntimeOutputStderr
 		}
-		d.pending = append(d.pending, driverpkg.RuntimeOutputFrame{Type: frameType, Data: []byte(chunk.Text)})
+		d.pending = append(d.pending, driverpkg.RuntimeOutputFrame{Type: frameType, Data: []byte(chunk.Text), Journal: chunk.Journal})
 	}
 	if d.follower.exit != nil && d.result == nil {
 		exit := execution.DetachExitResultFor(*d.follower.exit)
@@ -279,7 +288,6 @@ func (d *detachedInteraction) consumeAttachOutput(data []byte) {
 		d.result = &result
 		d.ended.Store(true)
 		d.pending = append(d.pending, driverpkg.RuntimeOutputFrame{Type: driverpkg.RuntimeOutputResult, Result: &result})
-		d.finish(true)
 	}
 }
 

@@ -452,6 +452,76 @@ func (_c *ProjectRunCreate) SetNillableDetachKind(v *string) *ProjectRunCreate {
 	return _c
 }
 
+// SetLogFormat sets the "log_format" field.
+func (_c *ProjectRunCreate) SetLogFormat(v string) *ProjectRunCreate {
+	_c.mutation.SetLogFormat(v)
+	return _c
+}
+
+// SetNillableLogFormat sets the "log_format" field if the given value is not nil.
+func (_c *ProjectRunCreate) SetNillableLogFormat(v *string) *ProjectRunCreate {
+	if v != nil {
+		_c.SetLogFormat(*v)
+	}
+	return _c
+}
+
+// SetSummaryJSON sets the "summary_json" field.
+func (_c *ProjectRunCreate) SetSummaryJSON(v string) *ProjectRunCreate {
+	_c.mutation.SetSummaryJSON(v)
+	return _c
+}
+
+// SetNillableSummaryJSON sets the "summary_json" field if the given value is not nil.
+func (_c *ProjectRunCreate) SetNillableSummaryJSON(v *string) *ProjectRunCreate {
+	if v != nil {
+		_c.SetSummaryJSON(*v)
+	}
+	return _c
+}
+
+// SetAgentCellID sets the "agent_cell_id" field.
+func (_c *ProjectRunCreate) SetAgentCellID(v string) *ProjectRunCreate {
+	_c.mutation.SetAgentCellID(v)
+	return _c
+}
+
+// SetNillableAgentCellID sets the "agent_cell_id" field if the given value is not nil.
+func (_c *ProjectRunCreate) SetNillableAgentCellID(v *string) *ProjectRunCreate {
+	if v != nil {
+		_c.SetAgentCellID(*v)
+	}
+	return _c
+}
+
+// SetLogIncomplete sets the "log_incomplete" field.
+func (_c *ProjectRunCreate) SetLogIncomplete(v int) *ProjectRunCreate {
+	_c.mutation.SetLogIncomplete(v)
+	return _c
+}
+
+// SetNillableLogIncomplete sets the "log_incomplete" field if the given value is not nil.
+func (_c *ProjectRunCreate) SetNillableLogIncomplete(v *int) *ProjectRunCreate {
+	if v != nil {
+		_c.SetLogIncomplete(*v)
+	}
+	return _c
+}
+
+// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
+func (_c *ProjectRunCreate) SetExecutionCheckpointJSON(v string) *ProjectRunCreate {
+	_c.mutation.SetExecutionCheckpointJSON(v)
+	return _c
+}
+
+// SetNillableExecutionCheckpointJSON sets the "execution_checkpoint_json" field if the given value is not nil.
+func (_c *ProjectRunCreate) SetNillableExecutionCheckpointJSON(v *string) *ProjectRunCreate {
+	if v != nil {
+		_c.SetExecutionCheckpointJSON(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *ProjectRunCreate) SetID(v string) *ProjectRunCreate {
 	_c.mutation.SetID(v)
@@ -671,6 +741,26 @@ func (_c *ProjectRunCreate) createSpec() (*ProjectRun, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.DetachKind(); ok {
 		_spec.SetField(projectrun.FieldDetachKind, field.TypeString, value)
 		_node.DetachKind = value
+	}
+	if value, ok := _c.mutation.LogFormat(); ok {
+		_spec.SetField(projectrun.FieldLogFormat, field.TypeString, value)
+		_node.LogFormat = value
+	}
+	if value, ok := _c.mutation.SummaryJSON(); ok {
+		_spec.SetField(projectrun.FieldSummaryJSON, field.TypeString, value)
+		_node.SummaryJSON = value
+	}
+	if value, ok := _c.mutation.AgentCellID(); ok {
+		_spec.SetField(projectrun.FieldAgentCellID, field.TypeString, value)
+		_node.AgentCellID = value
+	}
+	if value, ok := _c.mutation.LogIncomplete(); ok {
+		_spec.SetField(projectrun.FieldLogIncomplete, field.TypeInt, value)
+		_node.LogIncomplete = value
+	}
+	if value, ok := _c.mutation.ExecutionCheckpointJSON(); ok {
+		_spec.SetField(projectrun.FieldExecutionCheckpointJSON, field.TypeString, value)
+		_node.ExecutionCheckpointJSON = value
 	}
 	return _node, _spec
 }
@@ -1351,6 +1441,102 @@ func (u *ProjectRunUpsert) UpdateDetachKind() *ProjectRunUpsert {
 // ClearDetachKind clears the value of the "detach_kind" field.
 func (u *ProjectRunUpsert) ClearDetachKind() *ProjectRunUpsert {
 	u.SetNull(projectrun.FieldDetachKind)
+	return u
+}
+
+// SetLogFormat sets the "log_format" field.
+func (u *ProjectRunUpsert) SetLogFormat(v string) *ProjectRunUpsert {
+	u.Set(projectrun.FieldLogFormat, v)
+	return u
+}
+
+// UpdateLogFormat sets the "log_format" field to the value that was provided on create.
+func (u *ProjectRunUpsert) UpdateLogFormat() *ProjectRunUpsert {
+	u.SetExcluded(projectrun.FieldLogFormat)
+	return u
+}
+
+// ClearLogFormat clears the value of the "log_format" field.
+func (u *ProjectRunUpsert) ClearLogFormat() *ProjectRunUpsert {
+	u.SetNull(projectrun.FieldLogFormat)
+	return u
+}
+
+// SetSummaryJSON sets the "summary_json" field.
+func (u *ProjectRunUpsert) SetSummaryJSON(v string) *ProjectRunUpsert {
+	u.Set(projectrun.FieldSummaryJSON, v)
+	return u
+}
+
+// UpdateSummaryJSON sets the "summary_json" field to the value that was provided on create.
+func (u *ProjectRunUpsert) UpdateSummaryJSON() *ProjectRunUpsert {
+	u.SetExcluded(projectrun.FieldSummaryJSON)
+	return u
+}
+
+// ClearSummaryJSON clears the value of the "summary_json" field.
+func (u *ProjectRunUpsert) ClearSummaryJSON() *ProjectRunUpsert {
+	u.SetNull(projectrun.FieldSummaryJSON)
+	return u
+}
+
+// SetAgentCellID sets the "agent_cell_id" field.
+func (u *ProjectRunUpsert) SetAgentCellID(v string) *ProjectRunUpsert {
+	u.Set(projectrun.FieldAgentCellID, v)
+	return u
+}
+
+// UpdateAgentCellID sets the "agent_cell_id" field to the value that was provided on create.
+func (u *ProjectRunUpsert) UpdateAgentCellID() *ProjectRunUpsert {
+	u.SetExcluded(projectrun.FieldAgentCellID)
+	return u
+}
+
+// ClearAgentCellID clears the value of the "agent_cell_id" field.
+func (u *ProjectRunUpsert) ClearAgentCellID() *ProjectRunUpsert {
+	u.SetNull(projectrun.FieldAgentCellID)
+	return u
+}
+
+// SetLogIncomplete sets the "log_incomplete" field.
+func (u *ProjectRunUpsert) SetLogIncomplete(v int) *ProjectRunUpsert {
+	u.Set(projectrun.FieldLogIncomplete, v)
+	return u
+}
+
+// UpdateLogIncomplete sets the "log_incomplete" field to the value that was provided on create.
+func (u *ProjectRunUpsert) UpdateLogIncomplete() *ProjectRunUpsert {
+	u.SetExcluded(projectrun.FieldLogIncomplete)
+	return u
+}
+
+// AddLogIncomplete adds v to the "log_incomplete" field.
+func (u *ProjectRunUpsert) AddLogIncomplete(v int) *ProjectRunUpsert {
+	u.Add(projectrun.FieldLogIncomplete, v)
+	return u
+}
+
+// ClearLogIncomplete clears the value of the "log_incomplete" field.
+func (u *ProjectRunUpsert) ClearLogIncomplete() *ProjectRunUpsert {
+	u.SetNull(projectrun.FieldLogIncomplete)
+	return u
+}
+
+// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
+func (u *ProjectRunUpsert) SetExecutionCheckpointJSON(v string) *ProjectRunUpsert {
+	u.Set(projectrun.FieldExecutionCheckpointJSON, v)
+	return u
+}
+
+// UpdateExecutionCheckpointJSON sets the "execution_checkpoint_json" field to the value that was provided on create.
+func (u *ProjectRunUpsert) UpdateExecutionCheckpointJSON() *ProjectRunUpsert {
+	u.SetExcluded(projectrun.FieldExecutionCheckpointJSON)
+	return u
+}
+
+// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
+func (u *ProjectRunUpsert) ClearExecutionCheckpointJSON() *ProjectRunUpsert {
+	u.SetNull(projectrun.FieldExecutionCheckpointJSON)
 	return u
 }
 
@@ -2134,6 +2320,118 @@ func (u *ProjectRunUpsertOne) UpdateDetachKind() *ProjectRunUpsertOne {
 func (u *ProjectRunUpsertOne) ClearDetachKind() *ProjectRunUpsertOne {
 	return u.Update(func(s *ProjectRunUpsert) {
 		s.ClearDetachKind()
+	})
+}
+
+// SetLogFormat sets the "log_format" field.
+func (u *ProjectRunUpsertOne) SetLogFormat(v string) *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetLogFormat(v)
+	})
+}
+
+// UpdateLogFormat sets the "log_format" field to the value that was provided on create.
+func (u *ProjectRunUpsertOne) UpdateLogFormat() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateLogFormat()
+	})
+}
+
+// ClearLogFormat clears the value of the "log_format" field.
+func (u *ProjectRunUpsertOne) ClearLogFormat() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearLogFormat()
+	})
+}
+
+// SetSummaryJSON sets the "summary_json" field.
+func (u *ProjectRunUpsertOne) SetSummaryJSON(v string) *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetSummaryJSON(v)
+	})
+}
+
+// UpdateSummaryJSON sets the "summary_json" field to the value that was provided on create.
+func (u *ProjectRunUpsertOne) UpdateSummaryJSON() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateSummaryJSON()
+	})
+}
+
+// ClearSummaryJSON clears the value of the "summary_json" field.
+func (u *ProjectRunUpsertOne) ClearSummaryJSON() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearSummaryJSON()
+	})
+}
+
+// SetAgentCellID sets the "agent_cell_id" field.
+func (u *ProjectRunUpsertOne) SetAgentCellID(v string) *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetAgentCellID(v)
+	})
+}
+
+// UpdateAgentCellID sets the "agent_cell_id" field to the value that was provided on create.
+func (u *ProjectRunUpsertOne) UpdateAgentCellID() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateAgentCellID()
+	})
+}
+
+// ClearAgentCellID clears the value of the "agent_cell_id" field.
+func (u *ProjectRunUpsertOne) ClearAgentCellID() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearAgentCellID()
+	})
+}
+
+// SetLogIncomplete sets the "log_incomplete" field.
+func (u *ProjectRunUpsertOne) SetLogIncomplete(v int) *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetLogIncomplete(v)
+	})
+}
+
+// AddLogIncomplete adds v to the "log_incomplete" field.
+func (u *ProjectRunUpsertOne) AddLogIncomplete(v int) *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.AddLogIncomplete(v)
+	})
+}
+
+// UpdateLogIncomplete sets the "log_incomplete" field to the value that was provided on create.
+func (u *ProjectRunUpsertOne) UpdateLogIncomplete() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateLogIncomplete()
+	})
+}
+
+// ClearLogIncomplete clears the value of the "log_incomplete" field.
+func (u *ProjectRunUpsertOne) ClearLogIncomplete() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearLogIncomplete()
+	})
+}
+
+// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
+func (u *ProjectRunUpsertOne) SetExecutionCheckpointJSON(v string) *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetExecutionCheckpointJSON(v)
+	})
+}
+
+// UpdateExecutionCheckpointJSON sets the "execution_checkpoint_json" field to the value that was provided on create.
+func (u *ProjectRunUpsertOne) UpdateExecutionCheckpointJSON() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateExecutionCheckpointJSON()
+	})
+}
+
+// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
+func (u *ProjectRunUpsertOne) ClearExecutionCheckpointJSON() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearExecutionCheckpointJSON()
 	})
 }
 
@@ -3083,6 +3381,118 @@ func (u *ProjectRunUpsertBulk) UpdateDetachKind() *ProjectRunUpsertBulk {
 func (u *ProjectRunUpsertBulk) ClearDetachKind() *ProjectRunUpsertBulk {
 	return u.Update(func(s *ProjectRunUpsert) {
 		s.ClearDetachKind()
+	})
+}
+
+// SetLogFormat sets the "log_format" field.
+func (u *ProjectRunUpsertBulk) SetLogFormat(v string) *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetLogFormat(v)
+	})
+}
+
+// UpdateLogFormat sets the "log_format" field to the value that was provided on create.
+func (u *ProjectRunUpsertBulk) UpdateLogFormat() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateLogFormat()
+	})
+}
+
+// ClearLogFormat clears the value of the "log_format" field.
+func (u *ProjectRunUpsertBulk) ClearLogFormat() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearLogFormat()
+	})
+}
+
+// SetSummaryJSON sets the "summary_json" field.
+func (u *ProjectRunUpsertBulk) SetSummaryJSON(v string) *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetSummaryJSON(v)
+	})
+}
+
+// UpdateSummaryJSON sets the "summary_json" field to the value that was provided on create.
+func (u *ProjectRunUpsertBulk) UpdateSummaryJSON() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateSummaryJSON()
+	})
+}
+
+// ClearSummaryJSON clears the value of the "summary_json" field.
+func (u *ProjectRunUpsertBulk) ClearSummaryJSON() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearSummaryJSON()
+	})
+}
+
+// SetAgentCellID sets the "agent_cell_id" field.
+func (u *ProjectRunUpsertBulk) SetAgentCellID(v string) *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetAgentCellID(v)
+	})
+}
+
+// UpdateAgentCellID sets the "agent_cell_id" field to the value that was provided on create.
+func (u *ProjectRunUpsertBulk) UpdateAgentCellID() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateAgentCellID()
+	})
+}
+
+// ClearAgentCellID clears the value of the "agent_cell_id" field.
+func (u *ProjectRunUpsertBulk) ClearAgentCellID() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearAgentCellID()
+	})
+}
+
+// SetLogIncomplete sets the "log_incomplete" field.
+func (u *ProjectRunUpsertBulk) SetLogIncomplete(v int) *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetLogIncomplete(v)
+	})
+}
+
+// AddLogIncomplete adds v to the "log_incomplete" field.
+func (u *ProjectRunUpsertBulk) AddLogIncomplete(v int) *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.AddLogIncomplete(v)
+	})
+}
+
+// UpdateLogIncomplete sets the "log_incomplete" field to the value that was provided on create.
+func (u *ProjectRunUpsertBulk) UpdateLogIncomplete() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateLogIncomplete()
+	})
+}
+
+// ClearLogIncomplete clears the value of the "log_incomplete" field.
+func (u *ProjectRunUpsertBulk) ClearLogIncomplete() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearLogIncomplete()
+	})
+}
+
+// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
+func (u *ProjectRunUpsertBulk) SetExecutionCheckpointJSON(v string) *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetExecutionCheckpointJSON(v)
+	})
+}
+
+// UpdateExecutionCheckpointJSON sets the "execution_checkpoint_json" field to the value that was provided on create.
+func (u *ProjectRunUpsertBulk) UpdateExecutionCheckpointJSON() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateExecutionCheckpointJSON()
+	})
+}
+
+// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
+func (u *ProjectRunUpsertBulk) ClearExecutionCheckpointJSON() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearExecutionCheckpointJSON()
 	})
 }
 

@@ -23,7 +23,11 @@ When a requested combination is unavailable, the daemon returns a Connect `CodeU
 
 `StartAgentRun(interactive=true)` starts the same detached prompt session without keeping the submission request open. Ordinary `StartAgentRun` calls remain non-interactive.
 
-Attachments are resumable only while the daemon process remains alive. After a daemon restart, persisted run events and logs remain readable, but runtime input/output handles cannot be reconstructed and attach fails closed. After a page refresh or channel switch, clients should read `ListRunEvents`/`FollowRunLogs` before subscribing to live attachment output.
+A detached prompt run using the guest supervisor can be recovered after a daemon restart while its sandbox and retained execution remain available; clients can attach again once the daemon has restored the run. Its journal cursor, partial protocol frames and turn state are recovered with the committed log, including a result received before the process exit. Other attachments require a live daemon process; if their runtime handles cannot be reconstructed, attach fails closed. Persisted history remains readable. After a page refresh or channel switch, clients should read `ListRunMessages` (the conversation) and `FollowRunLogs` (the run log; pass `structured` for entries, resuming with `start_seq`) before subscribing to live attachment output.
+
+`RunSummary.log_incomplete` reports log persistence failures or gaps in the guest journal. These do not change the execution result; output streaming and conversation messages continue. New run logs replace duplicate agent cell output and trace events; existing notebook history remains readable.
+
+In structured run logs, tool IDs are scoped to a turn: identify a call and its result by `(turn, id)`. Patch calls include `changes` with each affected file’s path and change kind (`add`, `delete`, or `update`); the text view includes the same details. Older entries may omit these details.
 
 ## Staged run input files
 

@@ -87,7 +87,8 @@ func (r *AgentRunner) inputLimits() agentinput.Limits {
 
 // AgentRunDetach is the detached-execution part of an agent run.
 type AgentRunDetach struct {
-	ExecutionID string
+	JournalResume *execution.AgentJournalResume
+	ExecutionID   string
 	// CursorPath is the host file recording the journal offset already
 	// delivered, so a later daemon resumes without duplicating output.
 	CursorPath string
@@ -190,6 +191,7 @@ func (r *AgentRunner) ExecuteAgentRun(ctx context.Context, req AgentRunRequest, 
 		SkillNames: skillNames,
 	})
 	spec.Env["AGENT_COMPOSE_RUN_ID"] = runID
+	spec.Env[execution.AgentOutputEnv] = "frames"
 	spec.Env["AGENT_COMPOSE_PROJECT_ID"] = ""
 	if agentDef != nil {
 		spec.Env["AGENT_COMPOSE_PROJECT_ID"] = agentDef.ProjectID
@@ -267,7 +269,7 @@ func (r *AgentRunner) executeDetachedAgent(ctx context.Context, in detachedAgent
 
 func (r *AgentRunner) detachedAgentTask(in detachedAgentExec) runs.DetachedTask {
 	cursorPath := in.Detach.CursorPath
-	return runs.DetachedTask{
+	task := runs.DetachedTask{
 		Config:      r.config,
 		Runtime:     in.Runtime,
 		Sandbox:     in.Session,
@@ -281,6 +283,13 @@ func (r *AgentRunner) detachedAgentTask(in detachedAgentExec) runs.DetachedTask 
 			return runs.WriteDetachCursorFile(cursorPath, offset)
 		},
 	}
+	if in.Detach.JournalResume != nil {
+		task.Cursor = in.Detach.JournalResume.Offset
+		// The consumer commits its cursor with the log and lifecycle snapshot.
+		task.PersistCursor = nil
+		task.Journal = true
+	}
+	return task
 }
 
 // AgentResumeRequest identifies a detached agent run to re-attach to.
@@ -292,9 +301,9 @@ type AgentResumeRequest struct {
 }
 
 // ResumeAgentRun re-attaches to a detached agent run started by an earlier
-// daemon and parses its result. It replays the whole journal so the result
-// payload is found even when it precedes the delivered cursor; output already
-// delivered is not forwarded again. Once the run is over the per-run facade
+// daemon and parses its result. Structured consumers restore their cursor
+// and any previously consumed result together. Runs from older daemons retain
+// full replay only at this compatibility boundary. Once the run is over the per-run facade
 // token that was kept for it is retired.
 func (r *AgentRunner) ResumeAgentRun(ctx context.Context, req AgentResumeRequest, stream domain.ExecStreamWriter) (domain.ExecResult, domain.AgentRunResult, error) {
 	session, agent, runID := req.Session, req.Agent, req.RunID
@@ -312,7 +321,7 @@ func (r *AgentRunner) ResumeAgentRun(ctx context.Context, req AgentResumeRequest
 	}
 	env := execution.BuildSandboxExecEnv(ctx, r.config, session, r.config.GuestHomePath)
 	task := r.detachedAgentTask(detachedAgentExec{Session: session, VMState: vmState, Runtime: runtime, Env: env, Detach: req.Detach, Stream: stream})
-	task.ReplayAll = true
+	task.ReplayAll = req.Detach.JournalResume == nil
 	result, err := runs.FollowDetachedTask(ctx, task)
 	if errors.Is(err, runs.ErrRunDisconnected) {
 		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
@@ -322,6 +331,12 @@ func (r *AgentRunner) ResumeAgentRun(ctx context.Context, req AgentResumeRequest
 	}
 	if err != nil {
 		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
+	}
+	if resume := req.Detach.JournalResume; resume != nil {
+		result.Stdout = resume.Decoder.Pending + result.Stdout
+		if resume.ResultJSON != "" {
+			result.Stdout += "\n" + resume.ResultJSON + "\n"
+		}
 	}
 	parsed, err := execution.ParseAgentExecResult(agent, result)
 	if err != nil {

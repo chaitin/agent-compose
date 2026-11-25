@@ -306,6 +306,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		CleanupPolicy:   CleanupPolicyFromProto(req.CleanupPolicy),
 		ClientRequestID: req.ClientRequestID,
 		Labels:          req.Labels,
+		RunLogRoot:      c.runLogRoot(),
 	}
 	// Idempotency comes before admission: a retry must return the run the first
 	// attempt created even when its input (a staged upload, for example) can no
@@ -815,7 +816,10 @@ func (c *Controller) completeProjectRunAgent(runCtx, prepCtx context.Context, sa
 		execCtx, cancel = runExecContext(runCtx)
 		defer cancel()
 	}
+	projector := newAgentRunProjector(sandboxed.TransitionCtx, run, sandboxed.Sandbox, run.LogsPath, c.runLogs)
+	projector.bindStore(c.configDB)
 	cell, _, assistantEvent, execErr := c.executor.ExecuteAgentRequest(execCtx, sandboxed.Sandbox, execution.ExecuteAgentRequest{
+		History:           agentHistoryMode(run),
 		Agent:             agentConfig.Provider,
 		AgentDefinitionID: run.AgentID,
 		Model:             agentConfig.Model,
@@ -824,6 +828,7 @@ func (c *Controller) completeProjectRunAgent(runCtx, prepCtx context.Context, sa
 		Input:             req.Input,
 		OutputSchemaJSON:  req.OutputSchemaJSON,
 		Stream: projectRunAgentExecutionStream(sandboxed.TransitionCtx, agentExecutionStreamRequest{
+			Projector:   projector,
 			Coordinator: sandboxed.Coordinator,
 			Run:         run,
 			Sandbox:     sandboxed.Sandbox,
@@ -838,32 +843,12 @@ func (c *Controller) completeProjectRunAgent(runCtx, prepCtx context.Context, sa
 		return withRunWarnings(run, warnings), nil, nil
 	}
 	run, err = c.finishProjectRunAgent(sandboxed.TransitionCtx, execCtx, agentRunOutcome{
-		Run: run, Sandbox: sandboxed.Sandbox, Cell: cell, Assistant: assistantEvent, ExecErr: execErr,
+		Run: run, Sandbox: sandboxed.Sandbox, Cell: cell, Assistant: assistantEvent, ExecErr: execErr, Projector: projector,
 	})
 	if err != nil {
 		return domain.ProjectRunRecord{}, nil, err
 	}
 	return withRunWarnings(run, warnings), execErr, nil
-}
-
-// agentRunOutcome is what an agent turn produced, fresh or re-attached.
-type agentRunOutcome struct {
-	Run       domain.ProjectRunRecord
-	Sandbox   *domain.Sandbox
-	Cell      domain.NotebookCell
-	Assistant domain.SandboxEvent
-	ExecErr   error
-}
-
-// finishProjectRunAgent records the run's terminal state from its agent cell.
-func (c *Controller) finishProjectRunAgent(transitionCtx, runCtx context.Context, outcome agentRunOutcome) (domain.ProjectRunRecord, error) {
-	transition := TransitionFromAgentCell(outcome.Run, outcome.Sandbox, outcome.Cell, outcome.Assistant.Message, outcome.ExecErr)
-	transition.TerminalEvents = projectAgentTerminalEvents(outcome.Run, outcome.Cell, outcome.Assistant, outcome.ExecErr)
-	if outcome.ExecErr != nil || !outcome.Cell.Success {
-		return c.completeProjectRunError(transitionCtx, runCtx, transition, outcome.ExecErr)
-	}
-	transition.Status = domain.ProjectRunStatusSucceeded
-	return c.completeProjectRun(transitionCtx, transition)
 }
 
 // agentRunDetach decides whether an agent run goes behind the guest

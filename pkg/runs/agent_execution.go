@@ -3,12 +3,14 @@ package runs
 import (
 	"context"
 	"fmt"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"time"
+
 	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
-	"path/filepath"
-	"strings"
-	"time"
 )
 
 func (c *Controller) projectRunAgentConfig(ctx context.Context, run domain.ProjectRunRecord) (execution.AgentConfig, error) {
@@ -59,6 +61,7 @@ type agentExecutionStreamRequest struct {
 	Sandbox     *domain.Sandbox
 	Sink        *StreamSink
 	Hub         *RunLogHub
+	Projector   *agentRunProjector
 }
 
 func projectRunAgentExecutionStream(ctx context.Context, req agentExecutionStreamRequest) execution.AgentExecutionStream {
@@ -67,15 +70,36 @@ func projectRunAgentExecutionStream(ctx context.Context, req agentExecutionStrea
 	sandbox := req.Sandbox
 	sink := req.Sink
 	hub := req.Hub
+	projector := req.Projector
+	if projector == nil {
+		projector = newAgentRunProjector(ctx, run, sandbox, run.LogsPath, hub)
+		if coordinator != nil {
+			projector.bindStore(coordinator.store)
+		}
+	}
+	var rawOutput atomic.Bool
 	return execution.AgentExecutionStream{
+		OnRuntimeEnd: projector.FlushRuntimeOutput,
+		OnRuntimeOutput: func(chunk domain.ExecChunk) error {
+			rawOutput.Store(true)
+			_, err := projector.ProjectRuntimeOutput(chunk)
+			return err
+		},
 		OnStart: func(cell domain.NotebookCell) error {
+			if !usesRunLog(run) && projector.logsPath == "" {
+				projector.logsPath = projectRunAgentCellOutputPath(sandbox, cell.ID)
+			}
 			if coordinator != nil {
-				logsPath := projectRunAgentCellOutputPath(sandbox, cell.ID)
+				logsPath := run.LogsPath
+				if !usesRunLog(run) {
+					logsPath = projectRunAgentCellOutputPath(sandbox, cell.ID)
+				}
 				if strings.TrimSpace(logsPath) != "" {
 					if _, err := coordinator.TransitionRun(ctx, TransitionRequest{
-						RunID:    run.RunID,
-						Status:   domain.ProjectRunStatusRunning,
-						LogsPath: logsPath,
+						RunID:       run.RunID,
+						Status:      domain.ProjectRunStatusRunning,
+						LogsPath:    logsPath,
+						AgentCellID: cell.ID,
 					}); err != nil {
 						return err
 					}
@@ -87,15 +111,22 @@ func projectRunAgentExecutionStream(ctx context.Context, req agentExecutionStrea
 			return sink.SendStarted(run, time.Now().UTC())
 		},
 		OnChunk: func(cellID string, chunk domain.ExecChunk) error {
-			offset, err := appendProjectRunLogChunk(projectRunAgentCellOutputPath(sandbox, cellID), chunk)
-			if err != nil {
+			if chunk.Transcript || rawOutput.Load() {
+				// The shared projector records the original agent events.
+				return sendAgentChunk(sink, run, chunk)
+			}
+			if err := projector.AppendOutput(chunk); err != nil {
 				return err
 			}
-			publishRunLogChunk(hub, run, chunk, offset)
-			if sink == nil || sink.SendChunk == nil {
-				return nil
-			}
-			return sink.SendChunk(run.RunID, chunk, time.Now().UTC())
+			return sendAgentChunk(sink, run, chunk)
+		},
+		OnAgentEvent: func(_ string, event []byte) error {
+			_, err := projector.ProjectFrame(execution.AgentFrame{Type: "agent_event", Event: event})
+			return err
+		},
+		OnFrame: func(_ string, frame execution.AgentFrame) error {
+			_, err := projector.ProjectFrame(frame)
+			return err
 		},
 	}
 }
@@ -106,4 +137,18 @@ func projectRunAgentCellOutputPath(sandbox *domain.Sandbox, cellID string) strin
 		return ""
 	}
 	return filepath.Join(execution.HostSandboxDir(sandbox), "state", "cells", cellID, "output.txt")
+}
+
+func sendAgentChunk(sink *StreamSink, run domain.ProjectRunRecord, chunk domain.ExecChunk) error {
+	if sink == nil || sink.SendChunk == nil {
+		return nil
+	}
+	return sink.SendChunk(run.RunID, chunk, time.Now().UTC())
+}
+
+func agentHistoryMode(run domain.ProjectRunRecord) execution.AgentHistoryMode {
+	if usesRunLog(run) {
+		return execution.AgentHistoryRunLog
+	}
+	return execution.AgentHistoryNotebook
 }

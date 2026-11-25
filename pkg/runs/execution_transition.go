@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
-	"strings"
 )
 
 // commandOutcome is the result of a one-shot command execution, as reported
@@ -78,9 +79,8 @@ func transitionFromRuntimeResult(run domain.ProjectRunRecord, sandbox *domain.Sa
 	return transition
 }
 
-// promptWrapperOutcome is the result of one prompt-attach wrapper frame, as
-// reported back to transitionFromPromptWrapperResult.
-type promptWrapperOutcome struct {
+// agentFrameOutcome carries a normalized agent execution result or error.
+type agentFrameOutcome struct {
 	LogsPath   string
 	Payload    []byte
 	FinalText  string
@@ -88,13 +88,16 @@ type promptWrapperOutcome struct {
 	Message    string
 }
 
-func transitionFromPromptWrapperResult(run domain.ProjectRunRecord, sandbox *domain.Sandbox, outcome promptWrapperOutcome) TransitionRequest {
+func transitionFromAgentFrame(run domain.ProjectRunRecord, sandbox *domain.Sandbox, outcome agentFrameOutcome) TransitionRequest {
 	transition := TransitionRequest{
 		RunID:      run.RunID,
-		SandboxID:  sandbox.Summary.ID,
+		SandboxID:  run.SandboxID,
 		Output:     outcome.FinalText,
 		ResultJSON: string(outcome.Payload),
 		LogsPath:   outcome.LogsPath,
+	}
+	if sandbox != nil {
+		transition.SandboxID = sandbox.Summary.ID
 	}
 	if strings.TrimSpace(outcome.Message) != "" {
 		transition.ExitCode = 1
@@ -108,34 +111,11 @@ func transitionFromPromptWrapperResult(run domain.ProjectRunRecord, sandbox *dom
 	return transition
 }
 
-func promptWrapperTransitionError(transition TransitionRequest) error {
+func agentTransitionError(transition TransitionRequest) error {
 	if strings.EqualFold(strings.TrimSpace(transition.Error), "agent execution cancelled") {
 		return context.Canceled
 	}
 	return errors.New(firstNonEmpty(transition.Error, "agent execution failed"))
-}
-
-// promptRuntimeOutcome is the result of a driver-executed prompt runtime
-// command, as reported back to transitionFromPromptRuntimeResult.
-type promptRuntimeOutcome struct {
-	LogsPath string
-	Result   driverpkg.RuntimeResult
-	Err      error
-}
-
-func transitionFromPromptRuntimeResult(run domain.ProjectRunRecord, sandbox *domain.Sandbox, outcome promptRuntimeOutcome) TransitionRequest {
-	transition := TransitionRequest{
-		RunID:     run.RunID,
-		SandboxID: sandbox.Summary.ID,
-		LogsPath:  outcome.LogsPath,
-		ExitCode:  outcome.Result.ExitCode,
-		Error:     outcome.Result.Error,
-	}
-	if outcome.Err != nil {
-		transition.ExitCode = execution.FirstNonZeroInt(transition.ExitCode, 1)
-		transition.Error = fmt.Sprintf("agent execution failed: %v", outcome.Err)
-	}
-	return transition
 }
 
 func errorFromRuntimeResult(result driverpkg.RuntimeResult) error {

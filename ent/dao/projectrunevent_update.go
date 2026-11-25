@@ -252,6 +252,33 @@ func (_u *ProjectRunEventUpdate) AddCreatedAt(v int64) *ProjectRunEventUpdate {
 	return _u
 }
 
+// SetLogSeq sets the "log_seq" field.
+func (_u *ProjectRunEventUpdate) SetLogSeq(v int64) *ProjectRunEventUpdate {
+	_u.mutation.ResetLogSeq()
+	_u.mutation.SetLogSeq(v)
+	return _u
+}
+
+// SetNillableLogSeq sets the "log_seq" field if the given value is not nil.
+func (_u *ProjectRunEventUpdate) SetNillableLogSeq(v *int64) *ProjectRunEventUpdate {
+	if v != nil {
+		_u.SetLogSeq(*v)
+	}
+	return _u
+}
+
+// AddLogSeq adds value to the "log_seq" field.
+func (_u *ProjectRunEventUpdate) AddLogSeq(v int64) *ProjectRunEventUpdate {
+	_u.mutation.AddLogSeq(v)
+	return _u
+}
+
+// ClearLogSeq clears the value of the "log_seq" field.
+func (_u *ProjectRunEventUpdate) ClearLogSeq() *ProjectRunEventUpdate {
+	_u.mutation.ClearLogSeq()
+	return _u
+}
+
 // Mutation returns the ProjectRunEventMutation object of the builder.
 func (_u *ProjectRunEventUpdate) Mutation() *ProjectRunEventMutation {
 	return _u.mutation
@@ -364,6 +391,15 @@ func (_u *ProjectRunEventUpdate) sqlSave(ctx context.Context) (_node int, err er
 	}
 	if value, ok := _u.mutation.AddedCreatedAt(); ok {
 		_spec.AddField(projectrunevent.FieldCreatedAt, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.LogSeq(); ok {
+		_spec.SetField(projectrunevent.FieldLogSeq, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedLogSeq(); ok {
+		_spec.AddField(projectrunevent.FieldLogSeq, field.TypeInt64, value)
+	}
+	if _u.mutation.LogSeqCleared() {
+		_spec.ClearField(projectrunevent.FieldLogSeq, field.TypeInt64)
 	}
 	_spec.AddModifiers(_u.modifiers...)
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
@@ -611,6 +647,33 @@ func (_u *ProjectRunEventUpdateOne) AddCreatedAt(v int64) *ProjectRunEventUpdate
 	return _u
 }
 
+// SetLogSeq sets the "log_seq" field.
+func (_u *ProjectRunEventUpdateOne) SetLogSeq(v int64) *ProjectRunEventUpdateOne {
+	_u.mutation.ResetLogSeq()
+	_u.mutation.SetLogSeq(v)
+	return _u
+}
+
+// SetNillableLogSeq sets the "log_seq" field if the given value is not nil.
+func (_u *ProjectRunEventUpdateOne) SetNillableLogSeq(v *int64) *ProjectRunEventUpdateOne {
+	if v != nil {
+		_u.SetLogSeq(*v)
+	}
+	return _u
+}
+
+// AddLogSeq adds value to the "log_seq" field.
+func (_u *ProjectRunEventUpdateOne) AddLogSeq(v int64) *ProjectRunEventUpdateOne {
+	_u.mutation.AddLogSeq(v)
+	return _u
+}
+
+// ClearLogSeq clears the value of the "log_seq" field.
+func (_u *ProjectRunEventUpdateOne) ClearLogSeq() *ProjectRunEventUpdateOne {
+	_u.mutation.ClearLogSeq()
+	return _u
+}
+
 // Mutation returns the ProjectRunEventMutation object of the builder.
 func (_u *ProjectRunEventUpdateOne) Mutation() *ProjectRunEventMutation {
 	return _u.mutation
@@ -753,6 +816,15 @@ func (_u *ProjectRunEventUpdateOne) sqlSave(ctx context.Context) (_node *Project
 	}
 	if value, ok := _u.mutation.AddedCreatedAt(); ok {
 		_spec.AddField(projectrunevent.FieldCreatedAt, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.LogSeq(); ok {
+		_spec.SetField(projectrunevent.FieldLogSeq, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedLogSeq(); ok {
+		_spec.AddField(projectrunevent.FieldLogSeq, field.TypeInt64, value)
+	}
+	if _u.mutation.LogSeqCleared() {
+		_spec.ClearField(projectrunevent.FieldLogSeq, field.TypeInt64)
 	}
 	_spec.AddModifiers(_u.modifiers...)
 	_node = &ProjectRunEvent{config: _u.config}

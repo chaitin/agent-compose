@@ -37,7 +37,9 @@ type ProjectRunEvent struct {
 	// StopReason holds the value of the "stop_reason" field.
 	StopReason string `json:"stop_reason,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.
-	CreatedAt    int64 `json:"created_at,omitempty"`
+	CreatedAt int64 `json:"created_at,omitempty"`
+	// LogSeq holds the value of the "log_seq" field.
+	LogSeq       int64 `json:"log_seq,omitempty"`
 	selectValues sql.SelectValues
 }
 
@@ -46,7 +48,7 @@ func (*ProjectRunEvent) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case projectrunevent.FieldSequence, projectrunevent.FieldSuccess, projectrunevent.FieldExitCode, projectrunevent.FieldCreatedAt:
+		case projectrunevent.FieldSequence, projectrunevent.FieldSuccess, projectrunevent.FieldExitCode, projectrunevent.FieldCreatedAt, projectrunevent.FieldLogSeq:
 			values[i] = new(sql.NullInt64)
 		case projectrunevent.FieldID, projectrunevent.FieldRunID, projectrunevent.FieldKind, projectrunevent.FieldText, projectrunevent.FieldAgent, projectrunevent.FieldName, projectrunevent.FieldPayloadJSON, projectrunevent.FieldStopReason:
 			values[i] = new(sql.NullString)
@@ -137,6 +139,12 @@ func (_m *ProjectRunEvent) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.CreatedAt = value.Int64
 			}
+		case projectrunevent.FieldLogSeq:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field log_seq", values[i])
+			} else if value.Valid {
+				_m.LogSeq = value.Int64
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -205,6 +213,9 @@ func (_m *ProjectRunEvent) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("created_at=")
 	builder.WriteString(fmt.Sprintf("%v", _m.CreatedAt))
+	builder.WriteString(", ")
+	builder.WriteString("log_seq=")
+	builder.WriteString(fmt.Sprintf("%v", _m.LogSeq))
 	builder.WriteByte(')')
 	return builder.String()
 }

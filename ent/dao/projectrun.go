@@ -81,8 +81,18 @@ type ProjectRun struct {
 	// Deadline holds the value of the "deadline" field.
 	Deadline int64 `json:"deadline,omitempty"`
 	// DetachKind holds the value of the "detach_kind" field.
-	DetachKind   string `json:"detach_kind,omitempty"`
-	selectValues sql.SelectValues
+	DetachKind string `json:"detach_kind,omitempty"`
+	// LogFormat holds the value of the "log_format" field.
+	LogFormat string `json:"log_format,omitempty"`
+	// SummaryJSON holds the value of the "summary_json" field.
+	SummaryJSON string `json:"summary_json,omitempty"`
+	// AgentCellID holds the value of the "agent_cell_id" field.
+	AgentCellID string `json:"agent_cell_id,omitempty"`
+	// LogIncomplete holds the value of the "log_incomplete" field.
+	LogIncomplete int `json:"log_incomplete,omitempty"`
+	// ExecutionCheckpointJSON holds the value of the "execution_checkpoint_json" field.
+	ExecutionCheckpointJSON string `json:"execution_checkpoint_json,omitempty"`
+	selectValues            sql.SelectValues
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -90,9 +100,9 @@ func (*ProjectRun) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case projectrun.FieldProjectRevision, projectrun.FieldExitCode, projectrun.FieldSandboxCreated, projectrun.FieldStartedAt, projectrun.FieldCompletedAt, projectrun.FieldDurationMs, projectrun.FieldCreatedAt, projectrun.FieldUpdatedAt, projectrun.FieldDetach, projectrun.FieldDeadline:
+		case projectrun.FieldProjectRevision, projectrun.FieldExitCode, projectrun.FieldSandboxCreated, projectrun.FieldStartedAt, projectrun.FieldCompletedAt, projectrun.FieldDurationMs, projectrun.FieldCreatedAt, projectrun.FieldUpdatedAt, projectrun.FieldDetach, projectrun.FieldDeadline, projectrun.FieldLogIncomplete:
 			values[i] = new(sql.NullInt64)
-		case projectrun.FieldID, projectrun.FieldProjectID, projectrun.FieldProjectName, projectrun.FieldAgentName, projectrun.FieldAgentID, projectrun.FieldSource, projectrun.FieldSchedulerID, projectrun.FieldSchedulerRunID, projectrun.FieldTriggerID, projectrun.FieldStatus, projectrun.FieldSandboxID, projectrun.FieldError, projectrun.FieldErrorStack, projectrun.FieldPrompt, projectrun.FieldOutput, projectrun.FieldResultJSON, projectrun.FieldLogsPath, projectrun.FieldArtifactsDir, projectrun.FieldCleanupError, projectrun.FieldCleanupPolicy, projectrun.FieldDriver, projectrun.FieldImageRef, projectrun.FieldExecutionID, projectrun.FieldDetachKind:
+		case projectrun.FieldID, projectrun.FieldProjectID, projectrun.FieldProjectName, projectrun.FieldAgentName, projectrun.FieldAgentID, projectrun.FieldSource, projectrun.FieldSchedulerID, projectrun.FieldSchedulerRunID, projectrun.FieldTriggerID, projectrun.FieldStatus, projectrun.FieldSandboxID, projectrun.FieldError, projectrun.FieldErrorStack, projectrun.FieldPrompt, projectrun.FieldOutput, projectrun.FieldResultJSON, projectrun.FieldLogsPath, projectrun.FieldArtifactsDir, projectrun.FieldCleanupError, projectrun.FieldCleanupPolicy, projectrun.FieldDriver, projectrun.FieldImageRef, projectrun.FieldExecutionID, projectrun.FieldDetachKind, projectrun.FieldLogFormat, projectrun.FieldSummaryJSON, projectrun.FieldAgentCellID, projectrun.FieldExecutionCheckpointJSON:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -314,6 +324,36 @@ func (_m *ProjectRun) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.DetachKind = value.String
 			}
+		case projectrun.FieldLogFormat:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field log_format", values[i])
+			} else if value.Valid {
+				_m.LogFormat = value.String
+			}
+		case projectrun.FieldSummaryJSON:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field summary_json", values[i])
+			} else if value.Valid {
+				_m.SummaryJSON = value.String
+			}
+		case projectrun.FieldAgentCellID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field agent_cell_id", values[i])
+			} else if value.Valid {
+				_m.AgentCellID = value.String
+			}
+		case projectrun.FieldLogIncomplete:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field log_incomplete", values[i])
+			} else if value.Valid {
+				_m.LogIncomplete = int(value.Int64)
+			}
+		case projectrun.FieldExecutionCheckpointJSON:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field execution_checkpoint_json", values[i])
+			} else if value.Valid {
+				_m.ExecutionCheckpointJSON = value.String
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -450,6 +490,21 @@ func (_m *ProjectRun) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("detach_kind=")
 	builder.WriteString(_m.DetachKind)
+	builder.WriteString(", ")
+	builder.WriteString("log_format=")
+	builder.WriteString(_m.LogFormat)
+	builder.WriteString(", ")
+	builder.WriteString("summary_json=")
+	builder.WriteString(_m.SummaryJSON)
+	builder.WriteString(", ")
+	builder.WriteString("agent_cell_id=")
+	builder.WriteString(_m.AgentCellID)
+	builder.WriteString(", ")
+	builder.WriteString("log_incomplete=")
+	builder.WriteString(fmt.Sprintf("%v", _m.LogIncomplete))
+	builder.WriteString(", ")
+	builder.WriteString("execution_checkpoint_json=")
+	builder.WriteString(_m.ExecutionCheckpointJSON)
 	builder.WriteByte(')')
 	return builder.String()
 }

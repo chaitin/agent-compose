@@ -38,7 +38,7 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 		return ProjectRunRecord{}, err
 	}
 	client := newEntTxClient(s.dialect, tx)
-	err = applyProjectRunCreateFields(client.ProjectRun.Create(), run, false).
+	err = applyProjectRunCreateFields(client.ProjectRun.Create(), run, true).
 		OnConflict(entsql.ConflictColumns(projectrun.FieldID), entsql.DoNothing()).
 		Exec(ctx)
 	switch {
@@ -93,7 +93,7 @@ func (s *projectStore) UpdateProjectRunWithEvents(ctx context.Context, run Proje
 	}
 	defer func() { _ = tx.Rollback() }()
 	client := newEntTxClient(s.dialect, tx)
-	affected, err := applyProjectRunUpdateFields(client.ProjectRun.Update(), run, now.Unix(), false).Save(ctx)
+	affected, err := applyProjectRunUpdateFields(client.ProjectRun.Update(), run, now.Unix(), true).Save(ctx)
 	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("update project run %s: %w", run.RunID, err)
 	}

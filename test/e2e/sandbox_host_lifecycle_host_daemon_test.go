@@ -36,7 +36,7 @@ func TestE2ESandboxHostSurvivesClientRestart(t *testing.T) {
 	}
 	socketPath := filepath.Join(testRoot, "sandbox-host.sock")
 
-	host := startE2ESandboxHost(t, binary, testRoot, dataRoot, socketPath)
+	host := startE2ESandboxHost(t, binary, testRoot, dataRoot, socketPath, nil)
 	waitForE2ESandboxHostSocket(t, ctx, socketPath)
 
 	// First client attaches and handshakes.
@@ -69,7 +69,7 @@ func TestE2ESandboxHostSurvivesClientRestart(t *testing.T) {
 
 	// No duplicate host: a second process against the same data root must fail
 	// to take the file lock instead of serving a second host.
-	duplicate := spawnE2ESandboxHost(binary, testRoot, dataRoot, socketPath)
+	duplicate := spawnE2ESandboxHost(binary, testRoot, dataRoot, socketPath, nil)
 	if err := duplicate.wait(ctx); err == nil {
 		t.Fatalf("second sandbox-host unexpectedly started\nlog:\n%s", duplicate.logs.String())
 	} else if !strings.Contains(duplicate.logs.String(), "already running") {
@@ -90,17 +90,21 @@ type e2eSandboxHostProcess struct {
 	stopOnce sync.Once
 }
 
-func spawnE2ESandboxHost(binary, cwd, dataRoot, socketPath string) *e2eSandboxHostProcess {
+func spawnE2ESandboxHost(binary, cwd, dataRoot, socketPath string, extraEnv map[string]string) *e2eSandboxHostProcess {
 	process := &e2eSandboxHostProcess{done: make(chan error, 1)}
 	process.cmd = exec.Command(binary, "sandbox-host")
 	process.cmd.Dir = cwd
-	process.cmd.Env = overrideE2EEnv(os.Environ(), map[string]string{
+	env := map[string]string{
 		"DATA_ROOT":                         dataRoot,
 		"SANDBOX_ROOT":                      filepath.Join(dataRoot, "sandboxes"),
 		"AGENT_COMPOSE_SANDBOX_HOST_SOCKET": socketPath,
 		"DEFAULT_IMAGE":                     "debian:bookworm-slim",
 		"RUNTIME_DRIVER":                    "docker",
-	})
+	}
+	for name, value := range extraEnv {
+		env[name] = value
+	}
+	process.cmd.Env = overrideE2EEnv(os.Environ(), env)
 	process.cmd.Stdout = &process.logs
 	process.cmd.Stderr = &process.logs
 	if err := process.cmd.Start(); err != nil {
@@ -111,9 +115,9 @@ func spawnE2ESandboxHost(binary, cwd, dataRoot, socketPath string) *e2eSandboxHo
 	return process
 }
 
-func startE2ESandboxHost(t *testing.T, binary, cwd, dataRoot, socketPath string) *e2eSandboxHostProcess {
+func startE2ESandboxHost(t *testing.T, binary, cwd, dataRoot, socketPath string, extraEnv map[string]string) *e2eSandboxHostProcess {
 	t.Helper()
-	process := spawnE2ESandboxHost(binary, cwd, dataRoot, socketPath)
+	process := spawnE2ESandboxHost(binary, cwd, dataRoot, socketPath, extraEnv)
 	select {
 	case err := <-process.done:
 		t.Fatalf("sandbox-host exited before ready: %v\nlog:\n%s", err, process.logs.String())

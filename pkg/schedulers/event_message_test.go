@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
 
@@ -337,3 +338,37 @@ func TestResolveEventMessageSanitizesStoredMessageWithoutIO(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveEventMessagePrefersTheStepLogWhichOutlivesTheSandbox(t *testing.T) {
+	dataRoot := t.TempDir()
+	path, err := runlog.SchedulerCellPath(dataRoot, "sched-1", "run-1", "cell-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := runlog.Open(path, runlog.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = w.AppendOutput("stdout", "built\n")
+	_ = w.AppendOutput("stderr", "1 warning\n")
+	_ = w.Close()
+	// The sandbox is gone: its directory does not exist.
+	dirs := schedulers.ArtifactDirs{Sandboxes: staticSandboxDirs(filepath.Join(dataRoot, "missing")), DataRoot: dataRoot}
+	event := domain.SchedulerEvent{
+		SchedulerID: "sched-1", RunID: "run-1", Type: "scheduler.command.completed",
+		LinkedSandboxID: "sandbox-1", LinkedCellID: "cell-1",
+	}
+	text, available := schedulers.ResolveEventMessage(context.Background(), event, dirs)
+	if !available || text != "built\n1 warning\n" {
+		t.Fatalf("message = %q available=%v", text, available)
+	}
+	// Without a step log, the sandbox cell is still read.
+	event.LinkedCellID = "cell-2"
+	if _, available := schedulers.ResolveEventMessage(context.Background(), event, dirs); available {
+		t.Fatal("missing step log and sandbox reported as available")
+	}
+}
+
+type staticSandboxDirs string
+
+func (d staticSandboxDirs) SandboxDir(string) string { return string(d) }

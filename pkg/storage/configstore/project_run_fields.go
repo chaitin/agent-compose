@@ -41,7 +41,12 @@ func applyProjectRunCreateFields(create *dao.ProjectRunCreate, run ProjectRunRec
 		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
 		SetDurationMs(run.DurationMs).
 		SetCreatedAt(run.CreatedAt.Unix()).
-		SetUpdatedAt(run.UpdatedAt.Unix())
+		SetUpdatedAt(run.UpdatedAt.Unix()).
+		SetLogFormat(run.LogFormat).
+		SetSummaryJSON(run.SummaryJSON).
+		SetAgentCellID(run.AgentCellID).
+		SetLogIncomplete(BoolToInt(run.LogIncomplete)).
+		SetExecutionCheckpointJSON(run.ExecutionCheckpointJSON)
 	if includeLifecycle {
 		create = create.
 			SetExecutionID(run.ExecutionID).
@@ -85,7 +90,21 @@ func applyProjectRunUpdateFields(update *dao.ProjectRunUpdate, run ProjectRunRec
 		SetStartedAt(domain.NonZeroTimeUnixMilli(run.StartedAt)).
 		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
 		SetDurationMs(run.DurationMs).
-		SetUpdatedAt(updatedAt)
+		SetUpdatedAt(updatedAt).
+		SetLogFormat(run.LogFormat).
+		SetSummaryJSON(run.SummaryJSON).
+		SetAgentCellID(run.AgentCellID)
+	// log_incomplete is sticky: a log fault is only ever raised, so an update
+	// carrying a stale false must not clear it.
+	if run.LogIncomplete {
+		update = update.SetLogIncomplete(1)
+	}
+	// An active execution checkpoint belongs to the narrow checkpoint update; a
+	// status snapshot must not overwrite it. A terminal run clears it.
+	switch run.Status {
+	case domain.ProjectRunStatusSucceeded, domain.ProjectRunStatusFailed, domain.ProjectRunStatusCanceled:
+		update = update.SetExecutionCheckpointJSON("")
+	}
 	if ptr := schedulerRunIDPtr(run.SchedulerRunID); ptr != nil {
 		update = update.SetSchedulerRunID(*ptr)
 	} else {

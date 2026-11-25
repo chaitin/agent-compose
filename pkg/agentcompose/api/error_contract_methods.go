@@ -51,6 +51,7 @@ var rpcKinds = map[string]rpcKind{
 	agentcomposev2connect.RunServiceStopRunProcedure:              rpcWrite,
 	agentcomposev2connect.RunServiceAbandonRunCompletionProcedure: rpcWrite,
 	agentcomposev2connect.RunServiceListRunEventsProcedure:        rpcRead,
+	agentcomposev2connect.RunServiceListRunMessagesProcedure:      rpcRead,
 	agentcomposev2connect.RunServiceListSandboxRunEventsProcedure: rpcRead,
 	agentcomposev2connect.RunServiceUploadRunInputProcedure:       rpcWrite, // stages content for a later run
 

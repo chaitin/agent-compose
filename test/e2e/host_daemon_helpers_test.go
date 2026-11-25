@@ -127,7 +127,9 @@ func waitForE2EDaemon(t *testing.T, ctx context.Context, daemon *e2eDaemonProces
 	t.Helper()
 	client := newE2EHTTPClient()
 	client.Timeout = time.Second
-	deadline := time.Now().Add(30 * time.Second)
+	// Full Linux binaries can start slowly while a VM image is materialized on
+	// the same disk. Keep readiness bounded without assuming a warm page cache.
+	deadline := time.Now().Add(2 * time.Minute)
 	for time.Now().Before(deadline) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/version", nil)
 		if err == nil {

@@ -316,6 +316,41 @@ resource IDs on the next invocation instead of touching unrelated containers.
 Ordinary `task test` runs only the deterministic task contract and compiles the
 environment-gated runtime cases without contacting the Docker daemon.
 
+Run-log recovery has an opt-in host-daemon matrix against real Docker, BoxLite,
+Microsandbox, and Kubernetes drivers. Build the daemon and a guest containing
+the JavaScript runtime from the same checkout, then run:
+
+```bash
+task image:workspace-test
+AGENT_COMPOSE_E2E_BINARY="$PWD/build/agent-compose" \
+  AGENT_COMPOSE_E2E_RUN_LOG_IMAGE=agent-compose-guest:workspace-test \
+  AGENT_COMPOSE_E2E_RUN_LOG_DRIVERS=docker \
+  go test -count=1 -timeout=90m -run '^TestE2ERunLogHostDaemon$' -v ./test/e2e
+```
+
+`AGENT_COMPOSE_E2E_RUN_LOG_DRIVERS` accepts a comma-separated subset of
+`docker,boxlite,microsandbox,k8s`. VM cases require the full Linux daemon build,
+its native runtime artifacts, and usable KVM. Kubernetes requires a reachable
+cluster with the selected guest image available to its nodes; set
+`AGENT_COMPOSE_E2E_RUN_LOG_KUBECONFIG` and optionally
+`AGENT_COMPOSE_E2E_RUN_LOG_NAMESPACE` to select an isolated cluster/namespace.
+The tests own the VM sandbox-host process independently of daemon restarts and
+stop it before removing fixture data. All cases remove their sandboxes.
+
+The matrix verifies ordinary completion, hard daemon restart during streamed
+output, injected log-checkpoint failure followed by restart, interactive
+reattachment with a second turn, and the same interaction after log failure.
+Assertions cover successful execution despite observability failure, durable
+`log_incomplete`, complete conversation history without duplicate messages or
+agent notebook cells, structured/text log cursors, and history after sandbox
+removal. The scheduler case checks shell/exec step logs and the child agent run.
+Kubernetes currently rejects interactive command transport, so its two
+interactive cases explicitly skip; its other four cases run normally.
+
+Only the provider subprocess is a deterministic fixture. The provider SDK,
+guest runtime, sandbox driver, daemon, persistence, and public APIs are real;
+these tests require no provider credentials and do not verify real model calls.
+
 On a prepared Linux/KVM host, `task test:runtime-smoke` runs the real BoxLite
 and Microsandbox retention-and-release cases. Each case verifies that a normal
 stop/resume preserves the private writable layer, intentional runtime removal

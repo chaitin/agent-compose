@@ -392,9 +392,33 @@ func NormalizeStdioStream(stream StdioStream) StdioStream {
 	return StdioStdout
 }
 
+// JournalPosition identifies consumed guest bytes, including a retention gap.
+// Offsets count UTF-8 bytes across both stdout and stderr.
+type JournalPosition struct {
+	End  uint64
+	Gap  *JournalGap
+	Exit *JournalExit
+}
+
+// JournalExit preserves a confirmed process outcome independently of agent frames.
+type JournalExit struct {
+	Result    ExecResult
+	Error     string
+	Cancelled bool
+}
+
+// JournalGap is a range removed by guest journal retention.
+type JournalGap struct{ From, To uint64 }
+
 type ExecChunk struct {
+	Journal *JournalPosition
+
 	Text   string
 	Stream StdioStream
+	// Transcript marks text the daemon rebuilt from the guest's agent
+	// events. It is already in the run log as structured entries, so a run
+	// log must not record it again as output.
+	Transcript bool
 }
 
 type SandboxEvent struct {

@@ -14,26 +14,6 @@ type agentTurnProjection struct {
 	StopReason      string
 }
 
-func projectAgentTerminalEvents(run domain.ProjectRunRecord, cell domain.NotebookCell, assistant domain.SandboxEvent, execErr error) []domain.ProjectRunEventRecord {
-	if execErr != nil || !cell.Success {
-		return nil
-	}
-	finalText := strings.TrimSpace(assistant.Message)
-	if finalText == "" {
-		return nil
-	}
-	return []domain.ProjectRunEventRecord{{
-		ID:         terminalAgentEventID(run.RunID),
-		RunID:      run.RunID,
-		Kind:       domain.ProjectRunEventKindAgentMessage,
-		Text:       finalText,
-		Agent:      firstNonEmpty(cell.Agent, run.AgentName),
-		Success:    true,
-		ExitCode:   cell.ExitCode,
-		StopReason: cell.StopReason,
-	}}
-}
-
 func attachedAgentTurnEvents(run domain.ProjectRunRecord, sequence uint64, frame []byte, turn agentTurnProjection) []domain.ProjectRunEventRecord {
 	finalText := projectableFinalText(turn)
 	if finalText == "" {

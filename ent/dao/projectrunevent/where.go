@@ -117,6 +117,11 @@ func CreatedAt(v int64) predicate.ProjectRunEvent {
 	return predicate.ProjectRunEvent(sql.FieldEQ(FieldCreatedAt, v))
 }
 
+// LogSeq applies equality check predicate on the "log_seq" field. It's identical to LogSeqEQ.
+func LogSeq(v int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldEQ(FieldLogSeq, v))
+}
+
 // RunIDEQ applies the EQ predicate on the "run_id" field.
 func RunIDEQ(v string) predicate.ProjectRunEvent {
 	return predicate.ProjectRunEvent(sql.FieldEQ(FieldRunID, v))
@@ -800,6 +805,56 @@ func CreatedAtLT(v int64) predicate.ProjectRunEvent {
 // CreatedAtLTE applies the LTE predicate on the "created_at" field.
 func CreatedAtLTE(v int64) predicate.ProjectRunEvent {
 	return predicate.ProjectRunEvent(sql.FieldLTE(FieldCreatedAt, v))
+}
+
+// LogSeqEQ applies the EQ predicate on the "log_seq" field.
+func LogSeqEQ(v int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldEQ(FieldLogSeq, v))
+}
+
+// LogSeqNEQ applies the NEQ predicate on the "log_seq" field.
+func LogSeqNEQ(v int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldNEQ(FieldLogSeq, v))
+}
+
+// LogSeqIn applies the In predicate on the "log_seq" field.
+func LogSeqIn(vs ...int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldIn(FieldLogSeq, vs...))
+}
+
+// LogSeqNotIn applies the NotIn predicate on the "log_seq" field.
+func LogSeqNotIn(vs ...int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldNotIn(FieldLogSeq, vs...))
+}
+
+// LogSeqGT applies the GT predicate on the "log_seq" field.
+func LogSeqGT(v int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldGT(FieldLogSeq, v))
+}
+
+// LogSeqGTE applies the GTE predicate on the "log_seq" field.
+func LogSeqGTE(v int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldGTE(FieldLogSeq, v))
+}
+
+// LogSeqLT applies the LT predicate on the "log_seq" field.
+func LogSeqLT(v int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldLT(FieldLogSeq, v))
+}
+
+// LogSeqLTE applies the LTE predicate on the "log_seq" field.
+func LogSeqLTE(v int64) predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldLTE(FieldLogSeq, v))
+}
+
+// LogSeqIsNil applies the IsNil predicate on the "log_seq" field.
+func LogSeqIsNil() predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldIsNull(FieldLogSeq))
+}
+
+// LogSeqNotNil applies the NotNil predicate on the "log_seq" field.
+func LogSeqNotNil() predicate.ProjectRunEvent {
+	return predicate.ProjectRunEvent(sql.FieldNotNull(FieldLogSeq))
 }
 
 // And groups predicates with the AND operator between them.
