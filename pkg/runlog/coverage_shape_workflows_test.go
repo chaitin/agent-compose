@@ -20,7 +20,7 @@ func TestIntegrationRunLogWorkflows(t *testing.T) {
 	TestTextViewMatchesTheRenderedLog(t)
 	TestTextViewFollowsAGrowingLogAndIgnoresATornTail(t)
 	TestTextViewSeesOnlyTheCheckpointedPrefix(t)
-	TestLegacyOutputTrackingStaysSmall(t)
+	TestEndTurnRecordsTheFinalTextOnlyOnTheTurnEnd(t)
 }
 
 func TestE2ERunLogWorkflows(t *testing.T) {

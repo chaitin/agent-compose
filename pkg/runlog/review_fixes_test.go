@@ -152,7 +152,7 @@ func TestCheckpointStaysSmallOverALongTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 2 MiB of prose and 5 MiB of tool input went by in this turn.
-	if info.Size() > 2*maxTurnProseBytes {
+	if info.Size() > 128<<10 {
 		t.Fatalf("checkpoint is %d bytes", info.Size())
 	}
 }

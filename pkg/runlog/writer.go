@@ -242,9 +242,18 @@ func (w *Writer) Close() error {
 	if w.file == nil {
 		return nil
 	}
+	// Close writes the text still held for coalescing and the marker for
+	// bytes the cap dropped. On a checkpointed log readers see only what the
+	// last checkpoint committed, so these are committed too, with the consumer's
+	// state unchanged: they come from merger and writer state that checkpoint
+	// already held. Writes the consumer left uncommitted stay uncommitted.
+	committed := w.recovery != nil && w.size == w.recovery.LogBytes
 	flushErr := w.appendAllLocked(w.merger.FlushText())
 	if flushErr == nil {
 		flushErr = w.writeDroppedLocked(w.turn)
+	}
+	if flushErr == nil && committed && w.size != w.recovery.LogBytes {
+		flushErr = w.checkpointLocked(w.recovery.SourceOffset, w.recovery.State)
 	}
 	closeErr := w.file.Close()
 	w.file = nil

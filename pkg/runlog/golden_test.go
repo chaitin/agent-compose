@@ -74,6 +74,7 @@ func TestLogGolden(t *testing.T) {
 	must(w.AppendOutput("stderr", "bash: warning\n"))
 	event(`{"kind":"tool_result","id":"t1","ok":true,"exitCode":0,"output":"a.go\nb.go\n"}`)
 	event(`{"kind":"usage","scope":"turn","model":"m","inputTokens":120,"outputTokens":30,"cachedTokens":5}`)
+	event(`{"kind":"text_delta","text":"Two files: a.go and b.go."}`)
 	_, err = w.EndTurn("stop", "Two files: a.go and b.go.")
 	must(err)
 	_, err = w.AppendUser("and the tests?")

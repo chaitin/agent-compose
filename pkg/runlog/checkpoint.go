@@ -69,7 +69,10 @@ func recoverCheckpoint(path string) (*Recovery, error) {
 	return &recovery, nil
 }
 
-// Recovery returns an owned copy of the last committed consumer state.
+// Recovery returns an owned copy of the last committed consumer state. It is
+// nil until the first Checkpoint, and a log without one is kept whole on Open,
+// so a consumer that checkpoints must write its first checkpoint before it
+// appends anything it would produce again when replaying from the start.
 func (w *Writer) Recovery() *Recovery {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -107,6 +110,10 @@ func (w *Writer) Checkpoint(offset uint64, state json.RawMessage) error {
 	if w.file == nil {
 		return errors.New("run log is closed")
 	}
+	return w.checkpointLocked(offset, state)
+}
+
+func (w *Writer) checkpointLocked(offset uint64, state json.RawMessage) error {
 	recovery := Recovery{SourceOffset: offset, State: state, LogBytes: w.size}
 	header, err := json.Marshal(checkpointHeader{Version: 1, SourceOffset: offset, LogBytes: w.size})
 	if err != nil {

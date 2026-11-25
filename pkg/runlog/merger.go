@@ -39,20 +39,8 @@ type Pending struct {
 type Merger struct {
 	toolOutputHalf int
 	pendingText    strings.Builder
-	// turnProse is the tail of the turn's prose and turnProseLen its whole
-	// length; see rememberProse.
-	turnProse    string
-	turnProseLen int64
-	// legacyOutput is the tail of the turn's process output, kept only while
-	// the turn has no agent events, and legacyTruncated whether bytes before
-	// it were dropped; see rememberLegacyOutput.
-	legacyOutput    string
-	legacyTruncated bool
-	// turnEvents distinguishes structured prose from older guests' mirrored
-	// process output when reconciling a terminal frame's final text.
-	turnEvents bool
-	tools      map[string]*toolState
-	turn       uint32
+	tools          map[string]*toolState
+	turn           uint32
 }
 
 type toolState struct {
@@ -73,24 +61,9 @@ func NewMerger(toolOutputHalf int) *Merger {
 // Recover seeds the merger from an entry already in the log, so a reopened
 // log does not record a tool call or result twice.
 func (m *Merger) Recover(entry Entry) {
-	if entry.Turn != m.turn {
+	if entry.Turn != m.turn || entry.Type == EntryUser {
 		m.tools = map[string]*toolState{}
-		m.forgetLegacyOutput()
 		m.turn = entry.Turn
-	}
-	switch entry.Type {
-	case EntryUser, EntryTurnEnd:
-		m.forgetTurnText()
-		if entry.Type == EntryUser {
-			m.tools = map[string]*toolState{}
-		}
-	case EntryText:
-		m.rememberProse(entry.Text)
-		m.sawTurnEvent()
-	case EntryOutput:
-		m.rememberLegacyOutput(entry.Data)
-	case EntryToolCall, EntryToolResult, EntryUsage, EntryError:
-		m.sawTurnEvent()
 	}
 	if entry.Tool == nil || entry.Tool.ID == "" {
 		return
@@ -108,7 +81,6 @@ func (m *Merger) Recover(entry Entry) {
 // User records user input; the caller starts a new turn.
 func (m *Merger) User(text string) []Pending {
 	out := m.FlushText()
-	m.forgetTurnText()
 	m.tools = map[string]*toolState{}
 	return append(out, Pending{Entry: Entry{Type: EntryUser, Text: text}, Essential: true})
 }
@@ -118,7 +90,6 @@ func (m *Merger) Output(stream, data string) []Pending {
 	if data == "" {
 		return nil
 	}
-	m.rememberLegacyOutput(data)
 	out := m.FlushText()
 	for _, part := range splitText(data, maxEntryTextBytes) {
 		out = append(out, Pending{Entry: Entry{Type: EntryOutput, Stream: stream, Data: part}})
@@ -126,116 +97,12 @@ func (m *Merger) Output(stream, data string) []Pending {
 	return out
 }
 
-// EndTurn closes the turn, recording final text that never reached the log as
-// deltas. Older guests mirror answers as process output, which must not repeat.
+// EndTurn closes the turn. Its final text is recorded on the turn_end entry
+// only, never as prose: runners stream their answer as text deltas, and a
+// structured answer as a tool call, so the log already holds it. Older guests
+// printed it as process output.
 func (m *Merger) EndTurn(stopReason, finalText string) []Pending {
-	out := m.FlushText()
-	if m.turnEvents || !m.printedAsLegacyOutput(finalText) {
-		if rest := finalText[m.streamedFinalText(finalText):]; rest != "" {
-			out = append(out, m.text(rest)...)
-		}
-	}
-	m.forgetTurnText()
-	return append(out, Pending{Entry: Entry{Type: EntryTurnEnd, StopReason: stopReason, FinalText: finalText}, Essential: true})
-}
-
-// maxTurnProseBytes bounds the tail of a turn's prose the merger keeps to
-// find how much of a final answer was already streamed. The overlap is a
-// suffix of the prose, so the tail is what matters; for an answer longer than
-// the tail, see streamedFinalText. The tail is part of every journal
-// checkpoint, so it must stay small.
-const maxTurnProseBytes = 64 << 10
-
-// rememberProse keeps the tail of the turn's prose; see maxTurnProseBytes.
-func (m *Merger) rememberProse(text string) {
-	m.turnProse = keepTail(m.turnProse+text, maxTurnProseBytes)
-	m.turnProseLen += int64(len(text))
-}
-
-// streamedFinalText returns how many leading bytes of finalText the turn's
-// prose already ends with.
-//
-// While the whole prose is kept that is an exact overlap. Once only its tail
-// is, an answer longer than the tail cannot be matched from the front, so the
-// tail is located in the answer instead: if the answer contains the tail, ending
-// no further in than the prose is long, everything up to that end was streamed.
-// A false match would take the full tail lining up by chance.
-func (m *Merger) streamedFinalText(finalText string) int {
-	overlap := streamedFinalTextOverlap(m.turnProse, finalText)
-	if m.turnProseLen <= int64(len(m.turnProse)) {
-		return overlap
-	}
-	reach := finalText
-	if int64(len(reach)) > m.turnProseLen {
-		reach = reach[:m.turnProseLen]
-	}
-	if i := strings.LastIndex(reach, m.turnProse); i >= 0 && i+len(m.turnProse) > overlap {
-		return i + len(m.turnProse)
-	}
-	return overlap
-}
-
-// maxLegacyOutputBytes bounds the tail of a turn's process output the merger
-// keeps to recognize a final answer an older guest already printed there.
-// Such a guest prints its answer last, so the tail is what matters; for an
-// answer longer than the tail, see printedAsLegacyOutput. The tail is part of
-// every journal checkpoint, so it must stay small.
-const maxLegacyOutputBytes = 64 << 10
-
-// legacyProbeBytes is how much of a final answer's end must appear in the
-// output tail for an answer too long for the tail to count as printed. It
-// leaves room in the tail for whatever the guest printed after the answer.
-const legacyProbeBytes = maxLegacyOutputBytes / 2
-
-// printedAsLegacyOutput reports whether an older guest already printed
-// finalText as process output. Once the output tail has dropped bytes, an
-// answer that no longer fits in it is recognized by its end.
-func (m *Merger) printedAsLegacyOutput(finalText string) bool {
-	if strings.Contains(m.legacyOutput, finalText) {
-		return true
-	}
-	if !m.legacyTruncated || len(finalText) <= legacyProbeBytes {
-		return false
-	}
-	return strings.Contains(m.legacyOutput, finalText[len(finalText)-legacyProbeBytes:])
-}
-
-// rememberLegacyOutput keeps the tail of the turn's process output. Once the
-// turn has agent events its final text is never compared with the output, so
-// nothing is kept.
-func (m *Merger) rememberLegacyOutput(data string) {
-	if m.turnEvents {
-		return
-	}
-	kept := m.legacyOutput + data
-	m.legacyTruncated = m.legacyTruncated || len(kept) > maxLegacyOutputBytes
-	m.legacyOutput = keepTail(kept, maxLegacyOutputBytes)
-}
-
-// forgetLegacyOutput drops the output tail kept for older guests.
-func (m *Merger) forgetLegacyOutput() {
-	m.legacyOutput, m.legacyTruncated = "", false
-}
-
-// forgetTurnText drops what the merger tracks about the turn's text.
-func (m *Merger) forgetTurnText() {
-	m.turnProse, m.turnProseLen = "", 0
-	m.turnEvents = false
-	m.forgetLegacyOutput()
-}
-
-// sawTurnEvent marks the turn as carrying agent events and drops the output
-// tail kept for older guests, which this turn no longer needs.
-func (m *Merger) sawTurnEvent() {
-	m.turnEvents = true
-	m.forgetLegacyOutput()
-}
-
-func keepTail(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
+	return append(m.FlushText(), Pending{Entry: Entry{Type: EntryTurnEnd, StopReason: stopReason, FinalText: finalText}, Essential: true})
 }
 
 // FlushText emits text still held for coalescing.
@@ -250,7 +117,6 @@ func (m *Merger) FlushText() []Pending {
 
 // text records prose, split into entries of at most maxEntryTextBytes.
 func (m *Merger) text(text string) []Pending {
-	m.rememberProse(text)
 	parts := splitText(text, maxEntryTextBytes)
 	out := make([]Pending, 0, len(parts))
 	for _, part := range parts {
@@ -332,7 +198,6 @@ func (m *Merger) Event(raw []byte) ([]Pending, error) {
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return nil, fmt.Errorf("decode agent event: %w", err)
 	}
-	m.sawTurnEvent()
 	switch event.Kind {
 	case "text_delta":
 		return m.textDelta(event.Text), nil
@@ -527,33 +392,4 @@ func validRuneEnd(s string) bool {
 		need = 4
 	}
 	return len(s)-i >= need
-}
-
-// streamedFinalTextOverlap returns the length of the longest prefix of
-// finalText that the prose logged so far ends with, so only the part of the
-// final answer that was never streamed is appended.
-func streamedFinalTextOverlap(logged, finalText string) int {
-	if finalText == "" || logged == "" {
-		return 0
-	}
-	if len(logged) > len(finalText) {
-		logged = logged[len(logged)-len(finalText):]
-	}
-	combined := finalText + "\x00" + logged
-	failure := make([]int, len(combined))
-	for i := 1; i < len(combined); i++ {
-		length := failure[i-1]
-		for length > 0 && combined[i] != combined[length] {
-			length = failure[length-1]
-		}
-		if combined[i] == combined[length] {
-			length++
-		}
-		failure[i] = length
-	}
-	overlap := failure[len(combined)-1]
-	if overlap > len(finalText) || !strings.HasSuffix(logged, finalText[:overlap]) {
-		return 0
-	}
-	return overlap
 }

@@ -1,8 +1,6 @@
 package runlog
 
 import (
-	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -82,137 +80,44 @@ func TestFileChangesSurviveReopenAndRender(t *testing.T) {
 	}
 }
 
-func TestLegacyOutputTrackingStaysSmall(t *testing.T) {
-	big := strings.Repeat("diagnostic line\n", (1<<20)/16)
-
-	// A guest with agent events never compares its final text with output,
-	// so a noisy turn keeps nothing for the checkpoint.
-	m := NewMerger(0)
-	if _, err := m.Event([]byte(`{"kind":"text_delta","text":"hi"}`)); err != nil {
-		t.Fatal(err)
-	}
-	m.Output("stderr", big)
-	if got := m.checkpoint().LegacyOutput; got != "" {
-		t.Fatalf("legacy output kept %d bytes after an agent event", len(got))
-	}
-
-	// An older guest prints its answer after a long transcript; only the tail
-	// is kept, and it still recognizes the mirrored answer.
-	m = NewMerger(0)
-	m.Output("stderr", big)
-	m.Output("stderr", "The answer is 42.\n")
-	if got := len(m.checkpoint().LegacyOutput); got > maxLegacyOutputBytes {
-		t.Fatalf("legacy output kept %d bytes", got)
-	}
-	out := m.EndTurn("stop", "The answer is 42.")
-	if len(out) != 1 || out[0].Entry.Type != EntryTurnEnd {
-		t.Fatalf("EndTurn repeated the mirrored answer: %#v", out)
-	}
-
-	// A checkpoint from an older daemon may carry a long prefix.
-	m = NewMerger(0)
-	m.restoreCheckpoint(&mergerCheckpoint{LegacyOutput: big})
-	if got := len(m.legacyOutput); got != maxLegacyOutputBytes {
-		t.Fatalf("restored legacy output = %d bytes", got)
-	}
-}
-
-// longAnswer is an answer past maxTurnProseBytes with no repeated stretch, so
-// only the true alignment of the kept tail can match it.
-func longAnswer() string {
-	var b strings.Builder
-	for i := 0; b.Len() < 3*maxTurnProseBytes; i++ {
-		fmt.Fprintf(&b, "line %d of the answer\n", i)
-	}
-	return b.String()
-}
-
-func streamProse(t *testing.T, m *Merger, text string) {
-	t.Helper()
-	for len(text) > 0 {
-		n := min(len(text), 3000)
-		delta, _ := json.Marshal(map[string]string{"kind": "text_delta", "text": text[:n]})
-		if _, err := m.Event(delta); err != nil {
-			t.Fatal(err)
+func TestEndTurnRecordsTheFinalTextOnlyOnTheTurnEnd(t *testing.T) {
+	for name, feed := range map[string]func(m *Merger){
+		// The answer was streamed, partly still held for coalescing.
+		"streamed": func(m *Merger) {
+			_, _ = m.Event([]byte(`{"kind":"text_delta","text":"Let me check.\nThe answer is 42."}`))
+		},
+		// A structured answer arrives as a tool call, never as prose.
+		"structured": func(m *Merger) {
+			_, _ = m.Event([]byte(`{"kind":"tool_call","id":"t1","name":"StructuredOutput","input":{"answer":42},"status":"completed"}`))
+		},
+		// An older guest printed its answer as process output.
+		"legacy output": func(m *Merger) {
+			m.Output("stderr", "The answer is 42.\n")
+		},
+		// The final text can be the whole transcript (transcript_fallback).
+		"transcript": func(m *Merger) {
+			_, _ = m.Event([]byte(`{"kind":"text_delta","text":"Let me check.\n"}`))
+		},
+	} {
+		m := NewMerger(0)
+		feed(m)
+		before := RenderText(entriesOf(m.FlushText()))
+		m2 := NewMerger(0)
+		feed(m2)
+		out := m2.EndTurn("stop", "Let me check.\n\n[tool:Bash]\n\nThe answer is 42.")
+		if last := out[len(out)-1].Entry; last.Type != EntryTurnEnd || last.FinalText == "" {
+			t.Fatalf("%s: last entry = %#v", name, last)
 		}
-		text = text[n:]
-	}
-}
-
-// appendedText returns the prose an EndTurn added before its turn_end.
-func appendedText(out []Pending) string {
-	var b strings.Builder
-	for _, p := range out {
-		if p.Entry.Type == EntryText {
-			b.WriteString(p.Entry.Text)
+		if got := RenderText(entriesOf(out[:len(out)-1])); got != before {
+			t.Fatalf("%s: EndTurn recorded prose %q, want only the held %q", name, got, before)
 		}
 	}
-	return b.String()
 }
 
-func TestEndTurnDoesNotRepeatAStreamedAnswerLongerThanTheProseTail(t *testing.T) {
-	answer := longAnswer()
-
-	m := NewMerger(0)
-	streamProse(t, m, answer)
-	m.FlushText()
-	if got := appendedText(m.EndTurn("stop", answer)); got != "" {
-		t.Fatalf("EndTurn repeated %d bytes of a fully streamed answer", len(got))
+func entriesOf(pending []Pending) []Entry {
+	entries := make([]Entry, 0, len(pending))
+	for _, p := range pending {
+		entries = append(entries, p.Entry)
 	}
-
-	// Only the part that never streamed is appended.
-	m = NewMerger(0)
-	streamProse(t, m, "Let me look.\n")
-	streamProse(t, m, answer[:len(answer)-5000])
-	m.FlushText()
-	if got := appendedText(m.EndTurn("stop", answer)); got != answer[len(answer)-5000:] {
-		t.Fatalf("EndTurn appended %d bytes, want the 5000 unstreamed", len(got))
-	}
-
-	// The same holds across a restart.
-	m = NewMerger(0)
-	streamProse(t, m, answer)
-	m.FlushText()
-	restored := NewMerger(0)
-	restored.restoreCheckpoint(m.checkpoint())
-	if got := appendedText(restored.EndTurn("stop", answer)); got != "" {
-		t.Fatalf("EndTurn after restore repeated %d bytes", len(got))
-	}
-
-	// A checkpoint from an older daemon holds the whole prose and no length.
-	restored = NewMerger(0)
-	restored.restoreCheckpoint(&mergerCheckpoint{TurnProse: answer, TurnEvents: true})
-	if got := appendedText(restored.EndTurn("stop", answer)); got != "" {
-		t.Fatalf("EndTurn after an older checkpoint repeated %d bytes", len(got))
-	}
-}
-
-func TestEndTurnDoesNotCountMoreProseThanStreamed(t *testing.T) {
-	// A repetitive answer matches the kept tail at many places; the match may
-	// not reach past what was actually streamed.
-	m := NewMerger(0)
-	streamProse(t, m, strings.Repeat("a", maxTurnProseBytes+6000))
-	m.FlushText()
-	answer := strings.Repeat("a", 2*maxTurnProseBytes)
-	if got := len(appendedText(m.EndTurn("stop", answer))); got != maxTurnProseBytes-6000 {
-		t.Fatalf("EndTurn appended %d bytes, want %d", got, maxTurnProseBytes-6000)
-	}
-}
-
-func TestLegacyOutputRecognizesAnAnswerLongerThanItsTail(t *testing.T) {
-	answer := longAnswer()
-
-	m := NewMerger(0)
-	m.Output("stderr", "working...\n")
-	m.Output("stderr", answer+"\n")
-	if got := appendedText(m.EndTurn("stop", answer)); got != "" {
-		t.Fatalf("EndTurn repeated %d bytes of the mirrored answer", len(got))
-	}
-
-	// An answer the guest never printed is still recorded.
-	m = NewMerger(0)
-	m.Output("stderr", strings.Repeat("diagnostic line\n", 2*maxLegacyOutputBytes/16))
-	if got := appendedText(m.EndTurn("stop", answer)); got != answer {
-		t.Fatalf("EndTurn appended %d bytes, want the whole unprinted answer", len(got))
-	}
+	return entries
 }

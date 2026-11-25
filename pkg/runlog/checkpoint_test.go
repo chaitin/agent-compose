@@ -29,6 +29,9 @@ func TestCheckpointRecoversOnlyCommittedJournalEffects(t *testing.T) {
 	if err := w.AppendAgentEvent([]byte(`{"kind":"usage","scope":"turn","inputTokens":9}`)); err != nil {
 		t.Fatal(err)
 	}
+	if err := w.AppendAgentEvent([]byte(`{"kind":"text_delta","text":"answer"}`)); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := w.EndTurn("completed", "answer"); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +56,9 @@ func TestCheckpointRecoversOnlyCommittedJournalEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := w.AppendAgentEvent([]byte(`{"kind":"usage","scope":"turn","inputTokens":9}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendAgentEvent([]byte(`{"kind":"text_delta","text":"answer"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := w.EndTurn("completed", "answer"); err != nil {
@@ -202,8 +208,73 @@ func TestCheckpointPreservesCoalescedTextAndUnfinishedTool(t *testing.T) {
 	if err := w.Checkpoint(150, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
+	// Close commits the text it flushes, so the paragraph continues in a new
+	// entry; the announced tool survives in the merger state.
 	entries, err = ReadEntries(path, 0)
-	if err != nil || len(entries) != 3 || entries[0].Type != EntryText || entries[0].Text != "hello world" || entries[1].Tool == nil || entries[1].Tool.Name != "shell" || entries[2].Type != EntryToolResult {
+	if err != nil || len(entries) != 4 || entries[0].Text+entries[1].Text != "hello world" || entries[2].Tool == nil || entries[2].Tool.Name != "shell" || entries[3].Type != EntryToolResult {
 		t.Fatalf("lost merger state: %+v err=%v", entries, err)
+	}
+}
+
+func TestCloseCommitsWhatItWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	w, err := Open(path, Options{MaxBytes: 4 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendAgentEvent([]byte(`{"kind":"text_delta","text":"partial"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendOutput("stdout", strings.Repeat("x", 8<<10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.AppendAgentEvent([]byte(`{"kind":"text_delta","text":"tail"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Checkpoint(10, json.RawMessage(`{"n":1}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Readers see the held text and the cap's marker, and a reopen keeps them.
+	summary, err := SummarizeLog(path)
+	if err != nil || !summary.Truncated {
+		t.Fatalf("summary after close = %+v err=%v", summary, err)
+	}
+	before, _ := ReadEntries(path, 0)
+	w, err = Open(path, Options{MaxBytes: 4 << 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := w.Recovery(); r == nil || r.SourceOffset != 10 || string(r.State) != `{"n":1}` {
+		t.Fatalf("recovery after close = %+v", r)
+	}
+	_ = w.Close()
+	after, _ := ReadEntries(path, 0)
+	if len(before) == 0 || len(after) != len(before) || after[len(after)-1].Type != EntryTruncated {
+		t.Fatalf("entries before reopen = %d, after = %d", len(before), len(after))
+	}
+}
+
+func TestCloseLeavesTheConsumersUncommittedWrites(t *testing.T) {
+	path := filepath.Join(t.TempDir(), FileName)
+	w, err := Open(path, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Checkpoint(1, json.RawMessage(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	// A record the consumer never committed is replayed after a restart, so
+	// Close must not commit it.
+	if err := w.AppendOutput("stdout", "uncommitted\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if entries, _ := ReadEntries(path, 0); len(entries) != 0 {
+		t.Fatalf("uncommitted entries became visible: %+v", entries)
 	}
 }

@@ -128,25 +128,18 @@ func TestTextIsCoalescedAtLineBoundaries(t *testing.T) {
 	}
 }
 
-func TestEndTurnAppendsOnlyTheUnstreamedTail(t *testing.T) {
+func TestEndTurnKeepsTheFinalTextOutOfTheProse(t *testing.T) {
 	w, path := openTest(t, Options{})
 	mustEvent(t, w, `{"kind":"text_delta","text":"The answer"}`)
 	if _, err := w.EndTurn("stop", "The answer is 42."); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.AppendUser("again"); err != nil {
-		t.Fatal(err)
-	}
-	mustEvent(t, w, `{"kind":"usage","scope":"turn","inputTokens":1}`)
-	if _, err := w.EndTurn("stop", "Only final."); err != nil {
-		t.Fatal(err)
-	}
 	_ = w.Close()
 	entries, _ := ReadEntries(path, 0)
-	if got := types(entries); got != "text,text,turn_end,user,usage,text,turn_end" {
+	if got := types(entries); got != "text,turn_end" {
 		t.Fatalf("entry types = %s", got)
 	}
-	if entries[1].Text != " is 42." || entries[5].Text != "Only final." || entries[5].Turn != 2 {
+	if entries[0].Text != "The answer" || entries[1].FinalText != "The answer is 42." {
 		t.Fatalf("entries = %#v", entries)
 	}
 }
@@ -478,6 +471,8 @@ func TestOversizedEssentialEntriesAreKeptShrunk(t *testing.T) {
 	if err != nil || user.Seq == 0 {
 		t.Fatalf("user: seq=%d err=%v", user.Seq, err)
 	}
+	// A streamed answer this long is split across prose entries, not cut.
+	mustEvent(t, w, `{"kind":"text_delta","text":"`+huge("f")+`"}`)
 	end, err := w.EndTurn("stop", huge("f"))
 	if err != nil || end.Seq == 0 {
 		t.Fatalf("turn end: seq=%d err=%v", end.Seq, err)
@@ -516,8 +511,6 @@ func TestOversizedEssentialEntriesAreKeptShrunk(t *testing.T) {
 			t.Fatalf("seq %d: %#v", want.seq, got.Type)
 		}
 	}
-	// The final answer was never streamed, so the turn's prose carries it
-	// whole, split across entries rather than cut.
 	var prose strings.Builder
 	for _, e := range entries {
 		if e.Type == EntryText {
