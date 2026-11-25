@@ -485,11 +485,6 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	if err := r.ensureReady(ctx); err != nil {
 		return SandboxVMInfo{}, err
 	}
-	// An nfs volume is bound into the VM from its host mount point, so the
-	// export must be mounted before the VM is created or restarted.
-	if err := ensureSandboxNFSMounts(ctx, session); err != nil {
-		return SandboxVMInfo{}, err
-	}
 
 	sandbox, created, restarted, err := r.getOrCreateSandbox(ctx, session, vmState, proxyState)
 	if err != nil {
@@ -1214,6 +1209,12 @@ func (r *microsandboxRuntime) TerminateProcessTree(ctx context.Context, session 
 func (r *microsandboxRuntime) getOrCreateSandbox(ctx context.Context, session *Sandbox, vmState VMState, proxyState ProxyState) (*microsandbox.Sandbox, bool, bool, error) {
 	unlock := r.createLocks.lock(session.Summary.ID)
 	defer unlock()
+	// An nfs volume is bound into the VM from its host mount point, so the
+	// export must be mounted before the VM is created or restarted. This
+	// sandbox's lock serializes it with other starts and with removal.
+	if err := ensureSandboxNFSMounts(ctx, session); err != nil {
+		return nil, false, false, err
+	}
 	name := r.sandboxName(session, vmState)
 	handle, err := microsandbox.GetSandbox(ctx, name)
 	if err != nil {
@@ -1278,6 +1279,15 @@ func (r *microsandboxRuntime) connectSandbox(ctx context.Context, session *Sandb
 	}
 	if !startIfStopped {
 		return nil, fmt.Errorf("sandbox box is not running")
+	}
+	// Restarting a stopped VM here bypasses getOrCreateSandbox, and a
+	// sandbox-host restart loses its mounts, so the nfs exports are ensured
+	// again under the sandbox's lock before the VM comes back.
+	unlockNFS := r.createLocks.lock(session.Summary.ID)
+	err = ensureSandboxNFSMounts(ctx, session)
+	unlockNFS()
+	if err != nil {
+		return nil, err
 	}
 	defer func() {
 		if r := recover(); r != nil {

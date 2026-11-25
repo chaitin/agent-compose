@@ -3,6 +3,7 @@ package driver
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -97,27 +98,89 @@ func TestEnsureSandboxNFSMountsMountsOnceUnderSandboxVolumes(t *testing.T) {
 	}
 }
 
-func TestEnsureSandboxNFSMountsRefusesForeignMountAndRollsBack(t *testing.T) {
-	root := t.TempDir()
+// twoNFSMountSandbox gives the sandbox a second nfs mount of the same export.
+func twoNFSMountSandbox(t *testing.T, root string) (*Sandbox, string, string) {
+	t.Helper()
 	session, _ := testNFSSandbox(t, root, false)
-	first := filepath.Join(root, "volumes", "mount-nfs0001")
 	session.VolumeMounts = append(session.VolumeMounts, session.VolumeMounts[0])
 	session.VolumeMounts[1].ID = "mount-nfs0002"
 	session.VolumeMounts[1].Target = "/mnt/other"
-	second := filepath.Join(root, "volumes", "mount-nfs0002")
+	return session, filepath.Join(root, "volumes", "mount-nfs0001"), filepath.Join(root, "volumes", "mount-nfs0002")
+}
 
+func TestEnsureSandboxNFSMountsRefusesForeignMount(t *testing.T) {
+	root := t.TempDir()
+	session, first, second := twoNFSMountSandbox(t, root)
 	state := map[string]string{second: "ext4"}
 	calls := stubNFSMounts(t, state, nil)
 	err := ensureSandboxNFSMounts(context.Background(), session)
 	if err == nil || !strings.Contains(err.Error(), "non-NFS mount") {
 		t.Fatalf("error = %v, want non-NFS mount refusal", err)
 	}
-	want := []string{"mount nas.example.com:/srv/share " + first + " rw", "unmount " + first}
+	want := []string{"mount nas.example.com:/srv/share " + first + " rw"}
 	if strings.Join(*calls, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("calls = %q, want %q", *calls, want)
 	}
 	if state[second] != "ext4" {
 		t.Fatal("the foreign mount was touched")
+	}
+}
+
+// A failed start must not unmount what it mounted: the mounts belong to the
+// sandbox, and another start of the same sandbox may already rely on them.
+// They are released only when the sandbox is removed.
+func TestEnsureSandboxNFSMountsKeepsMountsWhenAStartFails(t *testing.T) {
+	root := t.TempDir()
+	session, first, second := twoNFSMountSandbox(t, root)
+	state := map[string]string{}
+	calls := stubNFSMounts(t, state, nil)
+	failSecond := nfsVolumeMounter
+	nfsVolumeMounter = func(ctx context.Context, source nfsvolume.Source, mountPoint string, readOnly bool) error {
+		if mountPoint == second {
+			return errors.New("server not responding")
+		}
+		return failSecond(ctx, source, mountPoint, readOnly)
+	}
+	if err := ensureSandboxNFSMounts(context.Background(), session); err == nil {
+		t.Fatal("ensure succeeded although the second mount failed")
+	}
+	for _, call := range *calls {
+		if strings.HasPrefix(call, "unmount") {
+			t.Fatalf("a failed start unmounted %q; calls = %q", call, *calls)
+		}
+	}
+	if state[first] == "" {
+		t.Fatal("the first export is no longer mounted")
+	}
+
+	// The retry reuses the first mount and only mounts the second.
+	nfsVolumeMounter = failSecond
+	*calls = nil
+	if err := ensureSandboxNFSMounts(context.Background(), session); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	want := []string{"mount nas.example.com:/srv/share " + second + " rw"}
+	if strings.Join(*calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("retry calls = %q, want %q", *calls, want)
+	}
+}
+
+// A mounted export is recognized from the mount table without touching its
+// path: a stat of a hard-mounted export whose server is gone would block.
+func TestEnsureSandboxNFSMountsReadsMountTableBeforeTouchingPath(t *testing.T) {
+	root := t.TempDir()
+	session, _ := testNFSSandbox(t, root, false)
+	// <sandbox>/volumes is a file, so any MkdirAll or stat below it fails.
+	if err := os.WriteFile(filepath.Join(root, "volumes"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mountPoint := filepath.Join(root, "volumes", "mount-nfs0001")
+	calls := stubNFSMounts(t, map[string]string{mountPoint: "nfs4"}, nil)
+	if err := ensureSandboxNFSMounts(context.Background(), session); err != nil {
+		t.Fatalf("ensure touched the mounted path: %v", err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("calls = %q, want none", *calls)
 	}
 }
 

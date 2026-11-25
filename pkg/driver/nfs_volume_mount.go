@@ -86,28 +86,41 @@ var (
 )
 
 // ensureSandboxNFSMounts mounts the sandbox's nfs volumes on their host mount
-// points for a VM runtime. It runs in the process that starts the VM, right
-// before the VM starts, and is idempotent: an export that is still mounted
-// from an earlier start is kept. On failure it unmounts what this call
-// mounted, so a half-prepared sandbox does not keep server connections.
+// points for a VM runtime, in the process that starts the VM, right before it
+// starts. The caller must hold the sandbox's own lock, which RemoveSandbox
+// also takes, so starts of one sandbox never race each other or its removal.
+//
+// The mounts belong to the sandbox, not to this call: an export that is still
+// mounted from an earlier start is reused, and a start that fails leaves what
+// it mounted in place for the next start. They are released only when the
+// sandbox is removed, by the cleanup that unmounts <sandbox>/volumes/.
+//
+// The mount table decides whether a mount point is mounted before anything
+// touches the path: a stat of a hard-mounted export whose server went away
+// would block without end. The kernel mount itself cannot be interrupted;
+// against an unreachable server it returns once its own timeouts expire,
+// and only this sandbox waits for it.
 func ensureSandboxNFSMounts(ctx context.Context, session *Sandbox) error {
 	mounts, err := sandboxNFSMounts(session)
-	if err != nil || len(mounts) == 0 {
+	if err != nil {
 		return err
 	}
-	var mounted []string
 	for _, item := range mounts {
+		isMount, isNFS, err := nfsVolumeMountStateOf(item.mountPoint)
+		if err != nil {
+			return fmt.Errorf("inspect nfs volume mount point %s: %w", item.mountPoint, err)
+		}
+		if isMount {
+			if !isNFS {
+				return fmt.Errorf("nfs volume mount point %s already has a non-NFS mount", item.mountPoint)
+			}
+			continue
+		}
 		if err := os.MkdirAll(item.mountPoint, nfsMountPointMode); err != nil {
-			rollbackBoxliteVolumeBridgeMounts(mounted)
 			return fmt.Errorf("create nfs volume mount point %s: %w", item.mountPoint, err)
 		}
-		mountedNow, err := ensureNFSMountPoint(ctx, item)
-		if err != nil {
-			rollbackBoxliteVolumeBridgeMounts(mounted)
-			return err
-		}
-		if mountedNow {
-			mounted = append(mounted, item.mountPoint)
+		if err := nfsVolumeMounter(ctx, item.source, item.mountPoint, item.mount.ReadOnly); err != nil {
+			return fmt.Errorf("mount nfs volume %q (%s): %w", item.mount.Source, item.source.Device(), err)
 		}
 	}
 	return nil

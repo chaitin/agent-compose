@@ -21,9 +21,8 @@ import (
 // nosuid and nodev keep a file planted on the server from gaining privileges
 // on the host that serves the mount to the VM.
 //
-// The kernel mount cannot be interrupted, so this call blocks until it
-// returns; ensureNFSMountPoint runs it in a tracked attempt that a caller can
-// stop waiting for.
+// The context bounds only the name lookup; the kernel mount cannot be
+// interrupted and returns when its own NFS timeouts expire.
 func mountNFSVolume(ctx context.Context, source nfsvolume.Source, mountPoint string, readOnly bool) error {
 	addr := source.Server
 	if net.ParseIP(addr) == nil {

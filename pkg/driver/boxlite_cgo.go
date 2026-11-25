@@ -479,13 +479,19 @@ func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox,
 	if _, err := sandboxWorkspaceMount(sandbox, RuntimeDriverBoxlite); err != nil {
 		return SandboxVMInfo{}, err
 	}
-	r.ensureMu.Lock()
-	defer r.ensureMu.Unlock()
 	// The guest reaches an nfs volume through the /data share, so the export
-	// must be mounted before the box starts or restarts.
-	if err := ensureSandboxNFSMounts(ctx, sandbox); err != nil {
+	// must be mounted before the box starts or restarts. It runs under this
+	// sandbox's lock, not the runtime-wide ensureMu, so an NFS server that
+	// does not answer holds up only this sandbox. getOrCreateBox takes the
+	// same lock inside ensureMu, so it is released first.
+	unlockNFS := r.createLocks.lock(sandbox.Summary.ID)
+	err := ensureSandboxNFSMounts(ctx, sandbox)
+	unlockNFS()
+	if err != nil {
 		return SandboxVMInfo{}, err
 	}
+	r.ensureMu.Lock()
+	defer r.ensureMu.Unlock()
 
 	startedAt := time.Now()
 	slog.Info("agent-compose boxlite ensure sandbox begin", "sandbox_id", sandbox.Summary.ID, "host_port", proxyState.HostPort)
@@ -745,6 +751,14 @@ func (r *cgoSandboxRuntime) execWithStream(ctx context.Context, sandbox *Sandbox
 		return ExecResult{}, err
 	}
 	if !info.State.Running {
+		// A sandbox-host restart loses the nfs mounts, so they are ensured
+		// again under the sandbox's lock before the box comes back.
+		unlockNFS := r.createLocks.lock(sandbox.Summary.ID)
+		err := ensureSandboxNFSMounts(ctx, sandbox)
+		unlockNFS()
+		if err != nil {
+			return ExecResult{}, err
+		}
 		if err := r.startBox(ctx, box); err != nil {
 			return ExecResult{}, err
 		}
