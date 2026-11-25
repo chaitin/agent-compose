@@ -2,6 +2,8 @@
 // and PostgreSQL storage backends. Queries are otherwise shared.
 package dialect
 
+import entDialect "entgo.io/ent/dialect"
+
 const (
 	NameSQLite   = "sqlite"
 	NamePostgres = "postgres"
@@ -32,6 +34,10 @@ type Dialect interface {
 	// constraint violation, so callers can map it to a resource conflict
 	// without knowing which driver produced it.
 	IsDuplicateRow(err error) bool
+	// EntDialect names the backend for ent clients built over the shared
+	// *sql.DB. ent calls SQLite "sqlite3", which is the driver name it uses,
+	// not this package's dialect name.
+	EntDialect() string
 }
 
 func OrSQLite(value Dialect) Dialect {
@@ -46,6 +52,8 @@ type sqliteDialect struct{}
 func SQLite() Dialect { return sqliteDialect{} }
 
 func (sqliteDialect) Name() string { return NameSQLite }
+
+func (sqliteDialect) EntDialect() string { return entDialect.SQLite }
 
 func (sqliteDialect) Contains(column string) string {
 	return "instr(" + column + ", ?) > 0"
@@ -66,6 +74,8 @@ type postgresDialect struct{}
 func Postgres() Dialect { return postgresDialect{} }
 
 func (postgresDialect) Name() string { return NamePostgres }
+
+func (postgresDialect) EntDialect() string { return entDialect.Postgres }
 
 func (postgresDialect) Contains(column string) string {
 	return "strpos(" + column + ", ?) > 0"

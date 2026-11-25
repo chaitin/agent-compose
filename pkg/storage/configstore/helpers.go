@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
-	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
 func NormalizeWorkspaceConfig(item domain.WorkspaceConfig, assignID bool) (domain.WorkspaceConfig, error) {
@@ -34,18 +33,6 @@ func NormalizeWorkspaceConfig(item domain.WorkspaceConfig, assignID bool) (domai
 	if item.ConfigJSON == "" {
 		item.ConfigJSON = "{}"
 	}
-	return item, nil
-}
-
-func ScanWorkspaceConfig(scan func(dest ...any) error) (domain.WorkspaceConfig, error) {
-	var item domain.WorkspaceConfig
-	var createdAtRaw any
-	var updatedAtRaw any
-	if err := scan(&item.ID, &item.Name, &item.Type, &item.ConfigJSON, &item.Comment, &createdAtRaw, &updatedAtRaw); err != nil {
-		return domain.WorkspaceConfig{}, fmt.Errorf("scan workspace config: %w", err)
-	}
-	item.CreatedAt = storedtime.ParseStoredTime(createdAtRaw)
-	item.UpdatedAt = storedtime.ParseStoredTime(updatedAtRaw)
 	return item, nil
 }
 

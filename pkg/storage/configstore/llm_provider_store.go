@@ -3,15 +3,30 @@ package configstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/llmcatalogdefault"
+	"github.com/chaitin/agent-compose/ent/dao/llmfacadetoken"
+	"github.com/chaitin/agent-compose/ent/dao/llmmodel"
+	"github.com/chaitin/agent-compose/ent/dao/llmprovider"
+	"github.com/chaitin/agent-compose/ent/dao/llmprovidermodel"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 const providerColumns = `id, name, provider_type, default_wire_api, base_url, api_key, auth_header, auth_scheme, auth, headers_json, use_generic_responses_text_parts, weight, enabled, scope, created_at, updated_at`
+
+// isDuplicateLLMRow classifies a unique or primary-key violation without a
+// dialect field on the store: both backends' constraint errors are recognized
+// through the small driver interfaces the dialect package probes.
+func isDuplicateLLMRow(err error) bool {
+	return dialect.SQLite().IsDuplicateRow(err) || dialect.Postgres().IsDuplicateRow(err)
+}
 
 // CreateLLMProvider creates an API-owned upstream provider with its declared
 // models, in one transaction. An explicit authentication choice is stored
@@ -32,24 +47,42 @@ func (s *llmStore) CreateLLMProvider(ctx context.Context, input llms.ProviderRep
 	auth := providerAuthValue(input.Auth)
 	family, header, scheme := managedProviderAuth(input.Protocol, auth)
 	now := time.Now().UTC().Unix()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return llms.Provider{}, fmt.Errorf("begin provider create: %w", err)
 	}
 	// Rollback after commit is harmless; on errors it releases the transaction.
 	defer func() { _ = tx.Rollback() }()
-	row := tx.QueryRowContext(ctx, `INSERT INTO llm_provider (`+providerColumns+`)
- VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 10, ?, ?, ?, ?)
- ON CONFLICT(id) DO NOTHING RETURNING `+providerColumns,
-		input.ID, input.Name, family, input.Protocol, input.BaseURL, *input.APIKey, header, scheme, string(auth), llms.ManagedProviderHeadersJSON(input.Protocol), BoolToInt(enabled), llms.ProviderScopeAPI, now, now)
-	provider, err := llms.ScanProvider(row.Scan)
-	if errors.Is(err, sql.ErrNoRows) {
-		return llms.Provider{}, fmt.Errorf("%w: provider id already exists", domain.ErrAlreadyExists)
-	}
+	client := tx.Client()
+	// The old statement was INSERT ... ON CONFLICT(id) DO NOTHING RETURNING, so
+	// it inserted every column explicitly and reported an existing id as
+	// ErrAlreadyExists without touching the stored row.
+	created, err := client.LLMProvider.Create().
+		SetID(input.ID).
+		SetName(input.Name).
+		SetProviderType(family).
+		SetDefaultWireAPI(input.Protocol).
+		SetBaseURL(input.BaseURL).
+		SetAPIKey(*input.APIKey).
+		SetAuthHeader(header).
+		SetAuthScheme(scheme).
+		SetAuth(string(auth)).
+		SetHeadersJSON(llms.ManagedProviderHeadersJSON(input.Protocol)).
+		SetUseGenericResponsesTextParts(0).
+		SetWeight(10).
+		SetEnabled(BoolToInt(enabled)).
+		SetScope(llms.ProviderScopeAPI).
+		SetCreatedAt(now).
+		SetUpdatedAt(now).
+		Save(ctx)
 	if err != nil {
+		if isDuplicateLLMRow(err) {
+			return llms.Provider{}, fmt.Errorf("%w: provider id already exists", domain.ErrAlreadyExists)
+		}
 		return llms.Provider{}, fmt.Errorf("create llm provider: %w", err)
 	}
-	if err := replaceProviderModels(ctx, tx, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
+	provider := llmProviderFromEntity(created)
+	if err := replaceProviderModels(ctx, client, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
 		return llms.Provider{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -63,13 +96,16 @@ func (s *llmStore) GetManagedLLMProvider(ctx context.Context, id string) (llms.P
 	if err := llms.ValidateManagedProviderID(id); err != nil {
 		return llms.Provider{}, err
 	}
-	provider, err := llms.ScanProvider(s.db.QueryRowContext(ctx, `SELECT `+providerColumns+` FROM llm_provider WHERE id = ?`, id).Scan)
-	if errors.Is(err, sql.ErrNoRows) {
-		return llms.Provider{}, fmt.Errorf("%w: llm provider not found", domain.ErrNotFound)
-	}
+	entity, err := s.client.LLMProvider.Query().
+		Where(llmprovider.IDEQ(id)).
+		Only(ctx)
 	if err != nil {
+		if dao.IsNotFound(err) {
+			return llms.Provider{}, fmt.Errorf("%w: llm provider not found", domain.ErrNotFound)
+		}
 		return llms.Provider{}, fmt.Errorf("get llm provider: %w", err)
 	}
+	provider := llmProviderFromEntity(entity)
 	if provider.Scope != llms.ProviderScopeAPI {
 		return llms.Provider{}, fmt.Errorf("%w: provider is not API-managed", domain.ErrFailedPrecondition)
 	}
@@ -78,22 +114,16 @@ func (s *llmStore) GetManagedLLMProvider(ctx context.Context, id string) (llms.P
 
 // ListManagedLLMProviders lists API-owned providers in stable ID order.
 func (s *llmStore) ListManagedLLMProviders(ctx context.Context) ([]llms.Provider, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+providerColumns+` FROM llm_provider WHERE scope = ? ORDER BY id`, llms.ProviderScopeAPI)
+	entities, err := s.client.LLMProvider.Query().
+		Where(llmprovider.ScopeEQ(llms.ProviderScopeAPI)).
+		Order(llmprovider.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list managed llm providers: %w", err)
 	}
-	// Read-only rows: iteration errors are reported by rows.Err below.
-	defer func() { _ = rows.Close() }()
-	providers := make([]llms.Provider, 0)
-	for rows.Next() {
-		provider, err := llms.ScanProvider(rows.Scan)
-		if err != nil {
-			return nil, fmt.Errorf("scan managed llm provider: %w", err)
-		}
-		providers = append(providers, provider)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate managed llm providers: %w", err)
+	providers := make([]llms.Provider, 0, len(entities))
+	for _, entity := range entities {
+		providers = append(providers, llmProviderFromEntity(entity))
 	}
 	return providers, nil
 }
@@ -106,19 +136,23 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 	if err != nil {
 		return llms.Provider{}, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return llms.Provider{}, fmt.Errorf("begin provider update: %w", err)
 	}
 	// Rollback after commit is harmless; on errors it releases the transaction.
 	defer func() { _ = tx.Rollback() }()
-	stored, err := llms.ScanProvider(tx.QueryRowContext(ctx, `SELECT `+providerColumns+` FROM llm_provider WHERE id = ?`, input.ID).Scan)
-	if errors.Is(err, sql.ErrNoRows) {
-		return llms.Provider{}, fmt.Errorf("%w: llm provider not found", domain.ErrNotFound)
-	}
+	client := tx.Client()
+	storedEntity, err := client.LLMProvider.Query().
+		Where(llmprovider.IDEQ(input.ID)).
+		Only(ctx)
 	if err != nil {
+		if dao.IsNotFound(err) {
+			return llms.Provider{}, fmt.Errorf("%w: llm provider not found", domain.ErrNotFound)
+		}
 		return llms.Provider{}, fmt.Errorf("read llm provider for update: %w", err)
 	}
+	stored := llmProviderFromEntity(storedEntity)
 	if stored.Scope != llms.ProviderScopeAPI {
 		return llms.Provider{}, fmt.Errorf("%w: provider is not API-managed", domain.ErrFailedPrecondition)
 	}
@@ -139,28 +173,33 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 		headersJSON = llms.ManagedProviderHeadersJSON(input.Protocol)
 	}
 	_, header, scheme := managedProviderAuth(protocol, presentation)
-	row := tx.QueryRowContext(ctx, `UPDATE llm_provider SET name = COALESCE(NULLIF(?, ''), name), provider_type = COALESCE(?, provider_type), default_wire_api = COALESCE(NULLIF(?, ''), default_wire_api), base_url = COALESCE(NULLIF(?, ''), base_url), api_key = COALESCE(?, api_key), auth_header = ?, auth_scheme = ?, auth = ?, headers_json = COALESCE(?, headers_json), enabled = COALESCE(?, enabled), updated_at = ?
+	// Kept as SQL: every updated value that is omitted from the request keeps
+	// the stored row's value through COALESCE/NULLIF of the old row, and the
+	// RETURNING result distinguishes the compare-and-swap miss (scope changed
+	// under us) from a successful update. ent's update builder computes values
+	// from a prior read, which would overwrite a concurrent writer's omitted
+	// fields.
+	rows, err := client.QueryContext(ctx, `UPDATE llm_provider SET name = COALESCE(NULLIF(?, ''), name), provider_type = COALESCE(?, provider_type), default_wire_api = COALESCE(NULLIF(?, ''), default_wire_api), base_url = COALESCE(NULLIF(?, ''), base_url), api_key = COALESCE(?, api_key), auth_header = ?, auth_scheme = ?, auth = ?, headers_json = COALESCE(?, headers_json), enabled = COALESCE(?, enabled), updated_at = ?
  WHERE id = ? AND scope = ? RETURNING `+providerColumns,
 		input.Name, family, input.Protocol, input.BaseURL, input.APIKey, header, scheme, string(presentation), headersJSON, optionalBoolToSQL(input.Enabled), time.Now().UTC().Unix(), input.ID, llms.ProviderScopeAPI)
-	provider, err := llms.ScanProvider(row.Scan)
-	if errors.Is(err, sql.ErrNoRows) {
-		// The row was readable and API-managed moments ago, so it changed under us.
-		return llms.Provider{}, fmt.Errorf("%w: provider changed during update", domain.ErrConflict)
-	}
 	if err != nil {
 		return llms.Provider{}, fmt.Errorf("update llm provider: %w", err)
 	}
-	if err := ensureRetainedModelProtocols(ctx, tx, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
+	provider, err := scanUpdatedLLMProvider(rows)
+	if err != nil {
 		return llms.Provider{}, err
 	}
-	if err := replaceProviderModels(ctx, tx, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
+	if err := ensureRetainedModelProtocols(ctx, client, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
+		return llms.Provider{}, err
+	}
+	if err := replaceProviderModels(ctx, client, provider.ID, provider.DefaultWireAPI, input.Models); err != nil {
 		return llms.Provider{}, err
 	}
 	if !provider.Enabled {
 		// A disabled connection cannot serve the default, and resolution already
 		// treats its reference as absent. Remove the row so GetDefaultModel does
 		// not advertise a default no run receives.
-		if err := clearDefaultReferenceForProvider(ctx, tx, provider.ID); err != nil {
+		if err := clearDefaultReferenceForProvider(ctx, client, provider.ID); err != nil {
 			return llms.Provider{}, err
 		}
 		// The model identity a literal default created is kept alive by that
@@ -169,12 +208,31 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 		// carries no model set skips it, and it ran before the clear. A leftover
 		// enabled api-scope identity would keep claiming its model id, and the
 		// environment bootstrap yields its whole projection to a foreign owner.
-		if err := sweepUnreferencedAPIModels(ctx, tx); err != nil {
+		if err := sweepUnreferencedAPIModels(ctx, client); err != nil {
 			return llms.Provider{}, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return llms.Provider{}, fmt.Errorf("commit provider update: %w", err)
+	}
+	return provider, nil
+}
+
+// scanUpdatedLLMProvider reads the row returned by the kept conditional UPDATE
+// and closes the cursor before the caller issues further queries (SQLite runs
+// with one connection, so an open cursor would block them).
+func scanUpdatedLLMProvider(rows *sql.Rows) (llms.Provider, error) {
+	defer func() { _ = rows.Close() }()
+	if !rows.Next() {
+		if queryErr := rows.Err(); queryErr != nil {
+			return llms.Provider{}, fmt.Errorf("update llm provider: %w", queryErr)
+		}
+		// The row was readable and API-managed moments ago, so it changed under us.
+		return llms.Provider{}, fmt.Errorf("%w: provider changed during update", domain.ErrConflict)
+	}
+	provider, err := llms.ScanProvider(rows.Scan)
+	if err != nil {
+		return llms.Provider{}, fmt.Errorf("update llm provider: %w", err)
 	}
 	return provider, nil
 }
@@ -187,27 +245,23 @@ func (s *llmStore) UpdateLLMProvider(ctx context.Context, input llms.ProviderRep
 // states it in a model spec. A request that carries models states the new intent
 // and is validated against that set instead, so only retained bindings are
 // checked here.
-func ensureRetainedModelProtocols(ctx context.Context, tx *sql.Tx, providerID, providerProtocol string, replacement *[]llms.ModelSpec) error {
+func ensureRetainedModelProtocols(ctx context.Context, client *dao.Client, providerID, providerProtocol string, replacement *[]llms.ModelSpec) error {
 	if replacement != nil {
 		return nil
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT model_id, wire_api FROM llm_provider_model WHERE provider_id = ? ORDER BY model_id`, providerID)
+	entities, err := client.LLMProviderModel.Query().
+		Where(llmprovidermodel.IDEQ(providerID)).
+		Select(llmprovidermodel.FieldModelID, llmprovidermodel.FieldWireAPI).
+		Order(llmprovidermodel.ByModelID()).
+		All(ctx)
 	if err != nil {
 		return fmt.Errorf("read retained provider %q models: %w", providerID, err)
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var modelID, wireAPI string
-		if err := rows.Scan(&modelID, &wireAPI); err != nil {
-			return fmt.Errorf("scan retained provider %q model: %w", providerID, err)
-		}
-		if err := llms.ValidateModelSpecProtocol(providerProtocol, wireAPI); err != nil {
+	for _, entity := range entities {
+		if err := llms.ValidateModelSpecProtocol(providerProtocol, entity.WireAPI); err != nil {
 			return fmt.Errorf("retained model %q declared as %q does not fit the new connection protocol %q, resend the model set to restate it: %w",
-				modelID, wireAPI, providerProtocol, err)
+				entity.ModelID, entity.WireAPI, providerProtocol, err)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate retained provider %q models: %w", providerID, err)
 	}
 	return nil
 }
@@ -217,11 +271,13 @@ func ensureRetainedModelProtocols(ctx context.Context, tx *sql.Tx, providerID, p
 // every binding. Model identity rows are shared across connections by model ID,
 // so an existing row another source owns keeps its scope and metadata and only
 // the binding is written.
-func replaceProviderModels(ctx context.Context, tx *sql.Tx, providerID, providerProtocol string, models *[]llms.ModelSpec) error {
+func replaceProviderModels(ctx context.Context, client *dao.Client, providerID, providerProtocol string, models *[]llms.ModelSpec) error {
 	if models == nil {
 		return nil
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_provider_model WHERE provider_id = ?`, providerID); err != nil {
+	if _, err := client.LLMProviderModel.Delete().
+		Where(llmprovidermodel.IDEQ(providerID)).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("replace provider %q models: %w", providerID, err)
 	}
 	now := time.Now().UTC().Unix()
@@ -239,20 +295,34 @@ func replaceProviderModels(ctx context.Context, tx *sql.Tx, providerID, provider
 		if err != nil {
 			return fmt.Errorf("encode provider %q model %q headers: %w", providerID, model.ID, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO llm_model(id, name, description, default_model, enabled, scope, created_at, updated_at)
-			VALUES(?, ?, '', 0, 1, ?, ?, ?)
-			ON CONFLICT(id) DO NOTHING`,
-			model.ID, firstNonEmptyString(model.Name, model.ID), llms.ProviderScopeAPI, now, now); err != nil {
+		if err := client.LLMModel.Create().
+			SetID(model.ID).
+			SetName(firstNonEmptyString(model.Name, model.ID)).
+			SetDescription("").
+			SetDefaultModel(0).
+			SetEnabled(1).
+			SetScope(llms.ProviderScopeAPI).
+			SetCreatedAt(now).
+			SetUpdatedAt(now).
+			OnConflict(entsql.ConflictColumns(llmmodel.FieldID), entsql.ResolveWithIgnore()).
+			Exec(ctx); err != nil {
 			return fmt.Errorf("record provider %q model %q identity: %w", providerID, model.ID, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO llm_provider_model(
-			provider_id, model_id, wire_api, weight, base_url, headers_json, max_output_tokens, display_name, context_window)
-			VALUES(?, ?, ?, 10, ?, ?, ?, ?, ?)`,
-			providerID, model.ID, protocol, model.BaseURL, headersJSON, model.MaxOutputTokens, model.Name, model.ContextWindow); err != nil {
+		if _, err := client.LLMProviderModel.Create().
+			SetID(providerID).
+			SetModelID(model.ID).
+			SetWireAPI(protocol).
+			SetWeight(10).
+			SetBaseURL(model.BaseURL).
+			SetHeadersJSON(headersJSON).
+			SetMaxOutputTokens(model.MaxOutputTokens).
+			SetContextWindow(model.ContextWindow).
+			SetDisplayName(model.Name).
+			Save(ctx); err != nil {
 			return fmt.Errorf("bind provider %q model %q: %w", providerID, model.ID, err)
 		}
 	}
-	return sweepUnreferencedAPIModels(ctx, tx)
+	return sweepUnreferencedAPIModels(ctx, client)
 }
 
 // sweepUnreferencedAPIModels removes API-owned model identities that no
@@ -269,11 +339,42 @@ func replaceProviderModels(ctx context.Context, tx *sql.Tx, providerID, provider
 // Only API-scope rows are swept. A catalog row belongs to the models.json
 // projection, which releases what it no longer declares, and an environment row
 // belongs to the environment projection.
-func sweepUnreferencedAPIModels(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM llm_model
-		WHERE scope = ?
-		  AND id NOT IN (SELECT model_id FROM llm_provider_model)
-		  AND id NOT IN (SELECT model_id FROM llm_catalog_default)`, llms.ProviderScopeAPI); err != nil {
+func sweepUnreferencedAPIModels(ctx context.Context, client *dao.Client) error {
+	// Collect the referenced model ids in the same transaction as the delete so
+	// the sweep sees the fully projected reference state.
+	bindings, err := client.LLMProviderModel.Query().
+		Select(llmprovidermodel.FieldModelID).
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("read bound model identities: %w", err)
+	}
+	defaults, err := client.LLMCatalogDefault.Query().
+		Select(llmcatalogdefault.FieldModelID).
+		All(ctx)
+	if err != nil {
+		return fmt.Errorf("read default model identities: %w", err)
+	}
+	referenced := make([]string, 0, len(bindings)+len(defaults))
+	seen := make(map[string]struct{}, len(bindings)+len(defaults))
+	for _, binding := range bindings {
+		if _, ok := seen[binding.ModelID]; ok {
+			continue
+		}
+		seen[binding.ModelID] = struct{}{}
+		referenced = append(referenced, binding.ModelID)
+	}
+	for _, entity := range defaults {
+		if _, ok := seen[entity.ModelID]; ok {
+			continue
+		}
+		seen[entity.ModelID] = struct{}{}
+		referenced = append(referenced, entity.ModelID)
+	}
+	deleteQuery := client.LLMModel.Delete().Where(llmmodel.ScopeEQ(llms.ProviderScopeAPI))
+	if len(referenced) > 0 {
+		deleteQuery = deleteQuery.Where(llmmodel.IDNotIn(referenced...))
+	}
+	if _, err := deleteQuery.Exec(ctx); err != nil {
 		return fmt.Errorf("sweep unreferenced api model identities: %w", err)
 	}
 	return nil
@@ -285,40 +386,49 @@ func (s *llmStore) DeleteLLMProvider(ctx context.Context, id string) error {
 	if err := llms.ValidateManagedProviderID(id); err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin provider deletion: %w", err)
 	}
 	// Rollback after commit is harmless; on errors it releases the transaction.
 	defer func() { _ = tx.Rollback() }()
-	var scope string
-	err = tx.QueryRowContext(ctx, `SELECT scope FROM llm_provider WHERE id = ?`, id).Scan(&scope)
-	if errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("%w: llm provider not found", domain.ErrNotFound)
-	}
+	client := tx.Client()
+	entity, err := client.LLMProvider.Query().
+		Where(llmprovider.IDEQ(id)).
+		Select(llmprovider.FieldScope).
+		Only(ctx)
 	if err != nil {
+		if dao.IsNotFound(err) {
+			return fmt.Errorf("%w: llm provider not found", domain.ErrNotFound)
+		}
 		return fmt.Errorf("read provider ownership: %w", err)
 	}
-	if scope != llms.ProviderScopeAPI {
+	if entity.Scope != llms.ProviderScopeAPI {
 		return fmt.Errorf("%w: provider is not API-managed", domain.ErrFailedPrecondition)
 	}
-	for _, statement := range []string{
-		`DELETE FROM llm_facade_token WHERE provider_id = ?`,
-		`DELETE FROM llm_provider_model WHERE provider_id = ?`,
-		`DELETE FROM llm_provider WHERE id = ?`,
-	} {
-		if _, err := tx.ExecContext(ctx, statement, id); err != nil {
-			return fmt.Errorf("delete llm provider configuration: %w", err)
-		}
+	if _, err := client.LLMFacadeToken.Delete().
+		Where(llmfacadetoken.ProviderIDEQ(id)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("delete llm provider configuration: %w", err)
+	}
+	if _, err := client.LLMProviderModel.Delete().
+		Where(llmprovidermodel.IDEQ(id)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("delete llm provider configuration: %w", err)
+	}
+	if _, err := client.LLMProvider.Delete().
+		Where(llmprovider.IDEQ(id)).
+		Exec(ctx); err != nil {
+		return fmt.Errorf("delete llm provider configuration: %w", err)
 	}
 	// The connection is gone, so a default naming it can never be served; leaving
 	// the row would make GetDefaultModel report a default no run receives.
-	if err := clearDefaultReferenceForProvider(ctx, tx, id); err != nil {
+	if err := clearDefaultReferenceForProvider(ctx, client, id); err != nil {
 		return err
 	}
 	// Its model identities are gone too, so nothing else may claim they are still
 	// declared.
-	if err := sweepUnreferencedAPIModels(ctx, tx); err != nil {
+	if err := sweepUnreferencedAPIModels(ctx, client); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {

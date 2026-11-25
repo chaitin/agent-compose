@@ -9,17 +9,27 @@ import (
 	"strings"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/project"
+	"github.com/chaitin/agent-compose/ent/dao/projectagent"
+	"github.com/chaitin/agent-compose/ent/dao/projectrevision"
+	"github.com/chaitin/agent-compose/ent/dao/projectrun"
+	"github.com/chaitin/agent-compose/ent/dao/projectscheduler"
 	"github.com/chaitin/agent-compose/internal/projects"
+	"github.com/chaitin/agent-compose/pkg/identity"
 	"github.com/chaitin/agent-compose/pkg/idset"
 	domain "github.com/chaitin/agent-compose/pkg/model"
-
 	"github.com/chaitin/agent-compose/pkg/storage/dialect"
+	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
 // projectStore owns projects, revisions, agents, schedulers, runs, and sandboxes.
 type projectStore struct {
 	db      *sql.DB
 	dialect dialect.Dialect
+	client  *dao.Client
 }
 
 func (s *projectStore) UpsertProject(ctx context.Context, project ProjectRecord) (ProjectRecord, error) {
@@ -30,6 +40,9 @@ func (s *projectStore) UpsertProject(ctx context.Context, project ProjectRecord)
 	now := time.Now().UTC()
 	project.CreatedAt = now
 	project.UpdatedAt = now
+	// Kept as SQL: the ON CONFLICT update keeps the stored spec_hash when the
+	// incoming hash is empty, a CASE over the existing row that ent's upsert
+	// setters cannot express without changing that behaviour.
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO project(
 		id, name, short_id, source_path, source_json, current_revision, spec_hash, created_at, updated_at, removed_at
 	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
@@ -63,12 +76,15 @@ func (s *projectStore) MarkProjectRemoved(ctx context.Context, projectID string)
 		return existing, nil
 	}
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE project SET updated_at = ?, removed_at = ? WHERE id = ? AND removed_at = 0`,
-		now.Unix(), now.Unix(), projectID)
+	affected, err := s.client.Project.Update().
+		Where(project.IDEQ(projectID), project.RemovedAtEQ(0)).
+		SetUpdatedAt(now.Unix()).
+		SetRemovedAt(now.Unix()).
+		Save(ctx)
 	if err != nil {
 		return ProjectRecord{}, fmt.Errorf("mark project %s removed: %w", projectID, err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		return s.getProjectRequired(ctx, projectID, true)
 	}
 	return s.getProjectRequired(ctx, projectID, true)
@@ -90,6 +106,10 @@ func (s *projectStore) SaveProjectRevision(ctx context.Context, revision Project
 		return ProjectRevisionRecord{}, false, fmt.Errorf("get project revision conn: %w", err)
 	}
 	defer func() { _ = conn.Close() }()
+	// Kept as SQL: the revision allocator reserves SQLite's write lock with
+	// BEGIN IMMEDIATE (and locks the project row on PostgreSQL) before reading
+	// current_revision and MAX(revision); an ent transaction begins deferred and
+	// cannot keep these statements on this explicitly reserved connection.
 	if _, err := conn.ExecContext(ctx, s.dialect.BeginWriteStatement()); err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("begin project revision tx: %w", err)
 	}
@@ -108,6 +128,7 @@ func (s *projectStore) SaveProjectRevision(ctx context.Context, revision Project
 	}
 
 	var currentRevision int64
+	// Kept as SQL: reads the row locked by the write reservation above.
 	if err := conn.QueryRowContext(ctx, `SELECT current_revision FROM project WHERE id = ?`+s.dialect.ForUpdateClause(), revision.ProjectID).Scan(&currentRevision); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ProjectRevisionRecord{}, false, domain.ResourceError(domain.ErrNotFound, "project", revision.ProjectID, fmt.Sprintf("project %s not found", revision.ProjectID), err)
@@ -115,6 +136,7 @@ func (s *projectStore) SaveProjectRevision(ctx context.Context, revision Project
 		return ProjectRevisionRecord{}, false, fmt.Errorf("query current project revision %s: %w", revision.ProjectID, err)
 	}
 	if currentRevision > 0 {
+		// Kept as SQL: part of the same explicitly reserved transaction.
 		row := conn.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
 			FROM project_revision WHERE project_id = ? AND revision = ?`, revision.ProjectID, currentRevision)
 		existing, err := projects.ScanProjectRevision(row.Scan)
@@ -131,16 +153,21 @@ func (s *projectStore) SaveProjectRevision(ctx context.Context, revision Project
 	}
 
 	var nextRevision int64
+	// Kept as SQL: COALESCE(MAX(revision), 0) + 1 must run under the same write
+	// reservation as the insert, which an ent aggregate cannot join.
 	if err := conn.QueryRowContext(ctx, `SELECT COALESCE(MAX(revision), 0) + 1 FROM project_revision WHERE project_id = ?`, revision.ProjectID).Scan(&nextRevision); err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("query next project revision %s: %w", revision.ProjectID, err)
 	}
 	now := time.Now().UTC()
 	revision.Revision = nextRevision
 	revision.CreatedAt = now
+	// Kept as SQL: inserts inside the explicitly reserved transaction.
 	if _, err := conn.ExecContext(ctx, `INSERT INTO project_revision(project_id, revision, spec_hash, spec_json, created_at)
 		VALUES(?, ?, ?, ?, ?)`, revision.ProjectID, revision.Revision, revision.SpecHash, revision.SpecJSON, revision.CreatedAt.Unix()); err != nil {
 		return ProjectRevisionRecord{}, false, fmt.Errorf("insert project revision %s/%d: %w", revision.ProjectID, revision.Revision, err)
 	}
+	// Kept as SQL: updates the project row in the same explicitly reserved
+	// transaction as the insert above.
 	result, err := conn.ExecContext(ctx, `UPDATE project SET current_revision = ?, spec_hash = ?, updated_at = ?, removed_at = 0 WHERE id = ?`,
 		revision.Revision, revision.SpecHash, now.Unix(), revision.ProjectID)
 	if err != nil {
@@ -168,17 +195,18 @@ func (s *projectStore) GetProject(ctx context.Context, projectID string) (Projec
 }
 
 func (s *projectStore) GetProjectRevision(ctx context.Context, projectID string, revision int64) (ProjectRevisionRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT project_id, revision, spec_hash, spec_json, created_at
-		FROM project_revision WHERE project_id = ? AND revision = ?`, strings.TrimSpace(projectID), revision)
-	item, err := projects.ScanProjectRevision(row.Scan)
+	projectID = strings.TrimSpace(projectID)
+	entity, err := s.client.ProjectRevision.Query().
+		Where(projectrevision.IDEQ(projectID), projectrevision.RevisionEQ(revision)).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			id := fmt.Sprintf("%s/%d", strings.TrimSpace(projectID), revision)
-			return ProjectRevisionRecord{}, domain.ResourceError(domain.ErrNotFound, "project revision", id, fmt.Sprintf("project revision %s not found", id), err)
+		if dao.IsNotFound(err) {
+			id := fmt.Sprintf("%s/%d", projectID, revision)
+			return ProjectRevisionRecord{}, domain.ResourceError(domain.ErrNotFound, "project revision", id, fmt.Sprintf("project revision %s not found", id), scanNotFound("project revision"))
 		}
 		return ProjectRevisionRecord{}, err
 	}
-	return item, nil
+	return projectRevisionFromEntity(entity), nil
 }
 
 func (s *projectStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgentRecord) (ProjectAgentRecord, error) {
@@ -187,60 +215,81 @@ func (s *projectStore) UpsertProjectAgent(ctx context.Context, agent ProjectAgen
 		return ProjectAgentRecord{}, err
 	}
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE project_agent SET
-		id = ?, name = ?, short_id = ?, revision = ?, provider = ?, model = ?, image = ?, driver = ?, scheduler_enabled = ?, spec_json = ?, updated_at = ?
-		WHERE project_id = ? AND agent_name = ?`,
-		agent.ID, agent.Name, agent.ShortID, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, BoolToInt(agent.SchedulerEnabled), agent.SpecJSON, now.Unix(),
-		agent.ProjectID, agent.AgentName)
+	affected, err := s.client.ProjectAgent.Update().
+		Where(projectagent.ProjectIDEQ(agent.ProjectID), projectagent.AgentNameEQ(agent.AgentName)).
+		SetName(agent.Name).
+		SetShortID(agent.ShortID).
+		SetRevision(agent.Revision).
+		SetProvider(agent.Provider).
+		SetModel(agent.Model).
+		SetImage(agent.Image).
+		SetDriver(agent.Driver).
+		SetSchedulerEnabled(BoolToInt(agent.SchedulerEnabled)).
+		SetSpecJSON(agent.SpecJSON).
+		SetUpdatedAt(now.Unix()).
+		// The released UPDATE also rewrote the physical id, which ent's update
+		// builder treats as immutable; set it explicitly to keep that behaviour.
+		Modify(func(u *entsql.UpdateBuilder) {
+			u.Set(projectagent.FieldID, agent.ID)
+		}).
+		Save(ctx)
 	if err != nil {
 		return ProjectAgentRecord{}, fmt.Errorf("update project agent %s/%s: %w", agent.ProjectID, agent.AgentName, err)
 	}
-	if rows, _ := result.RowsAffected(); rows > 0 {
+	if affected > 0 {
 		return s.GetProjectAgent(ctx, agent.ProjectID, agent.AgentName)
 	}
 	agent.CreatedAt = now
 	agent.UpdatedAt = now
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_agent(
-		id, name, short_id, project_id, agent_name, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		agent.ID, agent.Name, agent.ShortID, agent.ProjectID, agent.AgentName, agent.Revision, agent.Provider, agent.Model, agent.Image, agent.Driver, BoolToInt(agent.SchedulerEnabled), agent.SpecJSON,
-		agent.CreatedAt.Unix(), agent.UpdatedAt.Unix()); err != nil {
+	if _, err := s.client.ProjectAgent.Create().
+		SetID(agent.ID).
+		SetName(agent.Name).
+		SetShortID(agent.ShortID).
+		SetProjectID(agent.ProjectID).
+		SetAgentName(agent.AgentName).
+		SetRevision(agent.Revision).
+		SetProvider(agent.Provider).
+		SetModel(agent.Model).
+		SetImage(agent.Image).
+		SetDriver(agent.Driver).
+		SetSchedulerEnabled(BoolToInt(agent.SchedulerEnabled)).
+		SetSpecJSON(agent.SpecJSON).
+		SetCreatedAt(agent.CreatedAt.Unix()).
+		SetUpdatedAt(agent.UpdatedAt.Unix()).
+		Save(ctx); err != nil {
 		return ProjectAgentRecord{}, fmt.Errorf("insert project agent %s/%s: %w", agent.ProjectID, agent.AgentName, err)
 	}
 	return s.GetProjectAgent(ctx, agent.ProjectID, agent.AgentName)
 }
 
 func (s *projectStore) GetProjectAgent(ctx context.Context, projectID, agentName string) (ProjectAgentRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
-		FROM project_agent WHERE project_id = ? AND agent_name = ?`, strings.TrimSpace(projectID), strings.TrimSpace(agentName))
-	item, err := projects.ScanProjectAgent(row.Scan)
+	projectID = strings.TrimSpace(projectID)
+	agentName = strings.TrimSpace(agentName)
+	entity, err := s.client.ProjectAgent.Query().
+		Where(projectagent.ProjectIDEQ(projectID), projectagent.AgentNameEQ(agentName)).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			id := strings.TrimSpace(projectID) + "/" + strings.TrimSpace(agentName)
-			return ProjectAgentRecord{}, domain.ResourceError(domain.ErrNotFound, "project agent", id, fmt.Sprintf("project agent %s not found", id), err)
+		if dao.IsNotFound(err) {
+			id := projectID + "/" + agentName
+			return ProjectAgentRecord{}, domain.ResourceError(domain.ErrNotFound, "project agent", id, fmt.Sprintf("project agent %s not found", id), scanNotFound("project agent"))
 		}
 		return ProjectAgentRecord{}, err
 	}
-	return item, nil
+	return projectAgentFromEntity(entity), nil
 }
 
 func (s *projectStore) ListProjectAgents(ctx context.Context, projectID string) ([]ProjectAgentRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
-		FROM project_agent WHERE project_id = ? ORDER BY agent_name ASC`, strings.TrimSpace(projectID))
+	projectID = strings.TrimSpace(projectID)
+	entities, err := s.client.ProjectAgent.Query().
+		Where(projectagent.ProjectIDEQ(projectID)).
+		Order(projectagent.ByAgentName()).
+		All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("query project agents %s: %w", strings.TrimSpace(projectID), err)
+		return nil, fmt.Errorf("query project agents %s: %w", projectID, err)
 	}
-	defer func() { _ = rows.Close() }()
 	var items []ProjectAgentRecord
-	for rows.Next() {
-		item, err := projects.ScanProjectAgent(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate project agents %s: %w", strings.TrimSpace(projectID), err)
+	for _, entity := range entities {
+		items = append(items, projectAgentFromEntity(entity))
 	}
 	return items, nil
 }
@@ -252,27 +301,22 @@ func (s *projectStore) ListProjectAgentsByIDs(ctx context.Context, agentIDs []st
 	}
 	result := make(map[string]ProjectAgentRecord, len(ids))
 	if err := forEachIDBatch(ids, func(batch []string) error {
-		args := make([]any, len(batch))
-		for i, id := range batch {
-			args[i] = id
-		}
-		rows, err := s.db.QueryContext(ctx, `SELECT id, name, short_id, project_id, agent_name, revision, provider, model, image, driver, scheduler_enabled, spec_json, created_at, updated_at
-			FROM project_agent WHERE id IN (`+placeholders(len(batch))+`) ORDER BY updated_at DESC, project_id ASC, agent_name ASC`, args...)
+		entities, err := s.client.ProjectAgent.Query().
+			Where(projectagent.IDIn(batch...)).
+			Order(
+				projectagent.ByUpdatedAt(entsql.OrderDesc()),
+				projectagent.ByProjectID(),
+				projectagent.ByAgentName(),
+			).
+			All(ctx)
 		if err != nil {
 			return fmt.Errorf("query project agents by managed agent ids: %w", err)
 		}
-		defer func() { _ = rows.Close() }()
-		for rows.Next() {
-			item, err := projects.ScanProjectAgent(rows.Scan)
-			if err != nil {
-				return err
-			}
+		for _, entity := range entities {
+			item := projectAgentFromEntity(entity)
 			if _, exists := result[item.ID]; !exists {
 				result[item.ID] = item
 			}
-		}
-		if err := rows.Err(); err != nil {
-			return fmt.Errorf("iterate project agents by managed agent ids: %w", err)
 		}
 		return nil
 	}); err != nil {
@@ -287,41 +331,58 @@ func (s *projectStore) UpsertProjectScheduler(ctx context.Context, scheduler Pro
 		return ProjectSchedulerRecord{}, err
 	}
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET
-		scheduler_id = ?, short_id = ?, agent_name = ?, revision = ?, enabled = ?, trigger_count = ?, spec_json = ?, updated_at = ?
-		WHERE project_id = ? AND id = ?`,
-		scheduler.ID, scheduler.ShortID, scheduler.AgentName, scheduler.Revision, BoolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON, now.Unix(),
-		scheduler.ProjectID, scheduler.ID)
+	affected, err := s.client.ProjectScheduler.Update().
+		Where(projectscheduler.ProjectIDEQ(scheduler.ProjectID), projectscheduler.IDEQ(scheduler.ID)).
+		SetSchedulerID(scheduler.SchedulerID).
+		SetShortID(scheduler.ShortID).
+		SetAgentName(scheduler.AgentName).
+		SetRevision(scheduler.Revision).
+		SetEnabled(BoolToInt(scheduler.Enabled)).
+		SetTriggerCount(scheduler.TriggerCount).
+		SetSpecJSON(scheduler.SpecJSON).
+		SetUpdatedAt(now.Unix()).
+		Save(ctx)
 	if err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("update project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 	}
-	if rows, _ := result.RowsAffected(); rows > 0 {
+	if affected > 0 {
 		return s.GetProjectScheduler(ctx, scheduler.ProjectID, scheduler.SchedulerID)
 	}
 	scheduler.CreatedAt = now
 	scheduler.UpdatedAt = now
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO project_scheduler(
-		id, short_id, project_id, scheduler_id, agent_name, revision, enabled, trigger_count, spec_json, last_error, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		scheduler.ID, scheduler.ShortID, scheduler.ProjectID, scheduler.ID, scheduler.AgentName, scheduler.Revision, BoolToInt(scheduler.Enabled), scheduler.TriggerCount, scheduler.SpecJSON, scheduler.LastError,
-		scheduler.CreatedAt.Unix(), scheduler.UpdatedAt.Unix()); err != nil {
+	if _, err := s.client.ProjectScheduler.Create().
+		SetID(scheduler.ID).
+		SetSchedulerID(scheduler.ID).
+		SetShortID(scheduler.ShortID).
+		SetProjectID(scheduler.ProjectID).
+		SetAgentName(scheduler.AgentName).
+		SetRevision(scheduler.Revision).
+		SetEnabled(BoolToInt(scheduler.Enabled)).
+		SetTriggerCount(scheduler.TriggerCount).
+		SetSpecJSON(scheduler.SpecJSON).
+		SetLastError(scheduler.LastError).
+		SetCreatedAt(scheduler.CreatedAt.Unix()).
+		SetUpdatedAt(scheduler.UpdatedAt.Unix()).
+		Save(ctx); err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("insert project scheduler %s/%s: %w", scheduler.ProjectID, scheduler.SchedulerID, err)
 	}
 	return s.GetProjectScheduler(ctx, scheduler.ProjectID, scheduler.SchedulerID)
 }
 
 func (s *projectStore) GetProjectScheduler(ctx context.Context, projectID, schedulerID string) (ProjectSchedulerRecord, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, short_id, project_id, id, agent_name, revision, enabled, trigger_count, spec_json, created_at, updated_at
-		FROM project_scheduler WHERE project_id = ? AND id = ?`, strings.TrimSpace(projectID), strings.TrimSpace(schedulerID))
-	item, err := projects.ScanProjectScheduler(row.Scan)
+	projectID = strings.TrimSpace(projectID)
+	schedulerID = strings.TrimSpace(schedulerID)
+	entity, err := s.client.ProjectScheduler.Query().
+		Where(projectscheduler.ProjectIDEQ(projectID), projectscheduler.IDEQ(schedulerID)).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			id := strings.TrimSpace(projectID) + "/" + strings.TrimSpace(schedulerID)
-			return ProjectSchedulerRecord{}, domain.ResourceError(domain.ErrNotFound, "project scheduler", id, fmt.Sprintf("project scheduler %s not found", id), err)
+		if dao.IsNotFound(err) {
+			id := projectID + "/" + schedulerID
+			return ProjectSchedulerRecord{}, domain.ResourceError(domain.ErrNotFound, "project scheduler", id, fmt.Sprintf("project scheduler %s not found", id), scanNotFound("project scheduler"))
 		}
 		return ProjectSchedulerRecord{}, err
 	}
-	return item, nil
+	return projectSchedulerFromEntity(entity), nil
 }
 
 func (s *projectStore) SetProjectSchedulerEnabled(ctx context.Context, projectID, schedulerID string, enabled bool) (ProjectSchedulerRecord, error) {
@@ -330,12 +391,15 @@ func (s *projectStore) SetProjectSchedulerEnabled(ctx context.Context, projectID
 	if projectID == "" || schedulerID == "" {
 		return ProjectSchedulerRecord{}, fmt.Errorf("project scheduler id is required")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET enabled = ?, updated_at = ? WHERE project_id = ? AND id = ?`,
-		BoolToInt(enabled), time.Now().UTC().Unix(), projectID, schedulerID)
+	affected, err := s.client.ProjectScheduler.Update().
+		Where(projectscheduler.ProjectIDEQ(projectID), projectscheduler.IDEQ(schedulerID)).
+		SetEnabled(BoolToInt(enabled)).
+		SetUpdatedAt(time.Now().UTC().Unix()).
+		Save(ctx)
 	if err != nil {
 		return ProjectSchedulerRecord{}, fmt.Errorf("update project scheduler %s/%s enabled state: %w", projectID, schedulerID, err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		id := projectID + "/" + schedulerID
 		return ProjectSchedulerRecord{}, domain.ResourceError(domain.ErrNotFound, "project scheduler", id, fmt.Sprintf("project scheduler %s not found", id), nil)
 	}
@@ -343,22 +407,17 @@ func (s *projectStore) SetProjectSchedulerEnabled(ctx context.Context, projectID
 }
 
 func (s *projectStore) ListProjectSchedulers(ctx context.Context, projectID string) ([]ProjectSchedulerRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, short_id, project_id, id, agent_name, revision, enabled, trigger_count, spec_json, created_at, updated_at
-		FROM project_scheduler WHERE project_id = ? ORDER BY agent_name ASC, id ASC`, strings.TrimSpace(projectID))
+	projectID = strings.TrimSpace(projectID)
+	entities, err := s.client.ProjectScheduler.Query().
+		Where(projectscheduler.ProjectIDEQ(projectID)).
+		Order(projectscheduler.ByAgentName(), projectscheduler.ByID()).
+		All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("query project schedulers %s: %w", strings.TrimSpace(projectID), err)
+		return nil, fmt.Errorf("query project schedulers %s: %w", projectID, err)
 	}
-	defer func() { _ = rows.Close() }()
 	var items []ProjectSchedulerRecord
-	for rows.Next() {
-		item, err := projects.ScanProjectScheduler(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate project schedulers %s: %w", strings.TrimSpace(projectID), err)
+	for _, entity := range entities {
+		items = append(items, projectSchedulerFromEntity(entity))
 	}
 	return items, nil
 }
@@ -369,6 +428,8 @@ func (s *projectStore) ListProjectSchedulersPage(ctx context.Context, query stri
 	}
 	query = strings.ToLower(strings.TrimSpace(query))
 	likeQuery := "%" + query + "%"
+	// Kept as SQL: joins project and aggregates scheduler_run counts with a CTE
+	// and a LEFT JOIN, which ent cannot express without splitting the snapshot.
 	rows, err := s.db.QueryContext(ctx, `WITH page AS (
 		SELECT s.id, s.short_id, s.project_id, s.agent_name, s.revision, s.enabled, s.trigger_count, s.spec_json, s.created_at, s.updated_at, s.last_error
 		FROM project_scheduler s JOIN project p ON p.id = s.project_id
@@ -412,6 +473,7 @@ func (s *projectStore) CountProjectSchedulers(ctx context.Context, query string)
 	query = strings.ToLower(strings.TrimSpace(query))
 	likeQuery := "%" + query + "%"
 	var total int
+	// Kept as SQL: COUNT over a join between project_scheduler and project.
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_scheduler s JOIN project p ON p.id = s.project_id
 		WHERE p.removed_at = 0 AND s.revision = p.current_revision
 		AND (? = '' OR lower(p.id) LIKE ? OR lower(p.name) LIKE ? OR lower(p.source_path) LIKE ?)`, query, likeQuery, likeQuery, likeQuery).Scan(&total); err != nil {
@@ -431,26 +493,19 @@ func (s *projectStore) CreateProjectRun(ctx context.Context, run ProjectRunRecor
 	now := time.Now().UTC()
 	run.CreatedAt = now
 	run.UpdatedAt = now
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("begin create project run transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_run(
-		run_id, project_id, project_name, project_revision, agent_name, agent_id, source, scheduler_id, scheduler_run_id, trigger_id, status,
-		sandbox_id, exit_code, error, error_stack, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, cleanup_policy, sandbox_created, driver, image_ref,
-		started_at, completed_at, duration_ms, created_at, updated_at, execution_id, detach, deadline, detach_kind
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.RunID, run.ProjectID, run.ProjectName, run.ProjectRevision, run.AgentName, run.AgentID, run.Source, run.SchedulerID, nullableSchedulerRunID(run.SchedulerRunID), run.TriggerID, run.Status,
-		run.SandboxID, run.ExitCode, run.Error, run.ErrorStack, run.Prompt, run.Output, run.ResultJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.CleanupPolicy, BoolToInt(run.SandboxCreated), run.Driver, run.ImageRef,
-		domain.NonZeroTimeUnixMilli(run.StartedAt), domain.NonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, run.CreatedAt.Unix(), run.UpdatedAt.Unix(),
-		run.ExecutionID, BoolToInt(run.Detach), domain.NonZeroTimeUnixMilli(run.Deadline), run.DetachKind); err != nil {
+	client := tx.Client()
+	if _, err := applyProjectRunCreateFields(client.ProjectRun.Create(), run, true).Save(ctx); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("insert project run %s: %w", run.RunID, err)
 	}
-	if err := insertProjectRunLabelsTx(ctx, tx, run.RunID, run.Labels); err != nil {
+	if err := insertProjectRunLabels(ctx, client, run.RunID, run.Labels); err != nil {
 		return ProjectRunRecord{}, err
 	}
-	stored, err := getProjectRunTx(ctx, tx, run.RunID)
+	stored, err := getProjectRunByClient(ctx, client, run.RunID)
 	if err != nil {
 		return ProjectRunRecord{}, err
 	}
@@ -469,42 +524,47 @@ func (s *projectStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecor
 		return ProjectRunRecord{}, err
 	}
 	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE project_run SET
-		project_id = ?, project_name = ?, project_revision = ?, agent_name = ?, agent_id = ?, source = ?, scheduler_id = ?, scheduler_run_id = ?, trigger_id = ?, status = ?,
-		sandbox_id = ?, exit_code = ?, error = ?, error_stack = ?, prompt = ?, output = ?, result_json = ?, logs_path = ?, artifacts_dir = ?, cleanup_error = ?, cleanup_policy = ?, sandbox_created = ?, driver = ?, image_ref = ?,
-		started_at = ?, completed_at = ?, duration_ms = ?, updated_at = ?, execution_id = ?, detach = ?, deadline = ?, detach_kind = ?
-		WHERE run_id = ?`,
-		run.ProjectID, run.ProjectName, run.ProjectRevision, run.AgentName, run.AgentID, run.Source, run.SchedulerID, nullableSchedulerRunID(run.SchedulerRunID), run.TriggerID, run.Status,
-		run.SandboxID, run.ExitCode, run.Error, run.ErrorStack, run.Prompt, run.Output, run.ResultJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.CleanupPolicy, BoolToInt(run.SandboxCreated), run.Driver, run.ImageRef,
-		domain.NonZeroTimeUnixMilli(run.StartedAt), domain.NonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, now.Unix(), run.ExecutionID, BoolToInt(run.Detach), domain.NonZeroTimeUnixMilli(run.Deadline), run.DetachKind, run.RunID)
+	affected, err := applyProjectRunUpdateFields(s.client.ProjectRun.Update(), run, now.Unix(), true).Save(ctx)
 	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("update project run %s: %w", run.RunID, err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		return ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", run.RunID, fmt.Sprintf("project run %s not found", run.RunID), nil)
 	}
 	return s.GetProjectRun(ctx, run.RunID)
 }
 
-func nullableSchedulerRunID(id string) any {
+// schedulerRunIDPtr is the ent form of nullableSchedulerRunID: nil leaves the
+// nillable scheduler_run_id column unset on insert, or clears it on update.
+func schedulerRunIDPtr(id string) *string {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil
 	}
-	return id
+	return &id
 }
 
 func (s *projectStore) GetProjectRun(ctx context.Context, runID string) (ProjectRunRecord, error) {
-	row := s.db.QueryRowContext(ctx, projects.SelectProjectRunSQL()+` WHERE run_id = ?`, strings.TrimSpace(runID))
-	item, err := projects.ScanProjectRun(row.Scan)
+	runID = strings.TrimSpace(runID)
+	item, err := getProjectRunByClient(ctx, s.client, runID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			id := strings.TrimSpace(runID)
-			return ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", id, fmt.Sprintf("project run %s not found", id), err)
+		if dao.IsNotFound(err) {
+			return ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", runID, fmt.Sprintf("project run %s not found", runID), scanNotFound("project run"))
 		}
 		return ProjectRunRecord{}, err
 	}
-	labels, err := loadProjectRunLabels(ctx, s.db, item.RunID)
+	return item, nil
+}
+
+// getProjectRunByClient reads one run and its labels through an ent client,
+// which may be bound to an open transaction.
+func getProjectRunByClient(ctx context.Context, client *dao.Client, runID string) (ProjectRunRecord, error) {
+	entity, err := client.ProjectRun.Query().Where(projectrun.IDEQ(runID)).Only(ctx)
+	if err != nil {
+		return ProjectRunRecord{}, fmt.Errorf("scan project run: %w", err)
+	}
+	item := projectRunFromEntity(entity)
+	labels, err := loadProjectRunLabelsByClient(ctx, client, item.RunID)
 	if err != nil {
 		return ProjectRunRecord{}, err
 	}
@@ -539,6 +599,10 @@ func (s *projectStore) ListProjectRunsByOptions(ctx context.Context, options Pro
 	}
 	query += ` ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
+	// Kept as SQL: the filter assembly (project_run_filter.go and the event
+	// scope) emits SQL fragments, including a correlated EXISTS over
+	// project_run_label; ent cannot accept those without rewriting the shared
+	// filter builder.
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return domain.ProjectRunListResult{}, fmt.Errorf("query project runs: %w", err)
@@ -568,6 +632,7 @@ func (s *projectStore) CountProjectRuns(ctx context.Context, options ProjectRunL
 		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	var total int
+	// Kept as SQL: COUNT aggregate over the shared dynamic filter above.
 	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
 		return 0, false, fmt.Errorf("count project runs: %w", err)
 	}
@@ -594,7 +659,7 @@ func (s *projectStore) projectRunFilterWithEventScope(ctx context.Context, optio
 	if eventID == "" {
 		return where, args, false, nil
 	}
-	schedulerRunIDs, eventScopeTruncated, err := eventRunScope(ctx, s.db, eventID)
+	schedulerRunIDs, eventScopeTruncated, err := eventRunScope(ctx, s.client, s.db, eventID)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -615,20 +680,18 @@ func (s *projectStore) getProject(ctx context.Context, projectID string, include
 	if projectID == "" {
 		return ProjectRecord{}, false, fmt.Errorf("project id is required")
 	}
-	where := "id = ? AND removed_at = 0"
-	if includeRemoved {
-		where = "id = ?"
+	query := s.client.Project.Query().Where(project.IDEQ(projectID))
+	if !includeRemoved {
+		query.Where(project.RemovedAtEQ(0))
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, short_id, source_path, source_json, current_revision, spec_hash, created_at, updated_at, removed_at
-		FROM project WHERE `+where, projectID)
-	item, err := projects.ScanProject(row.Scan)
+	entity, err := query.Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			return ProjectRecord{}, false, nil
 		}
 		return ProjectRecord{}, false, err
 	}
-	return item, true, nil
+	return projectFromEntity(entity), true, nil
 }
 
 func (s *projectStore) getProjectRequired(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, error) {
@@ -645,4 +708,138 @@ func (s *projectStore) getProjectRequired(ctx context.Context, projectID string,
 
 func (s *projectStore) GetProjectIfExists(ctx context.Context, projectID string, includeRemoved bool) (ProjectRecord, bool, error) {
 	return s.getProject(ctx, projectID, includeRemoved)
+}
+
+// scanNotFound reproduces the scanner error text the released SQL readers
+// wrapped around sql.ErrNoRows, so classified resource errors keep the same
+// error string.
+func scanNotFound(entity string) error {
+	return fmt.Errorf("scan %s: %w", entity, sql.ErrNoRows)
+}
+
+// projectFromEntity maps a project row to the domain record, filling the
+// derived short id exactly like projects.ScanProject.
+func projectFromEntity(entity *dao.Project) ProjectRecord {
+	item := ProjectRecord{
+		ID:              entity.ID,
+		Name:            entity.Name,
+		ShortID:         entity.ShortID,
+		SourcePath:      entity.SourcePath,
+		SourceJSON:      entity.SourceJSON,
+		CurrentRevision: entity.CurrentRevision,
+		SpecHash:        entity.SpecHash,
+		CreatedAt:       storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt:       storedtime.ParseStoredTime(entity.UpdatedAt),
+		RemovedAt:       storedtime.ParseStoredTime(entity.RemovedAt),
+	}
+	if item.ShortID == "" {
+		item.ShortID = identity.ShortID(item.ID)
+	}
+	return item
+}
+
+func projectRevisionFromEntity(entity *dao.ProjectRevision) ProjectRevisionRecord {
+	return ProjectRevisionRecord{
+		ProjectID: entity.ID,
+		Revision:  entity.Revision,
+		SpecHash:  entity.SpecHash,
+		SpecJSON:  entity.SpecJSON,
+		CreatedAt: storedtime.ParseStoredTime(entity.CreatedAt),
+	}
+}
+
+func projectAgentFromEntity(entity *dao.ProjectAgent) ProjectAgentRecord {
+	item := ProjectAgentRecord{
+		ID:               entity.ID,
+		Name:             entity.Name,
+		ShortID:          entity.ShortID,
+		ProjectID:        entity.ProjectID,
+		AgentName:        entity.AgentName,
+		Revision:         entity.Revision,
+		Provider:         entity.Provider,
+		Model:            entity.Model,
+		Image:            entity.Image,
+		Driver:           entity.Driver,
+		SchedulerEnabled: entity.SchedulerEnabled != 0,
+		SpecJSON:         entity.SpecJSON,
+		CreatedAt:        storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt:        storedtime.ParseStoredTime(entity.UpdatedAt),
+	}
+	if item.Name == "" {
+		item.Name = item.AgentName
+	}
+	if item.ShortID == "" {
+		item.ShortID = identity.ShortID(item.ID)
+	}
+	return item
+}
+
+// projectSchedulerFromEntity maps a scheduler row for the reads that do not
+// select last_error, so LastError stays empty like the released scanner. The
+// released SELECTs read the scheduler id column twice, deliberately ignoring
+// the migration-only scheduler_id alias, so SchedulerID mirrors ID.
+func projectSchedulerFromEntity(entity *dao.ProjectScheduler) ProjectSchedulerRecord {
+	item := ProjectSchedulerRecord{
+		ID:           entity.ID,
+		ShortID:      entity.ShortID,
+		ProjectID:    entity.ProjectID,
+		SchedulerID:  entity.ID,
+		AgentName:    entity.AgentName,
+		Revision:     entity.Revision,
+		Enabled:      entity.Enabled != 0,
+		TriggerCount: entity.TriggerCount,
+		SpecJSON:     entity.SpecJSON,
+		CreatedAt:    storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt:    storedtime.ParseStoredTime(entity.UpdatedAt),
+	}
+	if item.ID == "" {
+		item.ID = item.SchedulerID
+	}
+	if item.ShortID == "" {
+		item.ShortID = identity.ShortID(item.ID)
+	}
+	return item
+}
+
+// projectRunFromEntity maps a run row exactly like projects.ScanProjectRun.
+func projectRunFromEntity(entity *dao.ProjectRun) ProjectRunRecord {
+	item := ProjectRunRecord{
+		RunID:           entity.ID,
+		ProjectID:       entity.ProjectID,
+		ProjectName:     entity.ProjectName,
+		ProjectRevision: entity.ProjectRevision,
+		AgentName:       entity.AgentName,
+		AgentID:         entity.AgentID,
+		Source:          entity.Source,
+		SchedulerID:     entity.SchedulerID,
+		TriggerID:       entity.TriggerID,
+		Status:          entity.Status,
+		SandboxID:       entity.SandboxID,
+		ExitCode:        entity.ExitCode,
+		Error:           entity.Error,
+		ErrorStack:      entity.ErrorStack,
+		Prompt:          entity.Prompt,
+		Output:          entity.Output,
+		ResultJSON:      entity.ResultJSON,
+		LogsPath:        entity.LogsPath,
+		ArtifactsDir:    entity.ArtifactsDir,
+		CleanupError:    entity.CleanupError,
+		CleanupPolicy:   entity.CleanupPolicy,
+		SandboxCreated:  entity.SandboxCreated != 0,
+		Driver:          entity.Driver,
+		ImageRef:        entity.ImageRef,
+		StartedAt:       storedtime.ParseStoredUnixTimeAuto(entity.StartedAt),
+		CompletedAt:     storedtime.ParseStoredUnixTimeAuto(entity.CompletedAt),
+		DurationMs:      entity.DurationMs,
+		CreatedAt:       storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt:       storedtime.ParseStoredTime(entity.UpdatedAt),
+		ExecutionID:     entity.ExecutionID,
+		Detach:          entity.Detach != 0,
+		Deadline:        storedtime.ParseStoredUnixTimeAuto(entity.Deadline),
+		DetachKind:      entity.DetachKind,
+	}
+	if entity.SchedulerRunID != nil {
+		item.SchedulerRunID = *entity.SchedulerRunID
+	}
+	return item
 }

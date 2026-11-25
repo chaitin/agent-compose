@@ -13,7 +13,7 @@ vars:
   GO_TOOLCHAIN_ENV: '{{.TASKFILE_DIR}}/scripts/with-go-toolchain.sh'
   GOLANGCI_LINT_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/golangci-lint'
   GO_BUILD_CACHE_DIR: '{{.TASKFILE_DIR}}/.cache/go-build'
-  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./internal/...
+  GO_LINT_PACKAGES: ./cmd/... ./pkg/... ./internal/... ./ent/...
   GOHOSTOS:
     sh: ./scripts/with-go-toolchain.sh go env GOHOSTOS
   GOHOSTARCH:
@@ -105,6 +105,35 @@ tasks:
     desc: Generate source artifacts
     cmds:
       - task: generate:proto
+      - task: generate:ent
+
+  generate:ent:
+    desc: Generate the ent DAO from ent/schema
+    dir: '{{.TASKFILE_DIR}}'
+    # ent v0.14.6's schema loader links a golang.org/x/tools version that cannot
+    # read export data written by Go toolchains newer than the one go.mod pins,
+    # so guard the toolchain instead of failing inside entc with a decoder
+    # panic. This repository intentionally tracks the upstream Go version.
+    preconditions:
+      - sh: |
+          want="$(go mod edit -json | sed -n 's/.*"Go": "\([0-9]*\.[0-9]*\).*/\1/p')"
+          have="$(go env GOVERSION | sed -E 's/^go([0-9]+\.[0-9]+).*/\1/')"
+          test -n "$want" && test "$want" = "$have"
+        msg: "ent codegen requires the Go toolchain declared in go.mod (ent v0.14.6 cannot read newer export data)"
+    cmds:
+      - GOCACHE={{.GO_BUILD_CACHE_DIR}} {{.GO_TOOLCHAIN_ENV}} go generate ./ent/...
+
+  check:ent:
+    desc: Fail when the committed ent DAO does not match ent/schema
+    dir: '{{.TASKFILE_DIR}}'
+    cmds:
+      - task: generate:ent
+      - |
+        if [ -n "$(git status --porcelain -- ent/dao)" ]; then
+          echo "ent/dao is out of date; run 'task generate:ent' and commit the regenerated files" >&2
+          git status --porcelain -- ent/dao >&2
+          exit 1
+        fi
 
   docs:build:
     desc: Render the GitHub Pages documentation site

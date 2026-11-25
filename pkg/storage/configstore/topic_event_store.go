@@ -3,22 +3,30 @@ package configstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"github.com/chaitin/agent-compose/pkg/events"
-	domain "github.com/chaitin/agent-compose/pkg/model"
-	"github.com/chaitin/agent-compose/pkg/storage/storeutil"
-	"github.com/chaitin/agent-compose/pkg/storedtime"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/event"
+	"github.com/chaitin/agent-compose/ent/dao/eventdelivery"
+	"github.com/chaitin/agent-compose/ent/dao/eventsandboxlink"
+	"github.com/chaitin/agent-compose/ent/dao/webhooksource"
+	"github.com/chaitin/agent-compose/pkg/events"
+	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/storage/dialect"
+	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
 // eventStore owns topic events, webhook sources, deliveries, and session links.
 type eventStore struct {
 	db      *sql.DB
 	dialect dialect.Dialect
+	client  *dao.Client
 }
 
 func (s *eventStore) GetEvent(ctx context.Context, eventID string) (domain.TopicEventRecord, error) {
@@ -26,15 +34,14 @@ func (s *eventStore) GetEvent(ctx context.Context, eventID string) (domain.Topic
 	if eventID == "" {
 		return domain.TopicEventRecord{}, fmt.Errorf("event id is required")
 	}
-	row := s.db.QueryRowContext(ctx, selectTopicEventSQL()+` WHERE id = ?`, eventID)
-	item, err := scanTopicEvent(row.Scan)
+	entity, err := s.client.Event.Query().Where(event.EventIDEQ(eventID)).Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.TopicEventRecord{}, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
+		if dao.IsNotFound(err) {
+			return domain.TopicEventRecord{}, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), sql.ErrNoRows)
 		}
 		return domain.TopicEventRecord{}, err
 	}
-	return item, nil
+	return topicEventFromEntity(entity), nil
 }
 
 func (s *eventStore) FindEventByIdempotencyKey(ctx context.Context, topic, key string) (domain.TopicEventRecord, bool, error) {
@@ -43,46 +50,47 @@ func (s *eventStore) FindEventByIdempotencyKey(ctx context.Context, topic, key s
 	if topic == "" || key == "" {
 		return domain.TopicEventRecord{}, false, nil
 	}
-	row := s.db.QueryRowContext(ctx, selectTopicEventSQL()+` WHERE topic = ? AND idempotency_key = ?`, topic, key)
-	item, err := scanTopicEvent(row.Scan)
+	entity, err := s.client.Event.Query().
+		Where(event.TopicEQ(topic), event.IdempotencyKeyEQ(key)).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			return domain.TopicEventRecord{}, false, nil
 		}
 		return domain.TopicEventRecord{}, false, err
 	}
-	return item, true, nil
+	return topicEventFromEntity(entity), true, nil
 }
 
 func (s *eventStore) ListPendingEvents(ctx context.Context, limit int) ([]domain.TopicEventRecord, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, selectTopicEventSQL()+` WHERE dispatch_status = ? ORDER BY sequence ASC LIMIT ?`, domain.TopicEventDispatchPending, limit)
+	entities, err := s.client.Event.Query().
+		Where(event.DispatchStatusEQ(domain.TopicEventDispatchPending)).
+		Order(event.ByID()).
+		Limit(limit).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query pending events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanTopicEvents(rows)
+	return topicEventsFromEntities(entities), nil
 }
 
 func (s *eventStore) ListEvents(ctx context.Context, filter domain.TopicEventFilter) ([]domain.TopicEventRecord, int, error) {
-	query, err := buildEventListQuery(filter)
+	list, err := buildEventListFilter(filter)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.countEventList(ctx, query)
+	total, err := s.countEventList(ctx, list)
 	if err != nil {
 		return nil, 0, err
 	}
-	args := append(append([]any(nil), query.filterArgs...), query.pageArgs...)
-	rows, err := s.db.QueryContext(ctx, selectTopicEventSQL()+query.where+query.page, args...)
+	entities, err := eventPageQuery(s.client, list).All(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	items, err := scanTopicEvents(rows)
-	return items, total, err
+	return topicEventsFromEntities(entities), total, nil
 }
 
 func (s *eventStore) MarkEventPublished(ctx context.Context, eventID, claimID string, dispatchedAt time.Time) error {
@@ -94,14 +102,16 @@ func (s *eventStore) MarkEventPublished(ctx context.Context, eventID, claimID st
 	if dispatchedAt.IsZero() {
 		dispatchedAt = time.Now().UTC()
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE event SET dispatch_status = ?, dispatched_at = ?, claim_id = '', claim_until = 0, last_error = '' WHERE id = ? AND claim_id = ?`,
-		domain.TopicEventDispatchPublishedToBus, dispatchedAt.UTC().UnixMilli(), eventID, claimID)
+	affected, err := s.client.Event.Update().
+		Where(event.EventIDEQ(eventID), event.ClaimIDEQ(claimID)).
+		SetDispatchStatus(domain.TopicEventDispatchPublishedToBus).
+		SetDispatchedAt(dispatchedAt.UTC().UnixMilli()).
+		SetClaimID("").
+		SetClaimUntil(0).
+		SetLastError("").
+		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("mark event published: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read event update count: %w", err)
 	}
 	if affected == 0 {
 		if _, err := s.GetEvent(ctx, eventID); err != nil {
@@ -125,13 +135,13 @@ func (s *eventStore) UpdateEventPayload(ctx context.Context, eventID, payloadJSO
 		return err
 	}
 	payloadHash := events.PayloadSHA256(payloadJSON)
-	result, err := s.db.ExecContext(ctx, `UPDATE event SET payload_hash = ?, payload_json = ? WHERE id = ?`, payloadHash, payloadJSON, eventID)
+	affected, err := s.client.Event.Update().
+		Where(event.EventIDEQ(eventID)).
+		SetPayloadHash(payloadHash).
+		SetPayloadJSON(payloadJSON).
+		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("update event payload: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read event payload update count: %w", err)
 	}
 	if affected == 0 {
 		return domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), nil)
@@ -144,19 +154,23 @@ func (s *eventStore) ListDispatchableEvents(ctx context.Context, now time.Time, 
 		limit = 100
 	}
 	nowMillis := now.UTC().UnixMilli()
-	rows, err := s.db.QueryContext(ctx, selectTopicEventSQL()+` WHERE dispatch_status IN (?, ?, ?) AND (next_attempt_at = 0 OR next_attempt_at <= ?) AND (claim_until = 0 OR claim_until <= ?) ORDER BY sequence ASC LIMIT ?`,
-		domain.TopicEventDispatchPending,
-		domain.TopicEventDispatchRetrying,
-		domain.TopicEventDispatchPublishing,
-		nowMillis,
-		nowMillis,
-		limit,
-	)
+	entities, err := s.client.Event.Query().
+		Where(
+			event.DispatchStatusIn(
+				domain.TopicEventDispatchPending,
+				domain.TopicEventDispatchRetrying,
+				domain.TopicEventDispatchPublishing,
+			),
+			event.Or(event.NextAttemptAtEQ(0), event.NextAttemptAtLTE(nowMillis)),
+			event.Or(event.ClaimUntilEQ(0), event.ClaimUntilLTE(nowMillis)),
+		).
+		Order(event.ByID()).
+		Limit(limit).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query dispatchable events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	return scanTopicEvents(rows)
+	return topicEventsFromEntities(entities), nil
 }
 
 func (s *eventStore) ClaimEvent(ctx context.Context, eventID, claimID string, now, until time.Time) (bool, error) {
@@ -166,28 +180,25 @@ func (s *eventStore) ClaimEvent(ctx context.Context, eventID, claimID string, no
 		return false, fmt.Errorf("event claim id is required")
 	}
 	nowMillis := now.UTC().UnixMilli()
-	result, err := s.db.ExecContext(ctx, `UPDATE event
-		SET dispatch_status = ?, claim_id = ?, claim_until = ?, attempt_count = attempt_count + 1, last_error = ''
-		WHERE id = ?
-		  AND dispatch_status IN (?, ?, ?)
-		  AND (next_attempt_at = 0 OR next_attempt_at <= ?)
-		  AND (claim_until = 0 OR claim_until <= ?)`,
-		domain.TopicEventDispatchPublishing,
-		claimID,
-		until.UTC().UnixMilli(),
-		eventID,
-		domain.TopicEventDispatchPending,
-		domain.TopicEventDispatchRetrying,
-		domain.TopicEventDispatchPublishing,
-		nowMillis,
-		nowMillis,
-	)
+	affected, err := s.client.Event.Update().
+		Where(
+			event.EventIDEQ(eventID),
+			event.DispatchStatusIn(
+				domain.TopicEventDispatchPending,
+				domain.TopicEventDispatchRetrying,
+				domain.TopicEventDispatchPublishing,
+			),
+			event.Or(event.NextAttemptAtEQ(0), event.NextAttemptAtLTE(nowMillis)),
+			event.Or(event.ClaimUntilEQ(0), event.ClaimUntilLTE(nowMillis)),
+		).
+		SetDispatchStatus(domain.TopicEventDispatchPublishing).
+		SetClaimID(claimID).
+		SetClaimUntil(until.UTC().UnixMilli()).
+		AddAttemptCount(1).
+		SetLastError("").
+		Save(ctx)
 	if err != nil {
 		return false, fmt.Errorf("claim event: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("read event claim count: %w", err)
 	}
 	return affected > 0, nil
 }
@@ -199,14 +210,14 @@ func (s *eventStore) ReleaseEventClaim(ctx context.Context, req events.ReleaseEv
 	if eventID == "" || claimID == "" || status == "" {
 		return fmt.Errorf("event claim release requires event, claim, and status")
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE event SET dispatch_status = ?, claim_id = '', claim_until = 0, next_attempt_at = ?, last_error = ? WHERE id = ? AND claim_id = ?`,
-		status,
-		domain.NonZeroTimeUnixMilli(req.NextAttemptAt),
-		strings.TrimSpace(req.LastError),
-		eventID,
-		claimID,
-	)
-	if err != nil {
+	if _, err := s.client.Event.Update().
+		Where(event.EventIDEQ(eventID), event.ClaimIDEQ(claimID)).
+		SetDispatchStatus(status).
+		SetClaimID("").
+		SetClaimUntil(0).
+		SetNextAttemptAt(domain.NonZeroTimeUnixMilli(req.NextAttemptAt)).
+		SetLastError(strings.TrimSpace(req.LastError)).
+		Save(ctx); err != nil {
 		return fmt.Errorf("release event claim: %w", err)
 	}
 	return nil
@@ -221,18 +232,16 @@ func (s *eventStore) MarkEventNoSubscriber(ctx context.Context, eventID, claimID
 	if dispatchedAt.IsZero() {
 		dispatchedAt = time.Now().UTC()
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE event SET dispatch_status = ?, dispatched_at = ?, claim_id = '', claim_until = 0, last_error = '' WHERE id = ? AND claim_id = ?`,
-		domain.TopicEventDispatchNoSubscriber,
-		dispatchedAt.UTC().UnixMilli(),
-		eventID,
-		claimID,
-	)
+	affected, err := s.client.Event.Update().
+		Where(event.EventIDEQ(eventID), event.ClaimIDEQ(claimID)).
+		SetDispatchStatus(domain.TopicEventDispatchNoSubscriber).
+		SetDispatchedAt(dispatchedAt.UTC().UnixMilli()).
+		SetClaimID("").
+		SetClaimUntil(0).
+		SetLastError("").
+		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("mark event no subscriber: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("read event no subscriber update count: %w", err)
 	}
 	if affected == 0 {
 		if _, err := s.GetEvent(ctx, eventID); err != nil {
@@ -260,6 +269,9 @@ func (s *eventStore) UpsertEventDelivery(ctx context.Context, delivery domain.Ev
 	if delivery.UpdatedAt.IsZero() {
 		delivery.UpdatedAt = now
 	}
+	// Kept as SQL: the conflict update reads both the proposed row and the
+	// stored row in CASE expressions (scheduler_run_id and status/error
+	// retention); ent's upsert setters cannot express that condition.
 	_, err := s.db.ExecContext(ctx, `INSERT INTO event_delivery(event_id, scheduler_id, trigger_id, scheduler_run_id, status, error, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(event_id, scheduler_id, trigger_id) DO UPDATE SET
@@ -304,19 +316,25 @@ func (s *eventStore) AddEventSandboxLink(ctx context.Context, link domain.EventS
 	if link.CreatedAt.IsZero() {
 		link.CreatedAt = time.Now().UTC()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO event_sandbox_link(event_id, sandbox_id, relation, scheduler_id, scheduler_run_id, trigger_id, scheduler_event_id, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT DO NOTHING`,
-		link.EventID,
-		link.SandboxID,
-		link.Relation,
-		link.SchedulerID,
-		link.RunID,
-		link.TriggerID,
-		link.SchedulerEventID,
-		link.CreatedAt.UTC().UnixMilli(),
-	)
-	if err != nil {
+	if err := s.client.EventSandboxLink.Create().
+		SetID(link.EventID).
+		SetSandboxID(link.SandboxID).
+		SetRelation(link.Relation).
+		SetSchedulerID(link.SchedulerID).
+		SetSchedulerRunID(link.RunID).
+		SetTriggerID(link.TriggerID).
+		SetSchedulerEventID(link.SchedulerEventID).
+		SetCreatedAt(link.CreatedAt.UTC().UnixMilli()).
+		OnConflict(
+			entsql.ConflictColumns(
+				eventsandboxlink.FieldID,
+				eventsandboxlink.FieldSandboxID,
+				eventsandboxlink.FieldRelation,
+				eventsandboxlink.FieldSchedulerRunID,
+			),
+			entsql.ResolveWithIgnore(),
+		).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("insert event sandbox link: %w", err)
 	}
 	return nil
@@ -352,6 +370,8 @@ func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string,
 		args = append(args, id)
 	}
 	args = append(args, domain.TopicEventDispatchPending, domain.TopicEventDispatchRetrying)
+	// Kept as SQL: the IN list is built dynamically and the reset must report
+	// the affected count; ent cannot carry the builder without losing either.
 	result, err := s.db.ExecContext(ctx, `UPDATE event
 		SET dispatch_status = ?, last_error = ?, claim_id = '', claim_until = 0, next_attempt_at = 0
 		WHERE id IN (`+idList+`) AND dispatch_status IN (?, ?)`, args...)
@@ -372,6 +392,7 @@ func (s *eventStore) CancelEventDispatch(ctx context.Context, eventIDs []string,
 	}
 	countArgs = append(countArgs, domain.TopicEventDispatchPublishing)
 	var inFlight, stale int
+	// Kept as SQL: the CASE aggregate splits publishing claims by claim_until.
 	if err := s.db.QueryRowContext(ctx, `SELECT
 			COALESCE(SUM(CASE WHEN claim_until >  ? THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN claim_until <= ? THEN 1 ELSE 0 END), 0)
@@ -406,32 +427,20 @@ func (s *eventStore) ListEventDeliveries(ctx context.Context, eventIDs []string)
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT event_id, scheduler_id, trigger_id, scheduler_run_id, status, error, created_at, updated_at
-		FROM event_delivery WHERE event_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY updated_at ASC, scheduler_id ASC, trigger_id ASC`, args...)
+	entities, err := s.client.EventDelivery.Query().
+		Where(eventdelivery.IDIn(ids...)).
+		Order(
+			eventdelivery.ByUpdatedAt(),
+			eventdelivery.BySchedulerID(),
+			eventdelivery.ByTriggerID(),
+		).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query event deliveries: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	items := make([]domain.EventDelivery, 0)
-	for rows.Next() {
-		var item domain.EventDelivery
-		var createdAtRaw int64
-		var updatedAtRaw int64
-		if err := rows.Scan(&item.EventID, &item.SchedulerID, &item.TriggerID, &item.RunID, &item.Status, &item.Error, &createdAtRaw, &updatedAtRaw); err != nil {
-			return nil, fmt.Errorf("scan event delivery: %w", err)
-		}
-		item.CreatedAt = storedtime.ParseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = storedtime.ParseStoredUnixTimeAuto(updatedAtRaw)
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate event deliveries: %w", err)
+	items := make([]domain.EventDelivery, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, eventDeliveryFromEntity(entity))
 	}
 	return items, nil
 }
@@ -453,30 +462,16 @@ func (s *eventStore) ListEventSandboxLinks(ctx context.Context, eventIDs []strin
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT event_id, sandbox_id, relation, scheduler_id, scheduler_run_id, trigger_id, scheduler_event_id, created_at
-		FROM event_sandbox_link WHERE event_id IN (`+strings.Join(placeholders, ",")+`) ORDER BY created_at ASC, sandbox_id ASC`, args...)
+	entities, err := s.client.EventSandboxLink.Query().
+		Where(eventsandboxlink.IDIn(ids...)).
+		Order(eventsandboxlink.ByCreatedAt(), eventsandboxlink.BySandboxID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query event sandbox links: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	items := make([]domain.EventSandboxTraceItem, 0)
-	for rows.Next() {
-		var item domain.EventSandboxTraceItem
-		var createdAtRaw int64
-		if err := rows.Scan(&item.EventID, &item.SandboxID, &item.Relation, &item.SchedulerID, &item.RunID, &item.TriggerID, &item.SchedulerEventID, &createdAtRaw); err != nil {
-			return nil, fmt.Errorf("scan event sandbox link: %w", err)
-		}
-		item.CreatedAt = storedtime.ParseStoredUnixTimeAuto(createdAtRaw)
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate event sandbox links: %w", err)
+	items := make([]domain.EventSandboxTraceItem, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, eventSandboxLinkFromEntity(entity))
 	}
 	return items, nil
 }
@@ -533,55 +528,51 @@ func (s *eventStore) ListCorrelatedEventIDs(ctx context.Context, eventID string,
 	if limit <= 0 || limit > maxDescendantEventIDs {
 		limit = maxDescendantEventIDs
 	}
-	var correlationID string
-	if err := s.db.QueryRowContext(ctx, `SELECT correlation_id FROM event WHERE id = ?`, eventID).Scan(&correlationID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
+	entity, err := s.client.Event.Query().
+		Select(event.FieldCorrelationID).
+		Where(event.EventIDEQ(eventID)).
+		Only(ctx)
+	if err != nil {
+		if dao.IsNotFound(err) {
+			return nil, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), sql.ErrNoRows)
 		}
 		return nil, fmt.Errorf("load event correlation id: %w", err)
 	}
-	correlationID = strings.TrimSpace(correlationID)
+	correlationID := strings.TrimSpace(entity.CorrelationID)
 	if correlationID == "" {
 		return []string{eventID}, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM event WHERE correlation_id = ? ORDER BY sequence ASC LIMIT ?`, correlationID, limit)
+	entities, err := s.client.Event.Query().
+		Select(event.FieldEventID).
+		Where(event.CorrelationIDEQ(correlationID)).
+		Order(event.ByID()).
+		Limit(limit).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query correlated events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	ids := make([]string, 0, limit)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan correlated event: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate correlated events: %w", err)
+	for _, entity := range entities {
+		ids = append(ids, entity.EventID)
 	}
 	return ids, nil
 }
 
 // childEventIDs reads the direct children of one event. The traversal above
-// visits many parents, so the cursor is owned by this call rather than deferred
-// to the end of the walk.
-func (s *eventStore) childEventIDs(ctx context.Context, parent string) (_ []string, err error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM event WHERE parent_event_id = ? ORDER BY sequence ASC`, parent)
+// visits many parents, so each call keeps its own result set rather than
+// sharing a cursor to the end of the walk.
+func (s *eventStore) childEventIDs(ctx context.Context, parent string) ([]string, error) {
+	entities, err := s.client.Event.Query().
+		Select(event.FieldEventID).
+		Where(event.ParentEventID(parent)).
+		Order(event.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query descendant events: %w", err)
 	}
-	defer func() { storeutil.ReportClose(rows.Close(), &err, "descendant event rows") }()
 	var children []string
-	for rows.Next() {
-		var id string
-		if scanErr := rows.Scan(&id); scanErr != nil {
-			return nil, fmt.Errorf("scan descendant event: %w", scanErr)
-		}
-		children = append(children, id)
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		return nil, fmt.Errorf("iterate descendant events: %w", rowsErr)
+	for _, entity := range entities {
+		children = append(children, entity.EventID)
 	}
 	return children, nil
 }
@@ -591,31 +582,29 @@ func (s *eventStore) ListEnabledWebhookSourcesForTopic(ctx context.Context, topi
 	if topic == "" {
 		return nil, fmt.Errorf("topic is required")
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, token_header, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
-		FROM webhook_source WHERE enabled = 1 ORDER BY length(topic_prefix) DESC, id ASC`)
+	entities, err := s.client.WebhookSource.Query().
+		Where(webhooksource.EnabledEQ(1)).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query webhook sources: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	items := make([]domain.WebhookSource, 0)
-	for rows.Next() {
-		var item domain.WebhookSource
-		var enabled int
-		var createdAtRaw int64
-		var updatedAtRaw int64
-		if err := rows.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.TokenHeader, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
-			return nil, fmt.Errorf("scan webhook source: %w", err)
-		}
-		item.Enabled = enabled != 0
-		item.CreatedAt = storedtime.ParseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = storedtime.ParseStoredUnixTimeAuto(updatedAtRaw)
+	items := make([]domain.WebhookSource, 0, len(entities))
+	for _, entity := range entities {
+		item := webhookSourceFromEntity(entity)
 		if webhookSourceTopicMatches(topic, item.TopicPrefix) {
 			items = append(items, item)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate webhook sources: %w", err)
-	}
+	// Selecting a topic first means the longest matching prefix wins. The
+	// released query ordered in SQL by length(topic_prefix) DESC, id ASC; the
+	// same order is applied here over the already-filtered rows.
+	sort.Slice(items, func(i, j int) bool {
+		left, right := utf8.RuneCountInString(items[i].TopicPrefix), utf8.RuneCountInString(items[j].TopicPrefix)
+		if left != right {
+			return left > right
+		}
+		return items[i].ID < items[j].ID
+	})
 	return items, nil
 }
 
@@ -632,28 +621,15 @@ func webhookSourceTopicMatches(topic, topicPrefix string) bool {
 }
 
 func (s *eventStore) ListWebhookSources(ctx context.Context) ([]domain.WebhookSource, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, token_header, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
-		FROM webhook_source ORDER BY id ASC`)
+	entities, err := s.client.WebhookSource.Query().
+		Order(webhooksource.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query webhook sources: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	items := make([]domain.WebhookSource, 0)
-	for rows.Next() {
-		var item domain.WebhookSource
-		var enabled int
-		var createdAtRaw int64
-		var updatedAtRaw int64
-		if err := rows.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.TokenHeader, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
-			return nil, fmt.Errorf("scan webhook source: %w", err)
-		}
-		item.Enabled = enabled != 0
-		item.CreatedAt = storedtime.ParseStoredUnixTimeAuto(createdAtRaw)
-		item.UpdatedAt = storedtime.ParseStoredUnixTimeAuto(updatedAtRaw)
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate webhook sources: %w", err)
+	items := make([]domain.WebhookSource, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, webhookSourceFromEntity(entity))
 	}
 	return items, nil
 }
@@ -663,22 +639,16 @@ func (s *eventStore) GetWebhookSource(ctx context.Context, sourceID string) (dom
 	if sourceID == "" {
 		return domain.WebhookSource{}, false, fmt.Errorf("webhook source id is required")
 	}
-	row := s.db.QueryRowContext(ctx, `SELECT id, name, enabled, provider, topic_prefix, token_hash, token_header, signature_type, signature_secret, body_limit_bytes, created_at, updated_at
-		FROM webhook_source WHERE id = ?`, sourceID)
-	var item domain.WebhookSource
-	var enabled int
-	var createdAtRaw int64
-	var updatedAtRaw int64
-	if err := row.Scan(&item.ID, &item.Name, &enabled, &item.Provider, &item.TopicPrefix, &item.TokenHash, &item.TokenHeader, &item.SignatureType, &item.SignatureSecret, &item.BodyLimitBytes, &createdAtRaw, &updatedAtRaw); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	entity, err := s.client.WebhookSource.Query().
+		Where(webhooksource.IDEQ(sourceID)).
+		Only(ctx)
+	if err != nil {
+		if dao.IsNotFound(err) {
 			return domain.WebhookSource{}, false, nil
 		}
 		return domain.WebhookSource{}, false, fmt.Errorf("get webhook source: %w", err)
 	}
-	item.Enabled = enabled != 0
-	item.CreatedAt = storedtime.ParseStoredUnixTimeAuto(createdAtRaw)
-	item.UpdatedAt = storedtime.ParseStoredUnixTimeAuto(updatedAtRaw)
-	return item, true, nil
+	return webhookSourceFromEntity(entity), true, nil
 }
 
 func (s *eventStore) UpsertWebhookSource(ctx context.Context, source domain.WebhookSource) (domain.WebhookSource, error) {
@@ -721,25 +691,33 @@ func (s *eventStore) UpsertWebhookSource(ctx context.Context, source domain.Webh
 	if source.Enabled {
 		enabled = 1
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO webhook_source(id, name, enabled, provider, topic_prefix, token_hash, token_header, signature_type, signature_secret, body_limit_bytes, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET name = excluded.name, enabled = excluded.enabled, provider = excluded.provider, topic_prefix = excluded.topic_prefix,
-			token_hash = excluded.token_hash, token_header = excluded.token_header, signature_type = excluded.signature_type, signature_secret = excluded.signature_secret,
-			body_limit_bytes = excluded.body_limit_bytes, updated_at = excluded.updated_at`,
-		source.ID,
-		source.Name,
-		enabled,
-		source.Provider,
-		source.TopicPrefix,
-		source.TokenHash,
-		source.TokenHeader,
-		source.SignatureType,
-		source.SignatureSecret,
-		source.BodyLimitBytes,
-		source.CreatedAt.UTC().UnixMilli(),
-		source.UpdatedAt.UTC().UnixMilli(),
-	)
-	if err != nil {
+	if err := s.client.WebhookSource.Create().
+		SetID(source.ID).
+		SetName(source.Name).
+		SetEnabled(enabled).
+		SetProvider(source.Provider).
+		SetTopicPrefix(source.TopicPrefix).
+		SetTokenHash(source.TokenHash).
+		SetTokenHeader(source.TokenHeader).
+		SetSignatureType(source.SignatureType).
+		SetSignatureSecret(source.SignatureSecret).
+		SetBodyLimitBytes(source.BodyLimitBytes).
+		SetCreatedAt(source.CreatedAt.UTC().UnixMilli()).
+		SetUpdatedAt(source.UpdatedAt.UTC().UnixMilli()).
+		OnConflict(entsql.ConflictColumns(webhooksource.FieldID)).
+		Update(func(u *dao.WebhookSourceUpsert) {
+			u.SetName(source.Name)
+			u.SetEnabled(enabled)
+			u.SetProvider(source.Provider)
+			u.SetTopicPrefix(source.TopicPrefix)
+			u.SetTokenHash(source.TokenHash)
+			u.SetTokenHeader(source.TokenHeader)
+			u.SetSignatureType(source.SignatureType)
+			u.SetSignatureSecret(source.SignatureSecret)
+			u.SetBodyLimitBytes(source.BodyLimitBytes)
+			u.SetUpdatedAt(source.UpdatedAt.UTC().UnixMilli())
+		}).
+		Exec(ctx); err != nil {
 		return domain.WebhookSource{}, fmt.Errorf("upsert webhook source: %w", err)
 	}
 	return source, nil
@@ -750,12 +728,102 @@ func (s *eventStore) DeleteWebhookSource(ctx context.Context, sourceID string) e
 	if sourceID == "" {
 		return fmt.Errorf("webhook source id is required")
 	}
-	result, err := s.db.ExecContext(ctx, `DELETE FROM webhook_source WHERE id = ?`, sourceID)
+	affected, err := s.client.WebhookSource.Delete().
+		Where(webhooksource.IDEQ(sourceID)).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("delete webhook source: %w", err)
 	}
-	if affected, err := result.RowsAffected(); err == nil && affected == 0 {
+	if affected == 0 {
 		return domain.ResourceError(domain.ErrNotFound, "webhook source", sourceID, "webhook source not found", nil)
 	}
 	return nil
+}
+
+// topicEventsFromEntities maps event rows exactly like scanTopicEvents did.
+func topicEventsFromEntities(entities []*dao.Event) []domain.TopicEventRecord {
+	items := make([]domain.TopicEventRecord, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, topicEventFromEntity(entity))
+	}
+	return items
+}
+
+// topicEventFromEntity maps one event row exactly like scanTopicEvent.
+func topicEventFromEntity(entity *dao.Event) domain.TopicEventRecord {
+	return domain.TopicEventRecord{
+		ID:                 entity.EventID,
+		Sequence:           entity.ID,
+		Topic:              entity.Topic,
+		Source:             entity.Source,
+		Provider:           entity.Provider,
+		Intent:             entity.Intent,
+		CorrelationID:      entity.CorrelationID,
+		IdempotencyKey:     entity.IdempotencyKey,
+		DeliveryID:         entity.DeliveryID,
+		PayloadHash:        entity.PayloadHash,
+		PayloadJSON:        entity.PayloadJSON,
+		DispatchStatus:     entity.DispatchStatus,
+		ParentEventID:      entity.ParentEventID,
+		PublisherType:      entity.PublisherType,
+		PublisherID:        entity.PublisherID,
+		PublisherRunID:     entity.PublisherRunID,
+		PublisherProjectID: entity.PublisherProjectID,
+		ReplayOfEventID:    entity.ReplayOfEventID,
+		ClaimID:            entity.ClaimID,
+		ClaimUntil:         storedtime.ParseStoredUnixTimeAuto(entity.ClaimUntil),
+		AttemptCount:       entity.AttemptCount,
+		NextAttemptAt:      storedtime.ParseStoredUnixTimeAuto(entity.NextAttemptAt),
+		LastError:          entity.LastError,
+		DeadLetterAt:       storedtime.ParseStoredUnixTimeAuto(entity.DeadLetterAt),
+		CreatedAt:          storedtime.ParseStoredUnixTimeAuto(entity.CreatedAt),
+		DispatchedAt:       storedtime.ParseStoredUnixTimeAuto(entity.DispatchedAt),
+	}
+}
+
+// eventDeliveryFromEntity maps one delivery row exactly like the released scan.
+func eventDeliveryFromEntity(entity *dao.EventDelivery) domain.EventDelivery {
+	return domain.EventDelivery{
+		EventID:     entity.ID,
+		SchedulerID: entity.SchedulerID,
+		TriggerID:   entity.TriggerID,
+		RunID:       entity.SchedulerRunID,
+		Status:      entity.Status,
+		Error:       entity.Error,
+		CreatedAt:   storedtime.ParseStoredUnixTimeAuto(entity.CreatedAt),
+		UpdatedAt:   storedtime.ParseStoredUnixTimeAuto(entity.UpdatedAt),
+	}
+}
+
+// eventSandboxLinkFromEntity maps one link row exactly like the released scan.
+func eventSandboxLinkFromEntity(entity *dao.EventSandboxLink) domain.EventSandboxTraceItem {
+	return domain.EventSandboxTraceItem{
+		SandboxID:        entity.SandboxID,
+		Relation:         entity.Relation,
+		SchedulerID:      entity.SchedulerID,
+		RunID:            entity.SchedulerRunID,
+		TriggerID:        entity.TriggerID,
+		SchedulerEventID: entity.SchedulerEventID,
+		EventID:          entity.ID,
+		CreatedAt:        storedtime.ParseStoredUnixTimeAuto(entity.CreatedAt),
+	}
+}
+
+// webhookSourceFromEntity maps one webhook_source row exactly like the released
+// scan; enabled stays a stored integer.
+func webhookSourceFromEntity(entity *dao.WebhookSource) domain.WebhookSource {
+	return domain.WebhookSource{
+		ID:              entity.ID,
+		Name:            entity.Name,
+		Enabled:         entity.Enabled != 0,
+		Provider:        entity.Provider,
+		TopicPrefix:     entity.TopicPrefix,
+		TokenHash:       entity.TokenHash,
+		TokenHeader:     entity.TokenHeader,
+		SignatureType:   entity.SignatureType,
+		SignatureSecret: entity.SignatureSecret,
+		BodyLimitBytes:  entity.BodyLimitBytes,
+		CreatedAt:       storedtime.ParseStoredUnixTimeAuto(entity.CreatedAt),
+		UpdatedAt:       storedtime.ParseStoredUnixTimeAuto(entity.UpdatedAt),
+	}
 }

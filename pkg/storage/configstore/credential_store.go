@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/credentialhandle"
 	"github.com/chaitin/agent-compose/pkg/credentials"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
@@ -16,7 +18,8 @@ import (
 // short-lived, narrowly scoped, revocable credential whose raw value is never
 // stored.
 type credentialStore struct {
-	db *sql.DB
+	db     *sql.DB
+	client *dao.Client
 }
 
 // SaveCredentialHandle persists a handle. Only the handle's hash is written, so
@@ -31,9 +34,9 @@ func (s *credentialStore) SaveCredentialHandle(ctx context.Context, handle crede
 	if err != nil {
 		return fmt.Errorf("save credential handle: %w", err)
 	}
-	// A revocation is not undone by a later save. The CASE keeps the stored
-	// revocation timestamp when the row is already revoked, so an upsert can
-	// never bring a revoked handle back to life.
+	// Kept as SQL: the upsert must preserve an existing revocation (the CASE),
+	// which ent's upsert setters cannot express, and splitting it into a read
+	// and a write would race a concurrent revoke.
 	if _, err := s.db.ExecContext(ctx, `INSERT INTO credential_handle(handle_id, kind, token_hash, token_fingerprint, env_name, sandbox_id, run_id, endpoint, owners_json, issued_at, expires_at, revoked_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(handle_id) DO UPDATE SET kind = excluded.kind, token_hash = excluded.token_hash, token_fingerprint = excluded.token_fingerprint, env_name = excluded.env_name, sandbox_id = excluded.sandbox_id, run_id = excluded.run_id, endpoint = excluded.endpoint, owners_json = excluded.owners_json, issued_at = excluded.issued_at, expires_at = excluded.expires_at, revoked_at = CASE WHEN credential_handle.revoked_at > 0 THEN credential_handle.revoked_at ELSE excluded.revoked_at END`,
@@ -87,14 +90,24 @@ func (s *credentialStore) GetCredentialHandleByID(ctx context.Context, handleID 
 }
 
 func (s *credentialStore) getCredentialHandleByColumn(ctx context.Context, column, value string) (credentials.Handle, error) {
-	// The column is chosen by this package, never by a caller, so interpolating
-	// it cannot inject SQL; the value is a bound parameter.
-	row := s.db.QueryRowContext(ctx, `SELECT `+credentials.HandleColumns+` FROM credential_handle WHERE `+column+` = ?`, value)
-	handle, err := credentials.ScanHandle(row.Scan)
+	query := s.client.CredentialHandle.Query()
+	switch column {
+	case "token_hash":
+		query = query.Where(credentialhandle.TokenHashEQ(value))
+	case "handle_id":
+		query = query.Where(credentialhandle.IDEQ(value))
+	default:
+		return credentials.Handle{}, fmt.Errorf("query credential handle: unknown lookup column %q", column)
+	}
+	entity, err := query.Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			return credentials.Handle{}, domain.ErrNotFound
 		}
+		return credentials.Handle{}, fmt.Errorf("query credential handle: %w", err)
+	}
+	handle, err := credentialHandleFromEntity(entity)
+	if err != nil {
 		return credentials.Handle{}, fmt.Errorf("query credential handle: %w", err)
 	}
 	return handle, nil
@@ -130,19 +143,35 @@ func (s *credentialStore) RevokeCredentialHandleByID(ctx context.Context, handle
 func (s *credentialStore) revokeCredentialHandleByColumn(ctx context.Context, column, value string) error {
 	// Revocation is idempotent: an already-revoked handle keeps its original
 	// revocation instant so "when did this stop being valid" stays answerable.
-	result, err := s.db.ExecContext(ctx, `UPDATE credential_handle SET revoked_at = ? WHERE `+column+` = ? AND revoked_at = 0`, credentials.UnixMillis(time.Now().UTC()), value)
-	if err != nil {
-		return fmt.Errorf("revoke credential handle: %w", err)
+	update := s.client.CredentialHandle.Update().
+		SetRevokedAt(credentials.UnixMillis(time.Now().UTC())).
+		Where(credentialhandle.RevokedAtEQ(0))
+	switch column {
+	case "token_hash":
+		update = update.Where(credentialhandle.TokenHashEQ(value))
+	case "handle_id":
+		update = update.Where(credentialhandle.IDEQ(value))
+	default:
+		return fmt.Errorf("revoke credential handle: unknown lookup column %q", column)
 	}
-	affected, err := result.RowsAffected()
+	affected, err := update.Save(ctx)
 	if err != nil {
 		return fmt.Errorf("revoke credential handle: %w", err)
 	}
 	if affected == 0 {
 		// Either the row is gone or it was already revoked; distinguish so a
 		// caller learns that the credential is already dead rather than missing.
-		var exists bool
-		if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM credential_handle WHERE `+column+` = ?)`, value).Scan(&exists); err != nil {
+		existsQuery := s.client.CredentialHandle.Query()
+		switch column {
+		case "token_hash":
+			existsQuery = existsQuery.Where(credentialhandle.TokenHashEQ(value))
+		case "handle_id":
+			existsQuery = existsQuery.Where(credentialhandle.IDEQ(value))
+		default:
+			return fmt.Errorf("revoke credential handle: unknown lookup column %q", column)
+		}
+		exists, err := existsQuery.Exist(ctx)
+		if err != nil {
 			return fmt.Errorf("revoke credential handle: %w", err)
 		}
 		if !exists {
@@ -182,11 +211,19 @@ func (s *credentialStore) RevokeCredentialHandlesForSandbox(ctx context.Context,
 		return nil
 	}
 	now := time.Now().UTC()
-	if _, err := s.db.ExecContext(ctx, `UPDATE credential_handle SET revoked_at = ? WHERE sandbox_id = ? AND revoked_at = 0`, credentials.UnixMillis(now), sandboxID); err != nil {
+	if _, err := s.client.CredentialHandle.Update().
+		SetRevokedAt(credentials.UnixMillis(now)).
+		Where(credentialhandle.SandboxIDEQ(sandboxID), credentialhandle.RevokedAtEQ(0)).
+		Save(ctx); err != nil {
 		return fmt.Errorf("revoke credential handles for sandbox: %w", err)
 	}
 	cutoff := credentials.UnixMillis(now.Add(-CredentialHandleRetention))
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM credential_handle WHERE (revoked_at != 0 AND revoked_at < ?) OR (expires_at != 0 AND expires_at < ?)`, cutoff, cutoff); err != nil {
+	if _, err := s.client.CredentialHandle.Delete().
+		Where(credentialhandle.Or(
+			credentialhandle.And(credentialhandle.RevokedAtNEQ(0), credentialhandle.RevokedAtLT(cutoff)),
+			credentialhandle.And(credentialhandle.ExpiresAtNEQ(0), credentialhandle.ExpiresAtLT(cutoff)),
+		)).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("prune credential handles: %w", err)
 	}
 	return nil
@@ -202,21 +239,51 @@ func (s *credentialStore) ListCredentialHandlesForSandbox(ctx context.Context, s
 	if sandboxID == "" {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+credentials.HandleColumns+` FROM credential_handle WHERE sandbox_id = ? ORDER BY issued_at ASC, handle_id ASC`, sandboxID)
+	entities, err := s.client.CredentialHandle.Query().
+		Where(credentialhandle.SandboxIDEQ(sandboxID)).
+		Order(credentialhandle.ByIssuedAt(), credentialhandle.ByID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query credential handles for sandbox: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	handles := make([]credentials.Handle, 0)
-	for rows.Next() {
-		handle, err := credentials.ScanHandle(rows.Scan)
+	handles := make([]credentials.Handle, 0, len(entities))
+	for _, entity := range entities {
+		handle, err := credentialHandleFromEntity(entity)
 		if err != nil {
 			return nil, fmt.Errorf("scan credential handle: %w", err)
 		}
 		handles = append(handles, handle)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate credential handles: %w", err)
-	}
 	return handles, nil
+}
+
+// credentialHandleFromEntity maps credential_handle to the domain handle,
+// keeping the released Unix-millisecond column units (0 means "not set").
+func credentialHandleFromEntity(entity *dao.CredentialHandle) (credentials.Handle, error) {
+	owners, err := credentials.ParseOwners(entity.OwnersJSON)
+	if err != nil {
+		return credentials.Handle{}, err
+	}
+	handle := credentials.Handle{
+		ID:               entity.ID,
+		Kind:             credentials.Kind(entity.Kind),
+		TokenHash:        entity.TokenHash,
+		TokenFingerprint: entity.TokenFingerprint,
+		EnvName:          entity.EnvName,
+		SandboxID:        entity.SandboxID,
+		RunID:            entity.RunID,
+		Scope:            credentials.Scope{Endpoint: entity.Endpoint, Owners: owners},
+		IssuedAt:         storedUnixMillis(entity.IssuedAt),
+		ExpiresAt:        storedUnixMillis(entity.ExpiresAt),
+		RevokedAt:        storedUnixMillis(entity.RevokedAt),
+	}
+	return handle.Normalized(), nil
+}
+
+// storedUnixMillis converts a released Unix-millisecond column to time.
+func storedUnixMillis(value int64) time.Time {
+	if value == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(value).UTC()
 }

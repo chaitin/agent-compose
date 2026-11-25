@@ -3,13 +3,21 @@ package configstore
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao/projectrun"
 	"github.com/chaitin/agent-compose/internal/projects"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
+// CreateProjectRunWithEvents creates a run and appends its first events in one
+// transaction. The event append keeps its own SQL (sequence allocation and the
+// parent-row lock), so the transaction is opened on the shared pool and the ent
+// client is bound to it: typed writes and the raw append commit atomically.
 func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run ProjectRunRecord, events []domain.ProjectRunEventRecord) (ProjectRunRecord, error) {
 	run, err := projects.NormalizeRunRecord(run)
 	if err != nil {
@@ -29,35 +37,30 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 	if err := validateRunEventBatch(run.RunID, events); err != nil {
 		return ProjectRunRecord{}, err
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO project_run(
-		run_id, project_id, project_name, project_revision, agent_name, agent_id, source, scheduler_id, scheduler_run_id, trigger_id, status,
-		sandbox_id, exit_code, error, error_stack, prompt, output, result_json, logs_path, artifacts_dir, cleanup_error, cleanup_policy, sandbox_created, driver, image_ref,
-		started_at, completed_at, duration_ms, created_at, updated_at
-	) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	ON CONFLICT(run_id) DO NOTHING`,
-		run.RunID, run.ProjectID, run.ProjectName, run.ProjectRevision, run.AgentName, run.AgentID, run.Source, run.SchedulerID, nullableSchedulerRunID(run.SchedulerRunID), run.TriggerID, run.Status,
-		run.SandboxID, run.ExitCode, run.Error, run.ErrorStack, run.Prompt, run.Output, run.ResultJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.CleanupPolicy, BoolToInt(run.SandboxCreated), run.Driver, run.ImageRef,
-		domain.NonZeroTimeUnixMilli(run.StartedAt), domain.NonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, run.CreatedAt.Unix(), run.UpdatedAt.Unix())
-	if err != nil {
-		return ProjectRunRecord{}, fmt.Errorf("insert project run %s: %w", run.RunID, err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return ProjectRunRecord{}, fmt.Errorf("inspect project run insert %s: %w", run.RunID, err)
-	}
-	if rows == 0 {
-		existing, loadErr := getProjectRunTx(ctx, tx, run.RunID)
+	client := newEntTxClient(s.dialect, tx)
+	err = applyProjectRunCreateFields(client.ProjectRun.Create(), run, false).
+		OnConflict(entsql.ConflictColumns(projectrun.FieldID), entsql.DoNothing()).
+		Exec(ctx)
+	switch {
+	case err == nil:
+		if err := insertProjectRunLabels(ctx, client, run.RunID, run.Labels); err != nil {
+			return ProjectRunRecord{}, err
+		}
+	case errors.Is(err, sql.ErrNoRows):
+		// ON CONFLICT DO NOTHING hit an existing run; keep that row and still
+		// append this batch's events exactly as the released path did.
+		existing, loadErr := getProjectRunByClient(ctx, client, run.RunID)
 		if loadErr != nil {
 			return ProjectRunRecord{}, fmt.Errorf("load existing project run %s: %w", run.RunID, loadErr)
 		}
 		run = existing
-	} else if err := insertProjectRunLabelsTx(ctx, tx, run.RunID, run.Labels); err != nil {
-		return ProjectRunRecord{}, err
+	default:
+		return ProjectRunRecord{}, fmt.Errorf("insert project run %s: %w", run.RunID, err)
 	}
 	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("append create project run events: %w", err)
 	}
-	stored, err := getProjectRunTx(ctx, tx, run.RunID)
+	stored, err := getProjectRunByClient(ctx, client, run.RunID)
 	if err != nil {
 		return ProjectRunRecord{}, err
 	}
@@ -67,6 +70,9 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 	return stored, nil
 }
 
+// UpdateProjectRunWithEvents updates a run and appends events in one
+// transaction, using the same ent-over-raw-transaction client as the create
+// path.
 func (s *projectStore) UpdateProjectRunWithEvents(ctx context.Context, run ProjectRunRecord, events []domain.ProjectRunEventRecord) (ProjectRunRecord, error) {
 	run, err := projects.NormalizeRunRecord(run)
 	if err != nil {
@@ -84,27 +90,18 @@ func (s *projectStore) UpdateProjectRunWithEvents(ctx context.Context, run Proje
 		return ProjectRunRecord{}, fmt.Errorf("begin update project run transaction: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE project_run SET
-		project_id = ?, project_name = ?, project_revision = ?, agent_name = ?, agent_id = ?, source = ?, scheduler_id = ?, scheduler_run_id = ?, trigger_id = ?, status = ?,
-		sandbox_id = ?, exit_code = ?, error = ?, error_stack = ?, prompt = ?, output = ?, result_json = ?, logs_path = ?, artifacts_dir = ?, cleanup_error = ?, cleanup_policy = ?, sandbox_created = ?, driver = ?, image_ref = ?,
-		started_at = ?, completed_at = ?, duration_ms = ?, updated_at = ? WHERE run_id = ?`,
-		run.ProjectID, run.ProjectName, run.ProjectRevision, run.AgentName, run.AgentID, run.Source, run.SchedulerID, nullableSchedulerRunID(run.SchedulerRunID), run.TriggerID, run.Status,
-		run.SandboxID, run.ExitCode, run.Error, run.ErrorStack, run.Prompt, run.Output, run.ResultJSON, run.LogsPath, run.ArtifactsDir, run.CleanupError, run.CleanupPolicy, BoolToInt(run.SandboxCreated), run.Driver, run.ImageRef,
-		domain.NonZeroTimeUnixMilli(run.StartedAt), domain.NonZeroTimeUnixMilli(run.CompletedAt), run.DurationMs, now.Unix(), run.RunID)
+	client := newEntTxClient(s.dialect, tx)
+	affected, err := applyProjectRunUpdateFields(client.ProjectRun.Update(), run, now.Unix(), false).Save(ctx)
 	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("update project run %s: %w", run.RunID, err)
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return ProjectRunRecord{}, fmt.Errorf("inspect project run update %s: %w", run.RunID, err)
-	}
-	if rows == 0 {
+	if affected == 0 {
 		return ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", run.RunID, fmt.Sprintf("project run %s not found", run.RunID), nil)
 	}
 	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("append update project run events: %w", err)
 	}
-	updated, err := getProjectRunTx(ctx, tx, run.RunID)
+	updated, err := getProjectRunByClient(ctx, client, run.RunID)
 	if err != nil {
 		return ProjectRunRecord{}, err
 	}
@@ -121,17 +118,4 @@ func validateRunEventBatch(runID string, events []domain.ProjectRunEventRecord) 
 		}
 	}
 	return nil
-}
-
-func getProjectRunTx(ctx context.Context, tx *sql.Tx, runID string) (ProjectRunRecord, error) {
-	item, err := projects.ScanProjectRun(tx.QueryRowContext(ctx, projects.SelectProjectRunSQL()+` WHERE run_id = ?`, runID).Scan)
-	if err != nil {
-		return ProjectRunRecord{}, err
-	}
-	labels, err := loadProjectRunLabels(ctx, tx, item.RunID)
-	if err != nil {
-		return ProjectRunRecord{}, err
-	}
-	item.Labels = labels
-	return item, nil
 }

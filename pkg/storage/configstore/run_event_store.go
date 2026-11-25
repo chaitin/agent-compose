@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/projectrunevent"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 
 	"github.com/chaitin/agent-compose/pkg/storage/dialect"
@@ -26,6 +29,8 @@ func (s *projectStore) AppendProjectRunEvents(ctx context.Context, events []doma
 	if len(events) == 0 {
 		return nil, nil, nil
 	}
+	// Kept as SQL: the append allocates per-run sequence numbers with a
+	// locking read and INSERT ... SELECT, so it stays on one raw transaction.
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("begin run event transaction: %w", err)
@@ -65,6 +70,8 @@ func lockProjectRunRows(ctx context.Context, tx *sql.Tx, d dialect.Dialect, even
 	sort.Strings(runIDs)
 	for _, runID := range runIDs {
 		var existing string
+		// Kept as SQL: PostgreSQL needs SELECT ... FOR UPDATE on the parent run
+		// row; ent cannot express a locking read.
 		err := tx.QueryRowContext(ctx, `SELECT run_id FROM project_run WHERE run_id = ?`+d.ForUpdateClause(), runID).Scan(&existing)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
@@ -95,6 +102,9 @@ func appendProjectRunEventsTx(ctx context.Context, tx *sql.Tx, d dialect.Dialect
 		// ON CONFLICT keeps the transaction usable on PostgreSQL: a duplicate
 		// primary key aborts the whole transaction, so a follow-up SELECT in
 		// the old error path could never observe the existing row.
+		// Kept as SQL: seq is allocated with COALESCE(MAX(seq), 0) + 1 in an
+		// INSERT ... SELECT and returned by RETURNING; ent cannot express that
+		// aggregate-derived upsert.
 		err := tx.QueryRowContext(ctx, `INSERT INTO project_run_event (id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at)
 			SELECT ?, ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM project_run_event WHERE run_id = ?
 			ON CONFLICT (id) DO NOTHING
@@ -127,21 +137,25 @@ func (s *projectStore) ListProjectRunEvents(ctx context.Context, runID string, a
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at FROM project_run_event WHERE run_id = ? AND seq > ? ORDER BY seq ASC LIMIT ?`, strings.TrimSpace(runID), afterSequence, limit)
+	// A sequence cursor above int64 cannot be compared against the stored
+	// column; reject it instead of wrapping the conversion to a negative value.
+	if afterSequence > math.MaxInt64 {
+		return nil, fmt.Errorf("list run events: sequence cursor %d is out of range", afterSequence)
+	}
+	entities, err := s.client.ProjectRunEvent.Query().
+		Where(
+			projectrunevent.RunIDEQ(strings.TrimSpace(runID)),
+			projectrunevent.SequenceGT(int64(afterSequence)),
+		).
+		Order(projectrunevent.BySequence()).
+		Limit(limit).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list run events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	var events []domain.ProjectRunEventRecord
-	for rows.Next() {
-		event, scanErr := scanRunEvent(rows.Scan)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate run events: %w", err)
+	for _, entity := range entities {
+		events = append(events, projectRunEventFromEntity(entity))
 	}
 	return events, nil
 }
@@ -150,36 +164,37 @@ func (s *projectStore) ListProjectRunEventsPage(ctx context.Context, runID strin
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at FROM project_run_event WHERE run_id = ? ORDER BY seq ASC LIMIT ? OFFSET ?`, strings.TrimSpace(runID), limit, max(offset, 0))
+	entities, err := s.client.ProjectRunEvent.Query().
+		Where(projectrunevent.RunIDEQ(strings.TrimSpace(runID))).
+		Order(projectrunevent.BySequence()).
+		Limit(limit).
+		Offset(max(offset, 0)).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list run event page: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 	var events []domain.ProjectRunEventRecord
-	for rows.Next() {
-		event, scanErr := scanRunEvent(rows.Scan)
-		if scanErr != nil {
-			return nil, scanErr
-		}
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate run event page: %w", err)
+	for _, entity := range entities {
+		events = append(events, projectRunEventFromEntity(entity))
 	}
 	return events, nil
 }
 
 func (s *projectStore) HasProjectRunEvents(ctx context.Context, runID string) (bool, error) {
-	var exists bool
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM project_run_event WHERE run_id = ?)`, strings.TrimSpace(runID)).Scan(&exists); err != nil {
+	exists, err := s.client.ProjectRunEvent.Query().
+		Where(projectrunevent.RunIDEQ(strings.TrimSpace(runID))).
+		Exist(ctx)
+	if err != nil {
 		return false, fmt.Errorf("check run events: %w", err)
 	}
 	return exists, nil
 }
 
 func (s *projectStore) CountProjectRunEvents(ctx context.Context, runID string) (int, error) {
-	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_run_event WHERE run_id = ?`, strings.TrimSpace(runID)).Scan(&total); err != nil {
+	total, err := s.client.ProjectRunEvent.Query().
+		Where(projectrunevent.RunIDEQ(strings.TrimSpace(runID))).
+		Count(ctx)
+	if err != nil {
 		return 0, fmt.Errorf("count run events: %w", err)
 	}
 	return total, nil
@@ -187,6 +202,7 @@ func (s *projectStore) CountProjectRunEvents(ctx context.Context, runID string) 
 
 func (s *projectStore) CountProjectRunEventsForSandbox(ctx context.Context, sandboxID string) (int, error) {
 	var total int
+	// Kept as SQL: COUNT join between project_run_event and project_run.
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_run_event e JOIN project_run r ON r.run_id = e.run_id WHERE r.sandbox_id = ?`, strings.TrimSpace(sandboxID)).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count sandbox run events: %w", err)
 	}
@@ -194,6 +210,7 @@ func (s *projectStore) CountProjectRunEventsForSandbox(ctx context.Context, sand
 }
 
 func (s *projectStore) ListProjectRunEventRunIDsForSandbox(ctx context.Context, sandboxID string) ([]string, error) {
+	// Kept as SQL: DISTINCT join between project_run_event and project_run.
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT e.run_id FROM project_run_event e JOIN project_run r ON r.run_id = e.run_id WHERE r.sandbox_id = ? ORDER BY e.run_id`, strings.TrimSpace(sandboxID))
 	if err != nil {
 		return nil, fmt.Errorf("list sandbox run event run ids: %w", err)
@@ -218,6 +235,7 @@ func (s *projectStore) ListProjectRunEventsForSandbox(ctx context.Context, sandb
 	if limit <= 0 {
 		limit = 100
 	}
+	// Kept as SQL: join to project_run with a compound keyset predicate.
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.run_id, e.seq, e.kind, e.text, e.agent, e.name, e.payload_json, e.success, e.exit_code, e.stop_reason, e.created_at
 		FROM project_run_event e JOIN project_run r ON r.run_id = e.run_id
 		WHERE r.sandbox_id = ? AND (e.created_at > ? OR (e.created_at = ? AND (e.run_id > ? OR (e.run_id = ? AND e.seq > ?))))
@@ -244,6 +262,7 @@ func (s *projectStore) ListProjectRunEventsForSandboxPage(ctx context.Context, s
 	if limit <= 0 {
 		limit = 100
 	}
+	// Kept as SQL: join to project_run scoped to one sandbox.
 	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.run_id, e.seq, e.kind, e.text, e.agent, e.name, e.payload_json, e.success, e.exit_code, e.stop_reason, e.created_at
 		FROM project_run_event e JOIN project_run r ON r.run_id = e.run_id
 		WHERE r.sandbox_id = ? ORDER BY e.created_at ASC, e.run_id ASC, e.seq ASC LIMIT ? OFFSET ?`, strings.TrimSpace(sandboxID), limit, max(offset, 0))
@@ -279,7 +298,27 @@ func scanRunEvent(scan runEventScanner) (domain.ProjectRunEventRecord, error) {
 	return event, nil
 }
 
+// projectRunEventFromEntity maps one run-event row exactly like scanRunEvent.
+func projectRunEventFromEntity(entity *dao.ProjectRunEvent) domain.ProjectRunEventRecord {
+	return domain.ProjectRunEventRecord{
+		ID:          entity.ID,
+		RunID:       entity.RunID,
+		Sequence:    uint64(entity.Sequence),
+		Kind:        domain.ProjectRunEventKind(entity.Kind),
+		Text:        entity.Text,
+		Agent:       entity.Agent,
+		Name:        entity.Name,
+		PayloadJSON: entity.PayloadJSON,
+		Success:     entity.Success != 0,
+		ExitCode:    entity.ExitCode,
+		StopReason:  entity.StopReason,
+		CreatedAt:   time.UnixMilli(entity.CreatedAt).UTC(),
+	}
+}
+
 func getRunEventByID(ctx context.Context, tx *sql.Tx, eventID string) (domain.ProjectRunEventRecord, bool, error) {
+	// Kept as SQL: conflict-resolution read that runs on the raw transaction
+	// carrying the INSERT ... SELECT above.
 	event, err := scanRunEvent(tx.QueryRowContext(ctx, `SELECT id, run_id, seq, kind, text, agent, name, payload_json, success, exit_code, stop_reason, created_at FROM project_run_event WHERE id = ?`, eventID).Scan)
 	if err == nil {
 		return event, true, nil

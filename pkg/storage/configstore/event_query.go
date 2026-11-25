@@ -4,22 +4,93 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/event"
+	"github.com/chaitin/agent-compose/ent/dao/predicate"
 	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
-type eventListQuery struct {
-	where      string
-	filterArgs []any
-	page       string
-	pageArgs   []any
+// eventListFilter is the ent form of a topic event listing request. The
+// released queries shared one WHERE builder between the count and the page; the
+// predicates below keep that single validation path. Ordering is ascending for
+// a sequence cursor or an explicit ascending request, and descending with an
+// offset otherwise.
+type eventListFilter struct {
+	predicates []predicate.Event
+	limit      int
+	offset     int
+	ascending  bool
 }
 
+func buildEventListFilter(filter domain.TopicEventFilter) (eventListFilter, error) {
+	if strings.TrimSpace(filter.Source) == "" && strings.TrimSpace(filter.Topic) == "" && strings.TrimSpace(filter.CorrelationID) == "" {
+		return eventListFilter{}, fmt.Errorf("source, topic, or correlation id is required")
+	}
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	predicates := make([]predicate.Event, 0, 5)
+	if source := strings.TrimSpace(filter.Source); source != "" {
+		values := events.SourceFilterValues(source)
+		if len(values) == 0 {
+			return eventListFilter{}, fmt.Errorf("event source is invalid")
+		}
+		predicates = append(predicates, event.SourceIn(values...))
+	}
+	if topic := strings.TrimSpace(filter.Topic); topic != "" {
+		if err := events.ValidateTopicName(topic); err != nil {
+			return eventListFilter{}, err
+		}
+		predicates = append(predicates, event.TopicEQ(topic))
+	}
+	if correlationID := strings.TrimSpace(filter.CorrelationID); correlationID != "" {
+		predicates = append(predicates, event.CorrelationIDEQ(correlationID))
+	}
+	if filter.AfterSequence > 0 {
+		predicates = append(predicates, event.IDGT(filter.AfterSequence))
+	}
+	if status := events.NormalizeDispatchStatus(filter.DispatchStatus); status != "" && strings.TrimSpace(filter.DispatchStatus) != "" {
+		predicates = append(predicates, event.DispatchStatusEQ(status))
+	}
+	list := eventListFilter{
+		predicates: predicates,
+		limit:      limit,
+		ascending:  filter.AfterSequence > 0 || filter.SequenceAsc,
+	}
+	if !list.ascending {
+		list.offset = max(filter.Offset, 0)
+	}
+	return list, nil
+}
+
+// eventPageQuery applies the shared ordering and page bounds to one filter.
+func eventPageQuery(client *dao.Client, filter eventListFilter) *dao.EventQuery {
+	query := client.Event.Query().Where(filter.predicates...)
+	if filter.ascending {
+		query.Order(event.ByID())
+	} else {
+		query.Order(event.ByID(entsql.OrderDesc()))
+	}
+	query.Limit(filter.limit)
+	if !filter.ascending {
+		query.Offset(filter.offset)
+	}
+	return query
+}
+
+// buildEventSourcePredicate renders the source IN list for ListEventTopics,
+// which stays a SQL aggregate query.
 func buildEventSourcePredicate(source string) (string, []any) {
 	values := events.SourceFilterValues(source)
 	if len(values) == 0 {
@@ -34,132 +105,107 @@ func buildEventSourcePredicate(source string) (string, []any) {
 	return "source IN (" + strings.Join(placeholders, ", ") + ")", args
 }
 
-func buildEventListQuery(filter domain.TopicEventFilter) (eventListQuery, error) {
-	if strings.TrimSpace(filter.Source) == "" && strings.TrimSpace(filter.Topic) == "" && strings.TrimSpace(filter.CorrelationID) == "" {
-		return eventListQuery{}, fmt.Errorf("source, topic, or correlation id is required")
-	}
-	limit := filter.Limit
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 500 {
-		limit = 500
-	}
-	clauses := make([]string, 0, 5)
-	args := make([]any, 0, 5)
-	if source := strings.TrimSpace(filter.Source); source != "" {
-		predicate, sourceArgs := buildEventSourcePredicate(source)
-		if predicate == "" {
-			return eventListQuery{}, fmt.Errorf("event source is invalid")
-		}
-		clauses = append(clauses, predicate)
-		args = append(args, sourceArgs...)
-	}
-	if topic := strings.TrimSpace(filter.Topic); topic != "" {
-		if err := events.ValidateTopicName(topic); err != nil {
-			return eventListQuery{}, err
-		}
-		clauses = append(clauses, "topic = ?")
-		args = append(args, topic)
-	}
-	if correlationID := strings.TrimSpace(filter.CorrelationID); correlationID != "" {
-		clauses = append(clauses, "correlation_id = ?")
-		args = append(args, correlationID)
-	}
-	if filter.AfterSequence > 0 {
-		clauses = append(clauses, "sequence > ?")
-		args = append(args, filter.AfterSequence)
-	}
-	if status := events.NormalizeDispatchStatus(filter.DispatchStatus); status != "" && strings.TrimSpace(filter.DispatchStatus) != "" {
-		clauses = append(clauses, "dispatch_status = ?")
-		args = append(args, status)
-	}
-	query := eventListQuery{
-		where:      ` WHERE ` + strings.Join(clauses, " AND "),
-		filterArgs: args,
-		page:       ` ORDER BY sequence ASC LIMIT ?`,
-		pageArgs:   []any{limit},
-	}
-	if filter.AfterSequence <= 0 && !filter.SequenceAsc {
-		query.page = ` ORDER BY sequence DESC LIMIT ? OFFSET ?`
-		query.pageArgs = []any{limit, max(filter.Offset, 0)}
-	}
-	return query, nil
-}
-
-func (s *eventStore) countEventList(ctx context.Context, query eventListQuery) (int, error) {
-	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM event`+query.where, query.filterArgs...).Scan(&total); err != nil {
+func (s *eventStore) countEventList(ctx context.Context, filter eventListFilter) (int, error) {
+	total, err := s.client.Event.Query().Where(filter.predicates...).Count(ctx)
+	if err != nil {
 		return 0, fmt.Errorf("count events: %w", err)
 	}
 	return total, nil
 }
 
 func (s *eventStore) ListEventSummaries(ctx context.Context, filter domain.TopicEventFilter) ([]domain.EventSummary, int, error) {
-	query, err := buildEventListQuery(filter)
+	list, err := buildEventListFilter(filter)
 	if err != nil {
 		return nil, 0, err
 	}
-	total, err := s.countEventList(ctx, query)
+	total, err := s.countEventList(ctx, list)
 	if err != nil {
 		return nil, 0, err
 	}
-	args := append(append([]any(nil), query.filterArgs...), query.pageArgs...)
-	rows, err := s.db.QueryContext(ctx, selectEventSummarySQL()+query.where+query.page, args...)
+	entities, err := eventPageQuery(s.client, list).
+		Select(
+			event.FieldEventID,
+			event.FieldTopic,
+			event.FieldSource,
+			event.FieldProvider,
+			event.FieldIntent,
+			event.FieldCorrelationID,
+			event.FieldDeliveryID,
+			event.FieldDispatchStatus,
+			event.FieldParentEventID,
+			event.FieldPublisherType,
+			event.FieldPublisherID,
+			event.FieldPublisherRunID,
+			event.FieldCreatedAt,
+			event.FieldDispatchedAt,
+		).
+		All(ctx)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query event summaries: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	items := make([]domain.EventSummary, 0)
-	for rows.Next() {
-		item, err := scanEventSummary(rows.Scan)
-		if err != nil {
-			return nil, 0, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, fmt.Errorf("iterate event summaries: %w", err)
+	items := make([]domain.EventSummary, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, eventSummaryFromEntity(entity))
 	}
 	return items, total, nil
 }
 
+// eventSummaryFromEntity maps the narrow summary projection exactly like
+// scanEventSummary.
+func eventSummaryFromEntity(entity *dao.Event) domain.EventSummary {
+	return domain.EventSummary{
+		ID:             entity.EventID,
+		Sequence:       entity.ID,
+		Topic:          entity.Topic,
+		Source:         entity.Source,
+		Provider:       entity.Provider,
+		Intent:         entity.Intent,
+		CorrelationID:  entity.CorrelationID,
+		DeliveryID:     entity.DeliveryID,
+		DispatchStatus: entity.DispatchStatus,
+		ParentEventID:  entity.ParentEventID,
+		PublisherType:  entity.PublisherType,
+		PublisherID:    entity.PublisherID,
+		PublisherRunID: entity.PublisherRunID,
+		CreatedAt:      storedtime.ParseStoredTime(entity.CreatedAt),
+		DispatchedAt:   storedtime.ParseStoredTime(entity.DispatchedAt),
+	}
+}
+
 // eventSummaryByID loads one event by exact id. Unknown or blank ids return
 // NotFound / argument errors respectively.
-func eventSummaryByID(ctx context.Context, db *sql.DB, eventID string) (domain.EventSummary, error) {
+func eventSummaryByID(ctx context.Context, client *dao.Client, eventID string) (domain.EventSummary, error) {
 	eventID = strings.TrimSpace(eventID)
 	if eventID == "" {
 		return domain.EventSummary{}, fmt.Errorf("event id is required")
 	}
-	item, err := scanEventSummary(db.QueryRowContext(ctx, selectEventSummarySQL()+` WHERE id = ?`, eventID).Scan)
+	entity, err := client.Event.Query().
+		Select(
+			event.FieldEventID,
+			event.FieldID,
+			event.FieldTopic,
+			event.FieldSource,
+			event.FieldProvider,
+			event.FieldIntent,
+			event.FieldCorrelationID,
+			event.FieldDeliveryID,
+			event.FieldDispatchStatus,
+			event.FieldParentEventID,
+			event.FieldPublisherType,
+			event.FieldPublisherID,
+			event.FieldPublisherRunID,
+			event.FieldCreatedAt,
+			event.FieldDispatchedAt,
+		).
+		Where(event.EventIDEQ(eventID)).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.EventSummary{}, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), err)
+		if dao.IsNotFound(err) {
+			return domain.EventSummary{}, domain.ResourceError(domain.ErrNotFound, "event", eventID, fmt.Sprintf("event %s not found", eventID), fmt.Errorf("scan event summary: %w", sql.ErrNoRows))
 		}
 		return domain.EventSummary{}, err
 	}
-	return item, nil
-}
-
-func scanEventSummary(scan func(dest ...any) error) (domain.EventSummary, error) {
-	var item domain.EventSummary
-	var createdAt, dispatchedAt any
-	if err := scan(
-		&item.ID, &item.Sequence, &item.Topic, &item.Source, &item.Provider, &item.Intent,
-		&item.CorrelationID, &item.DeliveryID, &item.DispatchStatus, &item.ParentEventID,
-		&item.PublisherType, &item.PublisherID, &item.PublisherRunID, &createdAt, &dispatchedAt,
-	); err != nil {
-		return domain.EventSummary{}, fmt.Errorf("scan event summary: %w", err)
-	}
-	item.CreatedAt = storedtime.ParseStoredTime(createdAt)
-	item.DispatchedAt = storedtime.ParseStoredTime(dispatchedAt)
-	return item, nil
-}
-
-func selectEventSummarySQL() string {
-	return `SELECT id, sequence, topic, source, provider, intent, correlation_id, delivery_id,
-		dispatch_status, parent_event_id, publisher_type, publisher_id, publisher_run_id, created_at, dispatched_at
-		FROM event`
+	return eventSummaryFromEntity(entity), nil
 }
 
 func (s *eventStore) ListEventTopics(ctx context.Context, source string, offset, limit int) ([]domain.EventTopicSummary, int, error) {
@@ -177,10 +223,12 @@ func (s *eventStore) ListEventTopics(ctx context.Context, source string, offset,
 		limit = 500
 	}
 	var total int
+	// Kept as SQL: COUNT(DISTINCT topic) is an aggregate.
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(DISTINCT topic) FROM event WHERE `+predicate, sourceArgs...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count event topics: %w", err)
 	}
 	queryArgs := append(append([]any(nil), sourceArgs...), limit, offset)
+	// Kept as SQL: GROUP BY topic with COUNT/MAX aggregates and ordering by MAX.
 	rows, err := s.db.QueryContext(ctx, `SELECT topic, COUNT(*), MAX(created_at)
 		FROM event WHERE `+predicate+` GROUP BY topic
 		ORDER BY MAX(created_at) DESC, topic ASC LIMIT ? OFFSET ?`, queryArgs...)
@@ -205,7 +253,7 @@ func (s *eventStore) ListEventTopics(ctx context.Context, source string, offset,
 }
 
 func (s *eventStore) GetEventTrace(ctx context.Context, eventID string, descendantLimit int) (domain.EventTrace, error) {
-	root, eventIDs, truncated, err := eventScopeIDs(ctx, s.db, eventID, descendantLimit)
+	root, eventIDs, truncated, err := eventScopeIDs(ctx, s.client, s.db, eventID, descendantLimit)
 	if err != nil {
 		return domain.EventTrace{}, err
 	}
@@ -229,8 +277,11 @@ func (s *eventStore) GetEventTrace(ctx context.Context, eventID string, descenda
 // ListRuns event_id filtering: the event, its parent_event_id descendants,
 // and events sharing its correlation id. A non-positive or oversized limit
 // falls back to MaxEventScopeEvents.
-func eventScopeIDs(ctx context.Context, db *sql.DB, eventID string, limit int) (domain.EventSummary, []string, bool, error) {
-	root, err := eventSummaryByID(ctx, db, eventID)
+//
+// The descendant walk stays a recursive-CTE query on the shared pool; the
+// root lookup and the correlation merge use ent.
+func eventScopeIDs(ctx context.Context, client *dao.Client, db *sql.DB, eventID string, limit int) (domain.EventSummary, []string, bool, error) {
+	root, err := eventSummaryByID(ctx, client, eventID)
 	if err != nil {
 		return domain.EventSummary{}, nil, false, err
 	}
@@ -245,7 +296,7 @@ func eventScopeIDs(ctx context.Context, db *sql.DB, eventID string, limit int) (
 	// parent_event_id, so the CTE traversal above does not discover them.
 	// Collect events that share the same correlation_id but are outside the
 	// parent chain so that sandbox links and run traces are still visible.
-	eventIDs, correlationTruncated, err := mergeCorrelationEventIDs(ctx, db, root, eventIDs, limit)
+	eventIDs, correlationTruncated, err := mergeCorrelationEventIDs(ctx, client, root, eventIDs, limit)
 	if err != nil {
 		return domain.EventSummary{}, nil, false, err
 	}
@@ -255,7 +306,7 @@ func eventScopeIDs(ctx context.Context, db *sql.DB, eventID string, limit int) (
 // mergeCorrelationEventIDs appends events that share the root's correlation id
 // but are outside its parent chain, up to the remaining limit. It reports
 // whether the merged scope was truncated.
-func mergeCorrelationEventIDs(ctx context.Context, db *sql.DB, root domain.EventSummary, descendants []string, limit int) ([]string, bool, error) {
+func mergeCorrelationEventIDs(ctx context.Context, client *dao.Client, root domain.EventSummary, descendants []string, limit int) ([]string, bool, error) {
 	correlationID := strings.TrimSpace(root.CorrelationID)
 	if correlationID == "" {
 		return descendants, false, nil
@@ -265,30 +316,21 @@ func mergeCorrelationEventIDs(ctx context.Context, db *sql.DB, root domain.Event
 		remaining = 0
 	}
 
-	args := make([]any, 0, len(descendants)+2)
-	args = append(args, correlationID)
-	for _, id := range descendants {
-		args = append(args, id)
+	query := client.Event.Query().
+		Select(event.FieldEventID).
+		Where(event.CorrelationIDEQ(correlationID)).
+		Order(event.ByID()).
+		Limit(remaining + 1)
+	if len(descendants) > 0 {
+		query = query.Where(event.EventIDNotIn(descendants...))
 	}
-	args = append(args, remaining+1)
-	rows, err := db.QueryContext(ctx,
-		`SELECT id FROM event WHERE correlation_id = ? AND id NOT IN (`+placeholders(len(descendants))+`) ORDER BY sequence ASC LIMIT ?`,
-		args...)
+	entities, err := query.All(ctx)
 	if err != nil {
 		return nil, false, fmt.Errorf("query correlation events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-
-	correlationIDs := make([]string, 0, remaining+1)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, false, fmt.Errorf("scan correlation event: %w", err)
-		}
-		correlationIDs = append(correlationIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("iterate correlation events: %w", err)
+	correlationIDs := make([]string, 0, len(entities))
+	for _, entity := range entities {
+		correlationIDs = append(correlationIDs, entity.EventID)
 	}
 	truncated := len(correlationIDs) > remaining
 	if truncated {
@@ -300,6 +342,7 @@ func mergeCorrelationEventIDs(ctx context.Context, db *sql.DB, root domain.Event
 // listEventDescendantIDs walks the event's parent_event_id chain starting at
 // eventID, capped at limit entries. It reports whether more descendants exist.
 func listEventDescendantIDs(ctx context.Context, db *sql.DB, eventID string, limit int) ([]string, bool, error) {
+	// Kept as SQL: recursive CTE over parent_event_id.
 	rows, err := db.QueryContext(ctx, `WITH RECURSIVE descendants(id, sequence) AS (
 		SELECT id, sequence FROM event WHERE id = ?
 		UNION
@@ -337,6 +380,8 @@ func (s *eventStore) listEventRunTraces(ctx context.Context, eventIDs []string) 
 	for index, id := range eventIDs {
 		args[index] = id
 	}
+	// Kept as SQL: one consistent read joining event_delivery with the
+	// scheduler and scheduler_run projections.
 	rows, err := s.db.QueryContext(ctx, `SELECT
 		d.event_id, d.scheduler_id, d.trigger_id, d.scheduler_run_id,
 		d.status, d.error, d.created_at, d.updated_at,
@@ -405,6 +450,7 @@ func (s *eventStore) attachEventSchedulerEvents(ctx context.Context, eventIDs []
 	for index, id := range eventIDs {
 		args[index] = id
 	}
+	// Kept as SQL: DISTINCT join between scheduler_event and event_delivery.
 	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT
 		e.scheduler_id, e.event_id, e.scheduler_run_id, e.type, e.level,
 		e.message, e.linked_sandbox_id, e.created_at

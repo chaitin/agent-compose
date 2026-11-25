@@ -2,9 +2,12 @@ package configstore
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/projectrunlabel"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -13,54 +16,51 @@ const (
 	maxProjectRunLabelValueLen = domain.MaxProjectRunLabelValueBytes
 )
 
-// rowQueryer is satisfied by both *sql.DB and *sql.Tx, letting label reads run
-// either standalone or inside an already-open transaction.
-type rowQueryer interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}
-
 // loadProjectRunLabels aggregates the full label set for one run from
 // project_run_label. There is no redundant column on project_run, so this
 // query is the only way to reconstruct a run's labels for detail-view reads
 // (GetProjectRun and the transactional helpers that back RunAgent/GetRun).
 // ListProjectRunsByOptions never calls this: labels live on RunDetail, not
 // RunSummary, so the high-frequency list/stream path stays free of it.
-func loadProjectRunLabels(ctx context.Context, q rowQueryer, runID string) (map[string]string, error) {
-	rows, err := q.QueryContext(ctx, `SELECT key, value FROM project_run_label WHERE run_id = ?`, runID)
+//
+// The client may be bound to a raw transaction, so the transactional run paths
+// reuse the same helper without opening a second connection.
+func loadProjectRunLabelsByClient(ctx context.Context, client *dao.Client, runID string) (map[string]string, error) {
+	entities, err := client.ProjectRunLabel.Query().
+		Where(projectrunlabel.IDEQ(runID)).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load project run labels %s: %w", runID, err)
 	}
-	defer func() { _ = rows.Close() }()
 	var labels map[string]string
-	for rows.Next() {
-		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
-			return nil, fmt.Errorf("scan project run label %s: %w", runID, err)
-		}
+	for _, entity := range entities {
 		if labels == nil {
 			labels = make(map[string]string, 4)
 		}
-		labels[key] = value
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate project run labels %s: %w", runID, err)
+		labels[entity.Key] = entity.Value
 	}
 	return labels, nil
 }
 
-// insertProjectRunLabelsTx validates and persists labels into
-// project_run_label inside an already-open transaction. This is the single
-// write path for run labels: every caller, whether it reached here through
-// the CLI's --label flag or a direct RunAgent API call, is validated here and
-// only here.
-func insertProjectRunLabelsTx(ctx context.Context, tx *sql.Tx, runID string, labels map[string]string) error {
+// insertProjectRunLabels validates and persists labels into
+// project_run_label. This is the single write path for run labels: every
+// caller, whether it reached here through the CLI's --label flag or a direct
+// RunAgent API call, is validated here and only here.
+func insertProjectRunLabels(ctx context.Context, client *dao.Client, runID string, labels map[string]string) error {
 	normalized, err := domain.NormalizeProjectRunLabels(labels)
 	if err != nil {
 		return err
 	}
 	for key, value := range normalized {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO project_run_label(run_id, key, value) VALUES(?, ?, ?)
-			ON CONFLICT(run_id, key) DO UPDATE SET value = excluded.value`, runID, key, value); err != nil {
+		if err := client.ProjectRunLabel.Create().
+			SetID(runID).
+			SetKey(key).
+			SetValue(value).
+			OnConflict(entsql.ConflictColumns(projectrunlabel.FieldID, projectrunlabel.FieldKey)).
+			Update(func(u *dao.ProjectRunLabelUpsert) {
+				u.SetValue(value)
+			}).
+			Exec(ctx); err != nil {
 			return fmt.Errorf("insert project run label %q for run %s: %w", key, runID, err)
 		}
 	}

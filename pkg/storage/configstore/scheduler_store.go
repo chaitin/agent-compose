@@ -5,40 +5,42 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	domain "github.com/chaitin/agent-compose/pkg/model"
-	"github.com/chaitin/agent-compose/pkg/schedulers"
-	"github.com/chaitin/agent-compose/pkg/storedtime"
 	"sort"
 	"strings"
 	"time"
+
+	entsql "entgo.io/ent/dialect/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/projectscheduler"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerevent"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerrun"
+	"github.com/chaitin/agent-compose/ent/dao/schedulersandboxbinding"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerstate"
+	"github.com/chaitin/agent-compose/ent/dao/schedulertrigger"
+	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/schedulers"
+	"github.com/chaitin/agent-compose/pkg/storedtime"
 )
 
 // schedulerStore owns scheduler execution state, triggers, runs, and events.
 type schedulerStore struct {
-	db *sql.DB
+	db     *sql.DB
+	client *dao.Client
 }
 
 func (s *schedulerStore) ListSchedulerSummaries(ctx context.Context) ([]domain.SchedulerSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM project_scheduler ORDER BY updated_at DESC, created_at DESC, id DESC`)
+	entities, err := s.client.ProjectScheduler.Query().
+		Select(projectscheduler.FieldID).
+		Order(dao.Desc(projectscheduler.FieldUpdatedAt, projectscheduler.FieldCreatedAt, projectscheduler.FieldID)).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query schedulers: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate schedulers: %w", err)
-	}
-	items := make([]domain.SchedulerSummary, 0, len(ids))
-	for _, id := range ids {
-		item, err := s.GetScheduler(ctx, id)
+	items := make([]domain.SchedulerSummary, 0, len(entities))
+	for _, entity := range entities {
+		item, err := s.GetScheduler(ctx, entity.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -67,6 +69,8 @@ func (s *schedulerStore) ListSchedulers(ctx context.Context) ([]Scheduler, error
 	return items, nil
 }
 
+// Kept as SQL: aggregate counts and MAX across scheduler_trigger, scheduler_run,
+// and a join with scheduler_event; ent cannot express this as one consistent read.
 func (s *schedulerStore) hydrateSchedulerSummaryCounts(ctx context.Context, summary *domain.SchedulerSummary) error {
 	if summary == nil || strings.TrimSpace(summary.ID) == "" {
 		return nil
@@ -150,34 +154,38 @@ func (s *schedulerStore) ReplaceSchedulerTriggers(ctx context.Context, scheduler
 		normalized = append(normalized, current)
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin scheduler trigger tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM scheduler_trigger WHERE scheduler_id = ?`, schedulerID); err != nil {
+	if _, err := client.SchedulerTrigger.Delete().
+		Where(schedulertrigger.IDEQ(schedulerID)).
+		Exec(ctx); err != nil {
 		return nil, fmt.Errorf("reset scheduler triggers: %w", err)
 	}
 	for _, trigger := range normalized {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO scheduler_trigger(
-            scheduler_id, trigger_id, kind, topic, interval_ms, enabled, auto_id, spec_json, next_fire_at, last_fired_at
-        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			trigger.SchedulerID,
-			trigger.ID,
-			trigger.Kind,
-			trigger.Topic,
-			trigger.IntervalMs,
-			BoolToInt(trigger.Enabled),
-			BoolToInt(trigger.AutoID),
-			trigger.SpecJSON,
-			domain.NonZeroTimeUnixMilli(trigger.NextFireAt),
-			domain.NonZeroTimeUnixMilli(trigger.LastFiredAt),
-		); err != nil {
+		if _, err := client.SchedulerTrigger.Create().
+			SetID(trigger.SchedulerID).
+			SetTriggerID(trigger.ID).
+			SetKind(trigger.Kind).
+			SetTopic(trigger.Topic).
+			SetIntervalMs(trigger.IntervalMs).
+			SetEnabled(BoolToInt(trigger.Enabled)).
+			SetAutoID(BoolToInt(trigger.AutoID)).
+			SetSpecJSON(trigger.SpecJSON).
+			SetNextFireAt(domain.NonZeroTimeUnixMilli(trigger.NextFireAt)).
+			SetLastFiredAt(domain.NonZeroTimeUnixMilli(trigger.LastFiredAt)).
+			Save(ctx); err != nil {
 			return nil, fmt.Errorf("insert scheduler trigger %s/%s: %w", schedulerID, trigger.ID, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE project_scheduler SET updated_at = ? WHERE id = ?`, time.Now().UTC().Unix(), schedulerID); err != nil {
+	if _, err := client.ProjectScheduler.Update().
+		Where(projectscheduler.IDEQ(schedulerID)).
+		SetUpdatedAt(time.Now().UTC().Unix()).
+		Save(ctx); err != nil {
 		return nil, fmt.Errorf("touch scheduler after trigger replace: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -193,22 +201,17 @@ func (s *schedulerStore) ReplaceSchedulerTriggers(ctx context.Context, scheduler
 }
 
 func (s *schedulerStore) listSchedulerTriggers(ctx context.Context, schedulerID string) ([]domain.SchedulerTrigger, error) {
-	rows, err := s.db.QueryContext(ctx, schedulers.SelectSchedulerTriggerSQL()+` WHERE scheduler_id = ? ORDER BY kind ASC, trigger_id ASC`, schedulerID)
+	entities, err := s.client.SchedulerTrigger.Query().
+		Where(schedulertrigger.IDEQ(schedulerID)).
+		Order(schedulertrigger.ByKind(), schedulertrigger.ByTriggerID()).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query scheduler triggers: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	items := make([]domain.SchedulerTrigger, 0)
-	for rows.Next() {
-		item, err := schedulers.ScanSchedulerTrigger(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate scheduler triggers: %w", err)
+	items := make([]domain.SchedulerTrigger, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, schedulerTriggerFromEntity(entity))
 	}
 	return items, nil
 }
@@ -229,17 +232,22 @@ func (s *schedulerStore) SetSchedulerEnabled(ctx context.Context, schedulerID st
 		}
 	}
 	now := time.Now().UTC()
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.client.Tx(ctx)
 	if err != nil {
 		return fmt.Errorf("begin scheduler enable tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	client := tx.Client()
 
-	result, err := tx.ExecContext(ctx, `UPDATE project_scheduler SET enabled = ?, updated_at = ? WHERE id = ?`, BoolToInt(enabled), now.Unix(), schedulerID)
+	affected, err := client.ProjectScheduler.Update().
+		Where(projectscheduler.IDEQ(schedulerID)).
+		SetEnabled(BoolToInt(enabled)).
+		SetUpdatedAt(now.Unix()).
+		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("update scheduler enabled state: %w", err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		return domain.ResourceError(domain.ErrNotFound, "scheduler", schedulerID, fmt.Sprintf("scheduler %s not found", schedulerID), nil)
 	}
 	if enabled {
@@ -251,12 +259,21 @@ func (s *schedulerStore) SetSchedulerEnabled(ctx context.Context, schedulerID st
 			if err != nil {
 				return fmt.Errorf("schedule scheduler trigger %s/%s: %w", schedulerID, trigger.ID, err)
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE scheduler_trigger SET next_fire_at = ? WHERE scheduler_id = ? AND trigger_id = ?`, domain.NonZeroTimeUnixMilli(nextFireAt), schedulerID, trigger.ID); err != nil {
+			if _, err := client.SchedulerTrigger.Update().
+				Where(schedulertrigger.IDEQ(schedulerID), schedulertrigger.TriggerIDEQ(trigger.ID)).
+				SetNextFireAt(domain.NonZeroTimeUnixMilli(nextFireAt)).
+				Save(ctx); err != nil {
 				return fmt.Errorf("schedule scheduler trigger %s/%s: %w", schedulerID, trigger.ID, err)
 			}
 		}
 	} else {
-		if _, err := tx.ExecContext(ctx, `UPDATE scheduler_trigger SET next_fire_at = 0 WHERE scheduler_id = ? AND kind IN (?, ?, ?)`, schedulerID, domain.SchedulerTriggerKindInterval, domain.SchedulerTriggerKindTimeout, domain.SchedulerTriggerKindCron); err != nil {
+		if _, err := client.SchedulerTrigger.Update().
+			Where(
+				schedulertrigger.IDEQ(schedulerID),
+				schedulertrigger.KindIn(domain.SchedulerTriggerKindInterval, domain.SchedulerTriggerKindTimeout, domain.SchedulerTriggerKindCron),
+			).
+			SetNextFireAt(0).
+			Save(ctx); err != nil {
 			return fmt.Errorf("pause scheduler triggers: %w", err)
 		}
 	}
@@ -272,15 +289,17 @@ func (s *schedulerStore) SetSchedulerTriggerEnabled(ctx context.Context, schedul
 	if schedulerID == "" || triggerID == "" {
 		return fmt.Errorf("scheduler trigger id is required")
 	}
-	row := s.db.QueryRowContext(ctx, schedulers.SelectSchedulerTriggerSQL()+` WHERE scheduler_id = ? AND trigger_id = ?`, schedulerID, triggerID)
-	trigger, err := schedulers.ScanSchedulerTrigger(row.Scan)
+	entity, err := s.client.SchedulerTrigger.Query().
+		Where(schedulertrigger.IDEQ(schedulerID), schedulertrigger.TriggerIDEQ(triggerID)).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			id := schedulerID + "/" + triggerID
-			return domain.ResourceError(domain.ErrNotFound, "scheduler trigger", id, fmt.Sprintf("scheduler trigger %s not found", id), err)
+			return domain.ResourceError(domain.ErrNotFound, "scheduler trigger", id, fmt.Sprintf("scheduler trigger %s not found", id), sql.ErrNoRows)
 		}
 		return err
 	}
+	trigger := schedulerTriggerFromEntity(entity)
 	nextFireAt := int64(0)
 	if enabled && schedulers.TriggerUsesSchedule(trigger.Kind) {
 		scheduledAt, err := schedulers.SchedulerTriggerNextFireAt(time.Now().UTC(), trigger, false)
@@ -289,15 +308,22 @@ func (s *schedulerStore) SetSchedulerTriggerEnabled(ctx context.Context, schedul
 		}
 		nextFireAt = domain.NonZeroTimeUnixMilli(scheduledAt)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE scheduler_trigger SET enabled = ?, next_fire_at = ? WHERE scheduler_id = ? AND trigger_id = ?`, BoolToInt(enabled), nextFireAt, schedulerID, triggerID)
+	affected, err := s.client.SchedulerTrigger.Update().
+		Where(schedulertrigger.IDEQ(schedulerID), schedulertrigger.TriggerIDEQ(triggerID)).
+		SetEnabled(BoolToInt(enabled)).
+		SetNextFireAt(nextFireAt).
+		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("update scheduler trigger enabled state: %w", err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		id := schedulerID + "/" + triggerID
 		return domain.ResourceError(domain.ErrNotFound, "scheduler trigger", id, fmt.Sprintf("scheduler trigger %s not found", id), nil)
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE project_scheduler SET updated_at = ? WHERE id = ?`, time.Now().UTC().Unix(), schedulerID)
+	_, _ = s.client.ProjectScheduler.Update().
+		Where(projectscheduler.IDEQ(schedulerID)).
+		SetUpdatedAt(time.Now().UTC().Unix()).
+		Save(ctx)
 	return nil
 }
 
@@ -306,16 +332,22 @@ func (s *schedulerStore) UpdateSchedulerLastError(ctx context.Context, scheduler
 	if schedulerID == "" {
 		return fmt.Errorf("scheduler id is required")
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE project_scheduler SET last_error = ?, updated_at = ? WHERE id = ?`, strings.TrimSpace(lastError), time.Now().UTC().Unix(), schedulerID)
-	if err != nil {
+	if _, err := s.client.ProjectScheduler.Update().
+		Where(projectscheduler.IDEQ(schedulerID)).
+		SetLastError(strings.TrimSpace(lastError)).
+		SetUpdatedAt(time.Now().UTC().Unix()).
+		Save(ctx); err != nil {
 		return fmt.Errorf("update scheduler last error: %w", err)
 	}
 	return nil
 }
 
 func (s *schedulerStore) MarkSchedulerTriggerFired(ctx context.Context, schedulerID, triggerID string, lastFiredAt, nextFireAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE scheduler_trigger SET last_fired_at = ?, next_fire_at = ? WHERE scheduler_id = ? AND trigger_id = ?`, domain.NonZeroTimeUnixMilli(lastFiredAt), domain.NonZeroTimeUnixMilli(nextFireAt), strings.TrimSpace(schedulerID), strings.TrimSpace(triggerID))
-	if err != nil {
+	if _, err := s.client.SchedulerTrigger.Update().
+		Where(schedulertrigger.IDEQ(strings.TrimSpace(schedulerID)), schedulertrigger.TriggerIDEQ(strings.TrimSpace(triggerID))).
+		SetLastFiredAt(domain.NonZeroTimeUnixMilli(lastFiredAt)).
+		SetNextFireAt(domain.NonZeroTimeUnixMilli(nextFireAt)).
+		Save(ctx); err != nil {
 		return fmt.Errorf("update scheduler trigger fire state: %w", err)
 	}
 	return nil
@@ -327,11 +359,14 @@ func (s *schedulerStore) SetSchedulerTriggerNextFireAt(ctx context.Context, sche
 	if schedulerID == "" || triggerID == "" {
 		return fmt.Errorf("scheduler trigger id is required")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE scheduler_trigger SET next_fire_at = ? WHERE scheduler_id = ? AND trigger_id = ?`, domain.NonZeroTimeUnixMilli(nextFireAt), schedulerID, triggerID)
+	affected, err := s.client.SchedulerTrigger.Update().
+		Where(schedulertrigger.IDEQ(schedulerID), schedulertrigger.TriggerIDEQ(triggerID)).
+		SetNextFireAt(domain.NonZeroTimeUnixMilli(nextFireAt)).
+		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("update scheduler trigger next fire time: %w", err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		id := schedulerID + "/" + triggerID
 		return domain.ResourceError(domain.ErrNotFound, "scheduler trigger", id, fmt.Sprintf("scheduler trigger %s not found", id), nil)
 	}
@@ -342,25 +377,22 @@ func (s *schedulerStore) CreateSchedulerRun(ctx context.Context, run domain.Sche
 	if err := validateHistoryArtifactPaths(&schedulerRunOwner{SchedulerID: run.SchedulerID, RunID: run.ID}, run.ArtifactsDir); err != nil {
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_run(
-        scheduler_id, run_id, trigger_id, trigger_kind, trigger_source, status, started_at, completed_at, duration_ms, error, result_json, payload_json, source_script_sha256, artifacts_dir
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		strings.TrimSpace(run.SchedulerID),
-		strings.TrimSpace(run.ID),
-		strings.TrimSpace(run.TriggerID),
-		strings.TrimSpace(run.TriggerKind),
-		strings.TrimSpace(run.TriggerSource),
-		schedulers.NormalizeRunStatus(run.Status),
-		run.StartedAt.UTC().UnixMilli(),
-		domain.NonZeroTimeUnixMilli(run.CompletedAt),
-		run.DurationMs,
-		run.Error,
-		run.ResultJSON,
-		run.PayloadJSON,
-		run.SourceScriptHash,
-		strings.TrimSpace(run.ArtifactsDir),
-	)
-	if err != nil {
+	if _, err := s.client.SchedulerRun.Create().
+		SetID(strings.TrimSpace(run.ID)).
+		SetSchedulerID(strings.TrimSpace(run.SchedulerID)).
+		SetTriggerID(strings.TrimSpace(run.TriggerID)).
+		SetTriggerKind(strings.TrimSpace(run.TriggerKind)).
+		SetTriggerSource(strings.TrimSpace(run.TriggerSource)).
+		SetStatus(schedulers.NormalizeRunStatus(run.Status)).
+		SetStartedAt(run.StartedAt.UTC().UnixMilli()).
+		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
+		SetDurationMs(run.DurationMs).
+		SetError(run.Error).
+		SetResultJSON(run.ResultJSON).
+		SetPayloadJSON(run.PayloadJSON).
+		SetSourceScriptSha256(run.SourceScriptHash).
+		SetArtifactsDir(strings.TrimSpace(run.ArtifactsDir)).
+		Save(ctx); err != nil {
 		return fmt.Errorf("insert scheduler run %s/%s: %w", run.SchedulerID, run.ID, err)
 	}
 	return nil
@@ -370,28 +402,28 @@ func (s *schedulerStore) UpdateSchedulerRun(ctx context.Context, run domain.Sche
 	if err := validateHistoryArtifactPaths(&schedulerRunOwner{SchedulerID: run.SchedulerID, RunID: run.ID}, run.ArtifactsDir); err != nil {
 		return err
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE scheduler_run SET
-        trigger_id = ?, trigger_kind = ?, trigger_source = ?, status = ?, started_at = ?, completed_at = ?, duration_ms = ?, error = ?, result_json = ?, payload_json = ?, source_script_sha256 = ?, artifacts_dir = ?
-		WHERE scheduler_id = ? AND run_id = ?`,
-		strings.TrimSpace(run.TriggerID),
-		strings.TrimSpace(run.TriggerKind),
-		strings.TrimSpace(run.TriggerSource),
-		schedulers.NormalizeRunStatus(run.Status),
-		run.StartedAt.UTC().UnixMilli(),
-		domain.NonZeroTimeUnixMilli(run.CompletedAt),
-		run.DurationMs,
-		run.Error,
-		run.ResultJSON,
-		run.PayloadJSON,
-		run.SourceScriptHash,
-		strings.TrimSpace(run.ArtifactsDir),
-		strings.TrimSpace(run.SchedulerID),
-		strings.TrimSpace(run.ID),
-	)
+	affected, err := s.client.SchedulerRun.Update().
+		Where(
+			schedulerrun.SchedulerIDEQ(strings.TrimSpace(run.SchedulerID)),
+			schedulerrun.IDEQ(strings.TrimSpace(run.ID)),
+		).
+		SetTriggerID(strings.TrimSpace(run.TriggerID)).
+		SetTriggerKind(strings.TrimSpace(run.TriggerKind)).
+		SetTriggerSource(strings.TrimSpace(run.TriggerSource)).
+		SetStatus(schedulers.NormalizeRunStatus(run.Status)).
+		SetStartedAt(run.StartedAt.UTC().UnixMilli()).
+		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
+		SetDurationMs(run.DurationMs).
+		SetError(run.Error).
+		SetResultJSON(run.ResultJSON).
+		SetPayloadJSON(run.PayloadJSON).
+		SetSourceScriptSha256(run.SourceScriptHash).
+		SetArtifactsDir(strings.TrimSpace(run.ArtifactsDir)).
+		Save(ctx)
 	if err != nil {
 		return fmt.Errorf("update scheduler run %s/%s: %w", run.SchedulerID, run.ID, err)
 	}
-	if rows, _ := result.RowsAffected(); rows == 0 {
+	if affected == 0 {
 		id := strings.TrimSpace(run.SchedulerID) + "/" + strings.TrimSpace(run.ID)
 		return domain.ResourceError(domain.ErrNotFound, "scheduler run", id, fmt.Sprintf("scheduler run %s not found", id), nil)
 	}
@@ -399,38 +431,38 @@ func (s *schedulerStore) UpdateSchedulerRun(ctx context.Context, run domain.Sche
 }
 
 func (s *schedulerStore) GetSchedulerRun(ctx context.Context, schedulerID, runID string) (domain.SchedulerRunSummary, error) {
-	row := s.db.QueryRowContext(ctx, schedulers.SelectSchedulerRunSQL()+` WHERE scheduler_id = ? AND run_id = ?`, strings.TrimSpace(schedulerID), strings.TrimSpace(runID))
-	item, err := schedulers.ScanSchedulerRun(row.Scan)
+	entity, err := s.client.SchedulerRun.Query().
+		Where(
+			schedulerrun.SchedulerIDEQ(strings.TrimSpace(schedulerID)),
+			schedulerrun.IDEQ(strings.TrimSpace(runID)),
+		).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			id := strings.TrimSpace(schedulerID) + "/" + strings.TrimSpace(runID)
-			return domain.SchedulerRunSummary{}, domain.ResourceError(domain.ErrNotFound, "scheduler run", id, fmt.Sprintf("scheduler run %s not found", id), err)
+			return domain.SchedulerRunSummary{}, domain.ResourceError(domain.ErrNotFound, "scheduler run", id, fmt.Sprintf("scheduler run %s not found", id), sql.ErrNoRows)
 		}
 		return domain.SchedulerRunSummary{}, err
 	}
-	return item, nil
+	return schedulerRunFromEntity(entity), nil
 }
 
 func (s *schedulerStore) ListSchedulerRuns(ctx context.Context, schedulerID string, limit int) ([]domain.SchedulerRunSummary, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, schedulers.SelectSchedulerRunSQL()+` WHERE scheduler_id = ? ORDER BY started_at DESC, run_id DESC LIMIT ?`, strings.TrimSpace(schedulerID), limit)
+	entities, err := s.client.SchedulerRun.Query().
+		Where(schedulerrun.SchedulerIDEQ(strings.TrimSpace(schedulerID))).
+		Order(dao.Desc(schedulerrun.FieldStartedAt, schedulerrun.FieldID)).
+		Limit(limit).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query scheduler runs: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	items := make([]domain.SchedulerRunSummary, 0)
-	for rows.Next() {
-		item, err := schedulers.ScanSchedulerRun(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate scheduler runs: %w", err)
+	items := make([]domain.SchedulerRunSummary, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, schedulerRunFromEntity(entity))
 	}
 	return items, nil
 }
@@ -439,44 +471,36 @@ func (s *schedulerStore) ListRecentSchedulerRuns(ctx context.Context, limit int)
 	if limit <= 0 {
 		limit = 50
 	}
-	rows, err := s.db.QueryContext(ctx, schedulers.SelectSchedulerRunSQL()+` ORDER BY started_at DESC, scheduler_id DESC, run_id DESC LIMIT ?`, limit)
+	entities, err := s.client.SchedulerRun.Query().
+		Order(dao.Desc(schedulerrun.FieldStartedAt, schedulerrun.FieldSchedulerID, schedulerrun.FieldID)).
+		Limit(limit).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query recent scheduler runs: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	items := make([]domain.SchedulerRunSummary, 0)
-	for rows.Next() {
-		item, err := schedulers.ScanSchedulerRun(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate recent scheduler runs: %w", err)
+	items := make([]domain.SchedulerRunSummary, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, schedulerRunFromEntity(entity))
 	}
 	return items, nil
 }
 
 func (s *schedulerStore) AddSchedulerEvent(ctx context.Context, event domain.SchedulerEvent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_event(
-        scheduler_id, event_id, scheduler_run_id, trigger_id, type, level, message, payload_json, linked_sandbox_id, linked_cell_id, linked_agent_thread_id, created_at
-    ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		strings.TrimSpace(event.SchedulerID),
-		strings.TrimSpace(event.ID),
-		strings.TrimSpace(event.RunID),
-		strings.TrimSpace(event.TriggerID),
-		strings.TrimSpace(event.Type),
-		strings.TrimSpace(event.Level),
-		strings.TrimSpace(event.Message),
-		strings.TrimSpace(event.PayloadJSON),
-		strings.TrimSpace(event.LinkedSandboxID),
-		strings.TrimSpace(event.LinkedCellID),
-		strings.TrimSpace(event.LinkedAgentThreadID),
-		event.CreatedAt.UTC().UnixMilli(),
-	)
-	if err != nil {
+	if _, err := s.client.SchedulerEvent.Create().
+		SetID(strings.TrimSpace(event.SchedulerID)).
+		SetEventID(strings.TrimSpace(event.ID)).
+		SetSchedulerRunID(strings.TrimSpace(event.RunID)).
+		SetTriggerID(strings.TrimSpace(event.TriggerID)).
+		SetType(strings.TrimSpace(event.Type)).
+		SetLevel(strings.TrimSpace(event.Level)).
+		SetMessage(strings.TrimSpace(event.Message)).
+		SetPayloadJSON(strings.TrimSpace(event.PayloadJSON)).
+		SetLinkedSandboxID(strings.TrimSpace(event.LinkedSandboxID)).
+		SetLinkedCellID(strings.TrimSpace(event.LinkedCellID)).
+		SetLinkedAgentThreadID(strings.TrimSpace(event.LinkedAgentThreadID)).
+		SetCreatedAt(event.CreatedAt.UTC().UnixMilli()).
+		Save(ctx); err != nil {
 		return fmt.Errorf("insert scheduler event %s/%s: %w", event.SchedulerID, event.ID, err)
 	}
 	return nil
@@ -500,45 +524,45 @@ func (s *schedulerStore) ListSchedulerEventsBefore(ctx context.Context, cursor S
 	if limit <= 0 {
 		limit = 100
 	}
-	query := schedulers.SelectSchedulerEventSQL() + ` WHERE scheduler_id = ?`
-	args := []any{strings.TrimSpace(schedulerID)}
+	query := s.client.SchedulerEvent.Query().
+		Where(schedulerevent.IDEQ(strings.TrimSpace(schedulerID)))
 	if !before.IsZero() {
-		query += ` AND (created_at < ? OR (created_at = ? AND event_id < ?))`
 		millis := before.UTC().UnixMilli()
-		args = append(args, millis, millis, strings.TrimSpace(beforeID))
+		query = query.Where(schedulerevent.Or(
+			schedulerevent.CreatedAtLT(millis),
+			schedulerevent.And(schedulerevent.CreatedAtEQ(millis), schedulerevent.EventIDLT(strings.TrimSpace(beforeID))),
+		))
 	}
-	query += ` ORDER BY created_at DESC, event_id DESC LIMIT ?`
-	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	entities, err := query.
+		Order(dao.Desc(schedulerevent.FieldCreatedAt, schedulerevent.FieldEventID)).
+		Limit(limit).
+		All(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query scheduler events: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
 
-	items := make([]domain.SchedulerEvent, 0)
-	for rows.Next() {
-		item, err := schedulers.ScanSchedulerEvent(rows.Scan)
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate scheduler events: %w", err)
+	items := make([]domain.SchedulerEvent, 0, len(entities))
+	for _, entity := range entities {
+		items = append(items, schedulerEventFromEntity(entity))
 	}
 	return items, nil
 }
 
 func (s *schedulerStore) GetSchedulerState(ctx context.Context, schedulerID, key string) (string, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT value_json FROM scheduler_state WHERE scheduler_id = ? AND key = ?`, strings.TrimSpace(schedulerID), strings.TrimSpace(key))
-	var value string
-	if err := row.Scan(&value); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	entity, err := s.client.SchedulerState.Query().
+		Where(
+			schedulerstate.IDEQ(strings.TrimSpace(schedulerID)),
+			schedulerstate.KeyEQ(strings.TrimSpace(key)),
+		).
+		Select(schedulerstate.FieldValueJSON).
+		Only(ctx)
+	if err != nil {
+		if dao.IsNotFound(err) {
 			return "", false, nil
 		}
 		return "", false, fmt.Errorf("query scheduler state: %w", err)
 	}
-	return value, true, nil
+	return entity.ValueJSON, true, nil
 }
 
 func (s *schedulerStore) SetSchedulerState(ctx context.Context, schedulerID, key, valueJSON string) error {
@@ -547,32 +571,50 @@ func (s *schedulerStore) SetSchedulerState(ctx context.Context, schedulerID, key
 	if schedulerID == "" || key == "" {
 		return fmt.Errorf("scheduler state key is required")
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_state(scheduler_id, key, value_json, updated_at) VALUES(?, ?, ?, ?)
-        ON CONFLICT(scheduler_id, key) DO UPDATE SET value_json = excluded.value_json, updated_at = excluded.updated_at`, schedulerID, key, strings.TrimSpace(valueJSON), time.Now().UTC().Unix())
-	if err != nil {
+	valueJSON = strings.TrimSpace(valueJSON)
+	now := time.Now().UTC().Unix()
+	if err := s.client.SchedulerState.Create().
+		SetID(schedulerID).
+		SetKey(key).
+		SetValueJSON(valueJSON).
+		SetUpdatedAt(now).
+		OnConflict(entsql.ConflictColumns(schedulerstate.FieldID, schedulerstate.FieldKey)).
+		Update(func(u *dao.SchedulerStateUpsert) {
+			u.SetValueJSON(valueJSON)
+			u.SetUpdatedAt(now)
+		}).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("upsert scheduler state: %w", err)
 	}
 	return nil
 }
 
 func (s *schedulerStore) DeleteSchedulerState(ctx context.Context, schedulerID, key string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM scheduler_state WHERE scheduler_id = ? AND key = ?`, strings.TrimSpace(schedulerID), strings.TrimSpace(key))
-	if err != nil {
+	if _, err := s.client.SchedulerState.Delete().
+		Where(
+			schedulerstate.IDEQ(strings.TrimSpace(schedulerID)),
+			schedulerstate.KeyEQ(strings.TrimSpace(key)),
+		).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("delete scheduler state: %w", err)
 	}
 	return nil
 }
 
 func (s *schedulerStore) GetSchedulerBinding(ctx context.Context, schedulerID, triggerID string) (domain.SchedulerBinding, bool, error) {
-	row := s.db.QueryRowContext(ctx, schedulers.SelectSchedulerBindingSQL()+` WHERE scheduler_id = ? AND trigger_id = ?`, strings.TrimSpace(schedulerID), strings.TrimSpace(triggerID))
-	item, err := schedulers.ScanSchedulerBinding(row.Scan)
+	entity, err := s.client.SchedulerSandboxBinding.Query().
+		Where(
+			schedulersandboxbinding.IDEQ(strings.TrimSpace(schedulerID)),
+			schedulersandboxbinding.TriggerIDEQ(strings.TrimSpace(triggerID)),
+		).
+		Only(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			return domain.SchedulerBinding{}, false, nil
 		}
 		return domain.SchedulerBinding{}, false, err
 	}
-	return item, true, nil
+	return schedulerBindingFromEntity(entity), true, nil
 }
 
 // GetSchedulerBindingForSandbox reports whether a sandbox is currently bound
@@ -580,15 +622,16 @@ func (s *schedulerStore) GetSchedulerBinding(ctx context.Context, schedulerID, t
 // orphan even when its stopped-runtime policy is remove: the scheduler keeps
 // the binding so the next run can resume it.
 func (s *schedulerStore) GetSchedulerBindingForSandbox(ctx context.Context, sandboxID string) (domain.SchedulerBinding, bool, error) {
-	row := s.db.QueryRowContext(ctx, schedulers.SelectSchedulerBindingSQL()+` WHERE sandbox_id = ? LIMIT 1`, strings.TrimSpace(sandboxID))
-	item, err := schedulers.ScanSchedulerBinding(row.Scan)
+	entity, err := s.client.SchedulerSandboxBinding.Query().
+		Where(schedulersandboxbinding.SandboxIDEQ(strings.TrimSpace(sandboxID))).
+		First(ctx)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if dao.IsNotFound(err) {
 			return domain.SchedulerBinding{}, false, nil
 		}
 		return domain.SchedulerBinding{}, false, err
 	}
-	return item, true, nil
+	return schedulerBindingFromEntity(entity), true, nil
 }
 
 func (s *schedulerStore) UpsertSchedulerBinding(ctx context.Context, binding domain.SchedulerBinding) error {
@@ -605,9 +648,22 @@ func (s *schedulerStore) UpsertSchedulerBinding(ctx context.Context, binding dom
 		binding.CreatedAt = now
 	}
 	binding.UpdatedAt = now
-	_, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_sandbox_binding(scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, scheduler_config_hash, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(scheduler_id, trigger_id) DO UPDATE SET sandbox_id = excluded.sandbox_id, sandbox_config_hash = excluded.sandbox_config_hash, scheduler_config_hash = excluded.scheduler_config_hash, updated_at = excluded.updated_at`, binding.SchedulerID, binding.TriggerID, binding.SandboxID, binding.SandboxConfigHash, binding.SchedulerConfigHash, binding.CreatedAt.Unix(), binding.UpdatedAt.Unix())
-	if err != nil {
+	if err := s.client.SchedulerSandboxBinding.Create().
+		SetID(binding.SchedulerID).
+		SetTriggerID(binding.TriggerID).
+		SetSandboxID(binding.SandboxID).
+		SetSandboxConfigHash(binding.SandboxConfigHash).
+		SetSchedulerConfigHash(binding.SchedulerConfigHash).
+		SetCreatedAt(binding.CreatedAt.Unix()).
+		SetUpdatedAt(binding.UpdatedAt.Unix()).
+		OnConflict(entsql.ConflictColumns(schedulersandboxbinding.FieldID, schedulersandboxbinding.FieldTriggerID)).
+		Update(func(u *dao.SchedulerSandboxBindingUpsert) {
+			u.SetSandboxID(binding.SandboxID)
+			u.SetSandboxConfigHash(binding.SandboxConfigHash)
+			u.SetSchedulerConfigHash(binding.SchedulerConfigHash)
+			u.SetUpdatedAt(binding.UpdatedAt.Unix())
+		}).
+		Exec(ctx); err != nil {
 		return fmt.Errorf("upsert scheduler binding: %w", err)
 	}
 	return nil
@@ -624,32 +680,110 @@ func (s *schedulerStore) CompareAndSwapSchedulerBinding(ctx context.Context, exp
 	}
 	now := time.Now().UTC()
 	if expected == nil {
-		result, err := s.db.ExecContext(ctx, `INSERT INTO scheduler_sandbox_binding(scheduler_id, trigger_id, sandbox_id, sandbox_config_hash, scheduler_config_hash, created_at, updated_at)
-			VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(scheduler_id, trigger_id) DO NOTHING`, replacement.SchedulerID, replacement.TriggerID, replacement.SandboxID, replacement.SandboxConfigHash, replacement.SchedulerConfigHash, now.Unix(), now.Unix())
-		if err != nil {
+		if err := s.client.SchedulerSandboxBinding.Create().
+			SetID(replacement.SchedulerID).
+			SetTriggerID(replacement.TriggerID).
+			SetSandboxID(replacement.SandboxID).
+			SetSandboxConfigHash(replacement.SandboxConfigHash).
+			SetSchedulerConfigHash(replacement.SchedulerConfigHash).
+			SetCreatedAt(now.Unix()).
+			SetUpdatedAt(now.Unix()).
+			OnConflict(entsql.ConflictColumns(schedulersandboxbinding.FieldID, schedulersandboxbinding.FieldTriggerID), entsql.DoNothing()).
+			Exec(ctx); err != nil {
+			// ent surfaces an INSERT ... ON CONFLICT DO NOTHING that hit an
+			// existing row as sql.ErrNoRows (no returned row); that means
+			// another claim won the race.
+			if errors.Is(err, sql.ErrNoRows) {
+				return false, nil
+			}
 			return false, fmt.Errorf("claim scheduler binding: %w", err)
 		}
-		rows, _ := result.RowsAffected()
-		return rows == 1, nil
+		return true, nil
 	}
 	if strings.TrimSpace(expected.SchedulerID) != replacement.SchedulerID || strings.TrimSpace(expected.TriggerID) != replacement.TriggerID {
 		return false, fmt.Errorf("scheduler binding replacement key does not match expected binding")
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE scheduler_sandbox_binding
-		SET sandbox_id = ?, sandbox_config_hash = ?, scheduler_config_hash = ?, updated_at = ?
-		WHERE scheduler_id = ? AND trigger_id = ? AND sandbox_id = ? AND sandbox_config_hash = ?`,
-		replacement.SandboxID,
-		replacement.SandboxConfigHash,
-		replacement.SchedulerConfigHash,
-		now.Unix(),
-		replacement.SchedulerID,
-		replacement.TriggerID,
-		strings.TrimSpace(expected.SandboxID),
-		strings.TrimSpace(expected.SandboxConfigHash),
-	)
+	affected, err := s.client.SchedulerSandboxBinding.Update().
+		Where(
+			schedulersandboxbinding.IDEQ(replacement.SchedulerID),
+			schedulersandboxbinding.TriggerIDEQ(replacement.TriggerID),
+			schedulersandboxbinding.SandboxIDEQ(strings.TrimSpace(expected.SandboxID)),
+			schedulersandboxbinding.SandboxConfigHashEQ(strings.TrimSpace(expected.SandboxConfigHash)),
+		).
+		SetSandboxID(replacement.SandboxID).
+		SetSandboxConfigHash(replacement.SandboxConfigHash).
+		SetSchedulerConfigHash(replacement.SchedulerConfigHash).
+		SetUpdatedAt(now.Unix()).
+		Save(ctx)
 	if err != nil {
 		return false, fmt.Errorf("replace scheduler binding: %w", err)
 	}
-	rows, _ := result.RowsAffected()
-	return rows == 1, nil
+	return affected == 1, nil
+}
+
+// schedulerTriggerFromEntity maps one scheduler_trigger row to the domain value.
+func schedulerTriggerFromEntity(entity *dao.SchedulerTrigger) domain.SchedulerTrigger {
+	return domain.SchedulerTrigger{
+		SchedulerID: entity.ID,
+		ID:          entity.TriggerID,
+		Kind:        entity.Kind,
+		Topic:       entity.Topic,
+		IntervalMs:  entity.IntervalMs,
+		Enabled:     entity.Enabled != 0,
+		AutoID:      entity.AutoID != 0,
+		SpecJSON:    entity.SpecJSON,
+		NextFireAt:  storedtime.ParseStoredTime(entity.NextFireAt),
+		LastFiredAt: storedtime.ParseStoredTime(entity.LastFiredAt),
+	}
+}
+
+// schedulerRunFromEntity maps one scheduler_run row to the domain value.
+func schedulerRunFromEntity(entity *dao.SchedulerRun) domain.SchedulerRunSummary {
+	return domain.SchedulerRunSummary{
+		ID:               entity.ID,
+		SchedulerID:      entity.SchedulerID,
+		TriggerID:        entity.TriggerID,
+		TriggerKind:      entity.TriggerKind,
+		TriggerSource:    entity.TriggerSource,
+		Status:           entity.Status,
+		StartedAt:        storedtime.ParseStoredTime(entity.StartedAt),
+		CompletedAt:      storedtime.ParseStoredTime(entity.CompletedAt),
+		DurationMs:       entity.DurationMs,
+		Error:            entity.Error,
+		ResultJSON:       entity.ResultJSON,
+		PayloadJSON:      entity.PayloadJSON,
+		SourceScriptHash: entity.SourceScriptSha256,
+		ArtifactsDir:     entity.ArtifactsDir,
+	}
+}
+
+// schedulerEventFromEntity maps one scheduler_event row to the domain value.
+func schedulerEventFromEntity(entity *dao.SchedulerEvent) domain.SchedulerEvent {
+	return domain.SchedulerEvent{
+		ID:                  entity.EventID,
+		SchedulerID:         entity.ID,
+		RunID:               entity.SchedulerRunID,
+		TriggerID:           entity.TriggerID,
+		Type:                entity.Type,
+		Level:               entity.Level,
+		Message:             entity.Message,
+		PayloadJSON:         entity.PayloadJSON,
+		LinkedSandboxID:     entity.LinkedSandboxID,
+		LinkedCellID:        entity.LinkedCellID,
+		LinkedAgentThreadID: entity.LinkedAgentThreadID,
+		CreatedAt:           storedtime.ParseStoredTime(entity.CreatedAt),
+	}
+}
+
+// schedulerBindingFromEntity maps one scheduler_sandbox_binding row to the domain value.
+func schedulerBindingFromEntity(entity *dao.SchedulerSandboxBinding) domain.SchedulerBinding {
+	return domain.SchedulerBinding{
+		SchedulerID:         entity.ID,
+		TriggerID:           entity.TriggerID,
+		SandboxID:           entity.SandboxID,
+		SandboxConfigHash:   entity.SandboxConfigHash,
+		SchedulerConfigHash: entity.SchedulerConfigHash,
+		CreatedAt:           storedtime.ParseStoredTime(entity.CreatedAt),
+		UpdatedAt:           storedtime.ParseStoredTime(entity.UpdatedAt),
+	}
 }

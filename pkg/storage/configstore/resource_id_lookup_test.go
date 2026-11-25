@@ -46,9 +46,3 @@ func TestFindResourceIDsReturnsStoredPrefixCandidates(t *testing.T) {
 		t.Fatalf("agent target = %#v", targets[1])
 	}
 }
-
-func TestResourceIDClauseRejectsUnknownColumn(t *testing.T) {
-	if clause, args, ok := resourceIDClause("external_input", strings.Repeat("a", 64)); ok || clause != "" || args != nil {
-		t.Fatalf("resourceIDClause accepted unknown column: %q %v %t", clause, args, ok)
-	}
-}

@@ -3,91 +3,120 @@ package configstore
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"slices"
 
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/eventsandboxlink"
+	"github.com/chaitin/agent-compose/ent/dao/project"
+	"github.com/chaitin/agent-compose/ent/dao/projectrun"
+	"github.com/chaitin/agent-compose/ent/dao/projectruncompletion"
+	"github.com/chaitin/agent-compose/ent/dao/projectscheduler"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerevent"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerrun"
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runhistory"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
 
-func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity) (runhistory.Scope, error) {
+// loadRunHistoryScope reads the history scope inside the caller's run-history
+// fence transaction. The single-table reads go through the ent client bound to
+// that transaction; the locking, the no-op write fence, and the multi-table
+// reference probes stay raw SQL in the callers/helpers.
+func loadRunHistoryScope(ctx context.Context, client *dao.Client, id runhistory.Identity) (runhistory.Scope, error) {
 	scope := runhistory.Scope{}
-	var projectID string
-	if err := tx.QueryRowContext(ctx, "SELECT id FROM project WHERE id=?", id.ProjectID).Scan(&projectID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return scope, domain.ClassifyError(domain.ErrNotFound, "project not found", err)
-		}
+	projectExists, err := client.Project.Query().Where(project.IDEQ(id.ProjectID)).Exist(ctx)
+	if err != nil {
 		return scope, err
+	}
+	if !projectExists {
+		return scope, domain.ClassifyError(domain.ErrNotFound, "project not found", sql.ErrNoRows)
 	}
 	switch id.Kind {
 	case runhistory.Run:
 		// A caller cannot erase a scheduler's child independently and leave
 		// the parent history pointing at missing execution evidence.
-		var schedulerRunExists bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM scheduler_run WHERE run_id=?)", id.RunID).Scan(&schedulerRunExists); err != nil {
+		schedulerRunExists, err := client.SchedulerRun.Query().Where(schedulerrun.IDEQ(id.RunID)).Exist(ctx)
+		if err != nil {
 			return scope, err
 		}
 		if schedulerRunExists {
 			return scope, domain.ClassifyError(domain.ErrFailedPrecondition, "identity refers to a scheduler run", nil)
 		}
 	case runhistory.SchedulerRun:
-		if err := tx.QueryRowContext(ctx, "SELECT project_id FROM project_scheduler WHERE id=?", id.SchedulerID).Scan(&projectID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return scope, domain.ClassifyError(domain.ErrNotFound, "scheduler not found", err)
+		scheduler, err := client.ProjectScheduler.Query().
+			Select(projectscheduler.FieldProjectID).
+			Where(projectscheduler.IDEQ(id.SchedulerID)).
+			Only(ctx)
+		if err != nil {
+			if dao.IsNotFound(err) {
+				return scope, domain.ClassifyError(domain.ErrNotFound, "scheduler not found", sql.ErrNoRows)
 			}
 			return scope, err
 		}
-		if projectID != id.ProjectID {
+		if scheduler.ProjectID != id.ProjectID {
 			return scope, domain.ClassifyError(domain.ErrNotFound, "scheduler not found in project", nil)
 		}
 		run := domain.SchedulerRunSummary{ID: id.RunID, SchedulerID: id.SchedulerID}
-		var schedulerID, status, artifactsDir string
-		err := tx.QueryRowContext(ctx, "SELECT scheduler_id, status, artifacts_dir FROM scheduler_run WHERE run_id=?", id.RunID).Scan(&schedulerID, &status, &artifactsDir)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		schedulerRun, err := client.SchedulerRun.Query().
+			Select(schedulerrun.FieldSchedulerID, schedulerrun.FieldStatus, schedulerrun.FieldArtifactsDir).
+			Where(schedulerrun.IDEQ(id.RunID)).
+			Only(ctx)
+		if err != nil && !dao.IsNotFound(err) {
 			return scope, err
 		}
 		if err == nil {
-			if schedulerID != id.SchedulerID {
+			if schedulerRun.SchedulerID != id.SchedulerID {
 				return scope, domain.ClassifyError(domain.ErrNotFound, "run not found in scheduler", nil)
 			}
-			if !schedulers.SchedulerRunStatusIsTerminal(status) {
+			if !schedulers.SchedulerRunStatusIsTerminal(schedulerRun.Status) {
 				return scope, domain.ClassifyError(domain.ErrFailedPrecondition, "scheduler run is not terminal", nil)
 			}
-			run.Status, run.ArtifactsDir = status, artifactsDir
+			run.Status, run.ArtifactsDir = schedulerRun.Status, schedulerRun.ArtifactsDir
 		}
 		// Even after a prior prune lost the row, this exact scheduler identity
 		// still lets a retry remove its canonical directory and direct links.
 		scope.SchedulerRun = &run
 	}
-	query := "SELECT run_id, project_id, scheduler_id, COALESCE(scheduler_run_id,''), status, sandbox_id, logs_path, artifacts_dir FROM project_run WHERE run_id=?"
+	query := client.ProjectRun.Query()
 	if id.Kind == runhistory.SchedulerRun {
-		query += " OR scheduler_run_id=?"
+		query = query.Where(projectrun.Or(projectrun.IDEQ(id.RunID), projectrun.SchedulerRunIDEQ(id.RunID)))
+	} else {
+		query = query.Where(projectrun.IDEQ(id.RunID))
 	}
-	args := []any{id.RunID}
-	if id.Kind == runhistory.SchedulerRun {
-		args = append(args, id.RunID)
-	}
-	rows, err := tx.QueryContext(ctx, query+" ORDER BY run_id", args...)
+	entities, err := query.
+		Select(
+			projectrun.FieldID,
+			projectrun.FieldProjectID,
+			projectrun.FieldSchedulerID,
+			projectrun.FieldSchedulerRunID,
+			projectrun.FieldStatus,
+			projectrun.FieldSandboxID,
+			projectrun.FieldLogsPath,
+			projectrun.FieldArtifactsDir,
+		).
+		Order(projectrun.ByID()).
+		All(ctx)
 	if err != nil {
 		return scope, err
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var run domain.ProjectRunRecord
-		if err := rows.Scan(&run.RunID, &run.ProjectID, &run.SchedulerID, &run.SchedulerRunID, &run.Status, &run.SandboxID, &run.LogsPath, &run.ArtifactsDir); err != nil {
-			return scope, err
+	for _, entity := range entities {
+		run := domain.ProjectRunRecord{
+			RunID:        entity.ID,
+			ProjectID:    entity.ProjectID,
+			SchedulerID:  entity.SchedulerID,
+			Status:       entity.Status,
+			SandboxID:    entity.SandboxID,
+			LogsPath:     entity.LogsPath,
+			ArtifactsDir: entity.ArtifactsDir,
+		}
+		if entity.SchedulerRunID != nil {
+			run.SchedulerRunID = *entity.SchedulerRunID
 		}
 		scope.Runs = append(scope.Runs, run)
 		if run.SandboxID != "" {
 			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(run.SandboxID))
 		}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return scope, err
 	}
 	for _, run := range scope.Runs {
 		if run.ProjectID != id.ProjectID {
@@ -102,8 +131,8 @@ func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity
 		if !projectRunStatusTerminal(run.Status) {
 			return scope, domain.ClassifyError(domain.ErrFailedPrecondition, "project run is not terminal", nil)
 		}
-		var pending bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM project_run_completion WHERE run_id=?)", run.RunID).Scan(&pending); err != nil {
+		pending, err := client.ProjectRunCompletion.Query().Where(projectruncompletion.IDEQ(run.RunID)).Exist(ctx)
+		if err != nil {
 			return scope, err
 		}
 		if pending {
@@ -111,25 +140,39 @@ func loadRunHistoryScope(ctx context.Context, tx *sql.Tx, id runhistory.Identity
 		}
 	}
 	if id.Kind == runhistory.SchedulerRun {
-		links, err := tx.QueryContext(ctx, "SELECT linked_sandbox_id FROM scheduler_event WHERE scheduler_id=? AND scheduler_run_id=? AND linked_sandbox_id<>'' UNION SELECT sandbox_id FROM event_sandbox_link WHERE scheduler_id=? AND scheduler_run_id=? AND sandbox_id<>''", id.SchedulerID, id.RunID, id.SchedulerID, id.RunID)
+		// Both link tables feed the same sandbox set; the caller canonicalizes
+		// and de-duplicates afterwards, so the two typed reads are equivalent to
+		// the released UNION.
+		eventLinks, err := client.SchedulerEvent.Query().
+			Select(schedulerevent.FieldLinkedSandboxID).
+			Where(
+				schedulerevent.IDEQ(id.SchedulerID),
+				schedulerevent.SchedulerRunIDEQ(id.RunID),
+				schedulerevent.LinkedSandboxIDNEQ(""),
+			).
+			All(ctx)
 		if err != nil {
 			return scope, err
 		}
-		defer func() { _ = links.Close() }()
-		for links.Next() {
-			var sandboxID string
-			if err := links.Scan(&sandboxID); err != nil {
-				return scope, err
-			}
-			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(sandboxID))
+		for _, event := range eventLinks {
+			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(event.LinkedSandboxID))
 		}
-		err = links.Err()
-		_ = links.Close()
+		linkedSandboxes, err := client.EventSandboxLink.Query().
+			Select(eventsandboxlink.FieldSandboxID).
+			Where(
+				eventsandboxlink.SchedulerIDEQ(id.SchedulerID),
+				eventsandboxlink.SchedulerRunIDEQ(id.RunID),
+				eventsandboxlink.SandboxIDNEQ(""),
+			).
+			All(ctx)
 		if err != nil {
 			return scope, err
+		}
+		for _, link := range linkedSandboxes {
+			scope.SandboxIDs = append(scope.SandboxIDs, canonicalSandboxID(link.SandboxID))
 		}
 	}
-	if err := protectRunHistoryReferences(ctx, tx, id, &scope); err != nil {
+	if err := protectRunHistoryReferences(ctx, client, id, &scope); err != nil {
 		return scope, err
 	}
 	slices.Sort(scope.SandboxIDs)

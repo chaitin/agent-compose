@@ -24,6 +24,8 @@ func (s *schedulerStore) ListSchedulerEventsPage(ctx context.Context, filter sch
 		placeholders[index] = "?"
 		args = append(args, schedulerID)
 	}
+	// Kept as SQL: joins scheduler_event with scheduler_run as one consistent
+	// read; ent cannot express this join without splitting the read.
 	query := `SELECT e.scheduler_id, e.event_id, e.scheduler_run_id, r.trigger_id, e.type, e.level, e.message, e.payload_json, e.linked_sandbox_id, e.linked_cell_id, e.linked_agent_thread_id, e.created_at
 		FROM scheduler_event e JOIN scheduler_run r ON r.scheduler_id = e.scheduler_id AND r.run_id = e.scheduler_run_id
 		WHERE e.scheduler_id IN (` + strings.Join(placeholders, ",") + `)`
@@ -97,6 +99,8 @@ func (s *schedulerStore) CountSchedulerEventsPage(ctx context.Context, filter sc
 	for _, schedulerID := range schedulerIDs {
 		args = append(args, schedulerID)
 	}
+	// Kept as SQL: COUNT over a join between scheduler_event and scheduler_run;
+	// ent cannot express this join without splitting the read.
 	query := `SELECT COUNT(*) FROM scheduler_event e JOIN scheduler_run r ON r.scheduler_id = e.scheduler_id AND r.run_id = e.scheduler_run_id WHERE e.scheduler_id IN (` + placeholders(len(schedulerIDs)) + `)`
 	if filter.RequireTrigger {
 		query += ` AND r.trigger_id <> ''`

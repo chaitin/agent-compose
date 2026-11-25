@@ -29,6 +29,7 @@ This repository contains the agent-compose daemon and CLI control plane. It appl
 | `pkg/schedulers`, `pkg/runs`, `pkg/sandboxes`, `internal/projects` | Domain ownership |
 | `pkg/compose` | Compose schema, validation, normalization, and source loading |
 | `pkg/resources`, `pkg/cache`, `pkg/skills` | Resource resolution, runtime cache policy, and skill resolution |
+| `ent` | ent schema (the Go model of the database), generated DAO, codegen, and transaction helper |
 | `proto` | API definitions and generated Go/Connect clients |
 | `runtime` | Guest JavaScript runtime, SDK, and Jupyter kernel metadata |
 | `test/e2e` | Opt-in host-daemon and image lifecycle tests |
@@ -133,6 +134,33 @@ Choose tests based on the behavior changed and boundaries crossed. Do not run ex
 - Changes to Compose topology, installer behavior, images, volumes, networking, or runtime deployment must preserve existing deployment compatibility unless explicitly intended.
 - Follow existing Docker and KVM deployment boundaries. Do not introduce privileged access, host mounts, or networking changes without understanding their security and lifecycle implications.
 - Verify deployment changes against the actual Compose files, installer, and deployment tests.
+- `Dockerfile` and `Dockerfile.agent-compose-local` copy Go source roots explicitly (`cmd`, `internal`, `pkg`, `ent`). A new top-level Go package that the daemon imports must be added to both build stages, or the image build fails even though `go build ./...` passes.
+
+## Database and ORM
+
+- SQLite (default) and PostgreSQL are both first-class backends. The physical
+  schema is owned solely by the released, paired SQL migration chains under
+  `pkg/storage/sqlite/migrations` and `pkg/storage/postgres/migrations`.
+- ent is the only ORM for application data access. `ent/schema` mirrors the
+  released schema one-to-one; `ent/dao` is generated from it. Read `ent/README.md`
+  before changing persistence code.
+- Never edit `ent/dao` or any other generated file by hand. Change `ent/schema`,
+  run `task generate:ent`, and commit the regenerated DAO. `task check:ent` fails
+  when the committed DAO is stale.
+- A model change that adds, removes, or retypes a column or index also needs
+  paired SQLite/PostgreSQL migrations with the same version and name, and must
+  keep existing data roots upgradable in place. Never edit a released migration.
+- Use the generated ent client for single-table reads, writes, upserts, and
+  deletes. Raw SQL is allowed only where ent cannot express the semantics
+  (read-model joins/aggregates/CTEs, row locks, migrations, bulk copy); mark each
+  such statement with `// Kept as SQL: <reason>`.
+- For entities whose physical primary key is composite, never call
+  `UpdateOneID`/`DeleteOneID`: constrain every key column with predicates. The
+  schema comments identify those entities.
+- Do not place ent's automatic migration or `Client.Schema.Create` in the
+  runtime path. Existing databases are migrated only by the released SQL chains.
+- Keep `pkg/storage/database/ent_schema_test.go` green: it verifies the ent
+  schema against the migrated SQLite schema.
 
 ## Documentation and Generated Sources
 
@@ -140,6 +168,7 @@ Choose tests based on the behavior changed and boundaries crossed. Do not run ex
 - Run `task docs:build`. Never edit `build/pages` directly.
 - Changes to `pkg/compose/spec.go` must update the YAML manuals and pass the documentation build.
 - Change API definitions in `proto/**/*.proto` and regenerate with `task generate` or `task generate:proto`. Never edit generated files manually.
+- Change the data model in `ent/schema` and regenerate with `task generate:ent`. Never edit `ent/dao` manually.
 - Change protobuf contracts and their implementations in the same PR. Follow the existing Proto module and release workflow.
 
 ## Commits and Pull Requests

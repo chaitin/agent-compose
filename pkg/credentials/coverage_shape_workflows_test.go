@@ -37,7 +37,6 @@ func testCredentialModelWorkflow(t *testing.T) {
 	TestHandleValidateRejectsUnattributableAndIncompleteHandles(t)
 	TestHandleOwnersAreNormalizedDeterministically(t)
 	TestParseOwnersRejectsMalformedJSON(t)
-	TestScanHandleRoundTripsPersistedRow(t)
 	TestUnixMillisUsesZeroForUnsetTimes(t)
 
 	// Authorization: attribution, lifetime, endpoint scope, owner scope.

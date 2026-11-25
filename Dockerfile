@@ -47,6 +47,7 @@ RUN GOBIN=/usr/local/bin go install github.com/bufbuild/buf/cmd/buf@${BUF_VERSIO
 COPY cmd ./cmd
 COPY internal ./internal
 COPY pkg ./pkg
+COPY ent ./ent
 COPY assets ./assets
 COPY proto ./proto
 COPY buf.yaml buf.gen.yaml ./

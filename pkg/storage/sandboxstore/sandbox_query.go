@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	sandboxdao "github.com/chaitin/agent-compose/ent/dao/sandbox"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 
@@ -18,6 +19,10 @@ import (
 // query from the list options. It returns an empty clause when no filter is
 // set. Every SandboxListOptions filter field is covered, including the keyset
 // cursor (BeforeUpdatedAt / BeforeID).
+//
+// Kept as SQL: the dynamic multi-filter clause depends on each backend's
+// Contains fragment (instr vs strpos) and on a hand-built keyset OR predicate;
+// ent predicates would not guarantee the same generated SQL.
 func sandboxWhere(o domain.SandboxListOptions, d dialect.Dialect) (string, []any) {
 	var conds []string
 	var args []any
@@ -98,6 +103,24 @@ func sandboxWhere(o domain.SandboxListOptions, d dialect.Dialect) (string, []any
 const sandboxSelectCols = `id, short_id, title, trigger_source, driver, vm_status,
 	workspace_path, workspace_id, nested_workspace_id, workspace_name, workspace_type, created_at, updated_at`
 
+// sandboxSummarySelectFields is the ent projection matching sandboxSelectCols
+// for the summary lookup, which reads the same subset of sandboxes columns.
+var sandboxSummarySelectFields = []string{
+	sandboxdao.FieldID,
+	sandboxdao.FieldShortID,
+	sandboxdao.FieldTitle,
+	sandboxdao.FieldTriggerSource,
+	sandboxdao.FieldDriver,
+	sandboxdao.FieldVMStatus,
+	sandboxdao.FieldWorkspacePath,
+	sandboxdao.FieldWorkspaceID,
+	sandboxdao.FieldNestedWorkspaceID,
+	sandboxdao.FieldWorkspaceName,
+	sandboxdao.FieldWorkspaceType,
+	sandboxdao.FieldCreatedAt,
+	sandboxdao.FieldUpdatedAt,
+}
+
 // list returns one page of sandboxes ordered by (updated_at DESC, id DESC),
 // applying the options' filters, keyset, offset, and limit, plus the total
 // count of matching rows. sandboxDir recomputes each result's WorkspacePath to
@@ -105,12 +128,16 @@ const sandboxSelectCols = `id, short_id, title, trigger_source, driver, vm_statu
 func (x *sandboxCache) list(ctx context.Context, o domain.SandboxListOptions, sandboxDir func(string) string) ([]*domain.Sandbox, int, error) {
 	where, args := sandboxWhere(o, x.dialect)
 
+	// Kept as SQL: the count must run against sandboxWhere's dynamically built
+	// clause so it matches the page query exactly.
 	var total int
 	if err := x.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sandboxes`+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count sandbox listing cache: %w", err)
 	}
 
 	offset, limit := sandboxes.NormalizeListBounds(o.Offset, o.Limit)
+	// Kept as SQL: the page query applies sandboxWhere's dynamic filters with the
+	// fixed (updated_at DESC, id DESC) ordering and limit/offset pagination.
 	query := `SELECT ` + sandboxSelectCols + ` FROM sandboxes` + where +
 		` ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`
 	rows, err := x.db.QueryContext(ctx, query, append(args, limit, offset)...)

@@ -37,26 +37,6 @@ func ScanProjectRevision(scan func(dest ...any) error) (domain.ProjectRevisionRe
 	return item, nil
 }
 
-func ScanProjectAgent(scan func(dest ...any) error) (domain.ProjectAgentRecord, error) {
-	var item domain.ProjectAgentRecord
-	var schedulerEnabled int
-	var createdAtRaw any
-	var updatedAtRaw any
-	if err := scan(&item.ID, &item.Name, &item.ShortID, &item.ProjectID, &item.AgentName, &item.Revision, &item.Provider, &item.Model, &item.Image, &item.Driver, &schedulerEnabled, &item.SpecJSON, &createdAtRaw, &updatedAtRaw); err != nil {
-		return domain.ProjectAgentRecord{}, fmt.Errorf("scan project agent: %w", err)
-	}
-	if item.Name == "" {
-		item.Name = item.AgentName
-	}
-	if item.ShortID == "" {
-		item.ShortID = identity.ShortID(item.ID)
-	}
-	item.SchedulerEnabled = schedulerEnabled != 0
-	item.CreatedAt = storedtime.ParseStoredTime(createdAtRaw)
-	item.UpdatedAt = storedtime.ParseStoredTime(updatedAtRaw)
-	return item, nil
-}
-
 func ScanProjectScheduler(scan func(dest ...any) error) (domain.ProjectSchedulerRecord, error) {
 	var item domain.ProjectSchedulerRecord
 	var enabled int

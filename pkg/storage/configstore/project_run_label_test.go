@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/storage/dialect"
 )
 
 func TestCreateProjectRunPersistsAndRoundTripsLabels(t *testing.T) {
@@ -244,7 +245,7 @@ func TestInsertProjectRunLabelsTxUpsertsOnConflict(t *testing.T) {
 	}
 
 	if err := withTx(ctx, db, func(tx *sql.Tx) error {
-		return insertProjectRunLabelsTx(ctx, tx, "run-upsert-labels", map[string]string{"env": "prod"})
+		return insertProjectRunLabels(ctx, newEntTxClient(dialect.SQLite(), tx), "run-upsert-labels", map[string]string{"env": "prod"})
 	}); err != nil {
 		t.Fatalf("upsert label: %v", err)
 	}

@@ -2,31 +2,29 @@ package configstore
 
 import (
 	"context"
-	"database/sql"
+
+	"github.com/chaitin/agent-compose/ent/dao"
+	"github.com/chaitin/agent-compose/ent/dao/eventsandboxlink"
+	"github.com/chaitin/agent-compose/ent/dao/projectrun"
+	"github.com/chaitin/agent-compose/ent/dao/schedulerevent"
+	"github.com/chaitin/agent-compose/ent/dao/schedulersandboxbinding"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runhistory"
 )
 
-func protectRunHistoryReferences(ctx context.Context, tx *sql.Tx, id runhistory.Identity, scope *runhistory.Scope) error {
+func protectRunHistoryReferences(ctx context.Context, client *dao.Client, id runhistory.Identity, scope *runhistory.Scope) error {
 	sandboxes := make(map[string]bool)
 	for _, sandboxID := range scope.SandboxIDs {
 		sandboxes[sandboxID] = true
 	}
 	for sandboxID := range sandboxes {
 		// Rows may carry the canonical or the legacy "sha256:" form of the
-		// same sandbox; match both. The scheduler_event predicate repeats the
-		// partial index condition so SQLite can use it inside the write fence.
-		// scheduler_sandbox_binding holds one row per trigger and stays small.
+		// same sandbox; match both. Each probe is an existence check on one
+		// table, evaluated through the ent client bound to the history fence
+		// transaction.
 		legacy := "sha256:" + sandboxID
-		var referenced bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM scheduler_event WHERE linked_sandbox_id IN (?, ?) AND linked_sandbox_id<>'' AND NOT(scheduler_id=? AND scheduler_run_id=?))
-			OR EXISTS(SELECT 1 FROM event_sandbox_link WHERE sandbox_id IN (?, ?) AND NOT(scheduler_id=? AND scheduler_run_id=?))
-			OR EXISTS(SELECT 1 FROM scheduler_sandbox_binding WHERE sandbox_id IN (?, ?))
-			OR EXISTS(SELECT 1 FROM project_run WHERE sandbox_id IN (?, ?) AND run_id<>? AND NOT(?='scheduler_run' AND COALESCE(scheduler_run_id,'')=? AND scheduler_id=?))`,
-			sandboxID, legacy, id.SchedulerID, id.RunID,
-			sandboxID, legacy, id.SchedulerID, id.RunID,
-			sandboxID, legacy,
-			sandboxID, legacy, id.RunID, id.Kind, id.RunID, id.SchedulerID).Scan(&referenced); err != nil {
+		referenced, err := runHistorySandboxReferenced(ctx, client, id, sandboxID, legacy)
+		if err != nil {
 			return err
 		}
 		if referenced {
@@ -37,4 +35,68 @@ func protectRunHistoryReferences(ctx context.Context, tx *sql.Tx, id runhistory.
 	// history writer rejects paths inside another scheduler run's directory
 	// (validateHistoryArtifactPaths), so no path scan is needed here.
 	return nil
+}
+
+// runHistorySandboxReferenced probes every table that can keep a sandbox
+// identity alive outside the run history being removed.
+func runHistorySandboxReferenced(ctx context.Context, client *dao.Client, id runhistory.Identity, sandboxID, legacy string) (bool, error) {
+	referenced, err := client.SchedulerEvent.Query().
+		Where(
+			schedulerevent.LinkedSandboxIDIn(sandboxID, legacy),
+			schedulerevent.LinkedSandboxIDNEQ(""),
+			schedulerevent.Not(schedulerevent.And(
+				schedulerevent.IDEQ(id.SchedulerID),
+				schedulerevent.SchedulerRunIDEQ(id.RunID),
+			)),
+		).
+		Exist(ctx)
+	if err != nil {
+		return false, err
+	}
+	if referenced {
+		return true, nil
+	}
+	referenced, err = client.EventSandboxLink.Query().
+		Where(
+			eventsandboxlink.SandboxIDIn(sandboxID, legacy),
+			eventsandboxlink.Not(eventsandboxlink.And(
+				eventsandboxlink.SchedulerIDEQ(id.SchedulerID),
+				eventsandboxlink.SchedulerRunIDEQ(id.RunID),
+			)),
+		).
+		Exist(ctx)
+	if err != nil {
+		return false, err
+	}
+	if referenced {
+		return true, nil
+	}
+	referenced, err = client.SchedulerSandboxBinding.Query().
+		Where(schedulersandboxbinding.SandboxIDIn(sandboxID, legacy)).
+		Exist(ctx)
+	if err != nil {
+		return false, err
+	}
+	if referenced {
+		return true, nil
+	}
+	query := client.ProjectRun.Query().
+		Where(
+			projectrun.SandboxIDIn(sandboxID, legacy),
+			projectrun.IDNEQ(id.RunID),
+		)
+	if id.Kind == runhistory.SchedulerRun {
+		// The released predicate used COALESCE(scheduler_run_id,'') here.
+		// scheduler_run_id is nullable (legacy rows from migration 000005 store
+		// NULL), and SQL's NOT(NULL AND ...) is NULL, so comparing the nullable
+		// column directly would silently drop those rows instead of counting
+		// them as external references. Keep the old three-valued behaviour:
+		// only a non-NULL matching run id is the self-reference to exclude.
+		query = query.Where(projectrun.Not(projectrun.And(
+			projectrun.SchedulerRunIDNotNil(),
+			projectrun.SchedulerRunIDEQ(id.RunID),
+			projectrun.SchedulerIDEQ(id.SchedulerID),
+		)))
+	}
+	return query.Exist(ctx)
 }
