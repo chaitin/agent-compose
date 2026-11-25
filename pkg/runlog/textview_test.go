@@ -221,7 +221,10 @@ func TestTextViewSkipsUnreadableLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, writeErr := f.WriteString("not json\n" + strings.Repeat("x", int(maxLogLineBytes)+1) + "\n")
+	// Valid JSON that is not an entry must not pass for one either: read as
+	// one, {} has seq 0 and text offset 0 and would rewind every reader.
+	_, writeErr := f.WriteString("not json\n" + strings.Repeat("x", int(maxLogLineBytes)+1) + "\n" +
+		"{}\nnull\n" + `{"type":"text","text":"no seq"}` + "\n" + `{"seq":9,"text_offset":0}` + "\n")
 	_ = f.Close()
 	if writeErr != nil {
 		t.Fatal(writeErr)
@@ -230,11 +233,21 @@ func TestTextViewSkipsUnreadableLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if w.Seq() != 1 {
+		t.Fatalf("reopened at seq %d, want 1", w.Seq())
+	}
 	if err := w.AppendOutput("stdout", "after\n"); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
+	}
+	entries, err := ReadEntries(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 || entries[1].Seq != 2 || entries[1].TextOffset != 7 {
+		t.Fatalf("entries = %+v", entries)
 	}
 	v, err := OpenTextView(path)
 	if err != nil {

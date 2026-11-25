@@ -186,6 +186,40 @@ func pathSegment(name, id string) (string, error) {
 	return id, nil
 }
 
+// decodeEntry decodes one run log line. Every reader goes through it, so they
+// agree on which lines are entries: a line that is valid JSON but not one the
+// writer produced (no type, or no sequence number) is skipped like an
+// unparsable one, rather than resetting a reader's position to zero.
+func decodeEntry(line []byte) (Entry, bool) {
+	var entry Entry
+	if line == nil || json.Unmarshal(line, &entry) != nil || !isEntry(entry.Type, entry.Seq) {
+		return Entry{}, false
+	}
+	return entry, true
+}
+
+// entryHead is the part of an entry a reader needs to locate text without
+// decoding a whole line; decodeHead applies decodeEntry's rule to it.
+type entryHead struct {
+	Seq        uint64    `json:"seq"`
+	Type       EntryType `json:"type"`
+	TextOffset uint64    `json:"text_offset"`
+}
+
+func decodeHead(line []byte) (entryHead, bool) {
+	var head entryHead
+	if line == nil || json.Unmarshal(line, &head) != nil || !isEntry(head.Type, head.Seq) {
+		return entryHead{}, false
+	}
+	return head, true
+}
+
+// isEntry is the rule both decoders share: the writer gives every entry a
+// type and a sequence number starting at 1.
+func isEntry(typ EntryType, seq uint64) bool {
+	return typ != "" && seq != 0
+}
+
 // Render is the entry's contribution to the run's text view. It keeps the
 // shape of the legacy transcript: prose as-is, tool calls as a [tool:name]
 // header with the command or arguments, then the tool's output.

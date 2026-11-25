@@ -23,6 +23,9 @@ const DefaultToolOutputHalf = 8 << 10
 // it. Ordinary runs stay far below it.
 const DefaultRunLogMaxBytes int64 = 256 << 20
 
+// Uncapped, as Options.MaxBytes, writes a log with no size cap.
+const Uncapped int64 = -1
+
 // maxLogLineBytes bounds one run log line, so that a single oversized entry —
 // however it is produced — cannot make the whole log unreadable: the writer
 // shrinks an entry that would not fit (see fitLine) and the reader skips lines
@@ -31,8 +34,10 @@ const maxLogLineBytes int64 = 16 << 20
 
 // Options configures a Writer. Zero values use the defaults.
 type Options struct {
-	// MaxBytes caps the log; zero leaves it uncapped. Callers pass
-	// DefaultRunLogMaxBytes unless they have a reason to differ.
+	// MaxBytes caps the log: zero applies DefaultRunLogMaxBytes and
+	// Uncapped (any negative value) turns the cap off. The cap is soft:
+	// past it only essential entries (user input, turn ends, truncation
+	// markers) are written, and they may take the file beyond it.
 	MaxBytes       int64
 	ToolOutputHalf int
 	Now            func() time.Time
@@ -88,6 +93,9 @@ type Writer struct {
 func Open(path string, opts Options) (*Writer, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
+	}
+	if opts.MaxBytes == 0 {
+		opts.MaxBytes = DefaultRunLogMaxBytes
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("create run log dir: %w", err)
@@ -147,8 +155,10 @@ func (w *Writer) recover(path string) error {
 		}
 		good += line.bytes
 		w.size = good
-		var entry Entry
-		if json.Unmarshal(line.data, &entry) != nil {
+		entry, ok := decodeEntry(line.data)
+		// Sequence numbers only grow; a line that would move them back did
+		// not come from this writer and must not reset its position.
+		if !ok || entry.Seq <= w.seq {
 			continue
 		}
 		w.seq = entry.Seq
@@ -200,6 +210,9 @@ func (w *Writer) appendUser(text string, initial bool) (Entry, error) {
 }
 
 // AppendOutput records process output. stream is stdout, stderr or tty.
+// data must be whole UTF-8, as the drivers' stream decoders deliver it
+// (pkg/driver/utf8_stream.go): JSON stores invalid UTF-8 as U+FFFD, so a
+// character split across two calls would be lost.
 // Valid UTF-8 is kept byte for byte, so filtering a log by stream reproduces
 // it; a JSON string cannot carry invalid sequences, which become U+FFFD.
 func (w *Writer) AppendOutput(stream, data string) error {
@@ -319,10 +332,12 @@ func (w *Writer) writeDroppedLocked(turn uint32) error {
 	if w.dropped == 0 {
 		return nil
 	}
-	dropped := w.dropped
+	if _, err := w.writeLocked(Entry{Type: EntryTruncated, Turn: turn, DroppedBytes: w.dropped}); err != nil {
+		// Keep the count so the next marker still reports these bytes.
+		return err
+	}
 	w.dropped = 0
-	_, err := w.writeLocked(Entry{Type: EntryTruncated, Turn: turn, DroppedBytes: dropped})
-	return err
+	return nil
 }
 
 func (w *Writer) writeLocked(entry Entry) (Entry, error) {
@@ -330,7 +345,7 @@ func (w *Writer) writeLocked(entry Entry) (Entry, error) {
 	entry.Seq = w.seq + 1
 	entry.Time = w.opts.Now().UTC()
 	entry.TextOffset = w.textOffset
-	entry, line, err := fitLine(entry)
+	line, err := fitLine(entry)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -371,24 +386,24 @@ func (w *Writer) writeLocked(entry Entry) (Entry, error) {
 // lose the very entries a run's state depends on (a user message, a turn end)
 // and hand the caller no sequence number to point at. What was cut is marked
 // in the text itself.
-func fitLine(entry Entry) (Entry, []byte, error) {
+func fitLine(entry Entry) ([]byte, error) {
 	line, err := json.Marshal(entry)
 	if err != nil {
-		return Entry{}, nil, fmt.Errorf("encode run log entry: %w", err)
+		return nil, fmt.Errorf("encode run log entry: %w", err)
 	}
 	for budget := maxEntryTextBytes; int64(len(line))+1 > maxLogLineBytes; budget /= 4 {
 		fitted := shrinkEntry(entry, budget)
 		if line, err = json.Marshal(fitted); err != nil {
-			return Entry{}, nil, fmt.Errorf("encode run log entry: %w", err)
+			return nil, fmt.Errorf("encode run log entry: %w", err)
 		}
 		if int64(len(line))+1 <= maxLogLineBytes {
-			return fitted, line, nil
+			return line, nil
 		}
 		if budget == 0 {
-			return Entry{}, nil, fmt.Errorf("run log %s entry does not fit in one line", entry.Type)
+			return nil, fmt.Errorf("run log %s entry does not fit in one line", entry.Type)
 		}
 	}
-	return entry, line, nil
+	return line, nil
 }
 
 // shrinkEntry keeps at most budget bytes of each long field of entry. It

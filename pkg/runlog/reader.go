@@ -2,7 +2,6 @@ package runlog
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -105,8 +104,7 @@ func scanEntries(r io.Reader, start int64, fn func(Entry) bool) (int64, error) {
 		line, err := readLogLine(reader)
 		if line.complete {
 			pos += line.bytes
-			var entry Entry
-			if json.Unmarshal(line.data, &entry) == nil && !fn(entry) {
+			if entry, ok := decodeEntry(line.data); ok && !fn(entry) {
 				return pos, nil
 			}
 		}

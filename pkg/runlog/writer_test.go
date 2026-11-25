@@ -93,14 +93,15 @@ func TestFitLineShrinksEveryLongField(t *testing.T) {
 	}
 	original := &Tool{ID: "t", Name: "Bash", Command: big, Output: big, Error: big,
 		Input: json.RawMessage(`"` + strings.Repeat("i", int(maxLogLineBytes)) + `"`), Changes: changes}
-	entry, line, err := fitLine(Entry{Type: EntryToolCall, Tool: original, Usage: &Usage{Model: big}})
+	line, err := fitLine(Entry{Type: EntryToolCall, Tool: original, Usage: &Usage{Model: big}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if int64(len(line))+1 > maxLogLineBytes || !json.Valid(line) {
+	var entry Entry
+	if int64(len(line))+1 > maxLogLineBytes || json.Unmarshal(line, &entry) != nil {
 		t.Fatalf("line: %d bytes, valid=%v", len(line), json.Valid(line))
 	}
-	if entry.Tool == original || len(original.Command) != len(big) || len(original.Changes) != len(changes) {
+	if len(original.Command) != len(big) || len(original.Changes) != len(changes) {
 		t.Fatal("fitLine modified the caller's tool")
 	}
 	if !strings.Contains(entry.Tool.Command, "bytes omitted") || len(entry.Tool.Changes) >= len(changes) {

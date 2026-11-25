@@ -3,7 +3,6 @@ package runlog
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -90,8 +89,8 @@ func (v *TextView) Refresh() error {
 		return err
 	}
 	err = scanLinesBackward(v.file, v.end, newEnd, func(_ int64, line []byte) bool {
-		var entry Entry
-		if line == nil || json.Unmarshal(line, &entry) != nil {
+		entry, valid := decodeEntry(line)
+		if !valid {
 			return true
 		}
 		v.size = entry.TextOffset + uint64(len(Render(entry)))
@@ -130,8 +129,7 @@ func (v *TextView) ReadAt(p []byte, off int64) (int, error) {
 		line, readErr := readLogLine(reader)
 		lineStart := pos
 		pos += line.bytes
-		var entry Entry
-		if line.complete && line.data != nil && json.Unmarshal(line.data, &entry) == nil {
+		if entry, ok := decodeEntry(line.data); line.complete && ok {
 			rendered := Render(entry)
 			if rendered != "" && entry.TextOffset+uint64(len(rendered)) > at {
 				skip := uint64(0)
@@ -168,8 +166,8 @@ func (v *TextView) TailOffset(lines int) (uint64, error) {
 	var found uint64
 	ok := false
 	err := scanLinesBackward(v.file, 0, v.end, func(_ int64, line []byte) bool {
-		var entry Entry
-		if line == nil || json.Unmarshal(line, &entry) != nil {
+		entry, valid := decodeEntry(line)
+		if !valid {
 			return true
 		}
 		rendered := Render(entry)
@@ -240,11 +238,8 @@ func (v *TextView) lineFrom(pos, hi int64) (start, next int64, textOffset uint64
 		line, readErr := readLogLine(reader)
 		lineStart := at
 		at += line.bytes
-		var header struct {
-			TextOffset uint64 `json:"text_offset"`
-		}
-		if line.complete && line.data != nil && json.Unmarshal(line.data, &header) == nil {
-			return lineStart, at, header.TextOffset, true, nil
+		if head, ok := decodeHead(line.data); line.complete && ok {
+			return lineStart, at, head.TextOffset, true, nil
 		}
 		if readErr != nil {
 			return 0, 0, 0, false, ignoreEOF(readErr)

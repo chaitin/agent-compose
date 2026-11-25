@@ -234,8 +234,16 @@ func TestCapMarkerCountsTheBytesItDropped(t *testing.T) {
 	}
 }
 
-func TestLogIsUncappedByDefault(t *testing.T) {
-	w, path := openTest(t, Options{})
+func TestLogIsCappedByDefault(t *testing.T) {
+	w, _ := openTest(t, Options{})
+	if w.opts.MaxBytes != DefaultRunLogMaxBytes {
+		t.Fatalf("default cap = %d, want %d", w.opts.MaxBytes, DefaultRunLogMaxBytes)
+	}
+	_ = w.Close()
+}
+
+func TestUncappedLogKeepsEverything(t *testing.T) {
+	w, path := openTest(t, Options{MaxBytes: Uncapped})
 	chunk := strings.Repeat("z", 1<<20)
 	for i := 0; i < 20; i++ {
 		if err := w.AppendOutput("stdout", chunk); err != nil {
@@ -246,6 +254,48 @@ func TestLogIsUncappedByDefault(t *testing.T) {
 	entries, _ := ReadEntries(path, 0)
 	if len(entries) != 20 || Summarize(entries).Truncated {
 		t.Fatalf("entries = %s", types(entries))
+	}
+}
+
+// A marker that fails to write must not lose its count: the next marker
+// written still reports every byte dropped since the last one.
+func TestCapMarkerKeepsItsCountWhenItFailsToWrite(t *testing.T) {
+	w, path := openTest(t, Options{MaxBytes: 600})
+	_, _ = w.AppendUser("go")
+	for i := 0; i < 10; i++ {
+		_ = w.AppendOutput("stdout", strings.Repeat("x", 100))
+	}
+	readOnly, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.mu.Lock()
+	writable := w.file
+	w.file = readOnly
+	w.mu.Unlock()
+	if _, err := w.EndTurn("stop", ""); err == nil {
+		t.Fatal("EndTurn on a read-only file succeeded")
+	}
+	w.mu.Lock()
+	w.file = writable
+	w.mu.Unlock()
+	_ = readOnly.Close()
+	if _, err := w.EndTurn("stop", ""); err != nil {
+		t.Fatal(err)
+	}
+	_ = w.Close()
+	entries, _ := ReadEntries(path, 0)
+	var kept, dropped uint64
+	for _, e := range entries {
+		switch e.Type {
+		case EntryOutput:
+			kept += uint64(len(e.Data))
+		case EntryTruncated:
+			dropped += e.DroppedBytes
+		}
+	}
+	if kept+dropped != 1000 {
+		t.Fatalf("kept %d + dropped %d, want 1000; entries = %s", kept, dropped, types(entries))
 	}
 }
 
