@@ -52,5 +52,11 @@ func (r *agentCellRun) completeRunStep(result domain.ExecResult, agent domain.Ag
 	if !cell.Success {
 		assistant.Type, assistant.Level = "agent.assistant.failed", "error"
 	}
+	// Nothing is stored in the sandbox: ListSandboxHistory rebuilds this cell
+	// from the run. Watchers still see it finish.
+	if r.e.streams != nil {
+		r.e.streams.PublishCellCompleted(r.session.Summary.ID, cell)
+		r.e.streams.PublishEventAdded(r.session.Summary.ID, assistant)
+	}
 	return cell, r.userEvent, assistant, execErr
 }

@@ -97,13 +97,15 @@ func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain
 	}
 	startedAt := time.Now().UTC()
 	userEvent := domain.SandboxEvent{ID: uuid.NewString(), Type: "agent.user", Level: "info", Message: message, CreatedAt: startedAt}
+	// A run-log run keeps its history in the run log, which ListSandboxHistory
+	// reads back; watchers of the sandbox still see the turn live.
 	if request.History == execution.AgentHistoryNotebook {
 		if err := e.store.AddEvent(ctx, session.Summary.ID, userEvent); err != nil {
 			return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, err
 		}
-		if e.streams != nil {
-			e.streams.PublishEventAdded(session.Summary.ID, userEvent)
-		}
+	}
+	if e.streams != nil {
+		e.streams.PublishEventAdded(session.Summary.ID, userEvent)
 	}
 
 	cell := domain.NotebookCell{
@@ -118,9 +120,9 @@ func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain
 		if err := e.store.AddCell(ctx, session, cell); err != nil {
 			return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, err
 		}
-		if e.streams != nil {
-			e.streams.PublishCellStarted(session.Summary.ID, cell)
-		}
+	}
+	if e.streams != nil {
+		e.streams.PublishCellStarted(session.Summary.ID, cell)
 	}
 
 	run := &agentCellRun{

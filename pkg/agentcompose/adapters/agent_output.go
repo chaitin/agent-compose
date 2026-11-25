@@ -116,9 +116,9 @@ func (r *agentCellRun) writeVisibleChunk(chunk domain.ExecChunk) {
 			r.setStreamErr(err)
 			return
 		}
-		if r.e.streams != nil {
-			r.e.streams.PublishCellOutput(r.session.Summary.ID, snapshot.ID, chunk.Text, chunk.Stream)
-		}
+	}
+	if r.e.streams != nil {
+		r.e.streams.PublishCellOutput(r.session.Summary.ID, snapshot.ID, chunk.Text, chunk.Stream)
 	}
 	if r.stream.OnChunk != nil {
 		if err := r.stream.OnChunk(snapshot.ID, chunk); err != nil {

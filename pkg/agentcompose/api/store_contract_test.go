@@ -6,6 +6,7 @@ import "github.com/chaitin/agent-compose/pkg/storage/configstore"
 // would only fail at runtime with "store is required". Pin that the real
 // store provides them; handler tests use fakes and cannot.
 var (
-	_ RunEventStore   = (*configstore.ConfigStore)(nil)
-	_ RunMessageStore = (*configstore.ConfigStore)(nil)
+	_ RunEventStore          = (*configstore.ConfigStore)(nil)
+	_ RunMessageStore        = (*configstore.ConfigStore)(nil)
+	_ SandboxRunHistoryStore = (*configstore.ConfigStore)(nil)
 )

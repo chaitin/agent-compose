@@ -211,7 +211,8 @@ func RegisterRoutes(di do.Injector) {
 	).WithRunTargetResolver(do.MustInvoke[*runs.SandboxRunTargetResolver](di)).
 		WithRemovalCoordinator(do.MustInvoke[*sandboxes.RemovalCoordinator](di)).
 		WithWorkspaceFiles(adapters.NewWorkspaceFiles(do.MustInvoke[*appconfig.Config](di))).
-		WithEgressPolicyObserver(do.MustInvoke[*adapters.SandboxEgressProxy](di))
+		WithEgressPolicyObserver(do.MustInvoke[*adapters.SandboxEgressProxy](di)).
+		WithRunHistory(do.MustInvoke[*configstore.ConfigStore](di))
 	path, handler = agentcomposev2connect.NewSandboxServiceHandler(sandboxHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewSettingsServiceHandler(api.NewSettingsV2Handler(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)), handlerOptions...)
