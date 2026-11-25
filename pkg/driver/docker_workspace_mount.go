@@ -35,8 +35,16 @@ func (r *dockerRuntime) dockerRuntimeMountsForWorkspace(ctx context.Context, doc
 	if err := validateWorkspaceRuntimeManifest(r.config, sandbox, manifest, workspace); err != nil {
 		return nil, err
 	}
+	nfsMounts, err := dockerNFSVolumeMounts(sandbox)
+	if err != nil {
+		return nil, err
+	}
 	mounts := make([]mountapi.Mount, 0, len(manifest.Mounts))
 	for _, item := range manifest.Mounts {
+		if nfs, ok := nfsMounts[item.HostPath]; ok {
+			mounts = append(mounts, dockerNFSVolumeMount(nfs, item.GuestPath, item.ReadOnly))
+			continue
+		}
 		mount := mountapi.Mount{Type: mountapi.TypeBind, Target: item.GuestPath, ReadOnly: item.ReadOnly}
 		if workspace != nil && item.GuestPath == workspace.guestPath {
 			mount.Source, err = r.bindWorkspaceMountSource(ctx, dockerClient, item.HostPath)

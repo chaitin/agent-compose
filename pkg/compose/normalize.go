@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/nfsvolume"
 	"github.com/chaitin/agent-compose/pkg/sources"
 
 	"github.com/robfig/cron/v3"
@@ -1070,15 +1071,23 @@ func normalizeProjectVolumes(values map[string]VolumeSpec) (map[string]Normalize
 		if driver == "" {
 			driver = "local"
 		}
-		if driver != "local" && driver != "k8s" {
-			return nil, &ValidationError{Path: joinPath(joinPath("volumes", key), "driver"), Message: "volume driver must be local or k8s"}
+		if driver != "local" && driver != "k8s" && driver != nfsvolume.DriverName {
+			return nil, &ValidationError{Path: joinPath(joinPath("volumes", key), "driver"), Message: "volume driver must be local, k8s or nfs"}
+		}
+		options := normalizeStringMap(value.Options)
+		if driver == nfsvolume.DriverName && !value.External {
+			// Reject a bad export when the project is applied rather than
+			// when the first sandbox tries to mount it.
+			if _, _, err := nfsvolume.FromOptions(options); err != nil {
+				return nil, &ValidationError{Path: joinPath(joinPath("volumes", key), "options"), Message: err.Error()}
+			}
 		}
 		normalized[key] = NormalizedVolumeSpec{
 			Name:     strings.TrimSpace(value.Name),
 			Driver:   driver,
 			External: value.External,
 			Labels:   normalizeStringMap(value.Labels),
-			Options:  normalizeStringMap(value.Options),
+			Options:  options,
 		}
 	}
 	return normalized, nil

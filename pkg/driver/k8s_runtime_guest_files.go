@@ -384,7 +384,9 @@ func k8sGuestDirVolumeMountOverlapKind(sandbox *Sandbox, guestDir string) k8sGue
 	}
 	guestDir = filepath.Clean(guestDir)
 	for _, mount := range sandbox.VolumeMounts {
-		if strings.ToLower(strings.TrimSpace(mount.Type)) != "volume" || strings.TrimSpace(mount.Driver) != RuntimeDriverK8s {
+		// An nfs export holds data the sandbox does not own, exactly like a
+		// PVC, so the push must not rm -rf over it either.
+		if strings.ToLower(strings.TrimSpace(mount.Type)) != "volume" || (strings.TrimSpace(mount.Driver) != RuntimeDriverK8s && !isNFSVolumeMount(mount)) {
 			continue
 		}
 		target := strings.TrimSpace(mount.Target)

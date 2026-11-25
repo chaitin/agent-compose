@@ -7,6 +7,7 @@ import (
 const (
 	VolumeDriverLocal = "local"
 	VolumeDriverK8s   = "k8s"
+	VolumeDriverNFS   = "nfs"
 
 	VolumeMountTypeVolume = "volume"
 	VolumeMountTypeBind   = "bind"

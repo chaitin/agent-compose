@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/nfsvolume"
 )
 
 var volumeNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -33,6 +34,17 @@ func NormalizeDriver(driver string) string {
 	return driver
 }
 
+// IsSupportedDriver reports whether driver names a volume driver agent-compose
+// implements. The driver must already be normalized.
+func IsSupportedDriver(driver string) bool {
+	switch driver {
+	case domain.VolumeDriverLocal, domain.VolumeDriverK8s, domain.VolumeDriverNFS:
+		return true
+	default:
+		return false
+	}
+}
+
 // NormalizeRecord enforces the invariants a stored volume must satisfy.
 func NormalizeRecord(item domain.VolumeRecord) (domain.VolumeRecord, error) {
 	item.ID = strings.TrimSpace(item.ID)
@@ -49,7 +61,7 @@ func NormalizeRecord(item domain.VolumeRecord) (domain.VolumeRecord, error) {
 	if item.ID == "" {
 		return domain.VolumeRecord{}, fmt.Errorf("volume id is required")
 	}
-	if item.Driver != domain.VolumeDriverLocal && item.Driver != domain.VolumeDriverK8s {
+	if !IsSupportedDriver(item.Driver) {
 		return domain.VolumeRecord{}, fmt.Errorf("volume driver %q is not supported", item.Driver)
 	}
 	return item, nil
@@ -138,8 +150,20 @@ func ValidateResolvedDriverMounts(driver string, items []domain.SandboxVolumeMou
 		case domain.VolumeMountTypeBind:
 			return fmt.Errorf("k8s driver does not support local bind mounts (source %q, target %q); use a named volume instead", strings.TrimSpace(item.Source), strings.TrimSpace(item.Target))
 		case domain.VolumeMountTypeVolume:
-			if NormalizeDriver(item.Driver) != domain.VolumeDriverK8s {
-				return fmt.Errorf("k8s driver does not support volume driver %q for source %q; use a volume with driver k8s", NormalizeDriver(item.Driver), strings.TrimSpace(item.Source))
+			switch NormalizeDriver(item.Driver) {
+			case domain.VolumeDriverK8s:
+			case domain.VolumeDriverNFS:
+				// A Pod mounts the export through an inline NFS volume, which
+				// has no field for a protocol version or mount options.
+				source, err := nfsvolume.ParseRef(item.HostPath)
+				if err != nil {
+					return fmt.Errorf("volume %q: %w", strings.TrimSpace(item.Source), err)
+				}
+				if source.HasCustomMountSettings() {
+					return fmt.Errorf("k8s driver cannot apply the version or mount_options of nfs volume %q; remove them so the node's NFS defaults apply, or use a k8s volume backed by an NFS StorageClass", strings.TrimSpace(item.Source))
+				}
+			default:
+				return fmt.Errorf("k8s driver does not support volume driver %q for source %q; use a volume with driver k8s or nfs", NormalizeDriver(item.Driver), strings.TrimSpace(item.Source))
 			}
 		}
 	}

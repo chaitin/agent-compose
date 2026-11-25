@@ -178,6 +178,9 @@ func buildRuntimeMountManifest(config *appconfig.Config, session *Sandbox, drive
 	if err != nil {
 		return RuntimeMountManifest{}, err
 	}
+	if err := validateSandboxNFSMounts(session); err != nil {
+		return RuntimeMountManifest{}, err
+	}
 	if driver == RuntimeDriverBoxlite {
 		if err := prepareBoxliteVolumeBridge(session); err != nil {
 			return RuntimeMountManifest{}, err
@@ -296,6 +299,11 @@ func sandboxVolumeMountSpecs(session *Sandbox) []runtimeMountSpec {
 	specs := make([]runtimeMountSpec, 0, len(session.VolumeMounts))
 	for _, mount := range session.VolumeMounts {
 		hostPath := strings.TrimSpace(mount.HostPath)
+		if isNFSVolumeMount(mount) {
+			// The runtime mounts the export on this directory (VM runtimes)
+			// or swaps the entry for an Engine volume (Docker).
+			hostPath = nfsVolumeMountPoint(session, mount)
+		}
 		guestPath := filepath.Clean(strings.TrimSpace(mount.Target))
 		if hostPath == "" || guestPath == "." || guestPath == "" {
 			continue

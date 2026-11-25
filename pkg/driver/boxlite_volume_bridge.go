@@ -31,6 +31,15 @@ func prepareBoxliteVolumeBridge(session *Sandbox) error {
 	}
 	mounted := make([]string, 0, len(entries))
 	for _, entry := range entries {
+		if entry.nfs {
+			// The export is mounted directly on the bridge path by the
+			// process that starts the VM; see ensureSandboxNFSMounts.
+			if err := os.MkdirAll(entry.hostBridgePath, nfsMountPointMode); err != nil {
+				rollbackBoxliteVolumeBridgeMounts(mounted)
+				return fmt.Errorf("create boxlite nfs volume mount point %s: %w", entry.hostBridgePath, err)
+			}
+			continue
+		}
 		if err := ensureBoxliteVolumeBridgeSource(entry.hostPath); err != nil {
 			rollbackBoxliteVolumeBridgeMounts(mounted)
 			return err
@@ -57,6 +66,7 @@ type boxliteVolumeBridgeEntry struct {
 	guestSource    string
 	guestTarget    string
 	readOnly       bool
+	nfs            bool
 }
 
 func boxliteVolumeBridgeEntries(session *Sandbox) []boxliteVolumeBridgeEntry {
@@ -84,6 +94,7 @@ func boxliteVolumeBridgeEntries(session *Sandbox) []boxliteVolumeBridgeEntry {
 			guestSource:    guestSource,
 			guestTarget:    guestTarget,
 			readOnly:       mount.ReadOnly,
+			nfs:            isNFSVolumeMount(mount),
 		})
 	}
 	return entries

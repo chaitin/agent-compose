@@ -511,12 +511,52 @@ volumes:
 | Field | Type | Default | Purpose |
 | --- | --- | --- | --- |
 | `name` | string | Derived from project and key | Explicit underlying volume name. |
-| `driver` | string | `local` | Volume driver. `local` uses a daemon-host directory; `k8s` creates a Kubernetes PersistentVolumeClaim when the agent uses the k8s runtime. |
+| `driver` | string | `local` | Volume driver. `local` uses a daemon-host directory; `k8s` creates a Kubernetes PersistentVolumeClaim when the agent uses the k8s runtime; `nfs` mounts an existing NFS export (see below). |
 | `external` | bool | `false` | References an existing volume instead of creating a project-owned volume. |
 | `labels` | map[string]string | Empty | Volume labels. Keys and values are trimmed. |
-| `options` | map[string]string | Empty | Driver options. For `k8s`, supported keys are `size` (default `1Gi`), `storage_class`, `access_mode` (default `ReadWriteOnce`), and `namespace` (default `K8S_NAMESPACE`/`default`). PVCs use the daemon's Kubernetes cluster. |
+| `options` | map[string]string | Empty | Driver options. For `k8s`, supported keys are `size` (default `1Gi`), `storage_class`, `access_mode` (default `ReadWriteOnce`), and `namespace` (default `K8S_NAMESPACE`/`default`). PVCs use the daemon's Kubernetes cluster. For `nfs`, see the table below. |
 
 The volume map key must be a stable identifier. Agents mount project volumes through `agents.<name>.volumes`.
+
+### NFS volumes
+
+An `nfs` volume records an export that already exists on an NFS server. agent-compose does not create, resize or delete anything on the server: applying the project only validates the options, and removing or pruning the volume forgets it while the files stay on the server.
+
+```yaml
+volumes:
+  shared:
+    driver: nfs
+    options:
+      server: nas.example.com
+      export: /srv/share
+      version: "4.1"          # optional
+      mount_options: nolock   # optional
+
+agents:
+  reviewer:
+    provider: codex
+    volumes:
+      - shared:/mnt/shared:ro
+```
+
+| NFS option | Default | Purpose |
+| --- | --- | --- |
+| `server` | Required | Hostname or IP address of the NFS server, without a port. |
+| `export` | Required | Clean absolute export path on the server. |
+| `version` | `4` | Protocol version: `3`, `4`, `4.0`, `4.1` or `4.2`. |
+| `mount_options` | Empty | Comma-separated extra NFS mount options, such as `nolock,timeo=600` or `port=2049`. `addr`, `vers`, `nfsvers`, `ro` and `rw` are set by agent-compose; read-only is chosen per agent mount with `:ro`. |
+
+Each runtime mounts the export itself when the sandbox starts, so the daemon needs neither mount privileges nor a route to the server, but the host that does the mount needs both:
+
+| Runtime | Who mounts | Requirements |
+| --- | --- | --- |
+| `docker` | The Docker Engine, as a `local`-driver NFS volume named `agent-compose-nfs-<hash>` | The Engine host reaches the server and has a kernel NFS client. |
+| `microsandbox`, `boxlite` | The process that runs the VM (the `sandbox-host` in the KVM deployment), with a kernel mount on `<sandbox>/volumes/<mount>` | Linux, `CAP_SYS_ADMIN` (the `sandbox-host` service is privileged), and a route to the server from its network namespace. |
+| `k8s` | The kubelet, as an inline NFS volume of the Pod | The nodes reach the server and have an NFS client. An inline volume cannot carry `version` or `mount_options`, so a volume that sets them is rejected on k8s; use a `k8s` volume backed by an NFS StorageClass instead. |
+
+VM runtimes mount with `nosuid,nodev` and keep the export mounted while the sandbox exists; it is unmounted before the sandbox directory is deleted. Docker volumes created for exports hold no data and stay on the Engine after sandboxes are removed; delete unused ones with `docker volume prune -a --filter label=agent-compose.nfs-volume`.
+
+NFS gives the guest a POSIX file system with server-side locking, so it can hold shared working directories, but every writer shares the same files: give concurrent agents their own sub-directories. File ownership is enforced by the server, so match the export's UID/GID mapping to the guest user.
 
 ## `policies`: project policies
 

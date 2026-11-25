@@ -481,6 +481,11 @@ func (r *cgoSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandbox,
 	}
 	r.ensureMu.Lock()
 	defer r.ensureMu.Unlock()
+	// The guest reaches an nfs volume through the /data share, so the export
+	// must be mounted before the box starts or restarts.
+	if err := ensureSandboxNFSMounts(ctx, sandbox); err != nil {
+		return SandboxVMInfo{}, err
+	}
 
 	startedAt := time.Now()
 	slog.Info("agent-compose boxlite ensure sandbox begin", "sandbox_id", sandbox.Summary.ID, "host_port", proxyState.HostPort)

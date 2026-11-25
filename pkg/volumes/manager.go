@@ -137,7 +137,7 @@ func (m *Manager) List(ctx context.Context, options domain.VolumeListOptions) ([
 		return nil, fmt.Errorf("volume store is required")
 	}
 	options.Driver = NormalizeDriver(options.Driver)
-	if strings.TrimSpace(options.Driver) == domain.VolumeDriverLocal || strings.TrimSpace(options.Driver) == domain.VolumeDriverK8s || strings.TrimSpace(options.Driver) == "" {
+	if IsSupportedDriver(options.Driver) {
 		return m.Store.ListVolumes(ctx, options)
 	}
 	return nil, fmt.Errorf("volume driver %q is not configured", options.Driver)

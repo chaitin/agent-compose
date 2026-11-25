@@ -1598,3 +1598,53 @@ func TestNormalizeRejectsRedactedValuePlaceholder(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeNFSProjectVolume(t *testing.T) {
+	spec := mustParseCompose(t, `
+name: nfs-demo
+volumes:
+  shared:
+    driver: NFS
+    options:
+      server: nas.example.com
+      export: /srv/share
+agents:
+  reviewer:
+    provider: codex
+    volumes:
+      - shared:/mnt/shared:ro
+`)
+	normalized, err := Normalize(spec, NormalizeOptions{})
+	if err != nil {
+		t.Fatalf("Normalize returned error: %v", err)
+	}
+	if got := normalized.Volumes["shared"]; got.Driver != "nfs" || got.Options["export"] != "/srv/share" {
+		t.Fatalf("volume = %#v", got)
+	}
+
+	bad := mustParseCompose(t, `
+name: nfs-demo
+volumes:
+  shared:
+    driver: nfs
+    options:
+      server: nas.example.com
+      export: relative/path
+`)
+	_, err = Normalize(bad, NormalizeOptions{})
+	var validation *ValidationError
+	if !errors.As(err, &validation) || validation.Path != "volumes.shared.options" {
+		t.Fatalf("Normalize error = %#v, want a volumes.shared.options validation error", err)
+	}
+
+	external := mustParseCompose(t, `
+name: nfs-demo
+volumes:
+  shared:
+    driver: nfs
+    external: true
+`)
+	if _, err := Normalize(external, NormalizeOptions{}); err != nil {
+		t.Fatalf("external nfs volume: %v", err)
+	}
+}

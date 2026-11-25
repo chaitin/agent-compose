@@ -12,6 +12,7 @@ import (
 	"fmt"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/nfsvolume"
 	"io"
 	"net/http"
 	"net/url"
@@ -580,11 +581,24 @@ func (r *k8sRuntime) podVolumeSpecs(sandbox *Sandbox, vmState VMState) ([]corev1
 		if mountType != "volume" {
 			return nil, nil, fmt.Errorf("k8s sandbox %s has unsupported mount type %q", sandbox.Summary.ID, mount.Type)
 		}
-		if strings.TrimSpace(mount.Driver) != RuntimeDriverK8s {
+		isNFS := isNFSVolumeMount(mount)
+		if !isNFS && strings.TrimSpace(mount.Driver) != RuntimeDriverK8s {
 			return nil, nil, fmt.Errorf("k8s sandbox %s volume %q uses unsupported driver %q", sandbox.Summary.ID, mount.Source, mount.Driver)
 		}
 		if err := k8sValidateVolumeMountTarget(mount.Target, r.config.GuestWorkspacePath, r.config.GuestHomePath); err != nil {
 			return nil, nil, fmt.Errorf("k8s sandbox %s volume %q: %w", sandbox.Summary.ID, mount.Source, err)
+		}
+		if isNFS {
+			volume, err := k8sNFSPodVolume(mount)
+			if err != nil {
+				return nil, nil, fmt.Errorf("k8s sandbox %s volume %q: %w", sandbox.Summary.ID, mount.Source, err)
+			}
+			if _, ok := volumeNames[volume.Name]; !ok {
+				volumeNames[volume.Name] = volume.Name
+				volumes = append(volumes, volume)
+			}
+			mounts = append(mounts, corev1.VolumeMount{Name: volume.Name, MountPath: mount.Target, ReadOnly: mount.ReadOnly})
+			continue
 		}
 		claimNamespace, claimName, err := parseK8sPVCRef(mount.HostPath)
 		if err != nil {
@@ -603,6 +617,27 @@ func (r *k8sRuntime) podVolumeSpecs(sandbox *Sandbox, vmState VMState) ([]corev1
 		mounts = append(mounts, corev1.VolumeMount{Name: volumeName, MountPath: mount.Target, ReadOnly: mount.ReadOnly})
 	}
 	return volumes, mounts, nil
+}
+
+// k8sNFSPodVolume mounts the export as an inline NFS volume of the Pod. The
+// kubelet mounts it with the node's NFS client and defaults; an inline volume
+// cannot carry a version or mount options, so a volume that sets them is
+// rejected rather than mounted with different settings than on other runtimes.
+// The Pod volume is shared by every mount of the same export, so each export
+// is mounted once per Pod.
+func k8sNFSPodVolume(mount SandboxVolumeMount) (corev1.Volume, error) {
+	source, err := nfsvolume.ParseRef(mount.HostPath)
+	if err != nil {
+		return corev1.Volume{}, err
+	}
+	if source.HasCustomMountSettings() {
+		return corev1.Volume{}, fmt.Errorf("an inline Kubernetes NFS volume cannot apply version or mount_options")
+	}
+	sum := sha256.Sum256([]byte(source.Ref()))
+	return corev1.Volume{
+		Name:         "nfs-" + hex.EncodeToString(sum[:])[:24],
+		VolumeSource: corev1.VolumeSource{NFS: &corev1.NFSVolumeSource{Server: source.Server, Path: source.Export}},
+	}, nil
 }
 
 // k8sValidateVolumeMountTarget rejects a volume mount target that partially

@@ -49,24 +49,39 @@ func dockerContainerMountsMatch(containerInfo containerapi.InspectResponse, expe
 		source   string
 		readOnly bool
 	}
+	// Binds and agent-compose nfs volumes are compared; anonymous volumes an
+	// image declares with VOLUME are not agent-compose mounts and are ignored.
+	// A volume is identified by its name, which encodes the export.
 	actual := make(map[string]mountIdentity, len(containerInfo.Mounts))
 	for _, item := range containerInfo.Mounts {
-		if item.Type != mountapi.TypeBind {
+		var source string
+		switch {
+		case item.Type == mountapi.TypeBind:
+			source = filepath.Clean(item.Source)
+		case item.Type == mountapi.TypeVolume && isDockerNFSVolumeName(item.Name):
+			source = item.Name
+		default:
 			continue
 		}
 		target := filepath.Clean(item.Destination)
 		if _, duplicate := actual[target]; duplicate {
 			return false
 		}
-		actual[target] = mountIdentity{source: filepath.Clean(item.Source), readOnly: !item.RW}
+		actual[target] = mountIdentity{source: source, readOnly: !item.RW}
 	}
 	for _, item := range expected {
-		if item.Type != mountapi.TypeBind {
+		var source string
+		switch item.Type {
+		case mountapi.TypeBind:
+			source = filepath.Clean(item.Source)
+		case mountapi.TypeVolume:
+			source = item.Source
+		default:
 			continue
 		}
 		target := filepath.Clean(item.Target)
 		identity, ok := actual[target]
-		if !ok || identity.source != filepath.Clean(item.Source) || identity.readOnly != item.ReadOnly {
+		if !ok || identity.source != source || identity.readOnly != item.ReadOnly {
 			return false
 		}
 		if item.BindOptions != nil && item.BindOptions.ReadOnlyForceRecursive && !dockerContainerHasRecursiveReadOnly(containerInfo, item) {

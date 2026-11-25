@@ -485,6 +485,11 @@ func (r *microsandboxRuntime) EnsureSandbox(ctx context.Context, session *Sandbo
 	if err := r.ensureReady(ctx); err != nil {
 		return SandboxVMInfo{}, err
 	}
+	// An nfs volume is bound into the VM from its host mount point, so the
+	// export must be mounted before the VM is created or restarted.
+	if err := ensureSandboxNFSMounts(ctx, session); err != nil {
+		return SandboxVMInfo{}, err
+	}
 
 	sandbox, created, restarted, err := r.getOrCreateSandbox(ctx, session, vmState, proxyState)
 	if err != nil {
@@ -643,6 +648,11 @@ func (r *microsandboxRuntime) RemoveSandbox(ctx context.Context, session *Sandbo
 		return fmt.Errorf("remove microsandbox %s: %w", name, err)
 	}
 	if err := r.removeRootfsDiskFiles(session.Summary.ID); err != nil {
+		return err
+	}
+	// Release nfs exports mounted for this sandbox in this process, before the
+	// daemon deletes the sandbox directory that holds their mount points.
+	if err := CleanupBoxliteVolumeBridgeMounts(hostSandboxDir(session)); err != nil {
 		return err
 	}
 	_ = os.RemoveAll(sandboxInitHostDir(r.config, session.Summary.ID))

@@ -507,12 +507,52 @@ volumes:
 | 字段 | 类型 | 默认值 | 作用 |
 | --- | --- | --- | --- |
 | `name` | string | 由项目和 key 派生 | 指定底层 Volume 名。 |
-| `driver` | string | `local` | Volume driver。`local` 使用 daemon 所在主机目录；agent 使用 k8s runtime 时，`k8s` 会创建 Kubernetes PersistentVolumeClaim。 |
+| `driver` | string | `local` | Volume driver。`local` 使用 daemon 所在主机目录；agent 使用 k8s runtime 时，`k8s` 会创建 Kubernetes PersistentVolumeClaim；`nfs` 挂载已有的 NFS export（见下文）。 |
 | `external` | bool | `false` | 为 `true` 时引用已经存在的 Volume，而不是由项目创建。 |
 | `labels` | map[string]string | 空 | 附加标签。key/value 会去除首尾空白。 |
-| `options` | map[string]string | 空 | Driver 选项。`k8s` 支持 `size`（默认 `1Gi`）、`storage_class`、`access_mode`（默认 `ReadWriteOnce`）和 `namespace`（默认 `K8S_NAMESPACE`/`default`）。PVC 使用 daemon 所在的 Kubernetes 集群。 |
+| `options` | map[string]string | 空 | Driver 选项。`k8s` 支持 `size`（默认 `1Gi`）、`storage_class`、`access_mode`（默认 `ReadWriteOnce`）和 `namespace`（默认 `K8S_NAMESPACE`/`default`）。PVC 使用 daemon 所在的 Kubernetes 集群。`nfs` 的选项见下表。 |
 
 Volume map key 必须符合稳定标识符格式。Agent 通过 `agents.<name>.volumes` 挂载项目 Volume。
+
+### NFS Volume
+
+`nfs` Volume 记录的是 NFS 服务器上已经存在的 export。agent-compose 不会在服务器上创建、扩容或删除任何内容：应用项目时只校验选项；删除或 prune 该 Volume 只是让 AC 不再记录它，文件仍保留在服务器上。
+
+```yaml
+volumes:
+  shared:
+    driver: nfs
+    options:
+      server: nas.example.com
+      export: /srv/share
+      version: "4.1"          # 可选
+      mount_options: nolock   # 可选
+
+agents:
+  reviewer:
+    provider: codex
+    volumes:
+      - shared:/mnt/shared:ro
+```
+
+| NFS 选项 | 默认值 | 作用 |
+| --- | --- | --- |
+| `server` | 必填 | NFS 服务器的主机名或 IP，不含端口。 |
+| `export` | 必填 | 服务器上规范的绝对 export 路径。 |
+| `version` | `4` | 协议版本：`3`、`4`、`4.0`、`4.1` 或 `4.2`。 |
+| `mount_options` | 空 | 逗号分隔的额外 NFS 挂载选项，例如 `nolock,timeo=600` 或 `port=2049`。`addr`、`vers`、`nfsvers`、`ro`、`rw` 由 agent-compose 设置；只读通过 agent 挂载上的 `:ro` 按挂载指定。 |
+
+sandbox 启动时由各 runtime 自己挂载 export，因此 daemon 不需要挂载权限，也不需要能访问服务器；但实际执行挂载的主机两者都需要：
+
+| Runtime | 由谁挂载 | 要求 |
+| --- | --- | --- |
+| `docker` | Docker Engine，作为 `local` driver 的 NFS 卷，名为 `agent-compose-nfs-<hash>` | Engine 所在主机能访问服务器，且有内核 NFS 客户端。 |
+| `microsandbox`、`boxlite` | 运行 VM 的进程（KVM 部署中是 `sandbox-host`），以内核挂载方式挂到 `<sandbox>/volumes/<mount>` | Linux，具备 `CAP_SYS_ADMIN`（`sandbox-host` 服务是特权容器），且其网络命名空间能访问服务器。 |
+| `k8s` | kubelet，作为 Pod 的内联 NFS 卷 | 节点能访问服务器并装有 NFS 客户端。内联卷无法携带 `version` 或 `mount_options`，设置了这两项的 Volume 在 k8s 上会被拒绝；这种情况请改用由 NFS StorageClass 提供的 `k8s` Volume。 |
+
+VM runtime 使用 `nosuid,nodev` 挂载，并在 sandbox 存在期间保持挂载；删除 sandbox 目录之前会先卸载。为 export 创建的 Docker 卷本身不存数据，sandbox 删除后仍留在 Engine 上，可用 `docker volume prune -a --filter label=agent-compose.nfs-volume` 清理不再使用的卷。
+
+NFS 为 guest 提供带服务端锁的 POSIX 文件系统，可以存放共享工作目录；但所有写入者共享同一批文件，并发的 agent 应各自使用独立子目录。文件属主由服务器校验，需要让 export 的 UID/GID 映射与 guest 用户一致。
 
 ## `policies`：项目级策略
 
