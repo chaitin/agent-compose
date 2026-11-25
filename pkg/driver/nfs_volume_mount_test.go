@@ -213,7 +213,7 @@ func TestDockerRuntimeMountsNFSVolumeThroughEngine(t *testing.T) {
 	}
 	driver := found.VolumeOptions.DriverConfig
 	if driver.Name != "local" || driver.Options["type"] != "nfs" || driver.Options["device"] != ":/srv/share" ||
-		driver.Options["o"] != "addr=nas.example.com,vers=4,nolock" {
+		driver.Options["o"] != "addr=nas.example.com,vers=4,nolock,nosuid,nodev" {
 		t.Fatalf("driver config = %+v", driver)
 	}
 

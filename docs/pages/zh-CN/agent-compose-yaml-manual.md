@@ -540,7 +540,7 @@ agents:
 | `server` | 必填 | NFS 服务器的主机名或 IP，不含端口。 |
 | `export` | 必填 | 服务器上规范的绝对 export 路径。 |
 | `version` | `4` | 协议版本：`3`、`4`、`4.0`、`4.1` 或 `4.2`。 |
-| `mount_options` | 空 | 逗号分隔的额外 NFS 挂载选项，例如 `nolock,timeo=600` 或 `port=2049`。`addr`、`vers`、`nfsvers`、`ro`、`rw` 由 agent-compose 设置；只读通过 agent 挂载上的 `:ro` 按挂载指定。 |
+| `mount_options` | 空 | 逗号分隔的额外 NFS 挂载选项，例如 `nolock,timeo=600` 或 `port=2049`。`addr`、`vers`、`nfsvers`、`ro`、`rw`、`suid`、`nosuid`、`dev`、`nodev` 由 agent-compose 设置；只读通过 agent 挂载上的 `:ro` 按挂载指定，由 agent-compose 执行挂载的 runtime 一律使用 `nosuid,nodev`。 |
 
 sandbox 启动时由各 runtime 自己挂载 export，因此 daemon 不需要挂载权限，也不需要能访问服务器；但实际执行挂载的主机两者都需要：
 
@@ -550,7 +550,7 @@ sandbox 启动时由各 runtime 自己挂载 export，因此 daemon 不需要挂
 | `microsandbox`、`boxlite` | 运行 VM 的进程（KVM 部署中是 `sandbox-host`），以内核挂载方式挂到 `<sandbox>/volumes/<mount>` | Linux，具备 `CAP_SYS_ADMIN`（`sandbox-host` 服务是特权容器），且其网络命名空间能访问服务器。 |
 | `k8s` | kubelet，作为 Pod 的内联 NFS 卷 | 节点能访问服务器并装有 NFS 客户端。内联卷无法携带 `version` 或 `mount_options`，设置了这两项的 Volume 在 k8s 上会被拒绝；这种情况请改用由 NFS StorageClass 提供的 `k8s` Volume。 |
 
-KVM 部署中，`sandbox-host` 也必须升级到支持 NFS 的版本：daemon 会拒绝在旧版 host 上启动带 `nfs` Volume 的 sandbox，否则旧 host 会让 VM 挂到一个空目录上。即使 export 为空，Docker 也不会把镜像中的文件复制进去。VM runtime 使用 `nosuid,nodev` 挂载，并在 sandbox 存在期间保持挂载；删除 sandbox 目录之前会先卸载。为 export 创建的 Docker 卷本身不存数据，sandbox 删除后仍留在 Engine 上，可用 `docker volume prune -a --filter label=agent-compose.nfs-volume` 清理不再使用的卷。
+KVM 部署中，`sandbox-host` 也必须升级到支持 NFS 的版本：daemon 会拒绝在旧版 host 上启动带 `nfs` Volume 的 sandbox，否则旧 host 会让 VM 挂到一个空目录上。即使 export 为空，Docker 也不会把镜像中的文件复制进去。VM runtime 在 sandbox 存在期间保持挂载；删除 sandbox 目录之前会先卸载。为 export 创建的 Docker 卷本身不存数据，sandbox 删除后仍留在 Engine 上，可用 `docker volume prune -a --filter label=agent-compose.nfs-volume` 清理不再使用的卷。
 
 NFS 为 guest 提供带服务端锁的 POSIX 文件系统，可以存放共享工作目录；但所有写入者共享同一批文件，并发的 agent 应各自使用独立子目录。文件属主由服务器校验，需要让 export 的 UID/GID 映射与 guest 用户一致。
 

@@ -71,6 +71,8 @@ func TestFromOptionsRejectsUnsafeInput(t *testing.T) {
 		"reserved addr":      {"server": "nas", "export": "/x", "mount_options": "addr=1.2.3.4"},
 		"reserved ro":        {"server": "nas", "export": "/x", "mount_options": "ro"},
 		"reserved nfsvers":   {"server": "nas", "export": "/x", "mount_options": "nfsvers=3"},
+		"reserved suid":      {"server": "nas", "export": "/x", "mount_options": "suid"},
+		"reserved dev":       {"server": "nas", "export": "/x", "mount_options": "dev"},
 		"repeated option":    {"server": "nas", "export": "/x", "mount_options": "timeo=1,timeo=2"},
 		"option injection":   {"server": "nas", "export": "/x", "mount_options": "soft x"},
 		"empty option token": {"server": "nas", "export": "/x", "mount_options": "soft,,hard"},
@@ -123,7 +125,7 @@ func TestMountSettings(t *testing.T) {
 		t.Fatal("tuned export does not report custom settings")
 	}
 	opts := tuned.DockerVolumeOptions()
-	if opts["type"] != "nfs" || opts["o"] != "addr=nas,vers=3,nolock" || opts["device"] != ":/x" {
+	if opts["type"] != "nfs" || opts["o"] != "addr=nas,vers=3,nolock,nosuid,nodev" || opts["device"] != ":/x" {
 		t.Fatalf("DockerVolumeOptions = %v", opts)
 	}
 	if plain.DockerVolumeName() == tuned.DockerVolumeName() || !strings.HasPrefix(plain.DockerVolumeName(), "agent-compose-nfs-") {

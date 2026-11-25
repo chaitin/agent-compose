@@ -544,7 +544,7 @@ agents:
 | `server` | Required | Hostname or IP address of the NFS server, without a port. |
 | `export` | Required | Clean absolute export path on the server. |
 | `version` | `4` | Protocol version: `3`, `4`, `4.0`, `4.1` or `4.2`. |
-| `mount_options` | Empty | Comma-separated extra NFS mount options, such as `nolock,timeo=600` or `port=2049`. `addr`, `vers`, `nfsvers`, `ro` and `rw` are set by agent-compose; read-only is chosen per agent mount with `:ro`. |
+| `mount_options` | Empty | Comma-separated extra NFS mount options, such as `nolock,timeo=600` or `port=2049`. `addr`, `vers`, `nfsvers`, `ro`, `rw`, `suid`, `nosuid`, `dev` and `nodev` are set by agent-compose; read-only is chosen per agent mount with `:ro`, and every runtime that agent-compose mounts with uses `nosuid,nodev`. |
 
 Each runtime mounts the export itself when the sandbox starts, so the daemon needs neither mount privileges nor a route to the server, but the host that does the mount needs both:
 
@@ -554,7 +554,7 @@ Each runtime mounts the export itself when the sandbox starts, so the daemon nee
 | `microsandbox`, `boxlite` | The process that runs the VM (the `sandbox-host` in the KVM deployment), with a kernel mount on `<sandbox>/volumes/<mount>` | Linux, `CAP_SYS_ADMIN` (the `sandbox-host` service is privileged), and a route to the server from its network namespace. |
 | `k8s` | The kubelet, as an inline NFS volume of the Pod | The nodes reach the server and have an NFS client. An inline volume cannot carry `version` or `mount_options`, so a volume that sets them is rejected on k8s; use a `k8s` volume backed by an NFS StorageClass instead. |
 
-In the KVM deployment the `sandbox-host` must also run a release with NFS support: the daemon refuses to start a sandbox with an `nfs` volume on an older host, which would otherwise start the VM on an empty directory. Docker never copies image files into an export, even when it is empty. VM runtimes mount with `nosuid,nodev` and keep the export mounted while the sandbox exists; it is unmounted before the sandbox directory is deleted. Docker volumes created for exports hold no data and stay on the Engine after sandboxes are removed; delete unused ones with `docker volume prune -a --filter label=agent-compose.nfs-volume`.
+In the KVM deployment the `sandbox-host` must also run a release with NFS support: the daemon refuses to start a sandbox with an `nfs` volume on an older host, which would otherwise start the VM on an empty directory. Docker never copies image files into an export, even when it is empty. VM runtimes keep the export mounted while the sandbox exists; it is unmounted before the sandbox directory is deleted. Docker volumes created for exports hold no data and stay on the Engine after sandboxes are removed; delete unused ones with `docker volume prune -a --filter label=agent-compose.nfs-volume`.
 
 NFS gives the guest a POSIX file system with server-side locking, so it can hold shared working directories, but every writer shares the same files: give concurrent agents their own sub-directories. File ownership is enforced by the server, so match the export's UID/GID mapping to the guest user.
 

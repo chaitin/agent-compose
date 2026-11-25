@@ -51,9 +51,10 @@ var (
 	mountOptionToken  = regexp.MustCompile(`^[a-z][a-z0-9_]*(=[A-Za-z0-9_.:/+-]+)?$`)
 	exportPattern     = regexp.MustCompile(`^/[A-Za-z0-9_.@+/-]*$`)
 	// Options agent-compose sets itself. The server address and version come
-	// from their own fields, and read-only is a property of each agent's
-	// mount, not of the volume.
-	reservedMountOptions = []string{"addr", "vers", "nfsvers", "ro", "rw"}
+	// from their own fields, read-only is a property of each agent's mount,
+	// not of the volume, and every runtime mounts with nosuid,nodev, so a
+	// volume cannot turn setuid files or device nodes on the server back on.
+	reservedMountOptions = []string{"addr", "vers", "nfsvers", "ro", "rw", "suid", "nosuid", "dev", "nodev"}
 )
 
 // Source is one validated NFS export.
@@ -212,12 +213,14 @@ func (s Source) KernelMountData(addr string) string {
 }
 
 // DockerVolumeOptions are the Docker local volume driver options that make
-// the Engine mount this export. The Engine resolves a hostname in addr itself.
+// the Engine mount this export. The Engine resolves a hostname in addr itself
+// and turns nosuid and nodev into mount flags, matching the VM runtimes.
 func (s Source) DockerVolumeOptions() map[string]string {
 	parts := []string{"addr=" + s.Server, "vers=" + s.EffectiveVersion()}
+	parts = append(append(parts, s.MountOptions...), "nosuid", "nodev")
 	return map[string]string{
 		"type":   "nfs",
-		"o":      strings.Join(append(parts, s.MountOptions...), ","),
+		"o":      strings.Join(parts, ","),
 		"device": ":" + s.Export,
 	}
 }
