@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 )
 
 type promptAttachProjector struct {
@@ -142,15 +143,16 @@ func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *Tr
 // field never splices the model's thinking into the answer.
 func (p *promptAttachProjector) agentEventText(raw json.RawMessage) (string, string) {
 	var event struct {
-		Kind    string          `json:"kind"`
-		Text    string          `json:"text"`
-		Type    string          `json:"type"`
-		ID      string          `json:"id"`
-		Name    string          `json:"name"`
-		Command string          `json:"command"`
-		Input   json.RawMessage `json:"input"`
-		Output  string          `json:"output"`
-		Error   string          `json:"error"`
+		Kind    string              `json:"kind"`
+		Text    string              `json:"text"`
+		Type    string              `json:"type"`
+		ID      string              `json:"id"`
+		Name    string              `json:"name"`
+		Command string              `json:"command"`
+		Input   json.RawMessage     `json:"input"`
+		Changes []runlog.FileChange `json:"changes"`
+		Output  string              `json:"output"`
+		Error   string              `json:"error"`
 	}
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return "agent_event", ""
@@ -163,9 +165,17 @@ func (p *promptAttachProjector) agentEventText(raw json.RawMessage) (string, str
 	case "text_delta":
 		return event.Kind, event.Text
 	case "tool_call":
-		return event.Kind, p.newToolText(event.ID, promptAttachToolCallText(event.Name, event.Command, event.Input))
+		// Rendered by the run log so this transcript and a run log's text
+		// view show a tool call the same way.
+		return event.Kind, p.newToolText(event.ID, runlog.Render(runlog.Entry{
+			Type: runlog.EntryToolCall,
+			Tool: &runlog.Tool{Name: event.Name, Command: event.Command, Input: event.Input, Changes: event.Changes},
+		}))
 	case "tool_result":
-		return event.Kind, p.newToolText(event.ID+"\x00result", promptAttachToolResultText(event.Output, event.Error))
+		return event.Kind, p.newToolText(event.ID+"\x00result", runlog.Render(runlog.Entry{
+			Type: runlog.EntryToolResult,
+			Tool: &runlog.Tool{Output: event.Output, Error: event.Error},
+		}))
 	default:
 		return event.Kind, ""
 	}
@@ -187,43 +197,6 @@ func (p *promptAttachProjector) newToolText(key, text string) string {
 		return text[len(previous):]
 	}
 	return text
-}
-
-// promptAttachToolCallText renders a tool call the way the guest runners'
-// own transcript writers do: a named header, then the shell command for an
-// execute call or the tool's arguments for anything else.
-func promptAttachToolCallText(name, command string, input json.RawMessage) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-	header := "\n[tool:" + name + "]\n"
-	if command = strings.TrimSpace(command); command != "" {
-		return header + "$ " + command + "\n"
-	}
-	if arguments := promptAttachToolInputText(input); arguments != "" {
-		return header + arguments + "\n"
-	}
-	return header
-}
-
-func promptAttachToolInputText(input json.RawMessage) string {
-	switch trimmed := strings.TrimSpace(string(input)); trimmed {
-	case "", "null", "{}", `""`:
-		return ""
-	default:
-		return trimmed
-	}
-}
-
-func promptAttachToolResultText(output, failure string) string {
-	if failure = strings.TrimSpace(failure); failure == "" {
-		return output
-	}
-	if output != "" && !strings.HasSuffix(output, "\n") {
-		output += "\n"
-	}
-	return output + "[tool error] " + failure + "\n"
 }
 
 // appendLogText writes text to the transcript, tracking assistant prose
