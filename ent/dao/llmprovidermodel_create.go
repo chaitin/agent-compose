@@ -98,6 +98,20 @@ func (_c *LLMProviderModelCreate) SetNillableMaxOutputTokens(v *int) *LLMProvide
 	return _c
 }
 
+// SetContextWindow sets the "context_window" field.
+func (_c *LLMProviderModelCreate) SetContextWindow(v int) *LLMProviderModelCreate {
+	_c.mutation.SetContextWindow(v)
+	return _c
+}
+
+// SetNillableContextWindow sets the "context_window" field if the given value is not nil.
+func (_c *LLMProviderModelCreate) SetNillableContextWindow(v *int) *LLMProviderModelCreate {
+	if v != nil {
+		_c.SetContextWindow(*v)
+	}
+	return _c
+}
+
 // SetDisplayName sets the "display_name" field.
 func (_c *LLMProviderModelCreate) SetDisplayName(v string) *LLMProviderModelCreate {
 	_c.mutation.SetDisplayName(v)
@@ -214,6 +228,10 @@ func (_c *LLMProviderModelCreate) createSpec() (*LLMProviderModel, *sqlgraph.Cre
 	if value, ok := _c.mutation.MaxOutputTokens(); ok {
 		_spec.SetField(llmprovidermodel.FieldMaxOutputTokens, field.TypeInt, value)
 		_node.MaxOutputTokens = value
+	}
+	if value, ok := _c.mutation.ContextWindow(); ok {
+		_spec.SetField(llmprovidermodel.FieldContextWindow, field.TypeInt, value)
+		_node.ContextWindow = value
 	}
 	if value, ok := _c.mutation.DisplayName(); ok {
 		_spec.SetField(llmprovidermodel.FieldDisplayName, field.TypeString, value)
@@ -382,6 +400,30 @@ func (u *LLMProviderModelUpsert) AddMaxOutputTokens(v int) *LLMProviderModelUpse
 // ClearMaxOutputTokens clears the value of the "max_output_tokens" field.
 func (u *LLMProviderModelUpsert) ClearMaxOutputTokens() *LLMProviderModelUpsert {
 	u.SetNull(llmprovidermodel.FieldMaxOutputTokens)
+	return u
+}
+
+// SetContextWindow sets the "context_window" field.
+func (u *LLMProviderModelUpsert) SetContextWindow(v int) *LLMProviderModelUpsert {
+	u.Set(llmprovidermodel.FieldContextWindow, v)
+	return u
+}
+
+// UpdateContextWindow sets the "context_window" field to the value that was provided on create.
+func (u *LLMProviderModelUpsert) UpdateContextWindow() *LLMProviderModelUpsert {
+	u.SetExcluded(llmprovidermodel.FieldContextWindow)
+	return u
+}
+
+// AddContextWindow adds v to the "context_window" field.
+func (u *LLMProviderModelUpsert) AddContextWindow(v int) *LLMProviderModelUpsert {
+	u.Add(llmprovidermodel.FieldContextWindow, v)
+	return u
+}
+
+// ClearContextWindow clears the value of the "context_window" field.
+func (u *LLMProviderModelUpsert) ClearContextWindow() *LLMProviderModelUpsert {
+	u.SetNull(llmprovidermodel.FieldContextWindow)
 	return u
 }
 
@@ -581,6 +623,34 @@ func (u *LLMProviderModelUpsertOne) UpdateMaxOutputTokens() *LLMProviderModelUps
 func (u *LLMProviderModelUpsertOne) ClearMaxOutputTokens() *LLMProviderModelUpsertOne {
 	return u.Update(func(s *LLMProviderModelUpsert) {
 		s.ClearMaxOutputTokens()
+	})
+}
+
+// SetContextWindow sets the "context_window" field.
+func (u *LLMProviderModelUpsertOne) SetContextWindow(v int) *LLMProviderModelUpsertOne {
+	return u.Update(func(s *LLMProviderModelUpsert) {
+		s.SetContextWindow(v)
+	})
+}
+
+// AddContextWindow adds v to the "context_window" field.
+func (u *LLMProviderModelUpsertOne) AddContextWindow(v int) *LLMProviderModelUpsertOne {
+	return u.Update(func(s *LLMProviderModelUpsert) {
+		s.AddContextWindow(v)
+	})
+}
+
+// UpdateContextWindow sets the "context_window" field to the value that was provided on create.
+func (u *LLMProviderModelUpsertOne) UpdateContextWindow() *LLMProviderModelUpsertOne {
+	return u.Update(func(s *LLMProviderModelUpsert) {
+		s.UpdateContextWindow()
+	})
+}
+
+// ClearContextWindow clears the value of the "context_window" field.
+func (u *LLMProviderModelUpsertOne) ClearContextWindow() *LLMProviderModelUpsertOne {
+	return u.Update(func(s *LLMProviderModelUpsert) {
+		s.ClearContextWindow()
 	})
 }
 
@@ -949,6 +1019,34 @@ func (u *LLMProviderModelUpsertBulk) UpdateMaxOutputTokens() *LLMProviderModelUp
 func (u *LLMProviderModelUpsertBulk) ClearMaxOutputTokens() *LLMProviderModelUpsertBulk {
 	return u.Update(func(s *LLMProviderModelUpsert) {
 		s.ClearMaxOutputTokens()
+	})
+}
+
+// SetContextWindow sets the "context_window" field.
+func (u *LLMProviderModelUpsertBulk) SetContextWindow(v int) *LLMProviderModelUpsertBulk {
+	return u.Update(func(s *LLMProviderModelUpsert) {
+		s.SetContextWindow(v)
+	})
+}
+
+// AddContextWindow adds v to the "context_window" field.
+func (u *LLMProviderModelUpsertBulk) AddContextWindow(v int) *LLMProviderModelUpsertBulk {
+	return u.Update(func(s *LLMProviderModelUpsert) {
+		s.AddContextWindow(v)
+	})
+}
+
+// UpdateContextWindow sets the "context_window" field to the value that was provided on create.
+func (u *LLMProviderModelUpsertBulk) UpdateContextWindow() *LLMProviderModelUpsertBulk {
+	return u.Update(func(s *LLMProviderModelUpsert) {
+		s.UpdateContextWindow()
+	})
+}
+
+// ClearContextWindow clears the value of the "context_window" field.
+func (u *LLMProviderModelUpsertBulk) ClearContextWindow() *LLMProviderModelUpsertBulk {
+	return u.Update(func(s *LLMProviderModelUpsert) {
+		s.ClearContextWindow()
 	})
 }
 

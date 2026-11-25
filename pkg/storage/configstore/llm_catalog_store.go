@@ -244,6 +244,10 @@ func applyCatalogModel(ctx context.Context, client *dao.Client, upsert catalogMo
 	if definition.MaxOutputTokens != nil {
 		maxOutputTokens = *definition.MaxOutputTokens
 	}
+	contextWindow := 0
+	if definition.ContextWindow != nil {
+		contextWindow = *definition.ContextWindow
+	}
 	if _, err := client.LLMProviderModel.Create().
 		SetID(providerID).
 		SetModelID(modelID).
@@ -252,6 +256,7 @@ func applyCatalogModel(ctx context.Context, client *dao.Client, upsert catalogMo
 		SetBaseURL(strings.TrimSpace(pointerString(definition.BaseURL))).
 		SetHeadersJSON(headersJSON).
 		SetMaxOutputTokens(maxOutputTokens).
+		SetContextWindow(contextWindow).
 		SetDisplayName(pointerString(definition.Name)).
 		Save(ctx); err != nil {
 		return fmt.Errorf("bind provider %q model %q: %w", providerID, modelID, err)
@@ -479,6 +484,7 @@ func (s *llmStore) LLMProviderModelConfig(ctx context.Context, providerID, model
 			llmprovidermodel.FieldBaseURL,
 			llmprovidermodel.FieldHeadersJSON,
 			llmprovidermodel.FieldMaxOutputTokens,
+			llmprovidermodel.FieldContextWindow,
 			llmprovidermodel.FieldDisplayName,
 		).
 		Only(ctx)
@@ -503,6 +509,7 @@ func (s *llmStore) ListLLMProviderModelConfigs(ctx context.Context) ([]llms.Prov
 			llmprovidermodel.FieldBaseURL,
 			llmprovidermodel.FieldHeadersJSON,
 			llmprovidermodel.FieldMaxOutputTokens,
+			llmprovidermodel.FieldContextWindow,
 			llmprovidermodel.FieldDisplayName,
 		).
 		Order(llmprovidermodel.ByID(), llmprovidermodel.ByModelID()).
@@ -529,6 +536,7 @@ func llmProviderModelConfigFromEntity(entity *dao.LLMProviderModel) llms.Provide
 		BaseURL:         entity.BaseURL,
 		HeadersJSON:     entity.HeadersJSON,
 		MaxOutputTokens: entity.MaxOutputTokens,
+		ContextWindow:   entity.ContextWindow,
 		DisplayName:     entity.DisplayName,
 	}
 	normalizeBindingWireAPI(&config)

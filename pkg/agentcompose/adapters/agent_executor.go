@@ -301,7 +301,7 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 	if strings.TrimSpace(execResult.Output) == "" {
 		execResult.Output = assistantEvent.Message
 	}
-	if err := execution.WriteCellArtifacts(r.hostCellDir, r.message, execResult); err != nil {
+	if err := execution.WriteCellArtifacts(r.hostCellDir, execResult); err != nil {
 		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
 	}
 	r.cellMu.Lock()
@@ -341,7 +341,7 @@ func (r *agentCellRun) succeed(execResult domain.ExecResult, result domain.Agent
 	if strings.TrimSpace(execResult.Output) == "" {
 		execResult.Output = firstNonEmpty(result.DisplayOutput, result.Transcript, result.FinalText)
 	}
-	if err := execution.WriteCellArtifacts(r.hostCellDir, r.message, execResult); err != nil {
+	if err := execution.WriteCellArtifacts(r.hostCellDir, execResult); err != nil {
 		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
 	}
 	r.cellMu.Lock()

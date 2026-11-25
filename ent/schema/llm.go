@@ -75,6 +75,7 @@ func (LLMProviderModel) Fields() []ent.Field {
 		field.String("base_url").Optional(),
 		field.String("headers_json").Optional(),
 		field.Int("max_output_tokens").Optional(),
+		field.Int("context_window").Optional(),
 		field.String("display_name").Optional(),
 	}
 }

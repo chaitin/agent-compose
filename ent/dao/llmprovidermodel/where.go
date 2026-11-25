@@ -92,6 +92,11 @@ func MaxOutputTokens(v int) predicate.LLMProviderModel {
 	return predicate.LLMProviderModel(sql.FieldEQ(FieldMaxOutputTokens, v))
 }
 
+// ContextWindow applies equality check predicate on the "context_window" field. It's identical to ContextWindowEQ.
+func ContextWindow(v int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldEQ(FieldContextWindow, v))
+}
+
 // DisplayName applies equality check predicate on the "display_name" field. It's identical to DisplayNameEQ.
 func DisplayName(v string) predicate.LLMProviderModel {
 	return predicate.LLMProviderModel(sql.FieldEQ(FieldDisplayName, v))
@@ -485,6 +490,56 @@ func MaxOutputTokensIsNil() predicate.LLMProviderModel {
 // MaxOutputTokensNotNil applies the NotNil predicate on the "max_output_tokens" field.
 func MaxOutputTokensNotNil() predicate.LLMProviderModel {
 	return predicate.LLMProviderModel(sql.FieldNotNull(FieldMaxOutputTokens))
+}
+
+// ContextWindowEQ applies the EQ predicate on the "context_window" field.
+func ContextWindowEQ(v int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldEQ(FieldContextWindow, v))
+}
+
+// ContextWindowNEQ applies the NEQ predicate on the "context_window" field.
+func ContextWindowNEQ(v int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldNEQ(FieldContextWindow, v))
+}
+
+// ContextWindowIn applies the In predicate on the "context_window" field.
+func ContextWindowIn(vs ...int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldIn(FieldContextWindow, vs...))
+}
+
+// ContextWindowNotIn applies the NotIn predicate on the "context_window" field.
+func ContextWindowNotIn(vs ...int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldNotIn(FieldContextWindow, vs...))
+}
+
+// ContextWindowGT applies the GT predicate on the "context_window" field.
+func ContextWindowGT(v int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldGT(FieldContextWindow, v))
+}
+
+// ContextWindowGTE applies the GTE predicate on the "context_window" field.
+func ContextWindowGTE(v int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldGTE(FieldContextWindow, v))
+}
+
+// ContextWindowLT applies the LT predicate on the "context_window" field.
+func ContextWindowLT(v int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldLT(FieldContextWindow, v))
+}
+
+// ContextWindowLTE applies the LTE predicate on the "context_window" field.
+func ContextWindowLTE(v int) predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldLTE(FieldContextWindow, v))
+}
+
+// ContextWindowIsNil applies the IsNil predicate on the "context_window" field.
+func ContextWindowIsNil() predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldIsNull(FieldContextWindow))
+}
+
+// ContextWindowNotNil applies the NotNil predicate on the "context_window" field.
+func ContextWindowNotNil() predicate.LLMProviderModel {
+	return predicate.LLMProviderModel(sql.FieldNotNull(FieldContextWindow))
 }
 
 // DisplayNameEQ applies the EQ predicate on the "display_name" field.

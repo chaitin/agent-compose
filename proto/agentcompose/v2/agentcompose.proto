@@ -2715,6 +2715,8 @@ message LLMModelSpec {
   map<string, string> headers = 5;
   // Positive output cap. Zero or absent inherits the facade default.
   optional int32 max_output_tokens = 6;
+  // Total context window in tokens. Zero or absent keeps runtime defaults.
+  optional int32 context_window = 7;
 }
 
 // LLMProviderModels carries a declared model set so presence is observable: an

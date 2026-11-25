@@ -23,6 +23,8 @@ const (
 	FieldHeadersJSON = "headers_json"
 	// FieldMaxOutputTokens holds the string denoting the max_output_tokens field in the database.
 	FieldMaxOutputTokens = "max_output_tokens"
+	// FieldContextWindow holds the string denoting the context_window field in the database.
+	FieldContextWindow = "context_window"
 	// FieldDisplayName holds the string denoting the display_name field in the database.
 	FieldDisplayName = "display_name"
 	// Table holds the table name of the llmprovidermodel in the database.
@@ -38,6 +40,7 @@ var Columns = []string{
 	FieldBaseURL,
 	FieldHeadersJSON,
 	FieldMaxOutputTokens,
+	FieldContextWindow,
 	FieldDisplayName,
 }
 
@@ -87,6 +90,11 @@ func ByHeadersJSON(opts ...sql.OrderTermOption) OrderOption {
 // ByMaxOutputTokens orders the results by the max_output_tokens field.
 func ByMaxOutputTokens(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldMaxOutputTokens, opts...).ToFunc()
+}
+
+// ByContextWindow orders the results by the context_window field.
+func ByContextWindow(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldContextWindow, opts...).ToFunc()
 }
 
 // ByDisplayName orders the results by the display_name field.

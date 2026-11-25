@@ -21,7 +21,7 @@ func TestCellArtifactsAndAgentFilesWorkflows(t *testing.T) {
 	if script != "cell.py" || command != "python3" || len(args) != 2 {
 		t.Fatalf("python spec %q %q %#v", script, command, args)
 	}
-	if err := WriteCellArtifacts(cellDir, "source", domain.ExecResult{Stdout: "out", Stderr: "err", Output: "", ExitCode: 2}); err != nil {
+	if err := WriteCellArtifacts(cellDir, domain.ExecResult{Stdout: "out", Stderr: "err", Output: "", ExitCode: 2}); err != nil {
 		t.Fatalf("WriteCellArtifacts returned error: %v", err)
 	}
 	recovered := RecoverExecResultFromCellArtifacts(cellDir, domain.ExecResult{})

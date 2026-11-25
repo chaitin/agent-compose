@@ -37,7 +37,7 @@ type execPreparation struct {
 	GuestExecDir string
 }
 
-func (h *ExecHandler) prepareExecCommand(ctx context.Context, sandbox *domain.Sandbox, req *agentcomposev2.ExecRequest, execID string) (execPreparation, error) {
+func (h *ExecHandler) prepareExecCommand(ctx context.Context, sandbox *domain.Sandbox, req *agentcomposev2.ExecRequest, execID string) (prep execPreparation, err error) {
 	if err := runs.ValidateCommandEnv(req.GetEnv()); err != nil {
 		return execPreparation{}, ConnectErrorForDomain(err)
 	}
@@ -58,6 +58,11 @@ func (h *ExecHandler) prepareExecCommand(ctx context.Context, sandbox *domain.Sa
 	if err := os.MkdirAll(hostExecDir, 0o755); err != nil {
 		return execPreparation{}, connect.NewError(connect.CodeInternal, fmt.Errorf("create exec artifact dir: %w", err))
 	}
+	defer func() {
+		if err != nil {
+			_ = os.RemoveAll(hostExecDir)
+		}
+	}()
 	guestExecDir := filepath.Join(h.config.GuestStateRoot, "exec", execID)
 	runtimeRequest := execution.RuntimeCommandRequestPayloadFromCommand(h.config, execution.RuntimeCommandSpec{
 		Mode:           "exec",
@@ -92,16 +97,16 @@ func (h *ExecHandler) prepareExecCommand(ctx context.Context, sandbox *domain.Sa
 // execStreamWriterRequest bundles the identifiers newExecStreamWriter needs
 // to label each streamed output chunk.
 type execStreamWriterRequest struct {
-	TranscriptPath string
-	ExecID         string
-	SandboxID      string
-	RunID          string
-	Send           execStreamSender
+	ExecID    string
+	SandboxID string
+	RunID     string
+	Send      execStreamSender
 }
 
-// newExecStreamWriter builds the ExecStreamWriter that appends each output
-// chunk to the on-disk transcript and, if req.Send is non-nil, streams it to
-// the caller. The returned pointer holds the first streaming error
+// newExecStreamWriter builds the ExecStreamWriter that filters runtime
+// protocol markers out of each output chunk and, if req.Send is non-nil,
+// streams it to the caller. Exec is non-persistent, so the output is not
+// written to disk. The returned pointer holds the first streaming error
 // encountered; the caller checks it after ExecStream returns.
 func newExecStreamWriter(req execStreamWriterRequest) (domain.ExecStreamWriter, *error) {
 	var sendErr error
@@ -111,10 +116,6 @@ func newExecStreamWriter(req execStreamWriterRequest) (domain.ExecStreamWriter, 
 		}
 		filtered, visible := execution.FilterCommandStreamChunk(chunk)
 		if !visible {
-			return
-		}
-		if err := appendExecTranscriptChunk(req.TranscriptPath, filtered); err != nil {
-			sendErr = err
 			return
 		}
 		if req.Send != nil {
@@ -167,12 +168,15 @@ func (h *ExecHandler) executeProjectCommand(ctx context.Context, req *agentcompo
 	if err != nil {
 		return nil, err
 	}
+	// Exec is non-persistent: the result is returned to the caller, so the
+	// request, result and output files the runtime leaves behind are removed
+	// once the command finishes.
+	defer func() { _ = os.RemoveAll(prep.HostExecDir) }()
 	writer, sendErr := newExecStreamWriter(execStreamWriterRequest{
-		TranscriptPath: filepath.Join(prep.HostExecDir, "transcript.txt"),
-		ExecID:         execID,
-		SandboxID:      sandbox.Summary.ID,
-		RunID:          runID,
-		Send:           send,
+		ExecID:    execID,
+		SandboxID: sandbox.Summary.ID,
+		RunID:     runID,
+		Send:      send,
 	})
 	execCtx, cancel := execution.ExecContext(ctx, req.GetTimeoutMs())
 	defer cancel()
@@ -200,9 +204,6 @@ func (h *ExecHandler) executeProjectCommand(ctx context.Context, req *agentcompo
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	if err := execution.MirrorRuntimeCommandArtifacts(prep.HostExecDir, commandResult); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
-	}
 	return ExecResultToProto(ExecResultProtoRequest{
 		ExecID:    execID,
 		SandboxID: sandbox.Summary.ID,
@@ -211,23 +212,4 @@ func (h *ExecHandler) executeProjectCommand(ctx context.Context, req *agentcompo
 		Cwd:       prep.Cwd,
 		Result:    execution.RuntimeCommandResultToExecResult(commandResult),
 	}), nil
-}
-
-func appendExecTranscriptChunk(path string, chunk domain.ExecChunk) error {
-	path = strings.TrimSpace(path)
-	if path == "" || chunk.Text == "" {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("create exec transcript dir: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("open exec transcript %s: %w", path, err)
-	}
-	defer func() { _ = file.Close() }()
-	if _, err := file.WriteString(chunk.Text); err != nil {
-		return fmt.Errorf("append exec transcript %s: %w", path, err)
-	}
-	return nil
 }

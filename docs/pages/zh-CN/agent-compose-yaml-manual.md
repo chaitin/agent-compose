@@ -628,7 +628,8 @@ daemon 在启动时加载一次 `$DATA_ROOT/models.json`。文件不存在是合
       "models": [
         {
           "id": "deepseek-v4-flash",
-          "maxOutputTokens": 8192
+          "maxOutputTokens": 8192,
+          "contextWindow": 128000
         }
       ]
     },
@@ -648,6 +649,8 @@ daemon 在启动时加载一次 `$DATA_ROOT/models.json`。文件不存在是合
 所有兼容的 Coding Agent 和 `scheduler.llm` 使用这份目录完成 agent-compose 的 Provider 路由和模型选择；它不替代 Agent 自身的模型能力目录。在项目 `variables` 或 Agent `env` 中声明的第一方凭据会被作为 daemon 自有的连接导入同一份目录并经 facade 代理，因此 key 留在 daemon，sandbox 只拿到本次 run 的 facade token；这既是完整 `LLM_API_ENDPOINT`、`LLM_API_PROTOCOL`、`LLM_API_KEY` 声明的兼容路径，也适用于 `variables` 和 `env` 下列出的各厂商变量名。可选的 daemon 或 Agent `LLM_API_HEADERS` 是该 env Provider 上的静态额外 HTTP Header JSON 对象，它不替代 catalog 的 `headers`，原始值也不会暴露给 guest runtime。该变量由 env-backed OpenAI 和 Anthropic Provider 共用，因此每个 Header 都必须适合发送给所有已配置的上游。daemon 自身的 `LLM_*` 配置只是默认模型解析上的启动兜底，而不是优先级更高的来源；连接选择是另一条轴，不按配置来源排序，因此两个以相同协议服务同一模型的连接互为对等，与各自来源无关。默认模型按三步解析：`models.json` 声明了 `default` 时它优先；否则通过 `LLMService.SetDefaultModel` 设置的引用生效并在重启后保留；两者都不存在时才轮到环境声明的默认模型，且该模型必须有已启用连接真正服务；被其他来源接管连接后遗留的标记按「无默认」处理。环境标记为默认、但没有任何已启用连接服务的模型同样按「无默认」处理：未声明模型的 run 会报「没有模型」，而不是被路由到一个从未服务过它的连接。`models.json` 的 `default` 必须指向文件自己声明且已启用的连接。指向文件未声明的连接、落库为 disabled 的连接（没有 `apiKey` 也没有显式 `enabled`）、或已被其他来源占用的连接时，该引用不会被应用、也不会落库：文件其余声明照常生效，若已存储的引用同样解析不了就一并清除，daemon 在日志中说明丢弃了什么以及原因并继续启动——一个不可用的默认模型不该让整个 daemon（连同 cleanup、scheduler、删除恢复）都起不来。仍然可解析的已存储引用（例如运维通过 LLM 服务选择的默认模型）会被保留。`models.json` 省略 `default` 时不会清空已存储的引用，因此运行时选择的默认模型不会被下一次启动抹掉；显式写 `"default": ""` 或调用 `LLMService.ClearDefaultModel` 可以清空它。环境投影同样不会抢占其他来源当前正在服务的 ID。ID 只在**归属方确实能服务它**时才留给对方：Provider ID 在其连接 enabled 期间留给对方——未声明 `apiKey` 的 `models.json` 声明会被持久化为禁用，确实不需要凭据时应显式写 `"enabled": true`；Model ID 则在**确有「其他来源拥有的」已启用连接绑定它**时留给对方。没有任何连接能服务的 ID 不构成归属，环境会接管它，而不是让位到整个部署一个可用连接都不剩；这也包括只有环境自己物化的连接在服务的 ID——文件投影每次启动都会收回该身份的 scope，而那条连接始终属于环境。接管不会让文件失去自己的声明：文件投影会改写任何 scope 的行，因此下一次启动仍按文件投影该声明，一旦文件能服务它，环境就按常规让位并打出告警。文件不再声明的 Provider 或 Model ID 会被释放：行本身保留（已存储的默认模型引用着它，文件以后也可以重新声明），但会被置为禁用并交出 catalog scope，因此不再持有该 ID，环境随后可以接管。由于文件是 daemon 自己的声明、环境只是兜底，在 `models.json` 中重新声明该 ID 会收回这一行，随后运行的环境投影按既有规则让位并打出常规告警，而不是让启动失败；环境自行物化的 Provider 或 Model ID 同理。只有属于显式来源的连接不在文件的可改写范围内：`models.json` 的 Provider ID 与 LLMService 管理的连接或 run 声明的连接冲突时，daemon 会在不覆盖原配置的前提下启动失败。如果没有任何默认模型，daemon 会在启动时打出一条告警，未声明模型的 Agent 继续使用自身鉴权。
 
 在启动时，以及每次 `LLMService` 写入 Provider 之后，daemon 都会校验每个已启用的连接：先请求该连接的 `/v1/models`，再按该连接所属协议族可服务的每种协议各发送一个最小 `ping` 请求（输出上限为 1 token）。每种协议都独立探测，因此同一端点同时支持 `responses` 和 `chat_completions` 时会同时报告两者，而不会在第一个成功后停止。探测只做诊断：不改变路由或已存储配置，也不用 `/v1/models` 判断协议支持，结果只写入日志、不落库。较新的结论会以「endpoint + 凭据」为键在内存中短暂保留，避免重复触发产生相同流量；进程重启后即失效并在启动时重新探测。日志形如 `endpoint <url> supports model list: <ids>` 和 `endpoint <url> supports <protocol> protocol`，并对被证明确实不支持的协议、不可达端点、超时以及凭据被拒绝分别给出告警；凭据被拒绝时协议支持情况保持未知。写入 Provider 后的探测同步执行，受 `LLM_PROBE_TIMEOUT`（默认 `15s`）约束；启动时的一轮探测在后台执行并自带同一个截止时间，因此不会阻塞启动，也不会延迟其后启动的任何组件；截止时间耗尽后探测即停止并记录还有多少连接未能探测，且被截止时间中断的结论不会写入缓存，因此下一次触发会重新真正探测。关闭时会中止进行中的探测并等待其停止，等待时间受关闭预算约束，而不是受探测超时约束。声明了模型的连接会用其中一个模型探测，且使用该模型实际走到的端点：模型级 `baseUrl` 才是该模型真实请求的端点，因此「每个模型各自一个端点」的部署按模型端点判定，而不是按连接端点。未声明模型时才会使用端点自身公布的模型。最新结论也会通过 `GetProvider` 和 `ListProviders` 的 `capabilities` 返回：`probes` 区分「已证实不支持」与「无法判定」，`models` 是端点公布的模型清单，`probedModel` / `probedAt` 给出探测所用模型和时间。daemon 尚未探测该连接时 `capabilities` 为空，且因为探测结果不落库，重启后会消失。探测默认开启，因此升级后每个已启用上游都会收到这些请求；设置 `LLM_UPSTREAM_PROBE=false` 可完全关闭探测。
+
+模型的可选字段 `contextWindow`（RPC：`context_window`）声明该模型的总上下文窗口（Token），与 `maxOutputTokens` 独立。AC 启动受管 Codex 时按实际选中的 Provider 和模型应用该值，并将自动压缩阈值设为窗口的 75%（向下取整，至少 1 Token）。请按上游模型实际容量配置；该值不能扩大上游容量。省略或填 0 时保留运行时和项目的默认配置。其他运行时和 LLM 代理不强制执行此值。
 
 ### 通过 RPC 管理 LLM Provider
 

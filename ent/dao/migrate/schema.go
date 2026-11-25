@@ -210,6 +210,7 @@ var (
 		{Name: "base_url", Type: field.TypeString, Nullable: true},
 		{Name: "headers_json", Type: field.TypeString, Nullable: true},
 		{Name: "max_output_tokens", Type: field.TypeInt, Nullable: true},
+		{Name: "context_window", Type: field.TypeInt, Nullable: true},
 		{Name: "display_name", Type: field.TypeString, Nullable: true},
 	}
 	// LlmProviderModelTable holds the schema information for the "llm_provider_model" table.

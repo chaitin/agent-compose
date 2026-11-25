@@ -195,11 +195,6 @@ func finishProjectRunCommand(outcome projectRunCommandOutcome) (TransitionReques
 		transition.Error = fmt.Sprintf("command execution failed: %v", err)
 		return transition, err
 	}
-	if err := execution.MirrorRuntimeCommandArtifacts(outcome.ArtifactsDir, commandResult); err != nil {
-		transition.ExitCode = execution.FirstNonZeroInt(commandResult.ExitCode, 1)
-		transition.Error = fmt.Sprintf("command execution failed: %v", err)
-		return transition, err
-	}
 	transition = transitionFromCommandResult(run, sandbox, commandOutcome{Command: outcome.CommandText, Result: execution.RuntimeCommandResultToExecResult(commandResult)})
 	transition.LogsPath = outcome.LogsPath
 	return transition, nil

@@ -9906,6 +9906,8 @@ type LLMProviderModelMutation struct {
 	headers_json         *string
 	max_output_tokens    *int
 	addmax_output_tokens *int
+	context_window       *int
+	addcontext_window    *int
 	display_name         *string
 	clearedFields        map[string]struct{}
 	done                 bool
@@ -10340,6 +10342,76 @@ func (m *LLMProviderModelMutation) ResetMaxOutputTokens() {
 	delete(m.clearedFields, llmprovidermodel.FieldMaxOutputTokens)
 }
 
+// SetContextWindow sets the "context_window" field.
+func (m *LLMProviderModelMutation) SetContextWindow(i int) {
+	m.context_window = &i
+	m.addcontext_window = nil
+}
+
+// ContextWindow returns the value of the "context_window" field in the mutation.
+func (m *LLMProviderModelMutation) ContextWindow() (r int, exists bool) {
+	v := m.context_window
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldContextWindow returns the old "context_window" field's value of the LLMProviderModel entity.
+// If the LLMProviderModel object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *LLMProviderModelMutation) OldContextWindow(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldContextWindow is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldContextWindow requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldContextWindow: %w", err)
+	}
+	return oldValue.ContextWindow, nil
+}
+
+// AddContextWindow adds i to the "context_window" field.
+func (m *LLMProviderModelMutation) AddContextWindow(i int) {
+	if m.addcontext_window != nil {
+		*m.addcontext_window += i
+	} else {
+		m.addcontext_window = &i
+	}
+}
+
+// AddedContextWindow returns the value that was added to the "context_window" field in this mutation.
+func (m *LLMProviderModelMutation) AddedContextWindow() (r int, exists bool) {
+	v := m.addcontext_window
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearContextWindow clears the value of the "context_window" field.
+func (m *LLMProviderModelMutation) ClearContextWindow() {
+	m.context_window = nil
+	m.addcontext_window = nil
+	m.clearedFields[llmprovidermodel.FieldContextWindow] = struct{}{}
+}
+
+// ContextWindowCleared returns if the "context_window" field was cleared in this mutation.
+func (m *LLMProviderModelMutation) ContextWindowCleared() bool {
+	_, ok := m.clearedFields[llmprovidermodel.FieldContextWindow]
+	return ok
+}
+
+// ResetContextWindow resets all changes to the "context_window" field.
+func (m *LLMProviderModelMutation) ResetContextWindow() {
+	m.context_window = nil
+	m.addcontext_window = nil
+	delete(m.clearedFields, llmprovidermodel.FieldContextWindow)
+}
+
 // SetDisplayName sets the "display_name" field.
 func (m *LLMProviderModelMutation) SetDisplayName(s string) {
 	m.display_name = &s
@@ -10423,7 +10495,7 @@ func (m *LLMProviderModelMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *LLMProviderModelMutation) Fields() []string {
-	fields := make([]string, 0, 7)
+	fields := make([]string, 0, 8)
 	if m.model_id != nil {
 		fields = append(fields, llmprovidermodel.FieldModelID)
 	}
@@ -10441,6 +10513,9 @@ func (m *LLMProviderModelMutation) Fields() []string {
 	}
 	if m.max_output_tokens != nil {
 		fields = append(fields, llmprovidermodel.FieldMaxOutputTokens)
+	}
+	if m.context_window != nil {
+		fields = append(fields, llmprovidermodel.FieldContextWindow)
 	}
 	if m.display_name != nil {
 		fields = append(fields, llmprovidermodel.FieldDisplayName)
@@ -10465,6 +10540,8 @@ func (m *LLMProviderModelMutation) Field(name string) (ent.Value, bool) {
 		return m.HeadersJSON()
 	case llmprovidermodel.FieldMaxOutputTokens:
 		return m.MaxOutputTokens()
+	case llmprovidermodel.FieldContextWindow:
+		return m.ContextWindow()
 	case llmprovidermodel.FieldDisplayName:
 		return m.DisplayName()
 	}
@@ -10488,6 +10565,8 @@ func (m *LLMProviderModelMutation) OldField(ctx context.Context, name string) (e
 		return m.OldHeadersJSON(ctx)
 	case llmprovidermodel.FieldMaxOutputTokens:
 		return m.OldMaxOutputTokens(ctx)
+	case llmprovidermodel.FieldContextWindow:
+		return m.OldContextWindow(ctx)
 	case llmprovidermodel.FieldDisplayName:
 		return m.OldDisplayName(ctx)
 	}
@@ -10541,6 +10620,13 @@ func (m *LLMProviderModelMutation) SetField(name string, value ent.Value) error 
 		}
 		m.SetMaxOutputTokens(v)
 		return nil
+	case llmprovidermodel.FieldContextWindow:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetContextWindow(v)
+		return nil
 	case llmprovidermodel.FieldDisplayName:
 		v, ok := value.(string)
 		if !ok {
@@ -10562,6 +10648,9 @@ func (m *LLMProviderModelMutation) AddedFields() []string {
 	if m.addmax_output_tokens != nil {
 		fields = append(fields, llmprovidermodel.FieldMaxOutputTokens)
 	}
+	if m.addcontext_window != nil {
+		fields = append(fields, llmprovidermodel.FieldContextWindow)
+	}
 	return fields
 }
 
@@ -10574,6 +10663,8 @@ func (m *LLMProviderModelMutation) AddedField(name string) (ent.Value, bool) {
 		return m.AddedWeight()
 	case llmprovidermodel.FieldMaxOutputTokens:
 		return m.AddedMaxOutputTokens()
+	case llmprovidermodel.FieldContextWindow:
+		return m.AddedContextWindow()
 	}
 	return nil, false
 }
@@ -10597,6 +10688,13 @@ func (m *LLMProviderModelMutation) AddField(name string, value ent.Value) error 
 		}
 		m.AddMaxOutputTokens(v)
 		return nil
+	case llmprovidermodel.FieldContextWindow:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddContextWindow(v)
+		return nil
 	}
 	return fmt.Errorf("unknown LLMProviderModel numeric field %s", name)
 }
@@ -10619,6 +10717,9 @@ func (m *LLMProviderModelMutation) ClearedFields() []string {
 	}
 	if m.FieldCleared(llmprovidermodel.FieldMaxOutputTokens) {
 		fields = append(fields, llmprovidermodel.FieldMaxOutputTokens)
+	}
+	if m.FieldCleared(llmprovidermodel.FieldContextWindow) {
+		fields = append(fields, llmprovidermodel.FieldContextWindow)
 	}
 	if m.FieldCleared(llmprovidermodel.FieldDisplayName) {
 		fields = append(fields, llmprovidermodel.FieldDisplayName)
@@ -10652,6 +10753,9 @@ func (m *LLMProviderModelMutation) ClearField(name string) error {
 	case llmprovidermodel.FieldMaxOutputTokens:
 		m.ClearMaxOutputTokens()
 		return nil
+	case llmprovidermodel.FieldContextWindow:
+		m.ClearContextWindow()
+		return nil
 	case llmprovidermodel.FieldDisplayName:
 		m.ClearDisplayName()
 		return nil
@@ -10680,6 +10784,9 @@ func (m *LLMProviderModelMutation) ResetField(name string) error {
 		return nil
 	case llmprovidermodel.FieldMaxOutputTokens:
 		m.ResetMaxOutputTokens()
+		return nil
+	case llmprovidermodel.FieldContextWindow:
+		m.ResetContextWindow()
 		return nil
 	case llmprovidermodel.FieldDisplayName:
 		m.ResetDisplayName()

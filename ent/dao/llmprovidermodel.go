@@ -28,6 +28,8 @@ type LLMProviderModel struct {
 	HeadersJSON string `json:"headers_json,omitempty"`
 	// MaxOutputTokens holds the value of the "max_output_tokens" field.
 	MaxOutputTokens int `json:"max_output_tokens,omitempty"`
+	// ContextWindow holds the value of the "context_window" field.
+	ContextWindow int `json:"context_window,omitempty"`
 	// DisplayName holds the value of the "display_name" field.
 	DisplayName  string `json:"display_name,omitempty"`
 	selectValues sql.SelectValues
@@ -38,7 +40,7 @@ func (*LLMProviderModel) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case llmprovidermodel.FieldWeight, llmprovidermodel.FieldMaxOutputTokens:
+		case llmprovidermodel.FieldWeight, llmprovidermodel.FieldMaxOutputTokens, llmprovidermodel.FieldContextWindow:
 			values[i] = new(sql.NullInt64)
 		case llmprovidermodel.FieldID, llmprovidermodel.FieldModelID, llmprovidermodel.FieldWireAPI, llmprovidermodel.FieldBaseURL, llmprovidermodel.FieldHeadersJSON, llmprovidermodel.FieldDisplayName:
 			values[i] = new(sql.NullString)
@@ -99,6 +101,12 @@ func (_m *LLMProviderModel) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.MaxOutputTokens = int(value.Int64)
 			}
+		case llmprovidermodel.FieldContextWindow:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field context_window", values[i])
+			} else if value.Valid {
+				_m.ContextWindow = int(value.Int64)
+			}
 		case llmprovidermodel.FieldDisplayName:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field display_name", values[i])
@@ -158,6 +166,9 @@ func (_m *LLMProviderModel) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("max_output_tokens=")
 	builder.WriteString(fmt.Sprintf("%v", _m.MaxOutputTokens))
+	builder.WriteString(", ")
+	builder.WriteString("context_window=")
+	builder.WriteString(fmt.Sprintf("%v", _m.ContextWindow))
 	builder.WriteString(", ")
 	builder.WriteString("display_name=")
 	builder.WriteString(_m.DisplayName)

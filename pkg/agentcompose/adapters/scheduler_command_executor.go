@@ -147,7 +147,7 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		if strings.TrimSpace(recovered.Output) == "" {
 			recovered.Output = firstNonEmpty(recovered.Stderr, recovered.Stdout, finalErr.Error())
 		}
-		if err := execution.WriteCellArtifacts(hostCellDir, source, recovered); err != nil {
+		if err := execution.WriteCellArtifacts(hostCellDir, recovered); err != nil {
 			return buildSchedulerCommandResult(recovered), err
 		}
 		cellMu.Lock()

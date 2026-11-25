@@ -156,6 +156,33 @@ func (_u *LLMProviderModelUpdate) ClearMaxOutputTokens() *LLMProviderModelUpdate
 	return _u
 }
 
+// SetContextWindow sets the "context_window" field.
+func (_u *LLMProviderModelUpdate) SetContextWindow(v int) *LLMProviderModelUpdate {
+	_u.mutation.ResetContextWindow()
+	_u.mutation.SetContextWindow(v)
+	return _u
+}
+
+// SetNillableContextWindow sets the "context_window" field if the given value is not nil.
+func (_u *LLMProviderModelUpdate) SetNillableContextWindow(v *int) *LLMProviderModelUpdate {
+	if v != nil {
+		_u.SetContextWindow(*v)
+	}
+	return _u
+}
+
+// AddContextWindow adds value to the "context_window" field.
+func (_u *LLMProviderModelUpdate) AddContextWindow(v int) *LLMProviderModelUpdate {
+	_u.mutation.AddContextWindow(v)
+	return _u
+}
+
+// ClearContextWindow clears the value of the "context_window" field.
+func (_u *LLMProviderModelUpdate) ClearContextWindow() *LLMProviderModelUpdate {
+	_u.mutation.ClearContextWindow()
+	return _u
+}
+
 // SetDisplayName sets the "display_name" field.
 func (_u *LLMProviderModelUpdate) SetDisplayName(v string) *LLMProviderModelUpdate {
 	_u.mutation.SetDisplayName(v)
@@ -261,6 +288,15 @@ func (_u *LLMProviderModelUpdate) sqlSave(ctx context.Context) (_node int, err e
 	}
 	if _u.mutation.MaxOutputTokensCleared() {
 		_spec.ClearField(llmprovidermodel.FieldMaxOutputTokens, field.TypeInt)
+	}
+	if value, ok := _u.mutation.ContextWindow(); ok {
+		_spec.SetField(llmprovidermodel.FieldContextWindow, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedContextWindow(); ok {
+		_spec.AddField(llmprovidermodel.FieldContextWindow, field.TypeInt, value)
+	}
+	if _u.mutation.ContextWindowCleared() {
+		_spec.ClearField(llmprovidermodel.FieldContextWindow, field.TypeInt)
 	}
 	if value, ok := _u.mutation.DisplayName(); ok {
 		_spec.SetField(llmprovidermodel.FieldDisplayName, field.TypeString, value)
@@ -418,6 +454,33 @@ func (_u *LLMProviderModelUpdateOne) ClearMaxOutputTokens() *LLMProviderModelUpd
 	return _u
 }
 
+// SetContextWindow sets the "context_window" field.
+func (_u *LLMProviderModelUpdateOne) SetContextWindow(v int) *LLMProviderModelUpdateOne {
+	_u.mutation.ResetContextWindow()
+	_u.mutation.SetContextWindow(v)
+	return _u
+}
+
+// SetNillableContextWindow sets the "context_window" field if the given value is not nil.
+func (_u *LLMProviderModelUpdateOne) SetNillableContextWindow(v *int) *LLMProviderModelUpdateOne {
+	if v != nil {
+		_u.SetContextWindow(*v)
+	}
+	return _u
+}
+
+// AddContextWindow adds value to the "context_window" field.
+func (_u *LLMProviderModelUpdateOne) AddContextWindow(v int) *LLMProviderModelUpdateOne {
+	_u.mutation.AddContextWindow(v)
+	return _u
+}
+
+// ClearContextWindow clears the value of the "context_window" field.
+func (_u *LLMProviderModelUpdateOne) ClearContextWindow() *LLMProviderModelUpdateOne {
+	_u.mutation.ClearContextWindow()
+	return _u
+}
+
 // SetDisplayName sets the "display_name" field.
 func (_u *LLMProviderModelUpdateOne) SetDisplayName(v string) *LLMProviderModelUpdateOne {
 	_u.mutation.SetDisplayName(v)
@@ -553,6 +616,15 @@ func (_u *LLMProviderModelUpdateOne) sqlSave(ctx context.Context) (_node *LLMPro
 	}
 	if _u.mutation.MaxOutputTokensCleared() {
 		_spec.ClearField(llmprovidermodel.FieldMaxOutputTokens, field.TypeInt)
+	}
+	if value, ok := _u.mutation.ContextWindow(); ok {
+		_spec.SetField(llmprovidermodel.FieldContextWindow, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedContextWindow(); ok {
+		_spec.AddField(llmprovidermodel.FieldContextWindow, field.TypeInt, value)
+	}
+	if _u.mutation.ContextWindowCleared() {
+		_spec.ClearField(llmprovidermodel.FieldContextWindow, field.TypeInt)
 	}
 	if value, ok := _u.mutation.DisplayName(); ok {
 		_spec.SetField(llmprovidermodel.FieldDisplayName, field.TypeString, value)

@@ -316,6 +316,7 @@ func replaceProviderModels(ctx context.Context, client *dao.Client, providerID, 
 			SetBaseURL(model.BaseURL).
 			SetHeadersJSON(headersJSON).
 			SetMaxOutputTokens(model.MaxOutputTokens).
+			SetContextWindow(model.ContextWindow).
 			SetDisplayName(model.Name).
 			Save(ctx); err != nil {
 			return fmt.Errorf("bind provider %q model %q: %w", providerID, model.ID, err)

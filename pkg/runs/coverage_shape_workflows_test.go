@@ -654,8 +654,10 @@ func TestRunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 	if err != nil || !strings.Contains(string(requestData), `"mode": "shell"`) || !strings.Contains(string(requestData), `"script": "echo command"`) {
 		t.Fatalf("command request artifact = %q err=%v", string(requestData), err)
 	}
-	if data, err := os.ReadFile(filepath.Join(run.ArtifactsDir, "output.txt")); err != nil || string(data) != "command output\n" {
-		t.Fatalf("command output artifact = %q err=%v", string(data), err)
+	for _, name := range []string{"stdout.txt", "stderr.txt", "output.txt"} {
+		if _, err := os.Stat(filepath.Join(run.ArtifactsDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("command output artifact %s should not be written by the host: err=%v", name, err)
+		}
 	}
 	if !started || len(chunks) != 1 || chunks[0].Text != "command output\n" || strings.Contains(chunks[0].Text, execution.CommandResultPrefix) || runtime.spec.Command != "sh" || !strings.Contains(strings.Join(runtime.spec.Args, " "), "agent-compose-runtime exec") {
 		t.Fatalf("started=%v chunks=%#v spec=%#v", started, chunks, runtime.spec)

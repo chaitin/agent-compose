@@ -2,6 +2,7 @@ package llms
 
 import (
 	"fmt"
+	"strconv"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -96,6 +97,8 @@ func writeCodexGuestConfig(config *appconfig.Config, sandbox *domain.Sandbox, pr
 	env := guestCredentialEnv(prepared)
 	env["LLM_MODEL"] = prepared.Model
 	env[GuestModelEnvName] = prepared.Model
+	// Zero must override a window inherited from an existing sandbox.
+	env["AGENT_COMPOSE_CODEX_CONTEXT_WINDOW"] = strconv.Itoa(prepared.Target.ContextWindow)
 	for name, value := range ProviderFamilyEnv(ProviderFamilyOpenAI, prepared.Credential, prepared.Endpoint, prepared.Model) {
 		env[name] = value
 	}

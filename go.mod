@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	connectrpc.com/connect v1.19.2
 	entgo.io/ent v0.14.6
-	github.com/chaitin/agent-compose/proto v0.1.20
+	github.com/chaitin/agent-compose/proto v0.1.23
 	github.com/chaitin/ai-api-protocol-bridge v1.2.1-0.20261014111939-58ae8a3baf41
 	github.com/chzyer/readline v1.5.1
 	github.com/containerd/errdefs v1.0.0
