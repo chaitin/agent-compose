@@ -138,9 +138,11 @@ const (
 	dockerNFSVolumeLabel        = "agent-compose.nfs-volume"
 )
 
-// dockerNFSVolumeMounts maps each nfs mount point that appears in the Docker
-// mount manifest to the Engine-managed volume mount that replaces the bind.
-func dockerNFSVolumeMounts(session *Sandbox) (map[string]sandboxNFSMount, error) {
+// nfsMountsByHostPath indexes the sandbox's nfs mounts by the absolute host
+// mount point that stands for them in the runtime mount manifest. Docker
+// replaces those manifest entries with Engine volumes; Microsandbox binds
+// them with stat virtualization off.
+func nfsMountsByHostPath(session *Sandbox) (map[string]sandboxNFSMount, error) {
 	mounts, err := sandboxNFSMounts(session)
 	if err != nil || len(mounts) == 0 {
 		return nil, err

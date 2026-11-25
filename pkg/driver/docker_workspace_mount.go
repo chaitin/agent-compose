@@ -35,7 +35,7 @@ func (r *dockerRuntime) dockerRuntimeMountsForWorkspace(ctx context.Context, doc
 	if err := validateWorkspaceRuntimeManifest(r.config, sandbox, manifest, workspace); err != nil {
 		return nil, err
 	}
-	nfsMounts, err := dockerNFSVolumeMounts(sandbox)
+	nfsMounts, err := nfsMountsByHostPath(sandbox)
 	if err != nil {
 		return nil, err
 	}

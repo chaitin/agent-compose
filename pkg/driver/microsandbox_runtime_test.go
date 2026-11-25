@@ -732,7 +732,7 @@ func TestMicrosandboxCreateMountsUseRootfsForDockerData(t *testing.T) {
 	hostPath := filepath.Join(t.TempDir(), "data")
 	mounts := runtime.microsandboxCreateMounts(RuntimeMountManifest{Mounts: []RuntimeMount{{
 		HostPath: hostPath, GuestPath: "/data", Type: "bind", ReadOnly: true,
-	}}}, "sandbox-a")
+	}}}, "sandbox-a", nil)
 
 	if _, exists := mounts["/var/lib/docker"]; exists {
 		t.Fatalf("mounts include a separate /var/lib/docker disk: %#v", mounts["/var/lib/docker"])
@@ -745,6 +745,24 @@ func TestMicrosandboxCreateMountsUseRootfsForDockerData(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(config.MicrosandboxHome, "docker-disks")); !os.IsNotExist(err) {
 		t.Fatalf("mount assembly created docker-disks, err=%v", err)
+	}
+}
+
+func TestMicrosandboxCreateMountsTurnsStatVirtualizationOffForNFS(t *testing.T) {
+	runtime := &microsandboxRuntime{config: testMicrosandboxConfig(t)}
+	nfsPoint := filepath.Join(t.TempDir(), "volumes", "mount-nfs0001")
+	localPoint := filepath.Join(t.TempDir(), "cache")
+	mounts := runtime.microsandboxCreateMounts(RuntimeMountManifest{Mounts: []RuntimeMount{
+		{HostPath: nfsPoint, GuestPath: "/mnt/shared", Type: "bind", ReadOnly: true},
+		{HostPath: localPoint, GuestPath: "/cache", Type: "bind"},
+	}}, "sandbox-a", map[string]sandboxNFSMount{nfsPoint: {mountPoint: nfsPoint}})
+
+	nfs := mounts["/mnt/shared"]
+	if nfs.Bind != nfsPoint || !nfs.Readonly || nfs.StatVirtualization != microsandbox.StatVirtualizationOff || !nfs.Nosuid || !nfs.Nodev {
+		t.Fatalf("nfs mount = %#v", nfs)
+	}
+	if local := mounts["/cache"]; local.StatVirtualization != microsandbox.StatVirtualizationDefault || local.Nosuid {
+		t.Fatalf("local bind mount changed: %#v", local)
 	}
 }
 

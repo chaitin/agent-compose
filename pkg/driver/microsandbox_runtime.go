@@ -1307,7 +1307,11 @@ func (r *microsandboxRuntime) createSandbox(ctx context.Context, session *Sandbo
 	if err != nil {
 		return nil, err
 	}
-	mounts := r.microsandboxCreateMounts(manifest, name)
+	nfsMounts, err := nfsMountsByHostPath(session)
+	if err != nil {
+		return nil, err
+	}
+	mounts := r.microsandboxCreateMounts(manifest, name, nfsMounts)
 	initEnabled := SandboxInitEnabledFor(r.config, vmState)
 	imageRef := resolveSandboxGuestImage(vmState.Image, session.Summary.GuestImage, defaultGuestImageForDriver(r.config, RuntimeDriverMicrosandbox))
 	imagePullTimeout := r.config.ImagePullTimeout
