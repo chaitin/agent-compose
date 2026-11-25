@@ -89,6 +89,7 @@ func (w *Writer) Recovery() *Recovery {
 func (w *Writer) SetSourceOffset(offset uint64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	w.changed = w.changed || offset != w.sourceOffset
 	w.sourceOffset = offset
 }
 
@@ -131,7 +132,7 @@ func (w *Writer) checkpointLocked(offset uint64, state json.RawMessage) error {
 		return err
 	}
 	recovery.State = append(json.RawMessage(nil), state...)
-	w.recovery, w.sourceOffset = &recovery, offset
+	w.recovery, w.sourceOffset, w.changed = &recovery, offset, false
 	if w.opts.OnAppend != nil {
 		for _, entry := range w.notifications {
 			w.opts.OnAppend(entry, Render(entry))

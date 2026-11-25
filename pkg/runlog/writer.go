@@ -74,6 +74,10 @@ type Writer struct {
 	sourceOffset  uint64
 	recovery      *Recovery
 	notifications []Entry
+	// changed reports whether merger or writer state moved since the last
+	// checkpoint, including changes that wrote no bytes: text held for
+	// coalescing, or entries the cap dropped.
+	changed bool
 }
 
 // Open opens the run log at path for appending, creating it if needed. An
@@ -244,10 +248,11 @@ func (w *Writer) Close() error {
 	}
 	// Close writes the text still held for coalescing and the marker for
 	// bytes the cap dropped. On a checkpointed log readers see only what the
-	// last checkpoint committed, so these are committed too, with the consumer's
-	// state unchanged: they come from merger and writer state that checkpoint
-	// already held. Writes the consumer left uncommitted stay uncommitted.
-	committed := w.recovery != nil && w.size == w.recovery.LogBytes
+	// last checkpoint committed. When nothing changed since then, these come
+	// from state that checkpoint already held, so they are committed too, with
+	// the consumer's state unchanged. Otherwise they may include input the
+	// consumer will replay from the checkpoint, and stay uncommitted.
+	committed := w.recovery != nil && !w.changed
 	flushErr := w.appendAllLocked(w.merger.FlushText())
 	if flushErr == nil {
 		flushErr = w.writeDroppedLocked(w.turn)
@@ -261,6 +266,7 @@ func (w *Writer) Close() error {
 }
 
 func (w *Writer) appendAllLocked(pending []Pending) error {
+	w.changed = true
 	for _, p := range pending {
 		if _, err := w.appendLocked(p); err != nil {
 			return err
@@ -271,6 +277,7 @@ func (w *Writer) appendAllLocked(pending []Pending) error {
 
 // appendLocked gives the entry its position and writes it, applying the cap.
 func (w *Writer) appendLocked(p Pending) (Entry, error) {
+	w.changed = true
 	if w.file == nil {
 		return Entry{}, errors.New("run log is closed")
 	}

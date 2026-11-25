@@ -278,3 +278,67 @@ func TestCloseLeavesTheConsumersUncommittedWrites(t *testing.T) {
 		t.Fatalf("uncommitted entries became visible: %+v", entries)
 	}
 }
+
+func TestCloseLeavesUncommittedStateThatWroteNoBytes(t *testing.T) {
+	for name, c := range map[string]struct {
+		opts        Options
+		uncommitted func(w *Writer) error
+	}{
+		// A delta without a newline stays in the merger.
+		"held text": {Options{}, func(w *Writer) error {
+			return w.AppendAgentEvent([]byte(`{"kind":"text_delta","text":"held"}`))
+		}},
+		// Past the cap, output only counts toward the next marker.
+		"dropped output": {Options{MaxBytes: 1}, func(w *Writer) error { return w.AppendOutput("stdout", "dropped\n") }},
+	} {
+		path := filepath.Join(t.TempDir(), FileName)
+		opts, uncommitted := c.opts, c.uncommitted
+		w, err := Open(path, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.AppendInitialPrompt("go"); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Checkpoint(1, json.RawMessage(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := uncommitted(w); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		// The consumer replays the record from the committed offset.
+		w, err = Open(path, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := uncommitted(w); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Checkpoint(2, json.RawMessage(`{}`)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		entries, err := ReadEntries(path, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := RenderText(entries)
+		if name == "held text" && strings.Count(text, "held") != 1 {
+			t.Fatalf("%s: replayed text repeated: %q", name, text)
+		}
+		var dropped uint64
+		for _, e := range entries {
+			if e.Type == EntryTruncated {
+				dropped += e.DroppedBytes
+			}
+		}
+		if name == "dropped output" && dropped != uint64(len("dropped\n")) {
+			t.Fatalf("%s: markers count %d dropped bytes, want %d", name, dropped, len("dropped\n"))
+		}
+	}
+}
