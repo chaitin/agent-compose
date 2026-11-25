@@ -189,41 +189,7 @@ func (s *projectStore) finalizeProjectRunCompletion(ctx context.Context, run dom
 		return domain.ProjectRunRecord{}, err
 	}
 	run.CleanupError = cleanupError
-	update := client.ProjectRun.Update().
-		Where(projectrun.IDEQ(run.RunID)).
-		SetProjectID(run.ProjectID).
-		SetProjectName(run.ProjectName).
-		SetProjectRevision(run.ProjectRevision).
-		SetAgentName(run.AgentName).
-		SetAgentID(run.AgentID).
-		SetSource(run.Source).
-		SetSchedulerID(run.SchedulerID).
-		SetTriggerID(run.TriggerID).
-		SetStatus(run.Status).
-		SetSandboxID(run.SandboxID).
-		SetExitCode(run.ExitCode).
-		SetError(run.Error).
-		SetErrorStack(run.ErrorStack).
-		SetPrompt(run.Prompt).
-		SetOutput(run.Output).
-		SetResultJSON(run.ResultJSON).
-		SetLogsPath(run.LogsPath).
-		SetArtifactsDir(run.ArtifactsDir).
-		SetCleanupError(run.CleanupError).
-		SetCleanupPolicy(run.CleanupPolicy).
-		SetSandboxCreated(BoolToInt(run.SandboxCreated)).
-		SetDriver(run.Driver).
-		SetImageRef(run.ImageRef).
-		SetStartedAt(domain.NonZeroTimeUnixMilli(run.StartedAt)).
-		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
-		SetDurationMs(run.DurationMs).
-		SetUpdatedAt(time.Now().UTC().Unix())
-	if ptr := schedulerRunIDPtr(run.SchedulerRunID); ptr != nil {
-		update.SetSchedulerRunID(*ptr)
-	} else {
-		update.ClearSchedulerRunID()
-	}
-	affected, err := update.Save(ctx)
+	affected, err := applyProjectRunUpdateFields(client.ProjectRun.Update(), run, time.Now().UTC().Unix(), false).Save(ctx)
 	if err != nil {
 		return domain.ProjectRunRecord{}, err
 	}

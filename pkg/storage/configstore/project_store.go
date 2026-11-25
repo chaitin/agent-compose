@@ -499,42 +499,7 @@ func (s *projectStore) CreateProjectRun(ctx context.Context, run ProjectRunRecor
 	}
 	defer func() { _ = tx.Rollback() }()
 	client := tx.Client()
-	if _, err := client.ProjectRun.Create().
-		SetID(run.RunID).
-		SetProjectID(run.ProjectID).
-		SetProjectName(run.ProjectName).
-		SetProjectRevision(run.ProjectRevision).
-		SetAgentName(run.AgentName).
-		SetAgentID(run.AgentID).
-		SetSource(run.Source).
-		SetSchedulerID(run.SchedulerID).
-		SetNillableSchedulerRunID(schedulerRunIDPtr(run.SchedulerRunID)).
-		SetTriggerID(run.TriggerID).
-		SetStatus(run.Status).
-		SetSandboxID(run.SandboxID).
-		SetExitCode(run.ExitCode).
-		SetError(run.Error).
-		SetErrorStack(run.ErrorStack).
-		SetPrompt(run.Prompt).
-		SetOutput(run.Output).
-		SetResultJSON(run.ResultJSON).
-		SetLogsPath(run.LogsPath).
-		SetArtifactsDir(run.ArtifactsDir).
-		SetCleanupError(run.CleanupError).
-		SetCleanupPolicy(run.CleanupPolicy).
-		SetSandboxCreated(BoolToInt(run.SandboxCreated)).
-		SetDriver(run.Driver).
-		SetImageRef(run.ImageRef).
-		SetStartedAt(domain.NonZeroTimeUnixMilli(run.StartedAt)).
-		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
-		SetDurationMs(run.DurationMs).
-		SetCreatedAt(run.CreatedAt.Unix()).
-		SetUpdatedAt(run.UpdatedAt.Unix()).
-		SetExecutionID(run.ExecutionID).
-		SetDetach(BoolToInt(run.Detach)).
-		SetDeadline(domain.NonZeroTimeUnixMilli(run.Deadline)).
-		SetDetachKind(run.DetachKind).
-		Save(ctx); err != nil {
+	if _, err := applyProjectRunCreateFields(client.ProjectRun.Create(), run, true).Save(ctx); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("insert project run %s: %w", run.RunID, err)
 	}
 	if err := insertProjectRunLabels(ctx, client, run.RunID, run.Labels); err != nil {
@@ -559,45 +524,7 @@ func (s *projectStore) UpdateProjectRun(ctx context.Context, run ProjectRunRecor
 		return ProjectRunRecord{}, err
 	}
 	now := time.Now().UTC()
-	update := s.client.ProjectRun.Update().
-		Where(projectrun.IDEQ(run.RunID)).
-		SetProjectID(run.ProjectID).
-		SetProjectName(run.ProjectName).
-		SetProjectRevision(run.ProjectRevision).
-		SetAgentName(run.AgentName).
-		SetAgentID(run.AgentID).
-		SetSource(run.Source).
-		SetSchedulerID(run.SchedulerID).
-		SetTriggerID(run.TriggerID).
-		SetStatus(run.Status).
-		SetSandboxID(run.SandboxID).
-		SetExitCode(run.ExitCode).
-		SetError(run.Error).
-		SetErrorStack(run.ErrorStack).
-		SetPrompt(run.Prompt).
-		SetOutput(run.Output).
-		SetResultJSON(run.ResultJSON).
-		SetLogsPath(run.LogsPath).
-		SetArtifactsDir(run.ArtifactsDir).
-		SetCleanupError(run.CleanupError).
-		SetCleanupPolicy(run.CleanupPolicy).
-		SetSandboxCreated(BoolToInt(run.SandboxCreated)).
-		SetDriver(run.Driver).
-		SetImageRef(run.ImageRef).
-		SetStartedAt(domain.NonZeroTimeUnixMilli(run.StartedAt)).
-		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
-		SetDurationMs(run.DurationMs).
-		SetUpdatedAt(now.Unix()).
-		SetExecutionID(run.ExecutionID).
-		SetDetach(BoolToInt(run.Detach)).
-		SetDeadline(domain.NonZeroTimeUnixMilli(run.Deadline)).
-		SetDetachKind(run.DetachKind)
-	if ptr := schedulerRunIDPtr(run.SchedulerRunID); ptr != nil {
-		update.SetSchedulerRunID(*ptr)
-	} else {
-		update.ClearSchedulerRunID()
-	}
-	affected, err := update.Save(ctx)
+	affected, err := applyProjectRunUpdateFields(s.client.ProjectRun.Update(), run, now.Unix(), true).Save(ctx)
 	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("update project run %s: %w", run.RunID, err)
 	}

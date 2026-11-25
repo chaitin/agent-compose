@@ -139,23 +139,6 @@ func parseResourceIDMatch(ref string) (resourceIDMatch, bool) {
 	return resourceIDMatch{values: []string{ref, upper, identity.Prefix + ref, identity.Prefix + upper}}, true
 }
 
-func resourceIDClause(column, ref string) (string, []any, bool) {
-	switch column {
-	case "id", "pa.id", "run_id":
-	default:
-		return "", nil, false
-	}
-	ref = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ref)), identity.Prefix)
-	if !identity.IsIDPrefix(ref) {
-		return "", nil, false
-	}
-	if identity.IsID(ref) {
-		return `(` + column + ` = ? OR ` + column + ` = ?)`, []any{ref, identity.Prefix + ref}, true
-	}
-	upper := nextResourceIDPrefix(ref)
-	return `((` + column + ` >= ? AND ` + column + ` < ?) OR (` + column + ` >= ? AND ` + column + ` < ?))`, []any{ref, upper, identity.Prefix + ref, identity.Prefix + upper}, true
-}
-
 func nextResourceIDPrefix(prefix string) string {
 	value := []byte(prefix)
 	for index := len(value) - 1; index >= 0; index-- {

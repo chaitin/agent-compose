@@ -38,37 +38,7 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 		return ProjectRunRecord{}, err
 	}
 	client := newEntTxClient(s.dialect, tx)
-	err = client.ProjectRun.Create().
-		SetID(run.RunID).
-		SetProjectID(run.ProjectID).
-		SetProjectName(run.ProjectName).
-		SetProjectRevision(run.ProjectRevision).
-		SetAgentName(run.AgentName).
-		SetAgentID(run.AgentID).
-		SetSource(run.Source).
-		SetSchedulerID(run.SchedulerID).
-		SetNillableSchedulerRunID(schedulerRunIDPtr(run.SchedulerRunID)).
-		SetTriggerID(run.TriggerID).
-		SetStatus(run.Status).
-		SetSandboxID(run.SandboxID).
-		SetExitCode(run.ExitCode).
-		SetError(run.Error).
-		SetErrorStack(run.ErrorStack).
-		SetPrompt(run.Prompt).
-		SetOutput(run.Output).
-		SetResultJSON(run.ResultJSON).
-		SetLogsPath(run.LogsPath).
-		SetArtifactsDir(run.ArtifactsDir).
-		SetCleanupError(run.CleanupError).
-		SetCleanupPolicy(run.CleanupPolicy).
-		SetSandboxCreated(BoolToInt(run.SandboxCreated)).
-		SetDriver(run.Driver).
-		SetImageRef(run.ImageRef).
-		SetStartedAt(domain.NonZeroTimeUnixMilli(run.StartedAt)).
-		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
-		SetDurationMs(run.DurationMs).
-		SetCreatedAt(run.CreatedAt.Unix()).
-		SetUpdatedAt(run.UpdatedAt.Unix()).
+	err = applyProjectRunCreateFields(client.ProjectRun.Create(), run, false).
 		OnConflict(entsql.ConflictColumns(projectrun.FieldID), entsql.DoNothing()).
 		Exec(ctx)
 	switch {
@@ -121,41 +91,7 @@ func (s *projectStore) UpdateProjectRunWithEvents(ctx context.Context, run Proje
 	}
 	defer func() { _ = tx.Rollback() }()
 	client := newEntTxClient(s.dialect, tx)
-	update := client.ProjectRun.Update().
-		Where(projectrun.IDEQ(run.RunID)).
-		SetProjectID(run.ProjectID).
-		SetProjectName(run.ProjectName).
-		SetProjectRevision(run.ProjectRevision).
-		SetAgentName(run.AgentName).
-		SetAgentID(run.AgentID).
-		SetSource(run.Source).
-		SetSchedulerID(run.SchedulerID).
-		SetTriggerID(run.TriggerID).
-		SetStatus(run.Status).
-		SetSandboxID(run.SandboxID).
-		SetExitCode(run.ExitCode).
-		SetError(run.Error).
-		SetErrorStack(run.ErrorStack).
-		SetPrompt(run.Prompt).
-		SetOutput(run.Output).
-		SetResultJSON(run.ResultJSON).
-		SetLogsPath(run.LogsPath).
-		SetArtifactsDir(run.ArtifactsDir).
-		SetCleanupError(run.CleanupError).
-		SetCleanupPolicy(run.CleanupPolicy).
-		SetSandboxCreated(BoolToInt(run.SandboxCreated)).
-		SetDriver(run.Driver).
-		SetImageRef(run.ImageRef).
-		SetStartedAt(domain.NonZeroTimeUnixMilli(run.StartedAt)).
-		SetCompletedAt(domain.NonZeroTimeUnixMilli(run.CompletedAt)).
-		SetDurationMs(run.DurationMs).
-		SetUpdatedAt(now.Unix())
-	if ptr := schedulerRunIDPtr(run.SchedulerRunID); ptr != nil {
-		update.SetSchedulerRunID(*ptr)
-	} else {
-		update.ClearSchedulerRunID()
-	}
-	affected, err := update.Save(ctx)
+	affected, err := applyProjectRunUpdateFields(client.ProjectRun.Update(), run, now.Unix(), false).Save(ctx)
 	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("update project run %s: %w", run.RunID, err)
 	}
