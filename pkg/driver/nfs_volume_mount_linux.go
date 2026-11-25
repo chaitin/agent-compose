@@ -21,10 +21,9 @@ import (
 // nosuid and nodev keep a file planted on the server from gaining privileges
 // on the host that serves the mount to the VM.
 //
-// A mount against an unreachable server can block in the kernel well past the
-// caller's deadline. The call then returns the context error while the mount
-// finishes or fails in the background; a later ensure finds and keeps a mount
-// that did complete.
+// The kernel mount cannot be interrupted, so this call blocks until it
+// returns; ensureNFSMountPoint runs it in a tracked attempt that a caller can
+// stop waiting for.
 func mountNFSVolume(ctx context.Context, source nfsvolume.Source, mountPoint string, readOnly bool) error {
 	addr := source.Server
 	if net.ParseIP(addr) == nil {
@@ -41,16 +40,7 @@ func mountNFSVolume(ctx context.Context, source nfsvolume.Source, mountPoint str
 	if readOnly {
 		flags |= unix.MS_RDONLY
 	}
-	done := make(chan error, 1)
-	go func() {
-		done <- unix.Mount(source.Device(), mountPoint, "nfs", flags, source.KernelMountData(addr))
-	}()
-	select {
-	case err := <-done:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return unix.Mount(source.Device(), mountPoint, "nfs", flags, source.KernelMountData(addr))
 }
 
 // nfsMountState reads this process's mount table, which is the one the VM

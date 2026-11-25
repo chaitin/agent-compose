@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -207,6 +208,9 @@ func TestDockerRuntimeMountsNFSVolumeThroughEngine(t *testing.T) {
 	if found.Type != mountapi.TypeVolume || found.Source != source.DockerVolumeName() || !found.ReadOnly {
 		t.Fatalf("nfs mount = %+v", found)
 	}
+	if !found.VolumeOptions.NoCopy {
+		t.Fatal("nfs volume mount lets Docker copy image files into the export")
+	}
 	driver := found.VolumeOptions.DriverConfig
 	if driver.Name != "local" || driver.Options["type"] != "nfs" || driver.Options["device"] != ":/srv/share" ||
 		driver.Options["o"] != "addr=nas.example.com,vers=4,nolock" {
@@ -235,5 +239,22 @@ func TestDockerRuntimeMountsNFSVolumeThroughEngine(t *testing.T) {
 	}
 	if dockerContainerMountsMatch(info, mounts) {
 		t.Fatal("container with a different nfs export was accepted")
+	}
+}
+
+func TestRequireNFSVolumesFeature(t *testing.T) {
+	session, _ := testNFSSandbox(t, t.TempDir(), false)
+	if err := requireNFSVolumesFeature(false, session); err == nil || !strings.Contains(err.Error(), sandboxHostFeatureNFSVolumes) {
+		t.Fatalf("old host error = %v", err)
+	}
+	if err := requireNFSVolumesFeature(true, session); err != nil {
+		t.Fatalf("current host: %v", err)
+	}
+	session.VolumeMounts[0].Driver = "local"
+	if err := requireNFSVolumesFeature(false, session); err != nil {
+		t.Fatalf("old host without nfs volumes: %v", err)
+	}
+	if !slices.Contains(sandboxHostFeatures, sandboxHostFeatureNFSVolumes) {
+		t.Fatalf("host features %v do not advertise %q", sandboxHostFeatures, sandboxHostFeatureNFSVolumes)
 	}
 }

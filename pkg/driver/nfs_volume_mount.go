@@ -101,23 +101,14 @@ func ensureSandboxNFSMounts(ctx context.Context, session *Sandbox) error {
 			rollbackBoxliteVolumeBridgeMounts(mounted)
 			return fmt.Errorf("create nfs volume mount point %s: %w", item.mountPoint, err)
 		}
-		isMount, isNFS, err := nfsVolumeMountStateOf(item.mountPoint)
+		mountedNow, err := ensureNFSMountPoint(ctx, item)
 		if err != nil {
 			rollbackBoxliteVolumeBridgeMounts(mounted)
-			return fmt.Errorf("inspect nfs volume mount point %s: %w", item.mountPoint, err)
+			return err
 		}
-		if isMount {
-			if isNFS {
-				continue
-			}
-			rollbackBoxliteVolumeBridgeMounts(mounted)
-			return fmt.Errorf("nfs volume mount point %s already has a non-NFS mount", item.mountPoint)
+		if mountedNow {
+			mounted = append(mounted, item.mountPoint)
 		}
-		if err := nfsVolumeMounter(ctx, item.source, item.mountPoint, item.mount.ReadOnly); err != nil {
-			rollbackBoxliteVolumeBridgeMounts(mounted)
-			return fmt.Errorf("mount nfs volume %q (%s): %w", item.mount.Source, item.source.Device(), err)
-		}
-		mounted = append(mounted, item.mountPoint)
 	}
 	return nil
 }
@@ -172,6 +163,10 @@ func dockerNFSVolumeMount(item sandboxNFSMount, target string, readOnly bool) mo
 				dockerNFSVolumeLabel:        item.source.Ref(),
 			},
 			DriverConfig: &mountapi.Driver{Name: "local", Options: item.source.DockerVolumeOptions()},
+			// Docker otherwise copies the image's files at the target into an
+			// empty volume when the container is created, even for a
+			// read-only mount, which would write them to the shared export.
+			NoCopy: true,
 		},
 	}
 }

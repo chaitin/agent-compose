@@ -39,8 +39,14 @@ const sandboxHostDenyProtocolVersion = 2
 // drop a declared limit, so the daemon refuses a declaring sandbox against it.
 const sandboxHostFeatureResourceLimits = "resource_limits"
 
+// sandboxHostFeatureNFSVolumes is advertised by a host that mounts nfs
+// volumes before it starts a sandbox. A host without it would bind the empty
+// mount-point directory instead, so the daemon refuses a sandbox with an nfs
+// volume against it rather than run the agent on an empty directory.
+const sandboxHostFeatureNFSVolumes = "nfs_volumes"
+
 // sandboxHostFeatures is what this host advertises in its handshake.
-var sandboxHostFeatures = []string{sandboxHostFeatureResourceLimits}
+var sandboxHostFeatures = []string{sandboxHostFeatureResourceLimits, sandboxHostFeatureNFSVolumes}
 
 // sandboxHostHandshake is what the daemon learned from a host's handshake.
 type sandboxHostHandshake struct {

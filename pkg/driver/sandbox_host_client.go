@@ -68,6 +68,21 @@ func requireResourceLimitsFeature(hasFeature bool, limits *SandboxResourceLimits
 	return nil
 }
 
+// requireNFSVolumesFeature fails closed when a sandbox mounts an nfs volume
+// and the sandbox-host did not advertise that it mounts them: such a host
+// would start the VM on the empty mount-point directory.
+func requireNFSVolumesFeature(hasFeature bool, sandbox *Sandbox) error {
+	if hasFeature || sandbox == nil {
+		return nil
+	}
+	for _, mount := range sandbox.VolumeMounts {
+		if isNFSVolumeMount(mount) {
+			return fmt.Errorf("sandbox mounts nfs volume %q but the sandbox-host does not advertise the %q feature; upgrade the sandbox-host", mount.Source, sandboxHostFeatureNFSVolumes)
+		}
+	}
+	return nil
+}
+
 // ErrRuntimeCapabilityUnsupported reports that the sandbox-host runtime does not
 // implement an optional capability (stats, liveness, guest signals, or process
 // tree termination). It is distinct from ErrRuntimeInteractionUnsupported, which
@@ -146,6 +161,9 @@ func (r *remoteSandboxRuntime) EnsureSandbox(ctx context.Context, sandbox *Sandb
 		return SandboxVMInfo{}, err
 	}
 	if err := requireResourceLimitsFeature(r.hasFeature(sandboxHostFeatureResourceLimits), sandbox.ResourceLimits); err != nil {
+		return SandboxVMInfo{}, err
+	}
+	if err := requireNFSVolumesFeature(r.hasFeature(sandboxHostFeatureNFSVolumes), sandbox); err != nil {
 		return SandboxVMInfo{}, err
 	}
 	needs, err := client.NeedsCreate(ctx, &sandboxhost.SandboxRequest{
