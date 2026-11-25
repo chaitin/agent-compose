@@ -8,7 +8,7 @@ import readline from "node:readline";
 import { formatError } from "../errors.js";
 import { readStoredThread, writeStoredThread } from "../session-state.js";
 import { extractText, jsonString } from "../text.js";
-import { TranscriptWriter, type TranscriptTextWriter } from "../transcript.js";
+import { lineDiagnostic, TranscriptWriter, writeDiagnostic, type TranscriptTextWriter } from "../transcript.js";
 import type { AgentEvent } from "../agent-event.js";
 import { toolKindForName, toolOutputText } from "../agent-event.js";
 import type { AgentResult, RunnerOptions, StoredThread } from "../types.js";
@@ -128,7 +128,7 @@ export class OpenCodeRunner {
     try {
       await fs.rm(dir, { recursive: true, force: true });
     } catch (error) {
-      this.writer.line(`[opencode cleanup] ${formatError(error)}`);
+      lineDiagnostic(this.writer, `[opencode cleanup] ${formatError(error)}`);
     }
   }
 
@@ -326,7 +326,7 @@ export class OpenCodeRunner {
       child.stderr?.on("data", (chunk) => {
         const text = String(chunk || "");
         stderrChunks.push(text);
-        this.writer.write(text);
+        writeDiagnostic(this.writer, text);
       });
 
       const rl = readline.createInterface({ input: child.stdout, crlfDelay: Infinity });
@@ -339,7 +339,7 @@ export class OpenCodeRunner {
           try {
             event = JSON.parse(line) as Record<string, unknown>;
           } catch {
-            this.writer.line(line);
+            lineDiagnostic(this.writer, line);
             continue;
           }
           this.handleEvent(event, result);
