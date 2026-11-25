@@ -24,6 +24,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/execution"
 	"github.com/chaitin/agent-compose/pkg/images"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/sources"
@@ -3335,6 +3336,36 @@ func TestPromptAttachProjectorKeepsToolActivityInTheTranscript(t *testing.T) {
 		t.Fatalf("read transcript: %v", err)
 	}
 	want := "listing the workspace\n[tool:bash]\n$ ls -1\nhello.txt\nnotes.md\ndone"
+	if string(transcript) != want {
+		t.Fatalf("transcript = %q, want %q", string(transcript), want)
+	}
+}
+
+// TestPromptAttachProjectorRendersToolsLikeTheRunLog keeps the attach
+// transcript and a run log's text view from drifting apart: both render tool
+// activity through runlog.Render, including a file-change call that has no
+// command or arguments to show.
+func TestPromptAttachProjectorRendersToolsLikeTheRunLog(t *testing.T) {
+	logsPath := filepath.Join(t.TempDir(), "transcript.txt")
+	projector := newPromptAttachProjector(domain.ProjectRunRecord{RunID: "run-changes"}, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-changes"}}, logsPath, nil)
+	frames := []string{
+		`{"type":"agent_event","event":{"kind":"tool_call","id":"patch-1","name":"apply_patch","toolKind":"edit","status":"completed","changes":[{"path":"a.go","kind":"update"},{"path":"b.go","kind":"add"}]}}`,
+		`{"type":"agent_event","event":{"kind":"tool_result","id":"patch-1","ok":false,"output":"partial","error":"b.go exists"}}`,
+	}
+	if _, _, err := projector.Project([]byte(strings.Join(frames, "\n") + "\n")); err != nil {
+		t.Fatalf("project agent events: %v", err)
+	}
+	transcript, err := os.ReadFile(logsPath)
+	if err != nil {
+		t.Fatalf("read transcript: %v", err)
+	}
+	want := runlog.Render(runlog.Entry{Type: runlog.EntryToolCall, Tool: &runlog.Tool{
+		Name:    "apply_patch",
+		Changes: []runlog.FileChange{{Path: "a.go", Kind: "update"}, {Path: "b.go", Kind: "add"}},
+	}}) + runlog.Render(runlog.Entry{Type: runlog.EntryToolResult, Tool: &runlog.Tool{Output: "partial", Error: "b.go exists"}})
+	if want != "\n[tool:apply_patch]\nupdate a.go\nadd b.go\npartial\n[tool error] b.go exists\n" {
+		t.Fatalf("runlog rendering changed: %q", want)
+	}
 	if string(transcript) != want {
 		t.Fatalf("transcript = %q, want %q", string(transcript), want)
 	}
