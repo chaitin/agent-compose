@@ -285,6 +285,58 @@ func (s *projectStore) ListProjectRunEventsForSandboxPage(ctx context.Context, s
 	return events, nil
 }
 
+// runMessageKinds are the run events that make up a run's conversation.
+const runMessageKinds = `'user_message', 'agent_message'`
+
+// ListProjectRunMessagesPage pages the conversation of one run (runID) or of
+// every run a sandbox hosted (sandboxID); exactly one is set.
+func (s *projectStore) ListProjectRunMessagesPage(ctx context.Context, runID, sandboxID string, offset, limit int) ([]domain.ProjectRunEventRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	where, arg := runMessageScope(runID, sandboxID)
+	// Kept as SQL: join to project_run so a sandbox's runs page together.
+	rows, err := s.db.QueryContext(ctx, `SELECT e.id, e.run_id, e.seq, e.kind, e.text, e.agent, e.name, e.payload_json, e.success, e.exit_code, e.stop_reason, e.created_at, e.log_seq
+		FROM project_run_event e JOIN project_run r ON r.run_id = e.run_id
+		WHERE `+where+` AND e.kind IN (`+runMessageKinds+`)
+		ORDER BY e.created_at ASC, e.run_id ASC, e.seq ASC LIMIT ? OFFSET ?`, arg, limit, max(offset, 0))
+	if err != nil {
+		return nil, fmt.Errorf("list run messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var messages []domain.ProjectRunEventRecord
+	for rows.Next() {
+		message, scanErr := scanRunEvent(rows.Scan)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list run messages: %w", err)
+	}
+	return messages, nil
+}
+
+// CountProjectRunMessages counts what ListProjectRunMessagesPage pages.
+func (s *projectStore) CountProjectRunMessages(ctx context.Context, runID, sandboxID string) (int, error) {
+	where, arg := runMessageScope(runID, sandboxID)
+	var total int
+	// Kept as SQL: COUNT join between project_run_event and project_run.
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_run_event e JOIN project_run r ON r.run_id = e.run_id
+		WHERE `+where+` AND e.kind IN (`+runMessageKinds+`)`, arg).Scan(&total); err != nil {
+		return 0, fmt.Errorf("count run messages: %w", err)
+	}
+	return total, nil
+}
+
+func runMessageScope(runID, sandboxID string) (string, string) {
+	if runID = strings.TrimSpace(runID); runID != "" {
+		return `e.run_id = ?`, runID
+	}
+	return `r.sandbox_id = ?`, strings.TrimSpace(sandboxID)
+}
+
 type runEventScanner func(...any) error
 
 func scanRunEvent(scan runEventScanner) (domain.ProjectRunEventRecord, error) {
