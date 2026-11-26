@@ -192,7 +192,12 @@ func sendRunLogEntries(stream *connect.ServerStream[agentcomposev2.RunLogChunk],
 		if len(entries) == 0 {
 			return nil
 		}
-		chunk := &agentcomposev2.RunLogChunk{RunStatus: ProjectRunStatusToProto(run.Status), CreatedAt: FormatProjectTime(time.Now().UTC())}
+		chunk := &agentcomposev2.RunLogChunk{CreatedAt: FormatProjectTime(time.Now().UTC())}
+		// A scheduler step has no Agent Run status; leave it unset rather
+		// than let an empty status normalize to pending.
+		if strings.TrimSpace(run.Status) != "" {
+			chunk.RunStatus = ProjectRunStatusToProto(run.Status)
+		}
 		for _, entry := range entries {
 			chunk.Entries = append(chunk.Entries, RunLogEntryToProto(entry))
 		}

@@ -161,6 +161,11 @@ func TestFollowRunLogsServesASchedulerStepLog(t *testing.T) {
 	if len(structured) != 2 || structured[0].GetEntries()[0].GetOutput().GetData() != "line one\nline two\n" {
 		t.Fatalf("structured chunks = %#v", structured)
 	}
+	for _, chunk := range structured {
+		if chunk.GetRunStatus() != agentcomposev2.RunStatus_RUN_STATUS_UNSPECIFIED {
+			t.Fatalf("scheduler step chunk run_status = %s, want unset: a step has no Agent Run status", chunk.GetRunStatus())
+		}
+	}
 
 	for name, req := range map[string]*agentcomposev2.FollowRunLogsRequest{
 		"missing cell":  {SchedulerId: "sched-1", SchedulerRunId: "run-1"},
