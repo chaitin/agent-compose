@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,9 @@ func TestFollowRunLogsReportsAnArchivedLogAsAFailedPrecondition(t *testing.T) {
 		}
 		if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 			t.Fatalf("%s: FollowRunLogs err = %v, want FailedPrecondition", name, err)
+		}
+		if strings.Contains(err.Error(), root) {
+			t.Fatalf("%s: FollowRunLogs err names a host path: %v", name, err)
 		}
 	}
 	// The conversation lives in the database and survives the archive.

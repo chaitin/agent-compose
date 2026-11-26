@@ -100,7 +100,7 @@ func TestListSandboxHistoryRebuildsRunLogAgentRuns(t *testing.T) {
 		t.Fatalf("rebuilt cell = %#v", done)
 	}
 	archived := cells["cell-archived"]
-	if archived.GetSuccess() || archived.GetExitCode() != 3 || !strings.Contains(archived.GetOutput(), "archived") {
+	if archived.GetSuccess() || archived.GetExitCode() != 3 || !strings.Contains(archived.GetOutput(), "archived") || strings.Contains(archived.GetOutput(), root) {
 		t.Fatalf("archived run cell = %#v", archived)
 	}
 	if cells["cell-stored"].GetOutput() != "notebook output" {

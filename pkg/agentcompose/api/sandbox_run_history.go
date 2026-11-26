@@ -159,12 +159,13 @@ func fillSandboxRunOutput(response *agentcomposev2.ListSandboxHistoryResponse, l
 
 func sandboxRunOutput(path string) string {
 	text, err := openRunLogText(path)
+	// Neither message names a host path: the cell output reaches API callers.
 	if errors.Is(err, runlog.ErrArchived) {
-		return "[" + err.Error() + "; ListRunMessages keeps the conversation]\n"
+		return "[" + runlog.ErrArchived.Error() + "; ListRunMessages keeps the conversation]\n"
 	}
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			return "[run log unreadable: " + err.Error() + "]\n"
+			return "[run log unreadable]\n"
 		}
 		return ""
 	}
