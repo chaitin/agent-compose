@@ -1,6 +1,7 @@
 package runs
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ func TestProjectRunLogIsCappedButKeepsItsOutcome(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "runs", "r", runlog.FileName)
 	run := domain.ProjectRunRecord{RunID: "r", LogFormat: runlog.FormatJSONL, LogsPath: path}
-	w, err := runLogWriter(run, nil)
+	w, err := runLogWriter(context.Background(), run, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +32,7 @@ func TestProjectRunLogIsCappedButKeepsItsOutcome(t *testing.T) {
 	if _, err := w.EndTurn("stop", "done"); err != nil {
 		t.Fatal(err)
 	}
-	if err := closeRunLog(path); err != nil {
+	if err := closeRunLog(context.Background(), path); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := runlog.ReadEntries(path, 0)

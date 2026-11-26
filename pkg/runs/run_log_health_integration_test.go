@@ -46,7 +46,7 @@ func TestIntegrationAgentLogFailurePreservesOutcomeAndRecovery(t *testing.T) {
 					}
 					run.LogsPath = filepath.Join(blocker, runlog.FileName)
 				case "append":
-					w, err := runLogWriter(run, nil)
+					w, err := runLogWriter(context.Background(), run, nil)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -55,7 +55,7 @@ func TestIntegrationAgentLogFailurePreservesOutcomeAndRecovery(t *testing.T) {
 						t.Fatal(err)
 					}
 				case "checkpoint":
-					if _, err := runLogWriter(run, nil); err != nil {
+					if _, err := runLogWriter(context.Background(), run, nil); err != nil {
 						t.Fatal(err)
 					}
 					// A directory at the checkpoint destination makes atomic publication fail.
@@ -178,7 +178,7 @@ func TestIntegrationTerminalLogFailurePreservesSelectedStatus(t *testing.T) {
 				t.Fatal(err)
 			}
 			completion := domain.ProjectRunCompletionRecord{TargetStatus: status, TransitionJSON: `{"RunID":"shared","ExitCode":7}`}
-			next, _, err := terminalRunUpdate(run, completion, time.Unix(100, 0))
+			next, _, err := terminalRunUpdate(context.Background(), run, completion, time.Unix(100, 0))
 			if err != nil || next.Status != status || next.ExitCode != 7 || !next.LogIncomplete {
 				t.Fatalf("run=%+v err=%v", next, err)
 			}

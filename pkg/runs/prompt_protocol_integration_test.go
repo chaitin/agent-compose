@@ -1,6 +1,7 @@
 package runs
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -18,7 +19,7 @@ func TestIntegrationPromptProtocolsShareLogProjection(t *testing.T) {
 	} {
 		t.Run(format, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), runlog.FileName)
-			t.Cleanup(func() { _ = closeRunLog(path) })
+			t.Cleanup(func() { _ = closeRunLog(context.Background(), path) })
 			run := domain.ProjectRunRecord{RunID: "r", Prompt: "go", LogsPath: path, LogFormat: runlog.FormatJSONL}
 			p := newPromptAttachProjector(run, &domain.Sandbox{Summary: domain.SandboxSummary{ID: "s"}}, path, nil)
 			var terminal *TransitionRequest
@@ -34,7 +35,7 @@ func TestIntegrationPromptProtocolsShareLogProjection(t *testing.T) {
 			if terminal == nil || terminal.Output != "answer" || terminal.ExitCode != 0 {
 				t.Fatalf("transition=%+v", terminal)
 			}
-			if err := closeRunLog(path); err != nil {
+			if err := closeRunLog(context.Background(), path); err != nil {
 				t.Fatal(err)
 			}
 			entries, err := runlog.ReadEntries(path, 0)

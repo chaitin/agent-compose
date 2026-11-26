@@ -37,7 +37,7 @@ func TestIntegrationAgentJournalRestoresSplitFramesAndTurnLifecycle(t *testing.T
 			}
 			restart := func() *execution.AgentJournalResume {
 				t.Helper()
-				if err := closeRunLog(run.LogsPath); err != nil {
+				if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
 					t.Fatal(err)
 				}
 				p = newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)
@@ -103,7 +103,7 @@ func TestIntegrationAgentJournalRestoresGapAndKeepsLaterOutput(t *testing.T) {
 	}
 	push(p, domain.ExecChunk{Text: `{"type":"agent_event","event":`, Journal: &domain.JournalPosition{End: 30}})
 	push(p, domain.ExecChunk{Journal: &domain.JournalPosition{End: 90, Gap: &domain.JournalGap{From: 30, To: 90}}})
-	if err := closeRunLog(run.LogsPath); err != nil {
+	if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
 		t.Fatal(err)
 	}
 	p = newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)
@@ -154,7 +154,7 @@ func TestIntegrationCheckpointedAgentExitCompletesWithoutGuestJournal(t *testing
 				if _, err := p.ProjectRuntimeOutput(domain.ExecChunk{Journal: &domain.JournalPosition{End: 100, Exit: &domain.JournalExit{Result: domain.ExecResult{ExitCode: exitCode, Success: exitCode == 0}}}}); err != nil {
 					t.Fatal(err)
 				}
-				if err := closeRunLog(run.LogsPath); err != nil {
+				if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
 					t.Fatal(err)
 				}
 				// Simulate restart after journal cleanup and even sandbox shutdown.
@@ -191,7 +191,7 @@ func TestIntegrationAgentJournalFlushesFinalResultWithoutNewline(t *testing.T) {
 	if _, err := p.ProjectRuntimeOutput(domain.ExecChunk{Journal: &domain.JournalPosition{End: 90, Exit: &domain.JournalExit{Result: domain.ExecResult{Success: true}}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := closeRunLog(run.LogsPath); err != nil {
+	if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
 		t.Fatal(err)
 	}
 	p = newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)

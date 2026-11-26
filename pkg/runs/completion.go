@@ -315,7 +315,7 @@ func (m *CompletionManager) process(ctx context.Context, runID string) (domain.P
 		m.logger.Warn("project run sandbox cleanup failed", "run_id", runID, "sandbox_id", run.SandboxID, "action", completion.CleanupAction, "attempt", attempt, "next_attempt_at", next, "error", err)
 		return run, err
 	}
-	next, statusEvent, err := terminalRunUpdate(run, completion, m.nowUTC())
+	next, statusEvent, err := terminalRunUpdate(ctx, run, completion, m.nowUTC())
 	if err != nil {
 		return run, err
 	}
@@ -332,7 +332,7 @@ func (m *CompletionManager) process(ctx context.Context, runID string) (domain.P
 // cleanup failure is recorded on the run, and the completion row is deleted, so
 // a permanent cleanup error converges instead of retrying forever.
 func (m *CompletionManager) abandonCleanup(ctx context.Context, run domain.ProjectRunRecord, completion domain.ProjectRunCompletionRecord, attempt int, cleanupErr error) (domain.ProjectRunRecord, error) {
-	next, statusEvent, err := terminalRunUpdate(run, completion, m.nowUTC())
+	next, statusEvent, err := terminalRunUpdate(ctx, run, completion, m.nowUTC())
 	if err != nil {
 		return run, err
 	}
@@ -352,7 +352,7 @@ func (m *CompletionManager) abandonCleanup(ctx context.Context, run domain.Proje
 
 // terminalRunUpdate builds the terminal run record and its status event from a
 // staged completion, applying the transition selected by the first writer.
-func terminalRunUpdate(run domain.ProjectRunRecord, completion domain.ProjectRunCompletionRecord, now time.Time) (domain.ProjectRunRecord, domain.ProjectRunEventRecord, error) {
+func terminalRunUpdate(ctx context.Context, run domain.ProjectRunRecord, completion domain.ProjectRunCompletionRecord, now time.Time) (domain.ProjectRunRecord, domain.ProjectRunEventRecord, error) {
 	var req TransitionRequest
 	if err := json.Unmarshal([]byte(completion.TransitionJSON), &req); err != nil {
 		return run, domain.ProjectRunEventRecord{}, fmt.Errorf("decode project run completion %s: %w", run.RunID, err)
@@ -366,7 +366,7 @@ func terminalRunUpdate(run domain.ProjectRunRecord, completion domain.ProjectRun
 	next.CompletedAt = now
 	next.DurationMs = max(0, next.CompletedAt.Sub(next.StartedAt).Milliseconds())
 	// Best effort, as in TransitionRun.
-	if err := finalizeRunLog(&next); err != nil {
+	if err := finalizeRunLog(ctx, &next); err != nil {
 		next.LogIncomplete = true
 	}
 	statusEvent := domain.ProjectRunEventRecord{ID: terminalStatusEventID(run.RunID), RunID: run.RunID, Kind: domain.ProjectRunEventKindStatus, PayloadJSON: next.ResultJSON, Success: next.Status == domain.ProjectRunStatusSucceeded, ExitCode: next.ExitCode, StopReason: next.Error}

@@ -174,7 +174,7 @@ func projectionTestRun(t *testing.T) domain.ProjectRunRecord {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), runlog.FileName)
 	t.Cleanup(func() {
-		if err := closeRunLog(path); err != nil {
+		if err := closeRunLog(context.Background(), path); err != nil {
 			t.Error(err)
 		}
 	})
@@ -183,7 +183,7 @@ func projectionTestRun(t *testing.T) domain.ProjectRunRecord {
 
 func readProjectionLog(t *testing.T, run domain.ProjectRunRecord) []runlog.Entry {
 	t.Helper()
-	if err := closeRunLog(run.LogsPath); err != nil {
+	if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := runlog.ReadEntries(run.LogsPath, 0)

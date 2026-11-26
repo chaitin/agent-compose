@@ -325,7 +325,7 @@ func (c *Coordinator) TransitionRun(ctx context.Context, req TransitionRequest) 
 	if StatusIsTerminal(next.Status) {
 		// The summary is best effort: a run log that cannot be read must not
 		// keep the run from completing.
-		if err := finalizeRunLog(&next); err != nil {
+		if err := finalizeRunLog(ctx, &next); err != nil {
 			next.LogIncomplete = true
 		}
 		batch = append(batch, req.TerminalEvents...)

@@ -59,7 +59,7 @@ func (p *agentRunProjector) writeLog(write func(*runlog.Writer) error) {
 	if p.logFailed {
 		return
 	}
-	w, err := runLogWriter(p.run, p.runLogs)
+	w, err := runLogWriter(p.eventCtx, p.run, p.runLogs)
 	if err == nil {
 		err = write(w)
 	}
@@ -85,12 +85,12 @@ func (h *runLogHealth) appendOutput(hub *RunLogHub, run domain.ProjectRunRecord,
 	var err error
 	if gap != nil && usesRunLog(run) {
 		var w *runlog.Writer
-		w, err = runLogWriter(run, hub)
+		w, err = runLogWriter(h.ctx, run, hub)
 		if err == nil {
 			err = w.AppendJournalGap(gap.From, gap.To)
 		}
 	} else {
-		err = appendRunOutput(hub, run, legacyPath, chunk)
+		err = appendRunOutput(h.ctx, hub, run, legacyPath, chunk)
 	}
 	if err != nil {
 		h.writeFailed = true

@@ -50,7 +50,7 @@ func (m *CompletionManager) AbandonCompletion(ctx context.Context, runID, reason
 	if err != nil {
 		return domain.ProjectRunRecord{}, false, err
 	}
-	next, statusEvent, err := terminalRunUpdate(run, completion, m.nowUTC())
+	next, statusEvent, err := terminalRunUpdate(ctx, run, completion, m.nowUTC())
 	if err != nil {
 		return run, false, err
 	}
