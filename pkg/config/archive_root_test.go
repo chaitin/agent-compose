@@ -79,7 +79,7 @@ func TestNewConfigDefaultsRunLogArchiveOffUnderTheDataRoot(t *testing.T) {
 }
 
 func TestNewConfigRejectsRunLogArchiveRootInsideTheRunsDirectory(t *testing.T) {
-	for _, path := range []string{"runs", filepath.Join("runs", "archive")} {
+	for _, path := range []string{".", "runs", filepath.Join("runs", "archive")} {
 		t.Run(path, func(t *testing.T) {
 			root := t.TempDir()
 			dataRoot := filepath.Join(root, "data")
@@ -106,5 +106,58 @@ func TestNewConfigReadsRunLogRetentionTTL(t *testing.T) {
 	}
 	if config.RunLogRetentionTTL != 720*time.Hour {
 		t.Fatalf("RunLogRetentionTTL = %v", config.RunLogRetentionTTL)
+	}
+}
+
+func TestNewConfigRejectsRunLogArchiveDestinationInsideRuns(t *testing.T) {
+	for _, kind := range []string{"data root", "data root symlink", "archive runs symlink", "archive runs nested symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			dataRoot := filepath.Join(root, "data")
+			runsRoot := filepath.Join(dataRoot, "runs")
+			if err := os.MkdirAll(runsRoot, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			archiveRoot := dataRoot
+			switch kind {
+			case "data root symlink":
+				archiveRoot = filepath.Join(root, "alias")
+				if err := os.Symlink(dataRoot, archiveRoot); err != nil {
+					t.Fatal(err)
+				}
+			case "archive runs symlink", "archive runs nested symlink":
+				archiveRoot = filepath.Join(root, "archive")
+				if err := os.MkdirAll(archiveRoot, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				target := runsRoot
+				if kind == "archive runs nested symlink" {
+					target = filepath.Join(runsRoot, "nested")
+				}
+				if err := os.MkdirAll(target, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, filepath.Join(archiveRoot, "runs")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("DATA_ROOT", dataRoot)
+			t.Setenv("RUN_LOG_ARCHIVE_ROOT", archiveRoot)
+			di := do.New()
+			do.ProvideValue(di, slog.Default())
+			if _, err := NewConfig(di); err == nil || !strings.Contains(err.Error(), "RUN_LOG_ARCHIVE_ROOT") {
+				t.Fatalf("NewConfig error=%v, want overlapping archive destination rejection", err)
+			}
+		})
+	}
+}
+
+func TestValidateRunLogArchiveRootAllowsSeparateDestinations(t *testing.T) {
+	root := t.TempDir()
+	dataRoot := filepath.Join(root, "data")
+	for _, archiveRoot := range []string{filepath.Join(dataRoot, "archives", "logs"), filepath.Join(root, "external"), filepath.Join(root, "data", "runs-other")} {
+		if err := validateRunLogArchiveRoot(dataRoot, archiveRoot); err != nil {
+			t.Fatalf("archiveRoot=%q: %v", archiveRoot, err)
+		}
 	}
 }

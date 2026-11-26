@@ -34,16 +34,20 @@ func validateRunLogArchiveRoot(dataRoot, archiveRoot string) error {
 	if err != nil {
 		return fmt.Errorf("resolve run log root: %w", err)
 	}
-	resolvedArchiveRoot, err := resolveConfigPathFromExistingAncestor(archiveRoot)
-	if err != nil {
-		return fmt.Errorf("resolve RUN_LOG_ARCHIVE_ROOT: %w", err)
-	}
-	relative, err := filepath.Rel(runsRoot, resolvedArchiveRoot)
-	if err != nil {
-		return fmt.Errorf("compare RUN_LOG_ARCHIVE_ROOT with the run log root: %w", err)
-	}
-	if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
-		return fmt.Errorf("RUN_LOG_ARCHIVE_ROOT %q must be outside %q", archiveRoot, filepath.Join(dataRoot, "runs"))
+	// Archives are written below archiveRoot/runs, which may itself be a
+	// symlink. Checking only archiveRoot misses both that alias and DATA_ROOT.
+	for _, path := range []string{archiveRoot, filepath.Join(archiveRoot, "runs")} {
+		resolved, err := resolveConfigPathFromExistingAncestor(path)
+		if err != nil {
+			return fmt.Errorf("resolve RUN_LOG_ARCHIVE_ROOT path %q: %w", path, err)
+		}
+		relative, err := filepath.Rel(runsRoot, resolved)
+		if err != nil {
+			return fmt.Errorf("compare RUN_LOG_ARCHIVE_ROOT with the run log root: %w", err)
+		}
+		if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			return fmt.Errorf("RUN_LOG_ARCHIVE_ROOT %q and its runs directory must be outside %q", archiveRoot, filepath.Join(dataRoot, "runs"))
+		}
 	}
 	return nil
 }
