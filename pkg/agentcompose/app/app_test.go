@@ -548,3 +548,44 @@ func hasEchoRoute(app *echo.Echo, method string, path string) bool {
 	}
 	return false
 }
+
+// The daemon's RunService must serve scheduler step logs: an unknown
+// scheduler run is NOT_FOUND, never UNIMPLEMENTED.
+func TestRunServiceRouteServesSchedulerStepLogs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DATA_ROOT", root)
+	t.Setenv("SANDBOX_ROOT", filepath.Join(root, "sandboxes"))
+	t.Setenv("IMAGE_CACHE_ROOT", filepath.Join(root, "images"))
+	t.Setenv("RUNTIME_DRIVER", driverpkg.RuntimeDriverDocker)
+	t.Setenv("DOCKER_IMAGE", "guest:latest")
+	t.Setenv("SANDBOX_START_TIMEOUT", "1s")
+	t.Setenv("SANDBOX_STOP_TIMEOUT", "1s")
+	t.Setenv("JUPYTER_PROXY_BASE", "/agent-compose/jupyter/")
+	t.Setenv("LLM_API_ENDPOINT", "")
+
+	ctx := context.Background()
+	di := do.New()
+	appconfig.Setup(di)
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, slog.Default())
+	do.ProvideValue(di, echo.New())
+	if err := Register(di); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	server := httptest.NewServer(do.MustInvoke[*echo.Echo](di))
+	defer server.Close()
+
+	client := agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL)
+	stream, err := client.FollowRunLogs(ctx, connect.NewRequest(&agentcomposev2.FollowRunLogsRequest{
+		SchedulerId: "missing-scheduler", SchedulerRunId: "missing-run", CellId: "missing-cell",
+	}))
+	if err != nil {
+		t.Fatalf("FollowRunLogs: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+	for stream.Receive() {
+	}
+	if code := connect.CodeOf(stream.Err()); code != connect.CodeNotFound {
+		t.Fatalf("scheduler step FollowRunLogs = %v (%s), want not_found", stream.Err(), code)
+	}
+}
