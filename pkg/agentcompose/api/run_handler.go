@@ -280,7 +280,7 @@ func (h *RunHandler) FollowRunLogs(ctx context.Context, req *connect.Request[age
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("config store is required"))
 	}
 	runID := strings.TrimSpace(req.Msg.GetRunId())
-	if req.Msg.GetSchedulerRunId() != "" || req.Msg.GetSchedulerId() != "" || req.Msg.GetCellId() != "" {
+	if req.Msg.GetSchedulerRunId() != "" || req.Msg.GetCellId() != "" {
 		if runID != "" {
 			return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("run id and scheduler step are mutually exclusive"))
 		}

@@ -577,7 +577,7 @@ func TestRunServiceRouteServesSchedulerStepLogs(t *testing.T) {
 
 	client := agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL)
 	stream, err := client.FollowRunLogs(ctx, connect.NewRequest(&agentcomposev2.FollowRunLogsRequest{
-		SchedulerId: "missing-scheduler", SchedulerRunId: "missing-run", CellId: "missing-cell",
+		SchedulerRunId: "missing-run", CellId: "missing-cell",
 	}))
 	if err != nil {
 		t.Fatalf("FollowRunLogs: %v", err)

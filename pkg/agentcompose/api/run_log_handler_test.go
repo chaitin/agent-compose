@@ -129,8 +129,8 @@ func TestFollowRunLogsStructuredReturnsEntriesAfterStartSeq(t *testing.T) {
 
 type fakeSchedulerRuns map[string]domain.SchedulerRunSummary
 
-func (f fakeSchedulerRuns) GetSchedulerRun(_ context.Context, schedulerID, runID string) (domain.SchedulerRunSummary, error) {
-	run, ok := f[schedulerID+"/"+runID]
+func (f fakeSchedulerRuns) GetSchedulerRunByID(_ context.Context, runID string) (domain.SchedulerRunSummary, error) {
+	run, ok := f[runID]
 	if !ok {
 		return domain.SchedulerRunSummary{}, domain.ErrNotFound
 	}
@@ -149,15 +149,15 @@ func TestFollowRunLogsServesASchedulerStepLog(t *testing.T) {
 	}
 	_ = w.AppendOutput("stdout", "line one\nline two\n")
 	_ = w.Close()
-	handler := NewRunHandler(nil, &apiProjectRunStore{}).WithSchedulerStepLogs(dataRoot, fakeSchedulerRuns{"sched-1/run-1": {ID: "run-1", SchedulerID: "sched-1"}})
+	handler := NewRunHandler(nil, &apiProjectRunStore{}).WithSchedulerStepLogs(dataRoot, fakeSchedulerRuns{"run-1": {ID: "run-1", SchedulerID: "sched-1"}})
 	client, closeServer := newRunHandlerTestClient(t, handler)
 	defer closeServer()
 
-	text := collectRunLogChunks(t, client, &agentcomposev2.FollowRunLogsRequest{SchedulerId: "sched-1", SchedulerRunId: "run-1", CellId: "cell-1", TailLines: 1})
+	text := collectRunLogChunks(t, client, &agentcomposev2.FollowRunLogsRequest{SchedulerRunId: "run-1", CellId: "cell-1", TailLines: 1})
 	if len(text) != 2 || text[0].GetData() != "line two\n" || !text[1].GetIsFinal() {
 		t.Fatalf("text chunks = %q / %q final=%v", text[0].GetData(), text[len(text)-1].GetData(), text[len(text)-1].GetIsFinal())
 	}
-	structured := collectRunLogChunks(t, client, &agentcomposev2.FollowRunLogsRequest{SchedulerId: "sched-1", SchedulerRunId: "run-1", CellId: "cell-1", Structured: true})
+	structured := collectRunLogChunks(t, client, &agentcomposev2.FollowRunLogsRequest{SchedulerRunId: "run-1", CellId: "cell-1", Structured: true})
 	if len(structured) != 2 || structured[0].GetEntries()[0].GetOutput().GetData() != "line one\nline two\n" {
 		t.Fatalf("structured chunks = %#v", structured)
 	}
@@ -168,11 +168,11 @@ func TestFollowRunLogsServesASchedulerStepLog(t *testing.T) {
 	}
 
 	for name, req := range map[string]*agentcomposev2.FollowRunLogsRequest{
-		"missing cell":  {SchedulerId: "sched-1", SchedulerRunId: "run-1"},
-		"with run id":   {RunId: "run-x", SchedulerId: "sched-1", SchedulerRunId: "run-1", CellId: "cell-1"},
-		"path traverse": {SchedulerId: "sched-1", SchedulerRunId: "run-1", CellId: "../x"},
-		"unknown run":   {SchedulerId: "sched-1", SchedulerRunId: "run-9", CellId: "cell-1"},
-		"no step log":   {SchedulerId: "sched-1", SchedulerRunId: "run-1", CellId: "cell-2"},
+		"missing cell":  {SchedulerRunId: "run-1"},
+		"with run id":   {RunId: "run-x", SchedulerRunId: "run-1", CellId: "cell-1"},
+		"path traverse": {SchedulerRunId: "run-1", CellId: "../x"},
+		"unknown run":   {SchedulerRunId: "run-9", CellId: "cell-1"},
+		"no step log":   {SchedulerRunId: "run-1", CellId: "cell-2"},
 	} {
 		stream, err := client.FollowRunLogs(context.Background(), connect.NewRequest(req))
 		if err == nil {

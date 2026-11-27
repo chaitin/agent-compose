@@ -261,9 +261,9 @@ func RunLogEntryToProto(entry runlog.Entry) *agentcomposev2.RunLogEntry {
 	return out
 }
 
-// SchedulerRunGetter resolves a persisted scheduler run.
+// SchedulerRunGetter resolves a persisted scheduler run by its id.
 type SchedulerRunGetter interface {
-	GetSchedulerRun(ctx context.Context, schedulerID, runID string) (domain.SchedulerRunSummary, error)
+	GetSchedulerRunByID(ctx context.Context, runID string) (domain.SchedulerRunSummary, error)
 }
 
 type schedulerStepLogs struct {
@@ -281,11 +281,10 @@ func (h *RunHandler) WithSchedulerStepLogs(dataRoot string, schedulerRuns Schedu
 // followSchedulerStepLog serves the log of one shell/exec step of a scheduler
 // run, in text or structured form, as it stands.
 func (h *RunHandler) followSchedulerStepLog(ctx context.Context, req *connect.Request[agentcomposev2.FollowRunLogsRequest], stream *connect.ServerStream[agentcomposev2.RunLogChunk]) error {
-	schedulerID := strings.TrimSpace(req.Msg.GetSchedulerId())
 	schedulerRunID := strings.TrimSpace(req.Msg.GetSchedulerRunId())
 	cellID := strings.TrimSpace(req.Msg.GetCellId())
-	if schedulerID == "" || schedulerRunID == "" || cellID == "" {
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("scheduler_id, scheduler_run_id and cell_id are all required for a scheduler step"))
+	if schedulerRunID == "" || cellID == "" {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("scheduler_run_id and cell_id are both required for a scheduler step"))
 	}
 	if strings.ContainsAny(cellID, `/\`) || cellID == "." || cellID == ".." {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("invalid cell id %q", cellID))
@@ -293,13 +292,14 @@ func (h *RunHandler) followSchedulerStepLog(ctx context.Context, req *connect.Re
 	if h.steps.dataRoot == "" || h.steps.runs == nil {
 		return connect.NewError(connect.CodeUnimplemented, fmt.Errorf("scheduler step logs are not available"))
 	}
-	if _, err := h.steps.runs.GetSchedulerRun(ctx, schedulerID, schedulerRunID); err != nil {
+	schedulerRun, err := h.steps.runs.GetSchedulerRunByID(ctx, schedulerRunID)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, domain.ErrNotFound) {
 			return connect.NewError(connect.CodeNotFound, fmt.Errorf("scheduler run %s not found", schedulerRunID))
 		}
 		return ConnectErrorForDomainKind(err, ResourceRun)
 	}
-	path, pathErr := runlog.SchedulerCellPath(h.steps.dataRoot, schedulerID, schedulerRunID, cellID)
+	path, pathErr := runlog.SchedulerCellPath(h.steps.dataRoot, schedulerRun.SchedulerID, schedulerRunID, cellID)
 	if pathErr != nil {
 		return connect.NewError(connect.CodeInternal, pathErr)
 	}

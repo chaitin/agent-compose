@@ -20,10 +20,12 @@ type SchedulerRunKey struct {
 }
 
 type SchedulerEventPageFilter struct {
-	SchedulerIDs       []string
-	RequireTrigger     bool
-	TriggerID          string
-	RunID              string
+	SchedulerIDs   []string
+	RequireTrigger bool
+	TriggerID      string
+	RunID          string
+	// LinkedSandboxID keeps only events linked to this sandbox.
+	LinkedSandboxID    string
 	BeforeCreatedAt    time.Time
 	BeforeSchedulerID  string
 	BeforeEventID      string

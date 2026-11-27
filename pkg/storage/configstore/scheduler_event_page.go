@@ -40,6 +40,10 @@ func (s *schedulerStore) ListSchedulerEventsPage(ctx context.Context, filter sch
 		query += ` AND r.run_id = ?`
 		args = append(args, runID)
 	}
+	if sandboxID := strings.TrimSpace(filter.LinkedSandboxID); sandboxID != "" {
+		query += ` AND e.linked_sandbox_id = ?`
+		args = append(args, sandboxID)
+	}
 	if !filter.BeforeCreatedAt.IsZero() {
 		query += ` AND (e.created_at < ? OR (e.created_at = ? AND (e.scheduler_id < ? OR (e.scheduler_id = ? AND e.event_id < ?))))`
 		beforeMillis := filter.BeforeCreatedAt.UTC().UnixMilli()
@@ -112,6 +116,10 @@ func (s *schedulerStore) CountSchedulerEventsPage(ctx context.Context, filter sc
 	if runID := strings.TrimSpace(filter.RunID); runID != "" {
 		query += ` AND r.run_id = ?`
 		args = append(args, runID)
+	}
+	if sandboxID := strings.TrimSpace(filter.LinkedSandboxID); sandboxID != "" {
+		query += ` AND e.linked_sandbox_id = ?`
+		args = append(args, sandboxID)
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {

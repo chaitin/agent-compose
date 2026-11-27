@@ -48,8 +48,8 @@ func (f *runLogE2E) exerciseScheduler(t *testing.T) {
 		if event.GetLinkedCellId() == "" || event.GetLinkedSandboxId() == "" {
 			t.Fatalf("scheduler command lost artifact links: %s", event)
 		}
-		entries, _ := f.logs(t, &agentcomposev2.FollowRunLogsRequest{SchedulerId: run.GetSchedulerId(), SchedulerRunId: run.GetRunId(), CellId: event.GetLinkedCellId(), Structured: true})
-		_, text := f.logs(t, &agentcomposev2.FollowRunLogsRequest{SchedulerId: run.GetSchedulerId(), SchedulerRunId: run.GetRunId(), CellId: event.GetLinkedCellId()})
+		entries, _ := f.logs(t, &agentcomposev2.FollowRunLogsRequest{SchedulerRunId: run.GetRunId(), CellId: event.GetLinkedCellId(), Structured: true})
+		_, text := f.logs(t, &agentcomposev2.FollowRunLogsRequest{SchedulerRunId: run.GetRunId(), CellId: event.GetLinkedCellId()})
 		if _, ok := outputs[text]; !ok || outputs[text] {
 			t.Fatalf("missing or duplicate scheduler step output %q", text)
 		}
