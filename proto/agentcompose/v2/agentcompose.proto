@@ -3210,4 +3210,7 @@ message StreamSandboxCellOutput {
   string cell_id = 3;
   string stream = 4;
   string data = 5;
+  // True when the daemon truncated the live chunk to its per-event limit.
+  // The full output remains available from the sandbox cell artifact.
+  bool truncated = 6;
 }

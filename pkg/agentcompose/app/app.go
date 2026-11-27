@@ -268,6 +268,9 @@ func NewSandboxRemovalCoordinator(di do.Injector) (*sandboxes.RemovalCoordinator
 		AccessRevoker: do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 		Residues:      adapters.NewRuntimeResidueManager(config, do.MustInvoke[*adapters.SandboxDriver](di)),
 		Locks:         do.MustInvoke[*sandboxes.LifecycleLocks](di),
+		StatusObserver: func(summary *domain.SandboxSummary) {
+			do.MustInvoke[*sandboxes.StreamBroker](di).PublishSandboxUpdated(summary)
+		},
 	}, nil
 }
 

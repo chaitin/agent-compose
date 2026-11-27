@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,5 +155,26 @@ func TestEventStreamBridgeSandboxAttributionAndCellOutput(t *testing.T) {
 		cellEvent.SandboxCellOutput == nil || cellEvent.SandboxCellOutput.CellID != "cell-1" ||
 		cellEvent.SandboxCellOutput.Data != "output" {
 		t.Fatalf("cell output event = %+v", cellEvent)
+	}
+}
+
+func TestEventStreamBridgeTruncatesOversizedLogChunks(t *testing.T) {
+	bridge, sub := testEventStreamBridge(t)
+	oversized := strings.Repeat("a", maxLogEventDataBytes+32)
+	bridge.PublishRunLog(runs.RunLogEvent{
+		RunID: "run-1", ProjectID: "p1", SandboxID: "s1", Stream: "stdout", Data: oversized,
+	})
+	event := receiveBridgeEvent(t, sub)
+	if event.RunLog == nil || !event.RunLog.Truncated || len(event.RunLog.Data) != maxLogEventDataBytes {
+		t.Fatalf("run log truncation = %+v", event.RunLog)
+	}
+
+	bridge.PublishSandboxWatch(sandboxes.WatchEvent{
+		SandboxID: "s1", EventType: sandboxes.WatchEventTypeCellOutput, CellID: "cell-1",
+		Chunk: oversized, Stream: domain.StdioStdout,
+	})
+	cellEvent := receiveBridgeEvent(t, sub)
+	if cellEvent.SandboxCellOutput == nil || !cellEvent.SandboxCellOutput.Truncated || len(cellEvent.SandboxCellOutput.Data) != maxLogEventDataBytes {
+		t.Fatalf("cell output truncation = %+v", cellEvent.SandboxCellOutput)
 	}
 }

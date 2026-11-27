@@ -340,6 +340,7 @@ func streamEventToProto(event *eventstream.Event) *agentcomposev2.StreamEvent {
 			CellId:    event.SandboxCellOutput.CellID,
 			Stream:    event.SandboxCellOutput.Stream,
 			Data:      event.SandboxCellOutput.Data,
+			Truncated: event.SandboxCellOutput.Truncated,
 		}}
 	default:
 		return nil

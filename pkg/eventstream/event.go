@@ -160,4 +160,5 @@ type SandboxCellOutputEvent struct {
 	CellID    string
 	Stream    string
 	Data      string
+	Truncated bool
 }

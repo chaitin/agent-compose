@@ -19,6 +19,8 @@ import (
 // eventStreamBridge adapts daemon domain notifications to the eventstream
 // broker. It owns only in-memory attribution caches; sources have already
 // persisted the state the event describes.
+const maxLogEventDataBytes = 64 << 10
+
 type eventStreamBridge struct {
 	broker *eventstream.Broker
 
@@ -86,6 +88,7 @@ func (b *eventStreamBridge) PublishRunLog(event runs.RunLogEvent) {
 		return
 	}
 	b.rememberSandbox(event.ProjectID, event.SandboxID)
+	data, truncated := truncateLogData(event.Data)
 	b.broker.Publish(&eventstream.Event{
 		Type:       eventstream.TypeRunLog,
 		ProjectID:  event.ProjectID,
@@ -97,8 +100,9 @@ func (b *eventStreamBridge) PublishRunLog(event runs.RunLogEvent) {
 			SandboxID: event.SandboxID,
 			Offset:    event.Offset,
 			Stream:    event.Stream,
-			Data:      event.Data,
+			Data:      data,
 			Format:    "text",
+			Truncated: truncated,
 		},
 	})
 }
@@ -178,6 +182,7 @@ func (b *eventStreamBridge) PublishSandboxWatch(event sandboxes.WatchEvent) {
 		if strings.TrimSpace(event.Chunk) == "" {
 			return
 		}
+		data, truncated := truncateLogData(event.Chunk)
 		b.broker.Publish(&eventstream.Event{
 			Type:       eventstream.TypeSandboxCellOutput,
 			ProjectID:  b.sandboxProject(event.SandboxID),
@@ -188,10 +193,18 @@ func (b *eventStreamBridge) PublishSandboxWatch(event sandboxes.WatchEvent) {
 				ProjectID: b.sandboxProject(event.SandboxID),
 				CellID:    event.CellID,
 				Stream:    string(event.Stream),
-				Data:      event.Chunk,
+				Data:      data,
+				Truncated: truncated,
 			},
 		})
 	}
+}
+
+func truncateLogData(data string) (string, bool) {
+	if len(data) <= maxLogEventDataBytes {
+		return data, false
+	}
+	return strings.ToValidUTF8(data[:maxLogEventDataBytes], ""), true
 }
 
 func (b *eventStreamBridge) rememberSandbox(projectID, sandboxID string) {

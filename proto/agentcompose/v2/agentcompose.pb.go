@@ -24134,12 +24134,15 @@ func (x *StreamSandboxEvent) GetMessage() string {
 }
 
 type StreamSandboxCellOutput struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	CellId        string                 `protobuf:"bytes,3,opt,name=cell_id,json=cellId,proto3" json:"cell_id,omitempty"`
-	Stream        string                 `protobuf:"bytes,4,opt,name=stream,proto3" json:"stream,omitempty"`
-	Data          string                 `protobuf:"bytes,5,opt,name=data,proto3" json:"data,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	ProjectId string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	CellId    string                 `protobuf:"bytes,3,opt,name=cell_id,json=cellId,proto3" json:"cell_id,omitempty"`
+	Stream    string                 `protobuf:"bytes,4,opt,name=stream,proto3" json:"stream,omitempty"`
+	Data      string                 `protobuf:"bytes,5,opt,name=data,proto3" json:"data,omitempty"`
+	// True when the daemon truncated the live chunk to its per-event limit.
+	// The full output remains available from the sandbox cell artifact.
+	Truncated     bool `protobuf:"varint,6,opt,name=truncated,proto3" json:"truncated,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -24207,6 +24210,13 @@ func (x *StreamSandboxCellOutput) GetData() string {
 		return x.Data
 	}
 	return ""
+}
+
+func (x *StreamSandboxCellOutput) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
 }
 
 var File_agentcompose_v2_agentcompose_proto protoreflect.FileDescriptor
@@ -26128,7 +26138,7 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"\bevent_id\x18\x03 \x01(\tR\aeventId\x12\x12\n" +
 	"\x04type\x18\x04 \x01(\tR\x04type\x12\x14\n" +
 	"\x05level\x18\x05 \x01(\tR\x05level\x12\x18\n" +
-	"\amessage\x18\x06 \x01(\tR\amessage\"\x9c\x01\n" +
+	"\amessage\x18\x06 \x01(\tR\amessage\"\xba\x01\n" +
 	"\x17StreamSandboxCellOutput\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
@@ -26136,7 +26146,8 @@ const file_agentcompose_v2_agentcompose_proto_rawDesc = "" +
 	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x17\n" +
 	"\acell_id\x18\x03 \x01(\tR\x06cellId\x12\x16\n" +
 	"\x06stream\x18\x04 \x01(\tR\x06stream\x12\x12\n" +
-	"\x04data\x18\x05 \x01(\tR\x04data*\x98\x01\n" +
+	"\x04data\x18\x05 \x01(\tR\x04data\x12\x1c\n" +
+	"\ttruncated\x18\x06 \x01(\bR\ttruncated*\x98\x01\n" +
 	"\x19ProjectValidationSeverity\x12+\n" +
 	"'PROJECT_VALIDATION_SEVERITY_UNSPECIFIED\x10\x00\x12'\n" +
 	"#PROJECT_VALIDATION_SEVERITY_WARNING\x10\x01\x12%\n" +

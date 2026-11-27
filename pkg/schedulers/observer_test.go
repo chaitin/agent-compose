@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
@@ -64,5 +65,60 @@ func TestRunExecutorReportsSchedulerRunStatusChanges(t *testing.T) {
 	}
 	if observer.projectIDs[0] != "project-1" || observer.agentNames[0] != "worker" {
 		t.Fatalf("observed ownership = %#v / %#v", observer.projectIDs, observer.agentNames)
+	}
+}
+
+type recoveryStoreFake struct {
+	schedulers.ControllerStore
+	runs      []domain.SchedulerRunSummary
+	updated   []domain.SchedulerRunSummary
+	events    []domain.SchedulerEvent
+	scheduler domain.Scheduler
+}
+
+func (s *recoveryStoreFake) ListInterruptedSchedulerRuns(context.Context, time.Time) ([]domain.SchedulerRunSummary, error) {
+	return append([]domain.SchedulerRunSummary(nil), s.runs...), nil
+}
+
+func (s *recoveryStoreFake) UpdateSchedulerRun(_ context.Context, run domain.SchedulerRunSummary) error {
+	s.updated = append(s.updated, run)
+	return nil
+}
+
+func (s *recoveryStoreFake) AddSchedulerEvent(_ context.Context, event domain.SchedulerEvent) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *recoveryStoreFake) GetScheduler(context.Context, string) (domain.Scheduler, error) {
+	return s.scheduler, nil
+}
+
+func TestRecoveryReportsInterruptedSchedulerRunStatus(t *testing.T) {
+	ctx := context.Background()
+	store := &recoveryStoreFake{
+		runs: []domain.SchedulerRunSummary{{
+			ID: "run-1", SchedulerID: "scheduler-1", Status: domain.SchedulerRunStatusRunning, StartedAt: time.Now().Add(-time.Minute),
+		}},
+		scheduler: domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-1", ProjectID: "p1", AgentName: "worker"}},
+	}
+	observer := &schedulerObserverFake{}
+	controller := schedulers.NewController(schedulers.ControllerDependencies{
+		Store:    store,
+		Observer: observer,
+	})
+	if err := controller.RecoverInterruptedRuns(ctx, time.Now()); err != nil {
+		t.Fatalf("RecoverInterruptedRuns: %v", err)
+	}
+	if len(store.updated) != 1 || store.updated[0].Status != domain.SchedulerRunStatusFailed {
+		t.Fatalf("updated runs = %+v", store.updated)
+	}
+	if len(observer.statuses) != 1 || observer.statuses[0] != domain.SchedulerRunStatusFailed ||
+		observer.previous[0] != domain.SchedulerRunStatusRunning ||
+		observer.projectIDs[0] != "p1" || observer.agentNames[0] != "worker" {
+		t.Fatalf("observed recovery status = %#v / %#v / %#v / %#v", observer.statuses, observer.previous, observer.projectIDs, observer.agentNames)
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("stored events = %d, want 1", len(store.events))
 	}
 }

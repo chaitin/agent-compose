@@ -65,7 +65,9 @@ its replay ring after the last subscriber has been idle for
 
 Control-plane events are replayable within the in-memory ring. Log events
 require `include_logs=true`, are live-only, and can be backfilled from a run's
-log with `FollowRunLogs` using the event's `offset`. When a cursor is older than
+log with `FollowRunLogs` using the event's `offset`. A live chunk larger than
+64 KiB is truncated and marked `truncated`; the full content remains available
+from the log or cell artifact. When a cursor is older than
 the ring or belongs to a previous daemon epoch, the stream returns
 `SYNC_REQUIRED` and the application reconciles through the existing List/Get
 APIs. This is a notification channel, not an audit log; durable history remains
