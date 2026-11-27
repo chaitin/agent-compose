@@ -752,7 +752,7 @@ Phase 1 已按本方案落地，主要落点如下：
 | sandbox | `StreamBroker` 全局 observer；project 归属由 run 状态/日志缓存，无法归属时留空 |
 | 测试 | broker、API、bridge、config、run/scheduler/sandbox observer、认证、race |
 
-与设计稿的已知差异：sandbox 的 `project_id` 采用 run 状态/日志形成的缓存，而不是逐事件数据库解析；日志事件只实时投递、不进 ring；Phase 2 webhook 未实现。
+与设计稿的已知差异：sandbox 的 `project_id` 优先取 sandbox 的 `project`/`project_id` tag，其次用 run 状态/日志形成的缓存，而不是逐事件数据库解析；日志事件只实时投递、不进 ring，单条实时日志超过 64 KiB 会截断并标记 `truncated`；Phase 2 webhook 未实现。
 
 ## 10. 附录：关键代码位置
 
