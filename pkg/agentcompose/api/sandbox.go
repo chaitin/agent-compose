@@ -320,6 +320,11 @@ func sandboxWatchEventToV2(event sandboxes.WatchEvent) *agentcomposev2.WatchSand
 	case sandboxes.WatchEventTypeEventAdded:
 		response.EventType = agentcomposev2.SandboxWatchEventType_SANDBOX_WATCH_EVENT_TYPE_EVENT_ADDED
 		response.Event = sandboxHistoryEventToV2(event.Event)
+	case sandboxes.WatchEventTypeSandboxRemoved:
+		response.EventType = agentcomposev2.SandboxWatchEventType_SANDBOX_WATCH_EVENT_TYPE_SANDBOX_REMOVED
+		if event.Sandbox != nil {
+			response.Sandbox = sandboxToV2(&domain.Sandbox{Summary: *event.Sandbox})
+		}
 	}
 	return response
 }

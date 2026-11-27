@@ -534,6 +534,39 @@ func removalTestSandbox(t *testing.T, spec removalTestSandboxSpec) *domain.Sandb
 	return sandbox
 }
 
+func TestRemovalCoordinatorPublishesTombstoneWhenSandboxRecordIsAlreadyGone(t *testing.T) {
+	root := t.TempDir()
+	sandboxID := "sandbox-retry-removed-record"
+	if err := sandboxes.WriteOwnershipRecord(root, sandboxes.OwnershipRecord{
+		Version: sandboxes.OwnershipRecordVersion, SandboxID: sandboxID, Driver: "docker",
+		SandboxPath:    filepath.Join(root, sandboxID),
+		LifecycleState: "deleting", CompletedStages: []sandboxes.DeletionStage{
+			sandboxes.DeletionStageIntent,
+			sandboxes.DeletionStageRuntimeStop,
+			sandboxes.DeletionStageRuntime,
+			sandboxes.DeletionStageAccessories,
+		},
+	}); err != nil {
+		t.Fatalf("WriteOwnershipRecord: %v", err)
+	}
+	var removed []*domain.SandboxSummary
+	coordinator := &sandboxes.RemovalCoordinator{
+		SandboxRoot: root,
+		Store:       &removalTestStore{sandboxes: map[string]*domain.Sandbox{}},
+		Runtime:     &removalTestRuntime{},
+		RemovedObserver: func(summary *domain.SandboxSummary) {
+			removed = append(removed, summary)
+		},
+	}
+	result, err := coordinator.Remove(context.Background(), sandboxID, true)
+	if err != nil || !result.Removed {
+		t.Fatalf("Remove result=%+v err=%v", result, err)
+	}
+	if len(removed) != 1 || removed[0].ID != sandboxID {
+		t.Fatalf("removed observer = %+v", removed)
+	}
+}
+
 type removalTestStore struct {
 	sandboxes   map[string]*domain.Sandbox
 	removeCalls int

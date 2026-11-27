@@ -234,9 +234,11 @@ func (c *RemovalCoordinator) Remove(ctx context.Context, sandboxID string, force
 		return result, fmt.Errorf("remove sandbox lifecycle journal: %w", err)
 	}
 	result.Removed = true
+	summary := &domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusDeleting, UpdatedAt: record.UpdatedAt}
 	if sandbox != nil {
-		c.observeRemoved(&sandbox.Summary)
+		summary = &sandbox.Summary
 	}
+	c.observeRemoved(summary)
 	return result, nil
 }
 

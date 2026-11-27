@@ -169,6 +169,7 @@ func TestV2SandboxWatchEventProjection(t *testing.T) {
 		{input: sandboxes.WatchEvent{EventType: sandboxes.WatchEventTypeCellOutput, CellID: "cell-1", Chunk: "part"}, want: agentcomposev2.SandboxWatchEventType_SANDBOX_WATCH_EVENT_TYPE_CELL_OUTPUT},
 		{input: sandboxes.WatchEvent{EventType: sandboxes.WatchEventTypeCellCompleted, Cell: &cell}, want: agentcomposev2.SandboxWatchEventType_SANDBOX_WATCH_EVENT_TYPE_CELL_COMPLETED},
 		{input: sandboxes.WatchEvent{EventType: sandboxes.WatchEventTypeEventAdded, Event: &event}, want: agentcomposev2.SandboxWatchEventType_SANDBOX_WATCH_EVENT_TYPE_EVENT_ADDED},
+		{input: sandboxes.WatchEvent{EventType: sandboxes.WatchEventTypeSandboxRemoved, Sandbox: &domain.SandboxSummary{ID: "sandbox-1"}}, want: agentcomposev2.SandboxWatchEventType_SANDBOX_WATCH_EVENT_TYPE_SANDBOX_REMOVED},
 	}
 	for _, test := range tests {
 		if got := sandboxWatchEventToV2(test.input); got.GetEventType() != test.want {
