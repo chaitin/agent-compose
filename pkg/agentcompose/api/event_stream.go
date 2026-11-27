@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"connectrpc.com/connect"
@@ -61,6 +62,8 @@ func (h *EventStreamHandler) WatchEvents(ctx context.Context, req *connect.Reque
 		return watchSubscribeError(err)
 	}
 	defer sub.Close()
+	slog.InfoContext(ctx, "event stream subscription started", "subscribers", h.broker.SubscriberCount(), "projects", len(req.Msg.GetProjectIds()), "event_types", len(req.Msg.GetEventTypes()), "include_logs", req.Msg.GetIncludeLogs())
+	defer func() { slog.Info("event stream subscription ended", "subscribers", h.broker.SubscriberCount()) }()
 
 	cfg := h.broker.Config()
 	maxBatch := int(req.Msg.GetMaxBatchEvents())
@@ -82,6 +85,7 @@ func (h *EventStreamHandler) WatchEvents(ctx context.Context, req *connect.Reque
 		return connect.NewError(connect.CodeUnknown, err)
 	}
 	if resume.SyncRequired {
+		slog.InfoContext(ctx, "event stream cursor requires reconciliation", "reason", resume.Reason)
 		if err := stream.Send(&agentcomposev2.WatchEventsResponse{
 			NextCursor: resume.HeadCursor,
 			Control: &agentcomposev2.StreamControl{
