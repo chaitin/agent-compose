@@ -184,6 +184,9 @@ func (h *EventStreamHandler) follow(ctx context.Context, sub *eventstream.Subscr
 				return nil
 			}
 		case <-ticker.C:
+			if err := h.sendGap(stream, sub); err != nil {
+				return err
+			}
 			if err := h.sendHeartbeat(stream); err != nil {
 				return err
 			}
