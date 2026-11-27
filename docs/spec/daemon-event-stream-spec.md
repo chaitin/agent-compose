@@ -1,6 +1,6 @@
 # Daemon 事件订阅流技术方案
 
-> 状态：调研 + 设计草案（未实现）
+> 状态：Phase 1 已实现（2026-11-27）；Phase 2 webhook 尚未实现
 >
 > 目标读者：daemon / API / runtime 维护者，以及上层应用（UI server、业务编排服务）的接入方
 
@@ -736,7 +736,25 @@ message EventSubscription {
 
 ---
 
-## 9. 附录：关键代码位置
+## 9. Phase 1 实现落点
+
+Phase 1 已按本方案落地，主要落点如下：
+
+| 主题 | 实现 |
+| --- | --- |
+| proto | `EventService.GetEventStreamCapabilities` / `WatchEvents`，事件信封与 control 帧 |
+| broker | `pkg/eventstream`：过滤、cursor/epoch、replay ring、每订阅有界队列、gap、idle 回收 |
+| API | `pkg/agentcompose/api/event_stream.go`：鉴权后的 Connect server-stream、批量、心跳、`SYNC_REQUIRED`、`GAP` |
+| 配置 | `pkg/config/event_stream.go`：`EVENT_STREAM_*`，默认关闭，启动时校验 |
+| 组装 | `pkg/agentcompose/app/event_stream.go`：broker 生命周期与领域事件到事件模型的桥接 |
+| run | `Coordinator` / `CompletionManager` 的状态观察者；`RunLogHub` 全局 observer |
+| scheduler | `Controller` / `RunExecutor` 的观察者；事件落库后发布 |
+| sandbox | `StreamBroker` 全局 observer；project 归属由 run 状态/日志缓存，无法归属时留空 |
+| 测试 | broker、API、bridge、config、run/scheduler/sandbox observer、认证、race |
+
+与设计稿的已知差异：sandbox 的 `project_id` 采用 run 状态/日志形成的缓存，而不是逐事件数据库解析；日志事件只实时投递、不进 ring；Phase 2 webhook 未实现。
+
+## 10. 附录：关键代码位置
 
 | 主题 | 位置 |
 | --- | --- |
