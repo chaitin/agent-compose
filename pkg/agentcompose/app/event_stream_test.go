@@ -178,3 +178,18 @@ func TestEventStreamBridgeTruncatesOversizedLogChunks(t *testing.T) {
 		t.Fatalf("cell output truncation = %+v", cellEvent.SandboxCellOutput)
 	}
 }
+
+func TestEventStreamBridgeAttributionsFromSandboxTags(t *testing.T) {
+	bridge, sub := testEventStreamBridge(t)
+	summary := domain.SandboxSummary{
+		ID: "s2", VMStatus: domain.VMStatusRunning,
+		Tags: []domain.SandboxTag{{Name: "project", Value: "p2"}, {Name: "agent", Value: "worker"}},
+	}
+	bridge.PublishSandboxWatch(sandboxes.WatchEvent{
+		SandboxID: "s2", EventType: sandboxes.WatchEventTypeSandboxUpdated, Sandbox: &summary,
+	})
+	event := receiveBridgeEvent(t, sub)
+	if event.ProjectID != "p2" {
+		t.Fatalf("sandbox event project = %q, want p2", event.ProjectID)
+	}
+}

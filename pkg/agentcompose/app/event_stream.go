@@ -151,7 +151,7 @@ func (b *eventStreamBridge) PublishSandboxWatch(event sandboxes.WatchEvent) {
 		if event.Sandbox == nil {
 			return
 		}
-		projectID := b.sandboxProject(event.SandboxID)
+		projectID := b.sandboxProjectFromSummary(event.Sandbox)
 		previous := b.setSandboxVMStatus(event.SandboxID, event.Sandbox.VMStatus)
 		b.broker.Publish(&eventstream.Event{
 			Type:       eventstream.TypeSandboxStatus,
@@ -205,6 +205,25 @@ func truncateLogData(data string) (string, bool) {
 		return data, false
 	}
 	return strings.ToValidUTF8(data[:maxLogEventDataBytes], ""), true
+}
+
+func (b *eventStreamBridge) sandboxProjectFromSummary(summary *domain.SandboxSummary) string {
+	if summary == nil {
+		return ""
+	}
+	if projectID := b.sandboxProject(summary.ID); projectID != "" {
+		return projectID
+	}
+	for _, tag := range summary.Tags {
+		switch tag.Name {
+		case "project", "project_id":
+			if projectID := strings.TrimSpace(tag.Value); projectID != "" {
+				b.rememberSandbox(projectID, summary.ID)
+				return projectID
+			}
+		}
+	}
+	return ""
 }
 
 func (b *eventStreamBridge) rememberSandbox(projectID, sandboxID string) {
