@@ -746,7 +746,7 @@ agent-compose logs -t
 | `-t, --timestamp` | 文本输出显示 run 级时间戳。当前没有逐 chunk 时间戳，会使用该 run 的 `completed_at`、`updated_at`、`started_at` 中最合适的可用时间。 |
 | `--agent <agent>` | 按 agent 过滤。 |
 | `--run <run-id>` | 按 run 过滤。 |
-| `--sandbox <sandbox>` | 按 sandbox 过滤。 |
+| `--sandbox <sandbox>` | 显示在这个 sandbox 里执行过的内容：它的 run，以及 scheduler run 的 shell/exec 步骤，按开始时间从旧到新排列，各自带行前缀（步骤为 `<agent>-step-<id>`）。`--tail` 对每一项分别生效。步骤日志按当前内容输出，`--follow` 只跟随 run。 |
 | `--event <evt-id>` | 按事件总线事件 ID（`evt_...`）过滤，展示该事件及其关联事件触发的 run。 |
 
 `--run` 和 `--sandbox` 是互斥的资源选择器。同时指定二者会返回用法错误，且不会发送日志请求。

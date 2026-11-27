@@ -774,7 +774,7 @@ agent-compose logs -t
 | `-t, --timestamp` | Prefix text log lines with a run-level timestamp. Current output does not have per-chunk timestamps; the CLI uses the best available run timestamp. |
 | `--agent <agent>` | Filter by agent. |
 | `--run <run-id>` | Filter by run id. |
-| `--sandbox <sandbox>` | Filter by sandbox. |
+| `--sandbox <sandbox>` | Show what ran in the sandbox: its runs and the shell/exec steps of scheduler runs, oldest first, each under its own line prefix (`<agent>-step-<id>` for a step). `--tail` applies to each of them. A step's log is printed as it stands; `--follow` follows runs. |
 | `--event <evt-id>` | Filter by event-bus event id (`evt_...`). Shows the runs triggered by the event and its correlated events. |
 
 `--run` and `--sandbox` are mutually exclusive resource selectors. Combining them is a usage error, and no log request is sent.

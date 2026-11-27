@@ -162,11 +162,20 @@ func followOrPrintProjectLogs(cmd *cobra.Command, cli cliOptions, clients cliSer
 		if err != nil {
 			return commandExitErrorForConnect(fmt.Errorf("list logs for project %s: %w", projectName, err))
 		}
-		if len(runs) == 0 && options.SandboxID != "" {
-			return writeSandboxHistoryLogs(cmd, cli, clients.sandbox, projectID, options)
-		}
 		if err := refreshLogRunSummariesForSort(cmd.Context(), client, projectID, projectName, runs); err != nil {
 			return err
+		}
+		if options.SandboxID != "" {
+			// A sandbox's history is the Agent Runs and scheduler steps it ran,
+			// each with its own log, in the order they started.
+			steps, err := listSandboxSteps(cmd.Context(), clients.project, projectID, options.SandboxID)
+			if err != nil {
+				return commandExitErrorForConnect(fmt.Errorf("list scheduler steps of sandbox %s: %w", options.SandboxID, err))
+			}
+			if len(runs) == 0 && len(steps) == 0 {
+				return writeSandboxHistoryLogs(cmd, cli, clients.sandbox, projectID, options)
+			}
+			return writeSandboxLogUnits(cmd.Context(), cmd.OutOrStdout(), clients, projectID, sandboxLogUnits(runs, steps), options)
 		}
 		sort.SliceStable(runs, func(i, j int) bool { return logRunSummaryLess(runs[i], runs[j]) })
 		for _, summary := range runs {
@@ -571,6 +580,9 @@ func displayStringWidth(value string) int {
 func runLogPrefix(summary *agentcomposev2.RunSummary) string {
 	runID := strings.TrimSpace(summary.GetRunId())
 	agentName := strings.TrimSpace(summary.GetAgentName())
+	if cellID, ok := strings.CutPrefix(runID, stepLogRunIDPrefix); ok {
+		return firstNonEmptyString(agentName, "scheduler") + "-step-" + shortRunID(cellID)
+	}
 	if agentName == "" {
 		return firstNonEmptyString(shortOpaqueID(runID), "-")
 	}
