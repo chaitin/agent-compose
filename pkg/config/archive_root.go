@@ -26,6 +26,32 @@ func validateSandboxArchiveRoot(sandboxRoot, archiveRoot string) error {
 	return nil
 }
 
+// validateRunLogArchiveRoot keeps archived run logs out of the directory that
+// holds the runs themselves: the archiver walks <data-root>/runs, and removing
+// a run's history removes its directory there.
+func validateRunLogArchiveRoot(dataRoot, archiveRoot string) error {
+	runsRoot, err := resolveConfigPathFromExistingAncestor(filepath.Join(dataRoot, "runs"))
+	if err != nil {
+		return fmt.Errorf("resolve run log root: %w", err)
+	}
+	// Archives are written below archiveRoot/runs, which may itself be a
+	// symlink. Checking only archiveRoot misses both that alias and DATA_ROOT.
+	for _, path := range []string{archiveRoot, filepath.Join(archiveRoot, "runs")} {
+		resolved, err := resolveConfigPathFromExistingAncestor(path)
+		if err != nil {
+			return fmt.Errorf("resolve RUN_LOG_ARCHIVE_ROOT path %q: %w", path, err)
+		}
+		relative, err := filepath.Rel(runsRoot, resolved)
+		if err != nil {
+			return fmt.Errorf("compare RUN_LOG_ARCHIVE_ROOT with the run log root: %w", err)
+		}
+		if relative == "." || (relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))) {
+			return fmt.Errorf("RUN_LOG_ARCHIVE_ROOT %q and its runs directory must be outside %q", archiveRoot, filepath.Join(dataRoot, "runs"))
+		}
+	}
+	return nil
+}
+
 func resolveConfigPathFromExistingAncestor(path string) (string, error) {
 	path = filepath.Clean(path)
 	current := path

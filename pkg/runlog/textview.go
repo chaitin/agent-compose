@@ -49,7 +49,7 @@ const textViewProbeBuffer = 4 << 10
 
 // OpenTextView opens the text view of the run log at path.
 func OpenTextView(path string) (*TextView, error) {
-	file, err := os.Open(path)
+	file, err := openLog(path)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +72,7 @@ func (v *TextView) Size() uint64 {
 }
 
 // Refresh extends the view to the complete lines committed since the last
-// Refresh. A log cut back by checkpoint recovery is taken in from scratch.
+// Refresh. A log rolled back to its last commit is taken in from scratch.
 func (v *TextView) Refresh() error {
 	limit, err := committedLogBytes(v.file)
 	if err != nil {

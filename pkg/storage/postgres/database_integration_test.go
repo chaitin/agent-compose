@@ -36,7 +36,7 @@ func TestPostgresMigrationsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("inspect: %v", err)
 	}
-	if len(statuses) != 2 || statuses[0].Version != baselineMigrationVersion || !statuses[0].Applied || statuses[1].Version != 21 || !statuses[1].Applied {
+	if len(statuses) != 2 || statuses[0].Version != baselineMigrationVersion || !statuses[0].Applied || statuses[1].Version != 24 || !statuses[1].Applied {
 		t.Fatalf("unexpected migration status: %+v", statuses)
 	}
 

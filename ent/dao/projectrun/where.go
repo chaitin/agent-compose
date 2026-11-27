@@ -227,6 +227,31 @@ func DetachKind(v string) predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldEQ(FieldDetachKind, v))
 }
 
+// LogFormat applies equality check predicate on the "log_format" field. It's identical to LogFormatEQ.
+func LogFormat(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldLogFormat, v))
+}
+
+// SummaryJSON applies equality check predicate on the "summary_json" field. It's identical to SummaryJSONEQ.
+func SummaryJSON(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldSummaryJSON, v))
+}
+
+// AgentCellID applies equality check predicate on the "agent_cell_id" field. It's identical to AgentCellIDEQ.
+func AgentCellID(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldAgentCellID, v))
+}
+
+// LogIncomplete applies equality check predicate on the "log_incomplete" field. It's identical to LogIncompleteEQ.
+func LogIncomplete(v int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldLogIncomplete, v))
+}
+
+// AgentProvider applies equality check predicate on the "agent_provider" field. It's identical to AgentProviderEQ.
+func AgentProvider(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldAgentProvider, v))
+}
+
 // ProjectIDEQ applies the EQ predicate on the "project_id" field.
 func ProjectIDEQ(v string) predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldEQ(FieldProjectID, v))
@@ -2410,6 +2435,356 @@ func DetachKindEqualFold(v string) predicate.ProjectRun {
 // DetachKindContainsFold applies the ContainsFold predicate on the "detach_kind" field.
 func DetachKindContainsFold(v string) predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldContainsFold(FieldDetachKind, v))
+}
+
+// LogFormatEQ applies the EQ predicate on the "log_format" field.
+func LogFormatEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldLogFormat, v))
+}
+
+// LogFormatNEQ applies the NEQ predicate on the "log_format" field.
+func LogFormatNEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNEQ(FieldLogFormat, v))
+}
+
+// LogFormatIn applies the In predicate on the "log_format" field.
+func LogFormatIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIn(FieldLogFormat, vs...))
+}
+
+// LogFormatNotIn applies the NotIn predicate on the "log_format" field.
+func LogFormatNotIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotIn(FieldLogFormat, vs...))
+}
+
+// LogFormatGT applies the GT predicate on the "log_format" field.
+func LogFormatGT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGT(FieldLogFormat, v))
+}
+
+// LogFormatGTE applies the GTE predicate on the "log_format" field.
+func LogFormatGTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGTE(FieldLogFormat, v))
+}
+
+// LogFormatLT applies the LT predicate on the "log_format" field.
+func LogFormatLT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLT(FieldLogFormat, v))
+}
+
+// LogFormatLTE applies the LTE predicate on the "log_format" field.
+func LogFormatLTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLTE(FieldLogFormat, v))
+}
+
+// LogFormatContains applies the Contains predicate on the "log_format" field.
+func LogFormatContains(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContains(FieldLogFormat, v))
+}
+
+// LogFormatHasPrefix applies the HasPrefix predicate on the "log_format" field.
+func LogFormatHasPrefix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasPrefix(FieldLogFormat, v))
+}
+
+// LogFormatHasSuffix applies the HasSuffix predicate on the "log_format" field.
+func LogFormatHasSuffix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasSuffix(FieldLogFormat, v))
+}
+
+// LogFormatIsNil applies the IsNil predicate on the "log_format" field.
+func LogFormatIsNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIsNull(FieldLogFormat))
+}
+
+// LogFormatNotNil applies the NotNil predicate on the "log_format" field.
+func LogFormatNotNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotNull(FieldLogFormat))
+}
+
+// LogFormatEqualFold applies the EqualFold predicate on the "log_format" field.
+func LogFormatEqualFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEqualFold(FieldLogFormat, v))
+}
+
+// LogFormatContainsFold applies the ContainsFold predicate on the "log_format" field.
+func LogFormatContainsFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContainsFold(FieldLogFormat, v))
+}
+
+// SummaryJSONEQ applies the EQ predicate on the "summary_json" field.
+func SummaryJSONEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldSummaryJSON, v))
+}
+
+// SummaryJSONNEQ applies the NEQ predicate on the "summary_json" field.
+func SummaryJSONNEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNEQ(FieldSummaryJSON, v))
+}
+
+// SummaryJSONIn applies the In predicate on the "summary_json" field.
+func SummaryJSONIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIn(FieldSummaryJSON, vs...))
+}
+
+// SummaryJSONNotIn applies the NotIn predicate on the "summary_json" field.
+func SummaryJSONNotIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotIn(FieldSummaryJSON, vs...))
+}
+
+// SummaryJSONGT applies the GT predicate on the "summary_json" field.
+func SummaryJSONGT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGT(FieldSummaryJSON, v))
+}
+
+// SummaryJSONGTE applies the GTE predicate on the "summary_json" field.
+func SummaryJSONGTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGTE(FieldSummaryJSON, v))
+}
+
+// SummaryJSONLT applies the LT predicate on the "summary_json" field.
+func SummaryJSONLT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLT(FieldSummaryJSON, v))
+}
+
+// SummaryJSONLTE applies the LTE predicate on the "summary_json" field.
+func SummaryJSONLTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLTE(FieldSummaryJSON, v))
+}
+
+// SummaryJSONContains applies the Contains predicate on the "summary_json" field.
+func SummaryJSONContains(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContains(FieldSummaryJSON, v))
+}
+
+// SummaryJSONHasPrefix applies the HasPrefix predicate on the "summary_json" field.
+func SummaryJSONHasPrefix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasPrefix(FieldSummaryJSON, v))
+}
+
+// SummaryJSONHasSuffix applies the HasSuffix predicate on the "summary_json" field.
+func SummaryJSONHasSuffix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasSuffix(FieldSummaryJSON, v))
+}
+
+// SummaryJSONIsNil applies the IsNil predicate on the "summary_json" field.
+func SummaryJSONIsNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIsNull(FieldSummaryJSON))
+}
+
+// SummaryJSONNotNil applies the NotNil predicate on the "summary_json" field.
+func SummaryJSONNotNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotNull(FieldSummaryJSON))
+}
+
+// SummaryJSONEqualFold applies the EqualFold predicate on the "summary_json" field.
+func SummaryJSONEqualFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEqualFold(FieldSummaryJSON, v))
+}
+
+// SummaryJSONContainsFold applies the ContainsFold predicate on the "summary_json" field.
+func SummaryJSONContainsFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContainsFold(FieldSummaryJSON, v))
+}
+
+// AgentCellIDEQ applies the EQ predicate on the "agent_cell_id" field.
+func AgentCellIDEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldAgentCellID, v))
+}
+
+// AgentCellIDNEQ applies the NEQ predicate on the "agent_cell_id" field.
+func AgentCellIDNEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNEQ(FieldAgentCellID, v))
+}
+
+// AgentCellIDIn applies the In predicate on the "agent_cell_id" field.
+func AgentCellIDIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIn(FieldAgentCellID, vs...))
+}
+
+// AgentCellIDNotIn applies the NotIn predicate on the "agent_cell_id" field.
+func AgentCellIDNotIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotIn(FieldAgentCellID, vs...))
+}
+
+// AgentCellIDGT applies the GT predicate on the "agent_cell_id" field.
+func AgentCellIDGT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGT(FieldAgentCellID, v))
+}
+
+// AgentCellIDGTE applies the GTE predicate on the "agent_cell_id" field.
+func AgentCellIDGTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGTE(FieldAgentCellID, v))
+}
+
+// AgentCellIDLT applies the LT predicate on the "agent_cell_id" field.
+func AgentCellIDLT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLT(FieldAgentCellID, v))
+}
+
+// AgentCellIDLTE applies the LTE predicate on the "agent_cell_id" field.
+func AgentCellIDLTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLTE(FieldAgentCellID, v))
+}
+
+// AgentCellIDContains applies the Contains predicate on the "agent_cell_id" field.
+func AgentCellIDContains(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContains(FieldAgentCellID, v))
+}
+
+// AgentCellIDHasPrefix applies the HasPrefix predicate on the "agent_cell_id" field.
+func AgentCellIDHasPrefix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasPrefix(FieldAgentCellID, v))
+}
+
+// AgentCellIDHasSuffix applies the HasSuffix predicate on the "agent_cell_id" field.
+func AgentCellIDHasSuffix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasSuffix(FieldAgentCellID, v))
+}
+
+// AgentCellIDIsNil applies the IsNil predicate on the "agent_cell_id" field.
+func AgentCellIDIsNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIsNull(FieldAgentCellID))
+}
+
+// AgentCellIDNotNil applies the NotNil predicate on the "agent_cell_id" field.
+func AgentCellIDNotNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotNull(FieldAgentCellID))
+}
+
+// AgentCellIDEqualFold applies the EqualFold predicate on the "agent_cell_id" field.
+func AgentCellIDEqualFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEqualFold(FieldAgentCellID, v))
+}
+
+// AgentCellIDContainsFold applies the ContainsFold predicate on the "agent_cell_id" field.
+func AgentCellIDContainsFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContainsFold(FieldAgentCellID, v))
+}
+
+// LogIncompleteEQ applies the EQ predicate on the "log_incomplete" field.
+func LogIncompleteEQ(v int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldLogIncomplete, v))
+}
+
+// LogIncompleteNEQ applies the NEQ predicate on the "log_incomplete" field.
+func LogIncompleteNEQ(v int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNEQ(FieldLogIncomplete, v))
+}
+
+// LogIncompleteIn applies the In predicate on the "log_incomplete" field.
+func LogIncompleteIn(vs ...int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIn(FieldLogIncomplete, vs...))
+}
+
+// LogIncompleteNotIn applies the NotIn predicate on the "log_incomplete" field.
+func LogIncompleteNotIn(vs ...int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotIn(FieldLogIncomplete, vs...))
+}
+
+// LogIncompleteGT applies the GT predicate on the "log_incomplete" field.
+func LogIncompleteGT(v int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGT(FieldLogIncomplete, v))
+}
+
+// LogIncompleteGTE applies the GTE predicate on the "log_incomplete" field.
+func LogIncompleteGTE(v int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGTE(FieldLogIncomplete, v))
+}
+
+// LogIncompleteLT applies the LT predicate on the "log_incomplete" field.
+func LogIncompleteLT(v int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLT(FieldLogIncomplete, v))
+}
+
+// LogIncompleteLTE applies the LTE predicate on the "log_incomplete" field.
+func LogIncompleteLTE(v int) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLTE(FieldLogIncomplete, v))
+}
+
+// LogIncompleteIsNil applies the IsNil predicate on the "log_incomplete" field.
+func LogIncompleteIsNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIsNull(FieldLogIncomplete))
+}
+
+// LogIncompleteNotNil applies the NotNil predicate on the "log_incomplete" field.
+func LogIncompleteNotNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotNull(FieldLogIncomplete))
+}
+
+// AgentProviderEQ applies the EQ predicate on the "agent_provider" field.
+func AgentProviderEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldAgentProvider, v))
+}
+
+// AgentProviderNEQ applies the NEQ predicate on the "agent_provider" field.
+func AgentProviderNEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNEQ(FieldAgentProvider, v))
+}
+
+// AgentProviderIn applies the In predicate on the "agent_provider" field.
+func AgentProviderIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIn(FieldAgentProvider, vs...))
+}
+
+// AgentProviderNotIn applies the NotIn predicate on the "agent_provider" field.
+func AgentProviderNotIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotIn(FieldAgentProvider, vs...))
+}
+
+// AgentProviderGT applies the GT predicate on the "agent_provider" field.
+func AgentProviderGT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGT(FieldAgentProvider, v))
+}
+
+// AgentProviderGTE applies the GTE predicate on the "agent_provider" field.
+func AgentProviderGTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGTE(FieldAgentProvider, v))
+}
+
+// AgentProviderLT applies the LT predicate on the "agent_provider" field.
+func AgentProviderLT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLT(FieldAgentProvider, v))
+}
+
+// AgentProviderLTE applies the LTE predicate on the "agent_provider" field.
+func AgentProviderLTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLTE(FieldAgentProvider, v))
+}
+
+// AgentProviderContains applies the Contains predicate on the "agent_provider" field.
+func AgentProviderContains(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContains(FieldAgentProvider, v))
+}
+
+// AgentProviderHasPrefix applies the HasPrefix predicate on the "agent_provider" field.
+func AgentProviderHasPrefix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasPrefix(FieldAgentProvider, v))
+}
+
+// AgentProviderHasSuffix applies the HasSuffix predicate on the "agent_provider" field.
+func AgentProviderHasSuffix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasSuffix(FieldAgentProvider, v))
+}
+
+// AgentProviderIsNil applies the IsNil predicate on the "agent_provider" field.
+func AgentProviderIsNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIsNull(FieldAgentProvider))
+}
+
+// AgentProviderNotNil applies the NotNil predicate on the "agent_provider" field.
+func AgentProviderNotNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotNull(FieldAgentProvider))
+}
+
+// AgentProviderEqualFold applies the EqualFold predicate on the "agent_provider" field.
+func AgentProviderEqualFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEqualFold(FieldAgentProvider, v))
+}
+
+// AgentProviderContainsFold applies the ContainsFold predicate on the "agent_provider" field.
+func AgentProviderContainsFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContainsFold(FieldAgentProvider, v))
 }
 
 // And groups predicates with the AND operator between them.

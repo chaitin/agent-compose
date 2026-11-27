@@ -40,7 +40,7 @@ func writeMixedLog(t *testing.T, w *Writer, turns int) {
 			mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":1,"outputTokens":1}`)
 			mustEvent(t, w, fmt.Sprintf(`{"kind":"text_delta","text":"answer %d 中文 "}`, i))
 		}
-		if _, err := w.EndTurn("stop", "final answer"); err != nil {
+		if _, err := w.EndTurn("stop", "final answer", nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -188,14 +188,15 @@ func TestTextViewFollowsAGrowingLogAndIgnoresATornTail(t *testing.T) {
 	}
 }
 
-func TestTextViewSeesOnlyTheCheckpointedPrefix(t *testing.T) {
+func TestTextViewSeesOnlyTheCommittedPrefix(t *testing.T) {
 	w, path := openTest(t, Options{})
 	if err := w.AppendOutput("stdout", "committed\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Checkpoint(1, json.RawMessage(`{}`)); err != nil {
+	if _, err := w.Commit(1, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
+	w.SetSourceOffset(2)
 	if err := w.AppendOutput("stdout", "pending\n"); err != nil {
 		t.Fatal(err)
 	}

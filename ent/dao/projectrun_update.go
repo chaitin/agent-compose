@@ -734,6 +734,113 @@ func (_u *ProjectRunUpdate) ClearDetachKind() *ProjectRunUpdate {
 	return _u
 }
 
+// SetLogFormat sets the "log_format" field.
+func (_u *ProjectRunUpdate) SetLogFormat(v string) *ProjectRunUpdate {
+	_u.mutation.SetLogFormat(v)
+	return _u
+}
+
+// SetNillableLogFormat sets the "log_format" field if the given value is not nil.
+func (_u *ProjectRunUpdate) SetNillableLogFormat(v *string) *ProjectRunUpdate {
+	if v != nil {
+		_u.SetLogFormat(*v)
+	}
+	return _u
+}
+
+// ClearLogFormat clears the value of the "log_format" field.
+func (_u *ProjectRunUpdate) ClearLogFormat() *ProjectRunUpdate {
+	_u.mutation.ClearLogFormat()
+	return _u
+}
+
+// SetSummaryJSON sets the "summary_json" field.
+func (_u *ProjectRunUpdate) SetSummaryJSON(v string) *ProjectRunUpdate {
+	_u.mutation.SetSummaryJSON(v)
+	return _u
+}
+
+// SetNillableSummaryJSON sets the "summary_json" field if the given value is not nil.
+func (_u *ProjectRunUpdate) SetNillableSummaryJSON(v *string) *ProjectRunUpdate {
+	if v != nil {
+		_u.SetSummaryJSON(*v)
+	}
+	return _u
+}
+
+// ClearSummaryJSON clears the value of the "summary_json" field.
+func (_u *ProjectRunUpdate) ClearSummaryJSON() *ProjectRunUpdate {
+	_u.mutation.ClearSummaryJSON()
+	return _u
+}
+
+// SetAgentCellID sets the "agent_cell_id" field.
+func (_u *ProjectRunUpdate) SetAgentCellID(v string) *ProjectRunUpdate {
+	_u.mutation.SetAgentCellID(v)
+	return _u
+}
+
+// SetNillableAgentCellID sets the "agent_cell_id" field if the given value is not nil.
+func (_u *ProjectRunUpdate) SetNillableAgentCellID(v *string) *ProjectRunUpdate {
+	if v != nil {
+		_u.SetAgentCellID(*v)
+	}
+	return _u
+}
+
+// ClearAgentCellID clears the value of the "agent_cell_id" field.
+func (_u *ProjectRunUpdate) ClearAgentCellID() *ProjectRunUpdate {
+	_u.mutation.ClearAgentCellID()
+	return _u
+}
+
+// SetLogIncomplete sets the "log_incomplete" field.
+func (_u *ProjectRunUpdate) SetLogIncomplete(v int) *ProjectRunUpdate {
+	_u.mutation.ResetLogIncomplete()
+	_u.mutation.SetLogIncomplete(v)
+	return _u
+}
+
+// SetNillableLogIncomplete sets the "log_incomplete" field if the given value is not nil.
+func (_u *ProjectRunUpdate) SetNillableLogIncomplete(v *int) *ProjectRunUpdate {
+	if v != nil {
+		_u.SetLogIncomplete(*v)
+	}
+	return _u
+}
+
+// AddLogIncomplete adds value to the "log_incomplete" field.
+func (_u *ProjectRunUpdate) AddLogIncomplete(v int) *ProjectRunUpdate {
+	_u.mutation.AddLogIncomplete(v)
+	return _u
+}
+
+// ClearLogIncomplete clears the value of the "log_incomplete" field.
+func (_u *ProjectRunUpdate) ClearLogIncomplete() *ProjectRunUpdate {
+	_u.mutation.ClearLogIncomplete()
+	return _u
+}
+
+// SetAgentProvider sets the "agent_provider" field.
+func (_u *ProjectRunUpdate) SetAgentProvider(v string) *ProjectRunUpdate {
+	_u.mutation.SetAgentProvider(v)
+	return _u
+}
+
+// SetNillableAgentProvider sets the "agent_provider" field if the given value is not nil.
+func (_u *ProjectRunUpdate) SetNillableAgentProvider(v *string) *ProjectRunUpdate {
+	if v != nil {
+		_u.SetAgentProvider(*v)
+	}
+	return _u
+}
+
+// ClearAgentProvider clears the value of the "agent_provider" field.
+func (_u *ProjectRunUpdate) ClearAgentProvider() *ProjectRunUpdate {
+	_u.mutation.ClearAgentProvider()
+	return _u
+}
+
 // Mutation returns the ProjectRunMutation object of the builder.
 func (_u *ProjectRunUpdate) Mutation() *ProjectRunMutation {
 	return _u.mutation
@@ -996,6 +1103,39 @@ func (_u *ProjectRunUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	}
 	if _u.mutation.DetachKindCleared() {
 		_spec.ClearField(projectrun.FieldDetachKind, field.TypeString)
+	}
+	if value, ok := _u.mutation.LogFormat(); ok {
+		_spec.SetField(projectrun.FieldLogFormat, field.TypeString, value)
+	}
+	if _u.mutation.LogFormatCleared() {
+		_spec.ClearField(projectrun.FieldLogFormat, field.TypeString)
+	}
+	if value, ok := _u.mutation.SummaryJSON(); ok {
+		_spec.SetField(projectrun.FieldSummaryJSON, field.TypeString, value)
+	}
+	if _u.mutation.SummaryJSONCleared() {
+		_spec.ClearField(projectrun.FieldSummaryJSON, field.TypeString)
+	}
+	if value, ok := _u.mutation.AgentCellID(); ok {
+		_spec.SetField(projectrun.FieldAgentCellID, field.TypeString, value)
+	}
+	if _u.mutation.AgentCellIDCleared() {
+		_spec.ClearField(projectrun.FieldAgentCellID, field.TypeString)
+	}
+	if value, ok := _u.mutation.LogIncomplete(); ok {
+		_spec.SetField(projectrun.FieldLogIncomplete, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedLogIncomplete(); ok {
+		_spec.AddField(projectrun.FieldLogIncomplete, field.TypeInt, value)
+	}
+	if _u.mutation.LogIncompleteCleared() {
+		_spec.ClearField(projectrun.FieldLogIncomplete, field.TypeInt)
+	}
+	if value, ok := _u.mutation.AgentProvider(); ok {
+		_spec.SetField(projectrun.FieldAgentProvider, field.TypeString, value)
+	}
+	if _u.mutation.AgentProviderCleared() {
+		_spec.ClearField(projectrun.FieldAgentProvider, field.TypeString)
 	}
 	_spec.AddModifiers(_u.modifiers...)
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
@@ -1725,6 +1865,113 @@ func (_u *ProjectRunUpdateOne) ClearDetachKind() *ProjectRunUpdateOne {
 	return _u
 }
 
+// SetLogFormat sets the "log_format" field.
+func (_u *ProjectRunUpdateOne) SetLogFormat(v string) *ProjectRunUpdateOne {
+	_u.mutation.SetLogFormat(v)
+	return _u
+}
+
+// SetNillableLogFormat sets the "log_format" field if the given value is not nil.
+func (_u *ProjectRunUpdateOne) SetNillableLogFormat(v *string) *ProjectRunUpdateOne {
+	if v != nil {
+		_u.SetLogFormat(*v)
+	}
+	return _u
+}
+
+// ClearLogFormat clears the value of the "log_format" field.
+func (_u *ProjectRunUpdateOne) ClearLogFormat() *ProjectRunUpdateOne {
+	_u.mutation.ClearLogFormat()
+	return _u
+}
+
+// SetSummaryJSON sets the "summary_json" field.
+func (_u *ProjectRunUpdateOne) SetSummaryJSON(v string) *ProjectRunUpdateOne {
+	_u.mutation.SetSummaryJSON(v)
+	return _u
+}
+
+// SetNillableSummaryJSON sets the "summary_json" field if the given value is not nil.
+func (_u *ProjectRunUpdateOne) SetNillableSummaryJSON(v *string) *ProjectRunUpdateOne {
+	if v != nil {
+		_u.SetSummaryJSON(*v)
+	}
+	return _u
+}
+
+// ClearSummaryJSON clears the value of the "summary_json" field.
+func (_u *ProjectRunUpdateOne) ClearSummaryJSON() *ProjectRunUpdateOne {
+	_u.mutation.ClearSummaryJSON()
+	return _u
+}
+
+// SetAgentCellID sets the "agent_cell_id" field.
+func (_u *ProjectRunUpdateOne) SetAgentCellID(v string) *ProjectRunUpdateOne {
+	_u.mutation.SetAgentCellID(v)
+	return _u
+}
+
+// SetNillableAgentCellID sets the "agent_cell_id" field if the given value is not nil.
+func (_u *ProjectRunUpdateOne) SetNillableAgentCellID(v *string) *ProjectRunUpdateOne {
+	if v != nil {
+		_u.SetAgentCellID(*v)
+	}
+	return _u
+}
+
+// ClearAgentCellID clears the value of the "agent_cell_id" field.
+func (_u *ProjectRunUpdateOne) ClearAgentCellID() *ProjectRunUpdateOne {
+	_u.mutation.ClearAgentCellID()
+	return _u
+}
+
+// SetLogIncomplete sets the "log_incomplete" field.
+func (_u *ProjectRunUpdateOne) SetLogIncomplete(v int) *ProjectRunUpdateOne {
+	_u.mutation.ResetLogIncomplete()
+	_u.mutation.SetLogIncomplete(v)
+	return _u
+}
+
+// SetNillableLogIncomplete sets the "log_incomplete" field if the given value is not nil.
+func (_u *ProjectRunUpdateOne) SetNillableLogIncomplete(v *int) *ProjectRunUpdateOne {
+	if v != nil {
+		_u.SetLogIncomplete(*v)
+	}
+	return _u
+}
+
+// AddLogIncomplete adds value to the "log_incomplete" field.
+func (_u *ProjectRunUpdateOne) AddLogIncomplete(v int) *ProjectRunUpdateOne {
+	_u.mutation.AddLogIncomplete(v)
+	return _u
+}
+
+// ClearLogIncomplete clears the value of the "log_incomplete" field.
+func (_u *ProjectRunUpdateOne) ClearLogIncomplete() *ProjectRunUpdateOne {
+	_u.mutation.ClearLogIncomplete()
+	return _u
+}
+
+// SetAgentProvider sets the "agent_provider" field.
+func (_u *ProjectRunUpdateOne) SetAgentProvider(v string) *ProjectRunUpdateOne {
+	_u.mutation.SetAgentProvider(v)
+	return _u
+}
+
+// SetNillableAgentProvider sets the "agent_provider" field if the given value is not nil.
+func (_u *ProjectRunUpdateOne) SetNillableAgentProvider(v *string) *ProjectRunUpdateOne {
+	if v != nil {
+		_u.SetAgentProvider(*v)
+	}
+	return _u
+}
+
+// ClearAgentProvider clears the value of the "agent_provider" field.
+func (_u *ProjectRunUpdateOne) ClearAgentProvider() *ProjectRunUpdateOne {
+	_u.mutation.ClearAgentProvider()
+	return _u
+}
+
 // Mutation returns the ProjectRunMutation object of the builder.
 func (_u *ProjectRunUpdateOne) Mutation() *ProjectRunMutation {
 	return _u.mutation
@@ -2017,6 +2264,39 @@ func (_u *ProjectRunUpdateOne) sqlSave(ctx context.Context) (_node *ProjectRun, 
 	}
 	if _u.mutation.DetachKindCleared() {
 		_spec.ClearField(projectrun.FieldDetachKind, field.TypeString)
+	}
+	if value, ok := _u.mutation.LogFormat(); ok {
+		_spec.SetField(projectrun.FieldLogFormat, field.TypeString, value)
+	}
+	if _u.mutation.LogFormatCleared() {
+		_spec.ClearField(projectrun.FieldLogFormat, field.TypeString)
+	}
+	if value, ok := _u.mutation.SummaryJSON(); ok {
+		_spec.SetField(projectrun.FieldSummaryJSON, field.TypeString, value)
+	}
+	if _u.mutation.SummaryJSONCleared() {
+		_spec.ClearField(projectrun.FieldSummaryJSON, field.TypeString)
+	}
+	if value, ok := _u.mutation.AgentCellID(); ok {
+		_spec.SetField(projectrun.FieldAgentCellID, field.TypeString, value)
+	}
+	if _u.mutation.AgentCellIDCleared() {
+		_spec.ClearField(projectrun.FieldAgentCellID, field.TypeString)
+	}
+	if value, ok := _u.mutation.LogIncomplete(); ok {
+		_spec.SetField(projectrun.FieldLogIncomplete, field.TypeInt, value)
+	}
+	if value, ok := _u.mutation.AddedLogIncomplete(); ok {
+		_spec.AddField(projectrun.FieldLogIncomplete, field.TypeInt, value)
+	}
+	if _u.mutation.LogIncompleteCleared() {
+		_spec.ClearField(projectrun.FieldLogIncomplete, field.TypeInt)
+	}
+	if value, ok := _u.mutation.AgentProvider(); ok {
+		_spec.SetField(projectrun.FieldAgentProvider, field.TypeString, value)
+	}
+	if _u.mutation.AgentProviderCleared() {
+		_spec.ClearField(projectrun.FieldAgentProvider, field.TypeString)
 	}
 	_spec.AddModifiers(_u.modifiers...)
 	_node = &ProjectRun{config: _u.config}

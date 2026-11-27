@@ -31,6 +31,8 @@ var detachCleanupTimeout = 10 * time.Second
 // DetachedTask describes a guest task run behind the detach supervisor: a
 // project command or agent run, fresh or re-attached after a daemon restart.
 type DetachedTask struct {
+	// Journal delegates acknowledgement, including process exit, to a structured consumer.
+	Journal     bool
 	Config      *appconfig.Config
 	Runtime     Runtime
 	Sandbox     *domain.Sandbox
@@ -142,7 +144,8 @@ func cleanupDetachedExecution(ctx context.Context, opts DetachedTask) {
 
 func followDetachedJournal(ctx context.Context, opts DetachedTask) detachedExecutionResult {
 	follower := newDetachFollower(opts.Writer, opts.PersistCursor)
-	follower.forwardFrom = opts.Cursor
+	follower.journal = opts.Journal
+	follower.forwardFrom, follower.cursor = opts.Cursor, opts.Cursor
 	attachFrom := opts.Cursor
 	if opts.ReplayAll {
 		attachFrom = 0
@@ -376,195 +379,6 @@ type detachedRunCommand struct {
 	Run              domain.ProjectRunRecord
 	GuestRequestPath string
 	Writer           func(domain.ExecChunk)
-}
-
-// detachFollower parses the NDJSON records emitted by `attach` and reconstructs
-// the task result while forwarding output chunks to the run log.
-type detachFollower struct {
-	writer  func(domain.ExecChunk)
-	persist func(uint64) error
-	sendErr error
-
-	pending strings.Builder
-	// queued holds the output parsed from the current chunk until its cursor
-	// is persisted.
-	queued []domain.ExecChunk
-	exit   *execution.DetachAttachRecord
-	// attachStderr keeps the head of the attach process's own stderr (Node
-	// warnings, a crash trace). It is not journal data, so it is never parsed;
-	// it only explains an attach that ended without an exit record.
-	attachStderr strings.Builder
-
-	stdout strings.Builder
-	stderr strings.Builder
-	output strings.Builder
-	cursor uint64
-	// forwardFrom is the offset below which output was already delivered by
-	// an earlier daemon: it still counts towards the result but is not
-	// forwarded or re-persisted.
-	forwardFrom uint64
-}
-
-func newDetachFollower(writer func(domain.ExecChunk), persist func(uint64) error) *detachFollower {
-	return &detachFollower{writer: writer, persist: persist}
-}
-
-// detachAttachStderrLimit bounds how much of the attach process's stderr is
-// kept for error messages.
-const detachAttachStderrLimit = 4096
-
-func (f *detachFollower) consume(chunk domain.ExecChunk) {
-	if chunk.Stream == domain.StdioStderr {
-		if room := detachAttachStderrLimit - f.attachStderr.Len(); room > 0 {
-			f.attachStderr.WriteString(truncateUTF8(chunk.Text, room))
-		}
-		return
-	}
-	if f.sendErr != nil || f.exit != nil {
-		return
-	}
-	before := f.cursor
-	f.pending.WriteString(chunk.Text)
-	for {
-		line, rest, ok := strings.Cut(f.pending.String(), "\n")
-		if !ok {
-			break
-		}
-		f.pending.Reset()
-		f.pending.WriteString(rest)
-		f.handleLine(line)
-	}
-	// Persist once per chunk rather than per record: attach batches every
-	// record it read in one poll, so this is one cursor write per poll instead
-	// of one per output line. As before, the cursor is written before the
-	// output is forwarded, so a hard kill in between can drop this chunk from
-	// the run log but never duplicates it on resume.
-	if f.cursor != before {
-		f.persistCursor()
-	}
-	queued := f.queued
-	f.queued = nil
-	for _, out := range queued {
-		f.forward(out)
-	}
-}
-
-func (f *detachFollower) handleLine(line string) {
-	line = strings.TrimSpace(line)
-	if line == "" {
-		return
-	}
-	record, err := execution.ParseDetachAttachLine(line)
-	if err != nil {
-		f.sendErr = err
-		return
-	}
-	switch {
-	case record.IsExit():
-		f.exit = &record
-	case record.IsOut():
-		f.appendOut(record)
-	case record.Type == "gap":
-		if record.To <= f.forwardFrom {
-			return
-		}
-		if record.To > f.cursor {
-			f.cursor = record.To
-		}
-		f.queued = append(f.queued, domain.ExecChunk{Stream: domain.StdioStderr, Text: fmt.Sprintf("\n[detach journal gap: %d..%d]\n", record.From, record.To)})
-	}
-}
-
-func (f *detachFollower) appendOut(record execution.DetachAttachRecord) {
-	stream := domain.StdioStream(record.Stream)
-	if stream != domain.StdioStdout && stream != domain.StdioStderr {
-		stream = domain.StdioStdout
-	}
-	if stream == domain.StdioStdout {
-		f.stdout.WriteString(record.Text)
-	} else {
-		f.stderr.WriteString(record.Text)
-	}
-	f.output.WriteString(record.Text)
-	end := record.Offset + uint64(len(record.Text))
-	if end <= f.forwardFrom {
-		return
-	}
-	text := record.Text
-	if record.Offset < f.forwardFrom {
-		text = text[f.forwardFrom-record.Offset:]
-	}
-	if end > f.cursor {
-		f.cursor = end
-	}
-	f.queued = append(f.queued, domain.ExecChunk{Stream: stream, Text: text})
-}
-
-func (f *detachFollower) persistCursor() {
-	if f.persist == nil || f.sendErr != nil {
-		return
-	}
-	if err := f.persist(f.cursor); err != nil {
-		f.sendErr = err
-	}
-}
-
-func (f *detachFollower) forward(chunk domain.ExecChunk) {
-	if f.writer != nil {
-		f.writer(chunk)
-	}
-}
-
-func (f *detachFollower) result(execErr error, attachCtx context.Context) detachedExecutionResult {
-	if f.sendErr != nil {
-		execErr = errors.Join(execErr, f.sendErr)
-	}
-	if f.exit == nil && execErr != nil {
-		if detail := strings.TrimSpace(f.attachStderr.String()); detail != "" {
-			execErr = fmt.Errorf("%w (attach stderr: %s)", execErr, detail)
-		}
-	}
-	result := domain.ExecResult{
-		Stdout: f.stdout.String(),
-		Stderr: f.stderr.String(),
-		Output: f.output.String(),
-	}
-	if f.exit == nil {
-		result.ExitCode = -1
-		if execErr != nil {
-			cause := context.Cause(attachCtx)
-			if errors.Is(cause, ErrRunDisconnected) {
-				return detachedExecutionResult{Result: result, Err: ErrRunDisconnected}
-			}
-			// Surface a specific cancellation cause (e.g. a failed stop request)
-			// rather than masking it behind the attach exec's context.Canceled.
-			// Only the bare context errors are skipped: a stop request that
-			// timed out wraps context.DeadlineExceeded but is still specific.
-			if cause != nil && !isBareContextError(cause) {
-				return detachedExecutionResult{Result: result, Err: cause}
-			}
-			return detachedExecutionResult{Result: result, Err: execErr}
-		}
-		return detachedExecutionResult{Result: result, Err: errors.New("detached execution ended without an exit record")}
-	}
-	exit := execution.DetachExitResultFor(*f.exit)
-	mapped, exitErr := execution.ExecResultFromDetachExit(exit)
-	mapped.Stdout = result.Stdout
-	mapped.Stderr = result.Stderr
-	mapped.Output = result.Output
-	if exitErr == nil {
-		mapped.Success = mapped.ExitCode == 0
-	}
-	stopReason := ""
-	if exit.Reason == execution.DetachExitStopped {
-		stopReason = exit.StopReason
-	}
-	return detachedExecutionResult{
-		Result:     mapped,
-		Abnormal:   exit.Reason == execution.DetachExitAbnormal,
-		StopReason: stopReason,
-		Err:        exitErr,
-	}
 }
 
 // remainingTimeout returns the time left before ctx's deadline, or 0 when ctx

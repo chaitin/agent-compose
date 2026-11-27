@@ -4,6 +4,11 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
+
+	"github.com/chaitin/agent-compose/pkg/identity"
+	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 )
 
 type preparedDirectory struct {
@@ -11,6 +16,7 @@ type preparedDirectory struct {
 	name     string
 	pending  string
 	original os.FileInfo
+	kind     string
 }
 
 func pendingHistoryName(runID string) string { return ".history-removing-" + runID }
@@ -19,43 +25,133 @@ func (a FSArtifacts) Prepare(ctx context.Context, scope Scope) (PreparedArtifact
 	if err := a.validate(ctx, scope); err != nil {
 		return nil, err
 	}
-	p := &preparedDirectory{}
-	if scope.SchedulerRun == nil {
-		return p, nil
+	var set preparedSet
+	for _, run := range scope.Runs {
+		if !ownsRunDirectory(run) {
+			continue
+		}
+		p, err := a.prepareDirectory([]string{"runs"}, run.RunID, "run")
+		if err != nil {
+			_ = set.Close() // Preserve the preparation error.
+			return nil, err
+		}
+		set = append(set, p)
+		if strings.TrimSpace(a.RunLogArchiveRoot) == "" {
+			continue
+		}
+		// An archived log belongs to the run as much as the original did.
+		archive, err := prepareDirectoryUnder(a.RunLogArchiveRoot, false, []string{"runs"}, run.RunID, "run log archive")
+		if err != nil {
+			_ = set.Close() // Preserve the preparation error.
+			return nil, err
+		}
+		set = append(set, archive)
 	}
-	run := scope.SchedulerRun
+	if scope.SchedulerRun != nil {
+		run := scope.SchedulerRun
+		p, err := a.prepareDirectory([]string{"schedulers", run.SchedulerID, "runs"}, run.ID, "scheduler")
+		if err != nil {
+			_ = set.Close() // Preserve the preparation error.
+			return nil, err
+		}
+		set = append(set, p)
+	}
+	return set, nil
+}
+
+// ownsRunDirectory reports whether the run keeps its history in a directory
+// of its own under the data root (a run log) rather than inside its sandbox.
+func ownsRunDirectory(run domain.ProjectRunRecord) bool {
+	return run.LogFormat == runlog.FormatJSONL && identity.IsID(run.RunID)
+}
+
+// prepareDirectory pins parent (below the data root) and records the state
+// of the child directory name, so Detach can move exactly that directory
+// aside. A missing parent or child means there is nothing to remove.
+func (a FSArtifacts) prepareDirectory(parentParts []string, name, kind string) (*preparedDirectory, error) {
 	// The data root always exists for a running daemon; a missing one means a
 	// misconfigured or unmounted root, where absence proves nothing. Missing
 	// directories below it are ordinary and mean there is nothing to remove.
-	root, err := os.OpenRoot(a.DataRoot)
+	return prepareDirectoryUnder(a.DataRoot, true, parentParts, name, kind)
+}
+
+// prepareDirectoryUnder prepares name below rootPath/parentParts. A root that
+// is created lazily, such as an archive root nothing was archived to yet, is
+// not required: its absence means there is nothing to remove.
+func prepareDirectoryUnder(rootPath string, requireRoot bool, parentParts []string, name, kind string) (*preparedDirectory, error) {
+	root, err := os.OpenRoot(rootPath)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, artifactPrecondition("scheduler data root is unavailable", err)
+		if !requireRoot {
+			return &preparedDirectory{name: name, pending: pendingHistoryName(name), kind: kind}, nil
+		}
+		return nil, artifactPrecondition(kind+" data root is unavailable", err)
 	}
 	if err != nil {
 		return nil, err
 	}
-	parent, err := pinArtifactParent(root, []string{"schedulers", run.SchedulerID, "runs"})
+	parent, err := pinArtifactParent(root, parentParts)
 	if err != nil {
 		return nil, err
 	}
-	p.parent, p.name, p.pending = parent, run.ID, pendingHistoryName(run.ID)
+	p := &preparedDirectory{parent: parent, name: name, pending: pendingHistoryName(name), kind: kind}
 	if parent == nil {
 		return p, nil
 	}
-	for _, name := range []string{p.name, p.pending} {
-		entry, err := parent.Lstat(name)
+	for _, entryName := range []string{p.name, p.pending} {
+		entry, err := parent.Lstat(entryName)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil || entry.Mode()&os.ModeSymlink != 0 || !entry.IsDir() {
 			_ = p.Close() // Preserve the validation error; no files were changed.
-			return nil, artifactPrecondition("scheduler artifact must be a directory, not a symlink", err)
+			return nil, artifactPrecondition(kind+" artifact must be a directory, not a symlink", err)
 		}
-		if name == p.name {
+		if entryName == p.name {
 			p.original = entry
 		}
 	}
 	return p, nil
+}
+
+// preparedSet removes several prepared directories as one operation.
+type preparedSet []*preparedDirectory
+
+func (s preparedSet) Detach(ctx context.Context) error {
+	for _, p := range s {
+		if err := p.Detach(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s preparedSet) Remove(ctx context.Context) error {
+	for _, p := range s {
+		if err := p.Remove(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s preparedSet) VerifyRemoved(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	for _, p := range s {
+		if err := p.VerifyRemoved(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s preparedSet) Close() error {
+	var errs []error
+	for _, p := range s {
+		errs = append(errs, p.Close())
+	}
+	return errors.Join(errs...)
 }
 
 // Pin each parent and compare its inode, so a symlink swap cannot redirect the
@@ -97,7 +193,7 @@ func (p *preparedDirectory) Detach(ctx context.Context) error {
 		return nil // Another exact remover may already have isolated it.
 	}
 	if err != nil || !os.SameFile(p.original, current) {
-		return artifactPrecondition("scheduler artifact changed during preparation", err)
+		return artifactPrecondition(p.kind+" artifact changed during preparation", err)
 	}
 	if entry, err := p.parent.Lstat(p.pending); !errors.Is(err, os.ErrNotExist) {
 		if err != nil || !entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 {
@@ -129,7 +225,7 @@ func (p *preparedDirectory) VerifyRemoved(ctx context.Context) error {
 	}
 	for _, name := range []string{p.name, p.pending} {
 		if _, err := p.parent.Lstat(name); !errors.Is(err, os.ErrNotExist) {
-			return artifactPrecondition("scheduler history artifacts remain; retry with the same identity", err)
+			return artifactPrecondition(p.kind+" history artifacts remain; retry with the same identity", err)
 		}
 	}
 	return nil

@@ -79,6 +79,10 @@ func (c *Controller) startInteractiveDetached(runCtx interactionRunContext, in i
 		return nil, fmt.Errorf("persist detached run fields: %w", err)
 	}
 	task := c.interactiveDetachedTask(runCtx.Run, runCtx.Sandbox, in, detach.ExecutionID)
+	if detach.Kind == domain.DetachKindInteractivePrompt && usesRunLog(runCtx.Run) {
+		task.PersistCursor = nil
+		task.Journal = true
+	}
 	task.TaskTimeout = remainingTimeout(detach.RunCtx)
 	return startDetachedInteraction(detach.RunCtx, detachedInteractionOptions{
 		Task:        task,
@@ -170,6 +174,17 @@ func (c *Controller) reattachInteractiveRun(transitionCtx, runCtx context.Contex
 	in := interactiveDetachStart{Runtime: runtime, Interaction: interactionRuntime, VMState: vmState, ArtifactsDir: artifactsDir}
 	task := c.interactiveDetachedTask(run, sandbox, in, run.ExecutionID)
 	task.Cursor = readDetachCursor(artifactsDir)
+	var promptProjector *promptAttachProjector
+	if run.DetachKind == domain.DetachKindInteractivePrompt {
+		promptProjector = newPersistentPromptAttachProjector(transitionCtx, persistentPromptAttachProjectorDeps{Run: run, Sandbox: sandbox, LogsPath: run.LogsPath, Hub: c.runLogs, EventStore: c.configDB})
+		recovery, err := promptProjector.projection.RestoreJournal()
+		if err != nil {
+			return fail(err)
+		}
+		if recovery != nil {
+			task.Cursor, task.PersistCursor, task.Journal = recovery.Offset, nil, true
+		}
+	}
 	interaction, err := openDetachedInteraction(runCtx, detachedInteractionOptions{Task: task, Interaction: interactionRuntime, OperationID: run.RunID, Origin: "run_attach_resume"})
 	if errors.Is(err, ErrRunDisconnected) {
 		return run, nil
@@ -191,7 +206,7 @@ func (c *Controller) reattachInteractiveRun(transitionCtx, runCtx context.Contex
 	var transition TransitionRequest
 	var execErr error
 	if run.DetachKind == domain.DetachKindInteractivePrompt {
-		transition, execErr = c.resumePromptInteraction(runCtx, commandResume{Run: run, Sandbox: sandbox, LogsPath: logsPath, Interaction: interaction}, session.Receive(), publish)
+		transition, execErr = c.resumePromptInteraction(runCtx, commandResume{Run: run, Sandbox: sandbox, LogsPath: logsPath, Interaction: interaction, PromptProjector: promptProjector}, session.Receive(), publish)
 	} else {
 		transition, execErr = resumeCommandInteraction(runCtx, c, commandResume{
 			Run: run, Sandbox: sandbox, LogsPath: logsPath, Command: readInteractiveCommandText(artifactsDir), Interaction: interaction,
@@ -228,12 +243,20 @@ func (c *Controller) reattachInteractiveRun(transitionCtx, runCtx context.Contex
 func (c *Controller) resumePromptInteraction(ctx context.Context, in commandResume, receive RunAttachReceiver, send RunAttachSender) (TransitionRequest, error) {
 	run, sandbox, logsPath, interaction := in.Run, in.Sandbox, in.LogsPath, in.Interaction
 	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
-	projector := newPersistentPromptAttachProjector(context.WithoutCancel(ctx), persistentPromptAttachProjectorDeps{Run: run, Sandbox: sandbox, LogsPath: logsPath, Hub: c.runLogs, EventStore: c.configDB})
+	projector := in.PromptProjector
+	if projector == nil {
+		projector = newPersistentPromptAttachProjector(context.WithoutCancel(ctx), persistentPromptAttachProjectorDeps{Run: run, Sandbox: sandbox, LogsPath: logsPath, Hub: c.runLogs, EventStore: c.configDB})
+	}
 	input := &promptWrapperInput{interaction: interaction}
-	// Whether a turn was in flight is not known here. The guest runner reads
-	// its input in order, so a message sent during a turn waits for it.
+	// A restored in-flight turn keeps the input gate closed until its
+	// completion frame arrives. Idle sessions accept their next turn immediately.
 	turnReady := make(chan struct{}, 1)
-	releasePromptTurn(turnReady)
+	projector.projection.mu.Lock()
+	ready := !projector.projection.journal || projector.projection.turnEnded || run.Prompt == "" && projector.projection.humanIndex == 0
+	projector.projection.mu.Unlock()
+	if ready {
+		releasePromptTurn(turnReady)
+	}
 	inputCtx, cancelInput := context.WithCancel(ctx)
 	defer cancelInput()
 	go pumpRunPromptAttachInput(inputCtx, receive, promptInputPump{Input: input, TurnReady: turnReady, OnHumanMessage: projector.AppendHumanMessageFrame})
@@ -243,17 +266,18 @@ func (c *Controller) resumePromptInteraction(ctx context.Context, in commandResu
 // commandResume is what resuming a detached interactive session needs;
 // Command is only used by command sessions.
 type commandResume struct {
-	Run         domain.ProjectRunRecord
-	Sandbox     *domain.Sandbox
-	LogsPath    string
-	Command     string
-	Interaction driverpkg.RuntimeInteraction
+	Run             domain.ProjectRunRecord
+	Sandbox         *domain.Sandbox
+	LogsPath        string
+	Command         string
+	Interaction     driverpkg.RuntimeInteraction
+	PromptProjector *promptAttachProjector
 }
 
-func resumeCommandInteraction(_ context.Context, c *Controller, in commandResume, receive RunAttachReceiver, send RunAttachSender) (TransitionRequest, error) {
+func resumeCommandInteraction(ctx context.Context, c *Controller, in commandResume, receive RunAttachReceiver, send RunAttachSender) (TransitionRequest, error) {
 	go pumpRunAttachInput(receive, in.Interaction)
 	return c.receiveCommandInteractionFrames(commandInteractionReceive{
-		Run: in.Run, Sandbox: in.Sandbox, LogsPath: in.LogsPath, Command: in.Command, Interaction: in.Interaction,
+		Context: ctx, Run: in.Run, Sandbox: in.Sandbox, LogsPath: in.LogsPath, Command: in.Command, Interaction: in.Interaction,
 	}, send)
 }
 

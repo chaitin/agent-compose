@@ -1,6 +1,7 @@
 package runs
 
 import (
+	"context"
 	"testing"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -14,7 +15,8 @@ func TestProjectAgentTerminalEventsOnlyPersistFinalMessage(t *testing.T) {
 		Success:    true,
 		StopReason: "completed",
 	}
-	events := projectAgentTerminalEvents(run, cell, domain.SandboxEvent{Message: "Beijing is 26°C today."}, nil)
+	projection := newAgentRunProjector(context.Background(), run, nil, "", nil)
+	events := projection.CompleteCell(cell, domain.SandboxEvent{Message: "Beijing is 26°C today."}, nil).TerminalEvents
 	if len(events) != 1 {
 		t.Fatalf("terminal events = %#v", events)
 	}
@@ -26,7 +28,8 @@ func TestProjectAgentTerminalEventsOnlyPersistFinalMessage(t *testing.T) {
 func TestFailedAgentTerminalEventsDoNotPersistTranscript(t *testing.T) {
 	run := domain.ProjectRunRecord{RunID: "run-agent-failure", AgentName: "worker"}
 	cell := domain.NotebookCell{Agent: "codex", Output: "$ curl https://weather.test\nrequest failed", ExitCode: 1}
-	events := projectAgentTerminalEvents(run, cell, domain.SandboxEvent{Message: "codex run failed"}, nil)
+	projection := newAgentRunProjector(context.Background(), run, nil, "", nil)
+	events := projection.CompleteCell(cell, domain.SandboxEvent{Message: "codex run failed"}, nil).TerminalEvents
 	if len(events) != 0 {
 		t.Fatalf("failed agent events = %#v, want none", events)
 	}

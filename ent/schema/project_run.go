@@ -52,6 +52,11 @@ func (ProjectRun) Fields() []ent.Field {
 		field.Int("detach").Optional(),
 		field.Int64("deadline").Optional(),
 		field.String("detach_kind").Optional(),
+		field.String("log_format").Optional(),
+		field.String("summary_json").Optional(),
+		field.String("agent_cell_id").Optional(),
+		field.Int("log_incomplete").Optional(),
+		field.String("agent_provider").Optional(),
 	}
 }
 
@@ -77,6 +82,7 @@ func (ProjectRunEvent) Fields() []ent.Field {
 		field.Int("exit_code").Optional(),
 		field.String("stop_reason").Optional(),
 		field.Int64("created_at"),
+		field.Int64("log_seq").Optional(),
 	}
 }
 

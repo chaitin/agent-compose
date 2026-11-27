@@ -30,11 +30,11 @@ type projectRunCommandExecution struct {
 	Sink        *StreamSink
 }
 
-func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectRunCommandExecution) (TransitionRequest, error) {
+func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectRunCommandExecution) (transition TransitionRequest, retErr error) {
 	run, sandbox, req, commandText, sink := exec.Run, exec.Sandbox, exec.Request, exec.CommandText, exec.Sink
 	artifactsDir := projectRunCommandArtifactsDir(run, sandbox)
 	logsPath := projectRunCommandTranscriptPath(run, sandbox)
-	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
+	transition = TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
 	if c.store == nil || c.runtime == nil {
 		err := fmt.Errorf("command runtime dependencies are required")
 		transition.ExitCode = 1
@@ -90,6 +90,8 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectR
 		transition.Error = fmt.Sprintf("command execution failed: push command request: %v", err)
 		return transition, err
 	}
+	health := runLogHealthFor(ctx, run, c.configDB)
+	defer func() { transition.LogIncomplete = transition.LogIncomplete || health.incomplete }()
 	var sendErr error
 	writer := func(chunk domain.ExecChunk) {
 		if sendErr != nil {
@@ -99,12 +101,7 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectR
 		if !visible {
 			return
 		}
-		offset, err := appendProjectRunLogChunk(logsPath, filtered)
-		if err != nil {
-			sendErr = err
-			return
-		}
-		c.publishRunLogChunk(run, filtered, offset)
+		health.appendOutput(c.runLogs, run, logsPath, filtered)
 		if sink != nil && sink.SendChunk != nil {
 			sendErr = sink.SendChunk(run.RunID, filtered, time.Now().UTC())
 		}

@@ -375,22 +375,36 @@ func TestRunsControllerRunProjectAgentSuccessWorkflow(t *testing.T) {
 		strings.Contains(configDB.events[1].Text, "curl") || configDB.events[2].Kind != domain.ProjectRunEventKindStatus {
 		t.Fatalf("project run events = %#v", configDB.events)
 	}
-	if !strings.Contains(run.ArtifactsDir, filepath.Join("state", "cells", "cell-1")) || filepath.Base(run.LogsPath) != "output.txt" {
+	expectedLogsPath, err := runlog.RunPath(filepath.Dir(filepath.Dir(filepath.Dir(run.LogsPath))), run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.ArtifactsDir != "" || run.LogsPath != expectedLogsPath || run.LogFormat != runlog.FormatJSONL {
 		t.Fatalf("agent run artifact paths = artifacts:%q logs:%q", run.ArtifactsDir, run.LogsPath)
 	}
 	if !started || len(chunks) != 1 || !driver.started || !driver.stopped || executor.request.Message != "do work" {
 		t.Fatalf("started=%v chunks=%#v driver=%#v request=%#v", started, chunks, driver, executor.request)
 	}
-	if startedLogsPath == "" || filepath.Base(startedLogsPath) != "output.txt" {
-		t.Fatalf("started logs path = %q, want cell output path", startedLogsPath)
+	// The run log's location is fixed at creation; the running transition's
+	// cell output path does not move it.
+	if startedLogsPath != run.LogsPath {
+		t.Fatalf("started logs path = %q, want the run log %q", startedLogsPath, run.LogsPath)
 	}
-	if data, err := os.ReadFile(run.LogsPath); err != nil || string(data) != "chunk" {
-		t.Fatalf("agent run logs_path content = %q err=%v", string(data), err)
+	// The executor streamed only diagnostic output; its final-only answer
+	// must also appear in the shared projection's text view.
+	if data, err := readRunLogText(run.LogsPath); err != nil || data != "chunkBeijing is 26°C today." {
+		t.Fatalf("agent run logs_path content = %q err=%v", data, err)
+	}
+	if entries, err := runlog.ReadEntries(run.LogsPath, 0); err != nil || len(entries) < 2 || entries[0].Type != runlog.EntryUser || !entries[0].Initial || entries[len(entries)-1].Type != runlog.EntryTurnEnd {
+		t.Fatalf("agent run log entries = %#v err=%v", entries, err)
+	}
+	if configDB.events[0].LogSeq != 1 || configDB.events[1].LogSeq == 0 {
+		t.Fatalf("message log seqs = %d/%d", configDB.events[0].LogSeq, configDB.events[1].LogSeq)
+	}
+	if run.SummaryJSON == "" {
+		t.Fatalf("run summary is empty")
 	}
 	proxyState, err := store.GetProxyState(run.SandboxID)
-	if data, err := os.ReadFile(filepath.Join(run.ArtifactsDir, "output.txt")); err != nil || string(data) != "chunk" {
-		t.Fatalf("agent run output artifact = %q err=%v", string(data), err)
-	}
 	if err != nil {
 		t.Fatalf("GetProxyState returned error: %v", err)
 	}
@@ -644,10 +658,10 @@ func TestRunsControllerRunProjectAgentCommandWorkflow(t *testing.T) {
 	if len(configDB.events) != 1 || configDB.events[0].Kind != domain.ProjectRunEventKindStatus {
 		t.Fatalf("command run events = %#v", configDB.events)
 	}
-	if !strings.Contains(run.ArtifactsDir, filepath.Join("state", "runs", run.RunID)) || filepath.Base(run.LogsPath) != "transcript.txt" {
+	if !strings.Contains(run.ArtifactsDir, filepath.Join("state", "runs", run.RunID)) || filepath.Base(run.LogsPath) != runlog.FileName || run.LogFormat != runlog.FormatJSONL {
 		t.Fatalf("command run artifact paths = artifacts:%q logs:%q", run.ArtifactsDir, run.LogsPath)
 	}
-	transcriptData, err := os.ReadFile(filepath.Join(run.ArtifactsDir, "transcript.txt"))
+	transcriptData, err := readRunLogText(run.LogsPath)
 	if err != nil || string(transcriptData) != "command output\n" || strings.Contains(string(transcriptData), execution.CommandResultPrefix) {
 		t.Fatalf("command transcript artifact = %q err=%v", string(transcriptData), err)
 	}
@@ -857,7 +871,7 @@ func TestRunsControllerRunProjectAgentCommandNonZeroExitPreservesOutput(t *testi
 	if !strings.Contains(joinedChunks, "partial stdout\n") || !strings.Contains(joinedChunks, "failure stderr\n") || strings.Contains(joinedChunks, execution.CommandResultPrefix) {
 		t.Fatalf("stream chunks leaked or lost output: %#v", chunks)
 	}
-	transcriptData, err := os.ReadFile(filepath.Join(run.ArtifactsDir, "transcript.txt"))
+	transcriptData, err := readRunLogText(run.LogsPath)
 	if err != nil || !strings.Contains(string(transcriptData), "partial stdout\n") || !strings.Contains(string(transcriptData), "failure stderr\n") || strings.Contains(string(transcriptData), execution.CommandResultPrefix) {
 		t.Fatalf("failed command transcript = %q err=%v", string(transcriptData), err)
 	}
@@ -919,7 +933,7 @@ func TestRunsControllerRunProjectCommandAttachProjectsOutputAndResult(t *testing
 	if err != nil || stored.Status != domain.ProjectRunStatusSucceeded || stored.Output != "hello\nwarn\n" || stored.LogsPath == "" {
 		t.Fatalf("stored run = %#v err=%v", stored, err)
 	}
-	data, err := os.ReadFile(stored.LogsPath)
+	data, err := readRunLogText(stored.LogsPath)
 	if err != nil || string(data) != "hello\nwarn\n" {
 		t.Fatalf("attach transcript = %q err=%v", string(data), err)
 	}
@@ -1020,7 +1034,7 @@ func TestRunsControllerRunProjectPromptAttachProjectsAgentFrames(t *testing.T) {
 	if err != nil || stored.Status != domain.ProjectRunStatusSucceeded || stored.Output != "hello agent\n" {
 		t.Fatalf("stored run = %#v err=%v", stored, err)
 	}
-	transcript, err := os.ReadFile(stored.LogsPath)
+	transcript, err := readRunLogText(stored.LogsPath)
 	if err != nil {
 		t.Fatalf("read prompt attach transcript: %v", err)
 	}
@@ -1106,7 +1120,7 @@ func TestRunsControllerRunProjectPromptAttachGatesQueuedTurnsAndOrdersTranscript
 	if err != nil {
 		t.Fatalf("get stored run: %v", err)
 	}
-	transcript, err := os.ReadFile(stored.LogsPath)
+	transcript, err := readRunLogText(stored.LogsPath)
 	if err != nil {
 		t.Fatalf("read transcript: %v", err)
 	}
@@ -1304,7 +1318,7 @@ func TestPromptAttachProjectorProjectsTerminalAgentEventAfterOnlyHumanMessage(t 
 	}
 }
 
-func TestIntegrationPromptAttachProjectorPersistsAssistantTurnBeforeSkippingTerminalEvent(t *testing.T) {
+func TestIntegrationPromptAttachProjectorIgnoresFramesAfterTerminalResult(t *testing.T) {
 	store := &projectorEventStore{keys: map[string]struct{}{}}
 	projector := newPersistentPromptAttachProjector(context.Background(), persistentPromptAttachProjectorDeps{Run: domain.ProjectRunRecord{RunID: "run-integration-events", AgentName: "worker"}, Sandbox: &domain.Sandbox{}, LogsPath: filepath.Join(t.TempDir(), "transcript.txt"), EventStore: store})
 	if err := projector.AppendHumanMessageFrame("question", "client-frame-1"); err != nil {
@@ -1318,17 +1332,17 @@ func TestIntegrationPromptAttachProjectorPersistsAssistantTurnBeforeSkippingTerm
 		t.Fatalf("result-only transition = %#v", transition)
 	}
 	turn := []byte(`{"seq":44,"type":"agent_turn_completed","provider":"codex","finalText":"answer","finalTextSource":"provider_message","stopReason":"end_turn"}` + "\n")
-	if _, _, err := projector.Project(turn); err != nil {
-		t.Fatalf("project assistant turn: %v", err)
+	if responses, next, err := projector.Project(turn); err != nil || len(responses) != 0 || next != nil {
+		t.Fatalf("late assistant frame: responses=%#v transition=%#v err=%v", responses, next, err)
 	}
 	_, transition, err = projector.Project([]byte(`{"seq":45,"type":"result","finalText":"answer","finalTextSource":"provider_message","stopReason":"end_turn"}` + "\n"))
 	if err != nil {
 		t.Fatalf("project result after assistant turn: %v", err)
 	}
-	if transition == nil || len(transition.TerminalEvents) != 0 {
-		t.Fatalf("assistant transition = %#v", transition)
+	if transition != nil {
+		t.Fatalf("repeated result produced another transition = %#v", transition)
 	}
-	if len(store.events) != 2 || store.events[0].Kind != domain.ProjectRunEventKindUserMessage || store.events[1].Kind != domain.ProjectRunEventKindAgentMessage {
+	if len(store.events) != 1 || store.events[0].Kind != domain.ProjectRunEventKindUserMessage {
 		t.Fatalf("persisted events = %#v", store.events)
 	}
 }

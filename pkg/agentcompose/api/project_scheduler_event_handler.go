@@ -59,19 +59,21 @@ func (h *ProjectHandler) ListProjectSchedulerEvents(ctx context.Context, req *co
 	if !ok {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("scheduler event store is required"))
 	}
+	sandboxID := strings.TrimSpace(req.Msg.GetSandboxId())
 	events, err := store.ListSchedulerEventsPage(ctx, schedulers.SchedulerEventPageFilter{
-		SchedulerIDs:   schedulerIDs,
-		RequireTrigger: true,
-		TriggerID:      triggerID,
-		RunID:          runID,
-		Offset:         offset,
-		Limit:          limit,
+		SchedulerIDs:    schedulerIDs,
+		RequireTrigger:  true,
+		TriggerID:       triggerID,
+		RunID:           runID,
+		LinkedSandboxID: sandboxID,
+		Offset:          offset,
+		Limit:           limit,
 	})
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)
 	}
 	total, err := store.CountSchedulerEventsPage(ctx, schedulers.SchedulerEventPageFilter{
-		SchedulerIDs: schedulerIDs, RequireTrigger: true, TriggerID: triggerID, RunID: runID,
+		SchedulerIDs: schedulerIDs, RequireTrigger: true, TriggerID: triggerID, RunID: runID, LinkedSandboxID: sandboxID,
 	})
 	if err != nil {
 		return nil, ConnectErrorForDomain(err)

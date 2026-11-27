@@ -175,6 +175,14 @@ type SchedulerCommandRequest struct {
 	JupyterEnabled bool              `json:"jupyter,omitempty"`
 	SandboxEnv     []SandboxEnvVar   `json:"sandboxEnv,omitempty"`
 	Volumes        []VolumeMountSpec `json:"volumes,omitempty"`
+	// SchedulerID and SchedulerRunID identify the persisted scheduler run
+	// the command is a step of, so its output can be logged under that run.
+	// They are set by the daemon and never part of a script's request.
+	SchedulerID    string `json:"-"`
+	SchedulerRunID string `json:"-"`
+	// CellID identifies the step. The daemon picks it before the step
+	// starts, so its started event can point at the step's log.
+	CellID string `json:"-"`
 }
 
 type SchedulerCommandResult struct {

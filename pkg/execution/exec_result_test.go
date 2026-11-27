@@ -29,3 +29,13 @@ func TestExecStreamAccumulatorStdioStreams(t *testing.T) {
 		t.Fatalf("result metadata = %#v", result)
 	}
 }
+
+func TestExecStreamAccumulatorRestoresInterleavedHistory(t *testing.T) {
+	var accumulator ExecStreamAccumulator
+	accumulator.Restore(domain.ExecResult{Stdout: "first\n", Stderr: "warning\n", Output: "warning\nfirst\n"})
+	accumulator.WriteChunk(domain.ExecChunk{Text: "tail", Stream: domain.StdioStdout})
+	result := accumulator.Result(0, true)
+	if result.Stdout != "first\ntail" || result.Stderr != "warning\n" || result.Output != "warning\nfirst\ntail" {
+		t.Fatalf("result=%+v", result)
+	}
+}

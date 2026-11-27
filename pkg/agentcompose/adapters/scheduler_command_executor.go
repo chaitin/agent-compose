@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/llms"
 	"github.com/chaitin/agent-compose/pkg/llms/runtimefacade"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
@@ -68,7 +70,10 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 	execCtx, execCancel := context.WithCancel(ctx)
 	defer execCancel()
 
-	cellID := uuid.NewString()
+	cellID := strings.TrimSpace(request.CellID)
+	if cellID == "" {
+		cellID = uuid.NewString()
+	}
 	hostCellDir := filepath.Join(execution.HostSandboxDir(session), "state", "cells", cellID)
 	if err := os.MkdirAll(hostCellDir, 0o755); err != nil {
 		return domain.SchedulerCommandResult{}, fmt.Errorf("create scheduler command cell state dir: %w", err)
@@ -98,9 +103,9 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 			}
 		}()
 	}
-	if err := e.Store.AddCell(ctx, session, cell); err != nil {
-		return domain.SchedulerCommandResult{}, err
-	}
+	// A step's history is its step log; the sandbox keeps no notebook cell or
+	// event for it. Watchers of the sandbox still see the step live, and
+	// ListSandboxHistory rebuilds it from the step log.
 	e.Streams.PublishCellStarted(session.Summary.ID, cell)
 
 	artifacts := map[string]string{
@@ -125,20 +130,7 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 	}
 
 	var cellMu sync.Mutex
-	var streamErrMu sync.Mutex
-	var streamErr error
 	var streamed execution.ExecStreamAccumulator
-	setStreamErr := func(err error) {
-		if err == nil {
-			return
-		}
-		streamErrMu.Lock()
-		if streamErr == nil {
-			streamErr = err
-			execCancel()
-		}
-		streamErrMu.Unlock()
-	}
 	persistFailedCell := func(execResult domain.ExecResult, finalErr error) (domain.SchedulerCommandResult, error) {
 		recovered := execution.MergeExecResults(execResult, streamed.Result(execution.FirstNonZeroInt(execResult.ExitCode, 1), false))
 		recovered = execution.RecoverExecResultFromCellArtifacts(hostCellDir, recovered)
@@ -159,19 +151,14 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		cell.Running = false
 		failedCell := cell
 		cellMu.Unlock()
-		if err := e.Store.AddCell(ctx, session, failedCell); err != nil {
-			return buildSchedulerCommandResult(recovered), err
-		}
 		e.Streams.PublishCellCompleted(session.Summary.ID, failedCell)
-		event := domain.SandboxEvent{
+		e.Streams.PublishEventAdded(session.Summary.ID, domain.SandboxEvent{
 			ID:        uuid.NewString(),
 			Type:      "kernel.cell.failed",
 			Level:     "error",
 			Message:   firstNonEmpty(recovered.Stderr, fmt.Sprintf("scheduler command failed with exit code %d", recovered.ExitCode), finalErr.Error()),
 			CreatedAt: time.Now().UTC(),
-		}
-		_ = e.Store.AddEvent(ctx, session.Summary.ID, event)
-		e.Streams.PublishEventAdded(session.Summary.ID, event)
+		})
 		return buildSchedulerCommandResult(recovered), finalErr
 	}
 
@@ -192,10 +179,23 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		}
 	}
 
+	stepLog := e.openStepLog(request, cellID)
+	if stepLog != nil {
+		defer func() { _ = stepLog.Close() }()
+	}
 	streamWriter := func(chunk domain.ExecChunk) {
 		filtered, visible := execution.FilterCommandStreamChunk(chunk)
 		if !visible {
 			return
+		}
+		if stepLog != nil {
+			stream := "stdout"
+			if domain.NormalizeStdioStream(filtered.Stream) == domain.StdioStderr {
+				stream = "stderr"
+			}
+			// The step log is history; failing to write it must not fail
+			// the command the script is waiting for.
+			_ = stepLog.AppendOutput(stream, filtered.Text)
 		}
 		cellMu.Lock()
 		streamed.WriteChunk(filtered)
@@ -206,13 +206,8 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 			cell.Stdout += filtered.Text
 		}
 		cell.Output += filtered.Text
-		snapshot := cell
 		cellMu.Unlock()
-		if err := e.Store.AddCell(ctx, session, snapshot); err != nil {
-			setStreamErr(err)
-			return
-		}
-		e.Streams.PublishCellOutput(session.Summary.ID, snapshot.ID, filtered.Text, filtered.Stream)
+		e.Streams.PublishCellOutput(session.Summary.ID, cellID, filtered.Text, filtered.Stream)
 	}
 	commandHome := e.Config.GuestHomePath
 	execResult, err := runtime.ExecStream(execCtx, execSession, vmState, execution.BuildSchedulerCommandExecSpec(execCtx, e.Config, execSession, filepath.Join(guestCellDir, "command-request.json"), commandHome), streamWriter)
@@ -225,12 +220,6 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		}
 	}
 	retainFacadeTokens = errors.Is(err, domain.ErrExecTerminationUnconfirmed)
-	streamErrMu.Lock()
-	deferredStreamErr := streamErr
-	streamErrMu.Unlock()
-	if deferredStreamErr != nil {
-		return persistFailedCell(execResult, errors.Join(deferredStreamErr, err))
-	}
 	if err != nil {
 		return persistFailedCell(execResult, err)
 	}
@@ -248,9 +237,6 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 	cell.ExitCode = commandResult.ExitCode
 	cell.Success = commandResult.Success
 	cell.Running = false
-	if err := e.Store.AddCell(ctx, session, cell); err != nil {
-		return domain.SchedulerCommandResult{}, err
-	}
 	e.Streams.PublishCellCompleted(session.Summary.ID, cell)
 
 	eventLevel := "info"
@@ -261,15 +247,13 @@ func (e *SchedulerCommandExecutor) ExecuteSchedulerCommand(ctx context.Context, 
 		eventType = "kernel.cell.failed"
 		eventMessage = firstNonEmpty(commandResult.Stderr, fmt.Sprintf("scheduler command failed with exit code %d", commandResult.ExitCode))
 	}
-	event := domain.SandboxEvent{
+	e.Streams.PublishEventAdded(session.Summary.ID, domain.SandboxEvent{
 		ID:        uuid.NewString(),
 		Type:      eventType,
 		Level:     eventLevel,
 		Message:   eventMessage,
 		CreatedAt: time.Now().UTC(),
-	}
-	_ = e.Store.AddEvent(ctx, session.Summary.ID, event)
-	e.Streams.PublishEventAdded(session.Summary.ID, event)
+	})
 
 	return domain.SchedulerCommandResult{
 		Stdout:          commandResult.Stdout,
@@ -326,4 +310,31 @@ func commandFacadeStoreFor(configDB *configstore.ConfigStore) runtimefacade.Comm
 		return nil
 	}
 	return configDB
+}
+
+// openStepLog opens the log of one shell/exec step of a persisted scheduler
+// run, inside the directory that run owns, so the step's output outlives the
+// sandbox it ran in. It returns nil when the command is not a scheduler run
+// step or the log cannot be opened.
+func (e *SchedulerCommandExecutor) openStepLog(request domain.SchedulerCommandRequest, cellID string) *runlog.Writer {
+	if e == nil || e.Config == nil || strings.TrimSpace(e.Config.DataRoot) == "" ||
+		strings.TrimSpace(request.SchedulerID) == "" || strings.TrimSpace(request.SchedulerRunID) == "" {
+		return nil
+	}
+	maxBytes := request.MaxOutputBytes
+	if maxBytes <= 0 {
+		maxBytes = execution.DefaultSchedulerCommandMaxOutputBytes
+	}
+	path, err := runlog.SchedulerCellPath(e.Config.DataRoot, request.SchedulerID, request.SchedulerRunID, cellID)
+	if err == nil {
+		// Leave room for the entry framing around the output itself.
+		var w *runlog.Writer
+		if w, err = runlog.Open(path, runlog.Options{MaxBytes: 2*maxBytes + 64<<10}); err == nil {
+			return w
+		}
+	}
+	// The step log is the step's only history, but failing to keep it must
+	// not fail the command the script is waiting for.
+	slog.Warn("scheduler step log unavailable", "scheduler_id", request.SchedulerID, "scheduler_run_id", request.SchedulerRunID, "cell_id", cellID, "error", err)
+	return nil
 }

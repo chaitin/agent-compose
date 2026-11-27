@@ -160,6 +160,9 @@ const (
 	// RunServiceListSandboxRunEventsProcedure is the fully-qualified name of the RunService's
 	// ListSandboxRunEvents RPC.
 	RunServiceListSandboxRunEventsProcedure = "/agentcompose.v2.RunService/ListSandboxRunEvents"
+	// RunServiceListRunMessagesProcedure is the fully-qualified name of the RunService's
+	// ListRunMessages RPC.
+	RunServiceListRunMessagesProcedure = "/agentcompose.v2.RunService/ListRunMessages"
 	// RunServiceUploadRunInputProcedure is the fully-qualified name of the RunService's UploadRunInput
 	// RPC.
 	RunServiceUploadRunInputProcedure = "/agentcompose.v2.RunService/UploadRunInput"
@@ -1041,8 +1044,17 @@ type RunServiceClient interface {
 	// the cleanup failure recorded: the sandbox runtime may still exist, because
 	// this call gives up on removing it rather than removing it.
 	AbandonRunCompletion(context.Context, *connect.Request[v2.AbandonRunCompletionRequest]) (*connect.Response[v2.AbandonRunCompletionResponse], error)
+	// Deprecated: use ListRunMessages for the conversation, GetRun for the
+	// outcome and FollowRunLogs for what happened in between.
 	ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error)
+	// Deprecated: use ListRunMessages with sandbox_id.
 	ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error)
+	// Lists the conversation of Agent Runs: what the user sent and the agent's
+	// final reply for each turn. Exactly one of run_id and sandbox_id selects
+	// the runs; a sandbox lists the runs it hosted, oldest message first. The
+	// complete history of a run, including what happened between messages, is
+	// its log (FollowRunLogs); log_seq points each message at its entry there.
+	ListRunMessages(context.Context, *connect.Request[v2.ListRunMessagesRequest]) (*connect.Response[v2.ListRunMessagesResponse], error)
 	// Stages one file for a later AgentInputFile.upload reference in the same
 	// project. The first frame must be info and may appear exactly once; chunk
 	// frames follow in order. A response means the bytes were verified and stored.
@@ -1131,6 +1143,12 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("ListSandboxRunEvents")),
 			connect.WithClientOptions(opts...),
 		),
+		listRunMessages: connect.NewClient[v2.ListRunMessagesRequest, v2.ListRunMessagesResponse](
+			httpClient,
+			baseURL+RunServiceListRunMessagesProcedure,
+			connect.WithSchema(runServiceMethods.ByName("ListRunMessages")),
+			connect.WithClientOptions(opts...),
+		),
 		uploadRunInput: connect.NewClient[v2.UploadRunInputRequest, v2.UploadRunInputResponse](
 			httpClient,
 			baseURL+RunServiceUploadRunInputProcedure,
@@ -1153,6 +1171,7 @@ type runServiceClient struct {
 	abandonRunCompletion *connect.Client[v2.AbandonRunCompletionRequest, v2.AbandonRunCompletionResponse]
 	listRunEvents        *connect.Client[v2.ListRunEventsRequest, v2.ListRunEventsResponse]
 	listSandboxRunEvents *connect.Client[v2.ListSandboxRunEventsRequest, v2.ListSandboxRunEventsResponse]
+	listRunMessages      *connect.Client[v2.ListRunMessagesRequest, v2.ListRunMessagesResponse]
 	uploadRunInput       *connect.Client[v2.UploadRunInputRequest, v2.UploadRunInputResponse]
 }
 
@@ -1211,6 +1230,11 @@ func (c *runServiceClient) ListSandboxRunEvents(ctx context.Context, req *connec
 	return c.listSandboxRunEvents.CallUnary(ctx, req)
 }
 
+// ListRunMessages calls agentcompose.v2.RunService.ListRunMessages.
+func (c *runServiceClient) ListRunMessages(ctx context.Context, req *connect.Request[v2.ListRunMessagesRequest]) (*connect.Response[v2.ListRunMessagesResponse], error) {
+	return c.listRunMessages.CallUnary(ctx, req)
+}
+
 // UploadRunInput calls agentcompose.v2.RunService.UploadRunInput.
 func (c *runServiceClient) UploadRunInput(ctx context.Context) *connect.ClientStreamForClient[v2.UploadRunInputRequest, v2.UploadRunInputResponse] {
 	return c.uploadRunInput.CallClientStream(ctx)
@@ -1250,8 +1274,17 @@ type RunServiceHandler interface {
 	// the cleanup failure recorded: the sandbox runtime may still exist, because
 	// this call gives up on removing it rather than removing it.
 	AbandonRunCompletion(context.Context, *connect.Request[v2.AbandonRunCompletionRequest]) (*connect.Response[v2.AbandonRunCompletionResponse], error)
+	// Deprecated: use ListRunMessages for the conversation, GetRun for the
+	// outcome and FollowRunLogs for what happened in between.
 	ListRunEvents(context.Context, *connect.Request[v2.ListRunEventsRequest]) (*connect.Response[v2.ListRunEventsResponse], error)
+	// Deprecated: use ListRunMessages with sandbox_id.
 	ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error)
+	// Lists the conversation of Agent Runs: what the user sent and the agent's
+	// final reply for each turn. Exactly one of run_id and sandbox_id selects
+	// the runs; a sandbox lists the runs it hosted, oldest message first. The
+	// complete history of a run, including what happened between messages, is
+	// its log (FollowRunLogs); log_seq points each message at its entry there.
+	ListRunMessages(context.Context, *connect.Request[v2.ListRunMessagesRequest]) (*connect.Response[v2.ListRunMessagesResponse], error)
 	// Stages one file for a later AgentInputFile.upload reference in the same
 	// project. The first frame must be info and may appear exactly once; chunk
 	// frames follow in order. A response means the bytes were verified and stored.
@@ -1336,6 +1369,12 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("ListSandboxRunEvents")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServiceListRunMessagesHandler := connect.NewUnaryHandler(
+		RunServiceListRunMessagesProcedure,
+		svc.ListRunMessages,
+		connect.WithSchema(runServiceMethods.ByName("ListRunMessages")),
+		connect.WithHandlerOptions(opts...),
+	)
 	runServiceUploadRunInputHandler := connect.NewClientStreamHandler(
 		RunServiceUploadRunInputProcedure,
 		svc.UploadRunInput,
@@ -1366,6 +1405,8 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceListRunEventsHandler.ServeHTTP(w, r)
 		case RunServiceListSandboxRunEventsProcedure:
 			runServiceListSandboxRunEventsHandler.ServeHTTP(w, r)
+		case RunServiceListRunMessagesProcedure:
+			runServiceListRunMessagesHandler.ServeHTTP(w, r)
 		case RunServiceUploadRunInputProcedure:
 			runServiceUploadRunInputHandler.ServeHTTP(w, r)
 		default:
@@ -1419,6 +1460,10 @@ func (UnimplementedRunServiceHandler) ListRunEvents(context.Context, *connect.Re
 
 func (UnimplementedRunServiceHandler) ListSandboxRunEvents(context.Context, *connect.Request[v2.ListSandboxRunEventsRequest]) (*connect.Response[v2.ListSandboxRunEventsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.ListSandboxRunEvents is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) ListRunMessages(context.Context, *connect.Request[v2.ListRunMessagesRequest]) (*connect.Response[v2.ListRunMessagesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.RunService.ListRunMessages is not implemented"))
 }
 
 func (UnimplementedRunServiceHandler) UploadRunInput(context.Context, *connect.ClientStream[v2.UploadRunInputRequest]) (*connect.Response[v2.UploadRunInputResponse], error) {

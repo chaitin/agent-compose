@@ -67,7 +67,6 @@ func NewSchedulerController(di do.Injector) (*schedulers.Controller, error) {
 				Events:                  events,
 				Sessions:                do.MustInvoke[*adapters.SchedulerSandboxRunner](di),
 				AgentDefinitions:        do.MustInvoke[*adapters.SchedulerSandboxRunner](di),
-				AgentExecutor:           adapters.SchedulerHostAgentExecutor{Executor: do.MustInvoke[*adapters.AgentExecutor](di)},
 				CommandExecutor:         adapters.SchedulerHostCommandExecutor{Executor: do.MustInvoke[*adapters.SchedulerCommandExecutor](di)},
 				ProjectAgentRunner:      schedulerProjectAgentRunner{controller: do.MustInvoke[*runs.Controller](di)},
 				LLM:                     adapters.SchedulerHostLLMRunner{Client: do.MustInvoke[*adapters.LLMClient](di)},
@@ -118,7 +117,9 @@ func (r schedulerProjectAgentRunner) RunProjectAgent(ctx context.Context, reques
 	cleanupPolicy := agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_UNSPECIFIED
 	stickySchedulerID := ""
 	stickyTriggerID := ""
-	if schedulers.NormalizeSandboxPolicy(request.SandboxPolicy) == domain.SchedulerSandboxPolicySticky {
+	// A sandbox the scheduler prepared is its own to keep or stop; the run
+	// only uses it.
+	if request.SandboxID == "" && schedulers.NormalizeSandboxPolicy(request.SandboxPolicy) == domain.SchedulerSandboxPolicySticky {
 		cleanupPolicy = agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING
 		stickySchedulerID = request.SchedulerID
 		stickyTriggerID = request.TriggerID
@@ -138,6 +139,9 @@ func (r schedulerProjectAgentRunner) RunProjectAgent(ctx context.Context, reques
 		StickyBindingSchedulerID: stickySchedulerID,
 		StickyBindingTriggerID:   stickyTriggerID,
 		StickyBindingConfigHash:  request.SandboxConfigHash,
+		SandboxID:                request.SandboxID,
+		Provider:                 request.Provider,
+		Timeout:                  request.Timeout,
 	}, nil)
 	if err != nil {
 		return domain.ProjectRunRecord{}, nil, err

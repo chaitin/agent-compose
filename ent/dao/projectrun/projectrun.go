@@ -77,6 +77,16 @@ const (
 	FieldDeadline = "deadline"
 	// FieldDetachKind holds the string denoting the detach_kind field in the database.
 	FieldDetachKind = "detach_kind"
+	// FieldLogFormat holds the string denoting the log_format field in the database.
+	FieldLogFormat = "log_format"
+	// FieldSummaryJSON holds the string denoting the summary_json field in the database.
+	FieldSummaryJSON = "summary_json"
+	// FieldAgentCellID holds the string denoting the agent_cell_id field in the database.
+	FieldAgentCellID = "agent_cell_id"
+	// FieldLogIncomplete holds the string denoting the log_incomplete field in the database.
+	FieldLogIncomplete = "log_incomplete"
+	// FieldAgentProvider holds the string denoting the agent_provider field in the database.
+	FieldAgentProvider = "agent_provider"
 	// Table holds the table name of the projectrun in the database.
 	Table = "project_run"
 )
@@ -117,6 +127,11 @@ var Columns = []string{
 	FieldDetach,
 	FieldDeadline,
 	FieldDetachKind,
+	FieldLogFormat,
+	FieldSummaryJSON,
+	FieldAgentCellID,
+	FieldLogIncomplete,
+	FieldAgentProvider,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -300,4 +315,29 @@ func ByDeadline(opts ...sql.OrderTermOption) OrderOption {
 // ByDetachKind orders the results by the detach_kind field.
 func ByDetachKind(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDetachKind, opts...).ToFunc()
+}
+
+// ByLogFormat orders the results by the log_format field.
+func ByLogFormat(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLogFormat, opts...).ToFunc()
+}
+
+// BySummaryJSON orders the results by the summary_json field.
+func BySummaryJSON(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSummaryJSON, opts...).ToFunc()
+}
+
+// ByAgentCellID orders the results by the agent_cell_id field.
+func ByAgentCellID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAgentCellID, opts...).ToFunc()
+}
+
+// ByLogIncomplete orders the results by the log_incomplete field.
+func ByLogIncomplete(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLogIncomplete, opts...).ToFunc()
+}
+
+// ByAgentProvider orders the results by the agent_provider field.
+func ByAgentProvider(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAgentProvider, opts...).ToFunc()
 }

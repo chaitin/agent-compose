@@ -11,6 +11,7 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/identity"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 )
 
 type SandboxDirs interface {
@@ -21,7 +22,10 @@ type FSArtifacts struct {
 	DataRoot           string
 	SandboxRoot        string
 	SandboxArchiveRoot string
-	SandboxDirs        SandboxDirs
+	// RunLogArchiveRoot is where LogArchiver moves run logs; removing a run's
+	// history removes its archived log too.
+	RunLogArchiveRoot string
+	SandboxDirs       SandboxDirs
 }
 
 func (a FSArtifacts) validate(ctx context.Context, scope Scope) error {
@@ -53,6 +57,14 @@ func (a FSArtifacts) validate(ctx context.Context, scope Scope) error {
 			if recorded == "" {
 				continue
 			}
+			if ownsRunDirectory(run) && recorded == run.LogsPath {
+				// The run log lives in the run's own directory, which this
+				// removal deletes; it has no sandbox to be verified against.
+				if err := a.verifyRunLogPath(run); err != nil {
+					return err
+				}
+				continue
+			}
 			if run.SandboxID == "" || a.SandboxDirs == nil {
 				return artifactPrecondition("run artifact has no verifiable sandbox owner", nil)
 			}
@@ -81,6 +93,25 @@ func (a FSArtifacts) validate(ctx context.Context, scope Scope) error {
 		}
 	}
 	return ctx.Err()
+}
+
+func (a FSArtifacts) verifyRunLogPath(run domain.ProjectRunRecord) error {
+	if strings.TrimSpace(a.DataRoot) == "" {
+		return artifactPrecondition("cannot verify run log owner", nil)
+	}
+	root, err := filepath.Abs(a.DataRoot)
+	if err != nil {
+		return err
+	}
+	recorded, err := filepath.Abs(run.LogsPath)
+	if err != nil {
+		return artifactPrecondition("recorded run log does not match the canonical run path", err)
+	}
+	canonical, pathErr := runlog.RunPath(root, run.RunID)
+	if pathErr != nil || recorded != canonical {
+		return artifactPrecondition("recorded run log does not match the canonical run path", pathErr)
+	}
+	return nil
 }
 
 func requireAbsent(path string) error {

@@ -37,10 +37,6 @@ func TestHistoricalUncompiledRuntimeOperationsPreserveState(t *testing.T) {
 		{name: "start", call: func() error { return sandboxDriver.StartSandboxVM(ctx, session) }},
 		{name: "stop", call: func() error { return sandboxDriver.StopSandboxVM(ctx, session) }},
 		{name: "remove", call: func() error { return sandboxDriver.RemoveSandboxVM(ctx, session) }},
-		{name: "exec", call: func() error {
-			_, err := NewCellExecutor(config, store, provider, nil).ExecuteCell(ctx, session, execution.CellTypeShell, "echo history")
-			return err
-		}},
 	}
 	for _, operation := range operations {
 		t.Run(operation.name, func(t *testing.T) {

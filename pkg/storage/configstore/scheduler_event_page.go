@@ -40,6 +40,10 @@ func (s *schedulerStore) ListSchedulerEventsPage(ctx context.Context, filter sch
 		query += ` AND r.run_id = ?`
 		args = append(args, runID)
 	}
+	if sandboxID := strings.TrimSpace(filter.LinkedSandboxID); sandboxID != "" {
+		query += ` AND e.linked_sandbox_id = ?`
+		args = append(args, sandboxID)
+	}
 	if !filter.BeforeCreatedAt.IsZero() {
 		query += ` AND (e.created_at < ? OR (e.created_at = ? AND (e.scheduler_id < ? OR (e.scheduler_id = ? AND e.event_id < ?))))`
 		beforeMillis := filter.BeforeCreatedAt.UTC().UnixMilli()
@@ -113,9 +117,51 @@ func (s *schedulerStore) CountSchedulerEventsPage(ctx context.Context, filter sc
 		query += ` AND r.run_id = ?`
 		args = append(args, runID)
 	}
+	if sandboxID := strings.TrimSpace(filter.LinkedSandboxID); sandboxID != "" {
+		query += ` AND e.linked_sandbox_id = ?`
+		args = append(args, sandboxID)
+	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&total); err != nil {
 		return 0, fmt.Errorf("count scheduler events: %w", err)
 	}
 	return total, nil
+}
+
+// maxSandboxSchedulerSteps bounds how many step events one sandbox's history
+// reads. A sandbox a sticky scheduler keeps can host a step per trigger run.
+const maxSandboxSchedulerSteps = 10000
+
+// ListSandboxSchedulerSteps returns the start and end events of the shell/exec
+// steps scheduler runs ran in a sandbox, oldest first. They locate each step's
+// log, which is the step's only history.
+func (s *schedulerStore) ListSandboxSchedulerSteps(ctx context.Context, sandboxID string) ([]domain.SchedulerEvent, error) {
+	sandboxID = strings.TrimSpace(sandboxID)
+	if sandboxID == "" {
+		return []domain.SchedulerEvent{}, nil
+	}
+	// Kept as SQL: the trigger comes from scheduler_run, as on every other
+	// scheduler event read. idx_scheduler_event_sandbox_run serves the filter.
+	rows, err := s.db.QueryContext(ctx, `SELECT e.scheduler_id, e.event_id, e.scheduler_run_id, COALESCE(r.trigger_id, ''), e.type, e.level, e.message, e.payload_json, e.linked_sandbox_id, e.linked_cell_id, e.linked_agent_thread_id, e.created_at
+		FROM scheduler_event e LEFT JOIN scheduler_run r ON r.scheduler_id = e.scheduler_id AND r.run_id = e.scheduler_run_id
+		WHERE e.linked_sandbox_id = ? AND e.linked_cell_id <> '' AND e.scheduler_run_id <> ''
+			AND e.type IN ('scheduler.command.started', 'scheduler.command.completed', 'scheduler.command.failed')
+		ORDER BY e.created_at ASC, e.scheduler_id ASC, e.event_id ASC
+		LIMIT ?`, sandboxID, maxSandboxSchedulerSteps)
+	if err != nil {
+		return nil, fmt.Errorf("query sandbox scheduler steps: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	items := make([]domain.SchedulerEvent, 0)
+	for rows.Next() {
+		item, err := schedulers.ScanSchedulerEvent(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sandbox scheduler steps: %w", err)
+	}
+	return items, nil
 }

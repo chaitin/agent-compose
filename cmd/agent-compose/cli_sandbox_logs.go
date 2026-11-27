@@ -82,7 +82,11 @@ func writeSandboxHistoryLogs(cmd *cobra.Command, cli cliOptions, client agentcom
 		return err
 	}
 	history.Total = total
-	output := tailLogOutput(sandboxHistoryOutput(history.GetCells()), options.TailLines)
+	// The history pages newest first; the log reads oldest first, so that a
+	// tail is the most recent output.
+	cells := history.GetCells()
+	sort.SliceStable(cells, func(i, j int) bool { return cells[i].GetCreatedAt().AsTime().Before(cells[j].GetCreatedAt().AsTime()) })
+	output := tailLogOutput(sandboxHistoryOutput(cells), options.TailLines)
 	if cli.JSON {
 		data, err := json.MarshalIndent(composeSandboxLogsOutput{SandboxID: sandboxID, Output: output, Events: history.GetEvents()}, "", "  ")
 		if err != nil {

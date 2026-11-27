@@ -100,9 +100,42 @@ func (m *Merger) Output(stream, data string) []Pending {
 // EndTurn closes the turn. Its final text is recorded on the turn_end entry
 // only, never as prose: runners stream their answer as text deltas, and a
 // structured answer as a tool call, so the log already holds it. Older guests
-// printed it as process output.
+// printed it as process output. A call still waiting for its arguments never
+// gets them once the turn is over, so it is forgotten.
 func (m *Merger) EndTurn(stopReason, finalText string) []Pending {
+	m.forgetUnannounced()
 	return append(m.FlushText(), Pending{Entry: Entry{Type: EntryTurnEnd, StopReason: stopReason, FinalText: finalText}, Essential: true})
+}
+
+// Quiescent reports whether every input the merger took in has become an
+// entry: no text waits for a newline and no tool call for its arguments. Only
+// then can its state be rebuilt from the log alone (see Recover), which a
+// commit requires.
+func (m *Merger) Quiescent() bool {
+	if m.pendingText.Len() > 0 {
+		return false
+	}
+	for _, state := range m.tools {
+		if state.awaitingArguments() {
+			return false
+		}
+	}
+	return true
+}
+
+// forgetUnannounced drops calls that will never get their arguments.
+func (m *Merger) forgetUnannounced() {
+	for id, state := range m.tools {
+		if state.awaitingArguments() {
+			delete(m.tools, id)
+		}
+	}
+}
+
+// awaitingArguments reports a call announced before its arguments, which has
+// no entry yet.
+func (s *toolState) awaitingArguments() bool {
+	return !s.callWritten && !s.resultWritten
 }
 
 // FlushText emits text still held for coalescing.
@@ -302,8 +335,8 @@ func (m *Merger) emitToolCall(state *toolState) []Pending {
 }
 
 // writtenCall keeps what a tool's result entry repeats from its call. Once
-// the call is in the log its arguments, which may be large, are not needed,
-// and dropping them keeps every journal checkpoint small.
+// the call is in the log its arguments, which may be large, are not needed;
+// Recover rebuilds the same state from the call entry.
 func writtenCall(tool Tool) Tool {
 	return Tool{ID: tool.ID, ParentID: tool.ParentID, Name: tool.Name, ExitCode: tool.ExitCode}
 }

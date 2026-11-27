@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
 type RuntimeOperationKind string
@@ -115,7 +117,9 @@ type RuntimeError struct {
 }
 
 type RuntimeOutputFrame struct {
-	Type RuntimeOutputFrameType `json:"type"`
+	// Journal is populated only by the host detach adapter, after driver transport.
+	Journal *domain.JournalPosition `json:"-"`
+	Type    RuntimeOutputFrameType  `json:"type"`
 	// Data in stdout and stderr frames is valid UTF-8 text. Runtime byte
 	// streams must complete or replace invalid rune fragments before emitting.
 	Data      []byte             `json:"data,omitempty"`

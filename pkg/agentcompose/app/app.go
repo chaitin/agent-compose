@@ -102,7 +102,6 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewDashboardOverviewHub)
 	do.Provide(di, schedulers.NewSchedulerEngine)
 	do.Provide(di, NewSandboxDriver)
-	do.Provide(di, NewCellExecutor)
 	do.Provide(di, NewAgentRunner)
 	do.Provide(di, NewAgentExecutor)
 	do.Provide(di, NewSchedulerCommandExecutor)
@@ -142,6 +141,7 @@ func RegisterRoutes(di do.Injector) {
 				DataRoot:           do.MustInvoke[*appconfig.Config](di).DataRoot,
 				SandboxRoot:        do.MustInvoke[*appconfig.Config](di).SandboxRoot,
 				SandboxArchiveRoot: do.MustInvoke[*appconfig.Config](di).SandboxArchiveRoot,
+				RunLogArchiveRoot:  do.MustInvoke[*appconfig.Config](di).RunLogArchiveRoot,
 				SandboxDirs:        do.MustInvoke[*sandboxstore.Store](di),
 			},
 		},
@@ -153,7 +153,8 @@ func RegisterRoutes(di do.Injector) {
 		controller: do.MustInvoke[*runs.Controller](di),
 		supervisor: do.MustInvoke[*RunSupervisor](di),
 	}
-	runHandler := api.NewRunHandlerWithRunLogHub(runDelegate, do.MustInvoke[*configstore.ConfigStore](di), do.MustInvoke[*runs.RunLogHub](di), do.MustInvoke[*RunSupervisor](di))
+	runHandler := api.NewRunHandlerWithRunLogHub(runDelegate, do.MustInvoke[*configstore.ConfigStore](di), do.MustInvoke[*runs.RunLogHub](di), do.MustInvoke[*RunSupervisor](di)).
+		WithSchedulerStepLogs(do.MustInvoke[*appconfig.Config](di).DataRoot, do.MustInvoke[*configstore.ConfigStore](di))
 	if uploads := do.MustInvoke[runInputStore](di).Store; uploads != nil {
 		runHandler.WithRunInputUploads(uploads)
 	}
@@ -210,7 +211,9 @@ func RegisterRoutes(di do.Injector) {
 	).WithRunTargetResolver(do.MustInvoke[*runs.SandboxRunTargetResolver](di)).
 		WithRemovalCoordinator(do.MustInvoke[*sandboxes.RemovalCoordinator](di)).
 		WithWorkspaceFiles(adapters.NewWorkspaceFiles(do.MustInvoke[*appconfig.Config](di))).
-		WithEgressPolicyObserver(do.MustInvoke[*adapters.SandboxEgressProxy](di))
+		WithEgressPolicyObserver(do.MustInvoke[*adapters.SandboxEgressProxy](di)).
+		WithRunHistory(do.MustInvoke[*configstore.ConfigStore](di)).
+		WithStepHistory(do.MustInvoke[*appconfig.Config](di).DataRoot, do.MustInvoke[*configstore.ConfigStore](di))
 	path, handler = agentcomposev2connect.NewSandboxServiceHandler(sandboxHandler, handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewSettingsServiceHandler(api.NewSettingsV2Handler(do.MustInvoke[*appconfig.Config](di), do.MustInvoke[*configstore.ConfigStore](di)), handlerOptions...)
@@ -310,6 +313,10 @@ func NewCleanupRunner(di do.Injector) (*cleanup.Runner, error) {
 		{TTL: config.SandboxRetentionTTL, Cleaner: &sandboxes.SandboxRetentionCleaner{
 			Store: store, Locks: do.MustInvoke[*sandboxes.LifecycleLocks](di), ArchiveRoot: config.SandboxArchiveRoot,
 			Removal: do.MustInvoke[*sandboxes.RemovalCoordinator](di), SandboxRoot: config.SandboxRoot,
+		}},
+		{TTL: config.RunLogRetentionTTL, Cleaner: &runhistory.LogArchiver{
+			DataRoot: config.DataRoot, ArchiveRoot: config.RunLogArchiveRoot,
+			Store: do.MustInvoke[*configstore.ConfigStore](di),
 		}},
 		{TTL: config.ImageCacheCleanupTTL, Cleaner: &adapters.ImageCacheCleaner{Cache: imageCache, Sandboxes: store, SandboxRoot: config.SandboxRoot}},
 	}
@@ -569,15 +576,6 @@ func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {
 			Capabilities: do.MustInvoke[capmatrix.Snapshot](di),
 		},
 		adapters.WithSandboxDriverRecorder(do.MustInvoke[*telemetry.Recorder](di)),
-	), nil
-}
-
-func NewCellExecutor(di do.Injector) (*adapters.CellExecutor, error) {
-	return adapters.NewCellExecutor(
-		do.MustInvoke[*appconfig.Config](di),
-		do.MustInvoke[*sandboxstore.Store](di),
-		do.MustInvoke[adapters.RuntimeProvider](di),
-		do.MustInvoke[*sandboxes.StreamBroker](di),
 	), nil
 }
 

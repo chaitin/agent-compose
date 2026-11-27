@@ -280,30 +280,13 @@ type promptInteractionReceiveState struct {
 
 func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain.Sandbox, transition TransitionRequest, state promptInteractionReceiveState, send RunAttachSender) (TransitionRequest, error) {
 	interaction, projector, turnReady, session := state.Interaction, state.Projector, state.TurnReady, state.Session
-	logsPath := transition.LogsPath
-	var promptTransition *TransitionRequest
 	for {
 		frame, err := interaction.Recv()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				result, waitErr := interaction.Wait()
-				if waitErr != nil {
-					transition.ExitCode = 1
-					transition.Error = fmt.Sprintf("agent execution failed: %v", waitErr)
-					return transition, waitErr
-				}
-				if promptTransition != nil {
-					if result.ExitCode != 0 || !result.Success {
-						promptTransition.ExitCode = execution.FirstNonZeroInt(result.ExitCode, promptTransition.ExitCode)
-						promptTransition.Error = firstNonEmpty(promptTransition.Error, result.Error, "agent execution failed")
-						return *promptTransition, promptWrapperTransitionError(*promptTransition)
-					}
-					if promptTransition.ExitCode != 0 || strings.TrimSpace(promptTransition.Error) != "" {
-						return *promptTransition, promptWrapperTransitionError(*promptTransition)
-					}
-					return *promptTransition, nil
-				}
-				return transitionFromPromptRuntimeResult(run, sandbox, promptRuntimeOutcome{LogsPath: logsPath, Result: result, Err: errorFromRuntimeResult(result)}), errorFromRuntimeResult(result)
+				waitErr = errors.Join(waitErr, projector.projection.FlushRuntimeOutput())
+				return projector.projection.CompleteExecution(domain.ExecResult{ExitCode: result.ExitCode, Success: result.Success}, errors.Join(waitErr, errorFromRuntimeResult(result)))
 			}
 			transition.ExitCode = 1
 			transition.Error = fmt.Sprintf("agent execution failed: %v", err)
@@ -318,7 +301,7 @@ func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain
 				return transition, err
 			}
 		case driverpkg.RuntimeOutputStdout:
-			responses, nextTransition, err := projector.Project(frame.Data)
+			responses, _, err := projector.ProjectChunk(domain.ExecChunk{Text: string(frame.Data), Journal: frame.Journal})
 			if err != nil {
 				_ = send(runAttachErrorResponse("runtime_stream_decode_error", err.Error(), true))
 				transition.ExitCode = 1
@@ -338,11 +321,11 @@ func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain
 					releasePromptTurn(turnReady)
 				}
 			}
-			if nextTransition != nil {
-				promptTransition = nextTransition
-			}
 		case driverpkg.RuntimeOutputStderr:
-			if err := projector.AppendStderr(string(frame.Data)); err != nil {
+			if err := func() error {
+				_, _, err := projector.ProjectChunk(domain.ExecChunk{Text: string(frame.Data), Stream: domain.StdioStderr, Journal: frame.Journal})
+				return err
+			}(); err != nil {
 				transition.ExitCode = 1
 				transition.Error = fmt.Sprintf("agent execution failed: %v", err)
 				return transition, err
@@ -353,22 +336,14 @@ func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain
 				return transition, err
 			}
 		case driverpkg.RuntimeOutputResult:
+			if err := projector.projection.FlushRuntimeOutput(); err != nil {
+				return transition, err
+			}
 			result := frame.Result
 			if result == nil {
 				result = &driverpkg.RuntimeResult{OperationID: run.RunID, Success: true}
 			}
-			if promptTransition != nil {
-				if result.ExitCode != 0 || !result.Success {
-					promptTransition.ExitCode = execution.FirstNonZeroInt(result.ExitCode, promptTransition.ExitCode)
-					promptTransition.Error = firstNonEmpty(promptTransition.Error, result.Error, "agent execution failed")
-					return *promptTransition, promptWrapperTransitionError(*promptTransition)
-				}
-				if promptTransition.ExitCode != 0 || strings.TrimSpace(promptTransition.Error) != "" {
-					return *promptTransition, promptWrapperTransitionError(*promptTransition)
-				}
-				return *promptTransition, nil
-			}
-			return transitionFromPromptRuntimeResult(run, sandbox, promptRuntimeOutcome{LogsPath: logsPath, Result: *result, Err: errorFromRuntimeResult(*result)}), errorFromRuntimeResult(*result)
+			return projector.projection.CompleteExecution(domain.ExecResult{ExitCode: result.ExitCode, Success: result.Success}, errorFromRuntimeResult(*result))
 		case driverpkg.RuntimeOutputError:
 			code := "runtime_error"
 			message := "runtime interaction failed"
@@ -377,9 +352,7 @@ func receivePromptInteractionFrames(run domain.ProjectRunRecord, sandbox *domain
 				message = firstNonEmpty(frame.Error.Message, message)
 			}
 			_ = send(runAttachErrorResponse(code, message, true))
-			transition.ExitCode = 1
-			transition.Error = message
-			return transition, errors.New(message)
+			return projector.projection.CompleteExecution(domain.ExecResult{ExitCode: 1}, errors.New(message))
 		}
 	}
 }

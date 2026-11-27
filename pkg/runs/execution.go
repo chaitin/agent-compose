@@ -25,7 +25,7 @@ func TransitionFromAgentCell(run domain.ProjectRunRecord, sandbox *domain.Sandbo
 	if sandbox != nil {
 		req.SandboxID = sandbox.Summary.ID
 	}
-	if sandbox != nil && cell.ID != "" {
+	if sandbox != nil && cell.ID != "" && !usesRunLog(run) {
 		artifactsDir := filepath.Join(execution.HostSandboxDir(sandbox), "state", "cells", cell.ID)
 		req.ArtifactsDir = artifactsDir
 		req.LogsPath = filepath.Join(artifactsDir, "output.txt")

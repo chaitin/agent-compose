@@ -144,6 +144,20 @@ func (_c *ProjectRunEventCreate) SetCreatedAt(v int64) *ProjectRunEventCreate {
 	return _c
 }
 
+// SetLogSeq sets the "log_seq" field.
+func (_c *ProjectRunEventCreate) SetLogSeq(v int64) *ProjectRunEventCreate {
+	_c.mutation.SetLogSeq(v)
+	return _c
+}
+
+// SetNillableLogSeq sets the "log_seq" field if the given value is not nil.
+func (_c *ProjectRunEventCreate) SetNillableLogSeq(v *int64) *ProjectRunEventCreate {
+	if v != nil {
+		_c.SetLogSeq(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *ProjectRunEventCreate) SetID(v string) *ProjectRunEventCreate {
 	_c.mutation.SetID(v)
@@ -275,6 +289,10 @@ func (_c *ProjectRunEventCreate) createSpec() (*ProjectRunEvent, *sqlgraph.Creat
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(projectrunevent.FieldCreatedAt, field.TypeInt64, value)
 		_node.CreatedAt = value
+	}
+	if value, ok := _c.mutation.LogSeq(); ok {
+		_spec.SetField(projectrunevent.FieldLogSeq, field.TypeInt64, value)
+		_node.LogSeq = value
 	}
 	return _node, _spec
 }
@@ -523,6 +541,30 @@ func (u *ProjectRunEventUpsert) UpdateCreatedAt() *ProjectRunEventUpsert {
 // AddCreatedAt adds v to the "created_at" field.
 func (u *ProjectRunEventUpsert) AddCreatedAt(v int64) *ProjectRunEventUpsert {
 	u.Add(projectrunevent.FieldCreatedAt, v)
+	return u
+}
+
+// SetLogSeq sets the "log_seq" field.
+func (u *ProjectRunEventUpsert) SetLogSeq(v int64) *ProjectRunEventUpsert {
+	u.Set(projectrunevent.FieldLogSeq, v)
+	return u
+}
+
+// UpdateLogSeq sets the "log_seq" field to the value that was provided on create.
+func (u *ProjectRunEventUpsert) UpdateLogSeq() *ProjectRunEventUpsert {
+	u.SetExcluded(projectrunevent.FieldLogSeq)
+	return u
+}
+
+// AddLogSeq adds v to the "log_seq" field.
+func (u *ProjectRunEventUpsert) AddLogSeq(v int64) *ProjectRunEventUpsert {
+	u.Add(projectrunevent.FieldLogSeq, v)
+	return u
+}
+
+// ClearLogSeq clears the value of the "log_seq" field.
+func (u *ProjectRunEventUpsert) ClearLogSeq() *ProjectRunEventUpsert {
+	u.SetNull(projectrunevent.FieldLogSeq)
 	return u
 }
 
@@ -802,6 +844,34 @@ func (u *ProjectRunEventUpsertOne) AddCreatedAt(v int64) *ProjectRunEventUpsertO
 func (u *ProjectRunEventUpsertOne) UpdateCreatedAt() *ProjectRunEventUpsertOne {
 	return u.Update(func(s *ProjectRunEventUpsert) {
 		s.UpdateCreatedAt()
+	})
+}
+
+// SetLogSeq sets the "log_seq" field.
+func (u *ProjectRunEventUpsertOne) SetLogSeq(v int64) *ProjectRunEventUpsertOne {
+	return u.Update(func(s *ProjectRunEventUpsert) {
+		s.SetLogSeq(v)
+	})
+}
+
+// AddLogSeq adds v to the "log_seq" field.
+func (u *ProjectRunEventUpsertOne) AddLogSeq(v int64) *ProjectRunEventUpsertOne {
+	return u.Update(func(s *ProjectRunEventUpsert) {
+		s.AddLogSeq(v)
+	})
+}
+
+// UpdateLogSeq sets the "log_seq" field to the value that was provided on create.
+func (u *ProjectRunEventUpsertOne) UpdateLogSeq() *ProjectRunEventUpsertOne {
+	return u.Update(func(s *ProjectRunEventUpsert) {
+		s.UpdateLogSeq()
+	})
+}
+
+// ClearLogSeq clears the value of the "log_seq" field.
+func (u *ProjectRunEventUpsertOne) ClearLogSeq() *ProjectRunEventUpsertOne {
+	return u.Update(func(s *ProjectRunEventUpsert) {
+		s.ClearLogSeq()
 	})
 }
 
@@ -1247,6 +1317,34 @@ func (u *ProjectRunEventUpsertBulk) AddCreatedAt(v int64) *ProjectRunEventUpsert
 func (u *ProjectRunEventUpsertBulk) UpdateCreatedAt() *ProjectRunEventUpsertBulk {
 	return u.Update(func(s *ProjectRunEventUpsert) {
 		s.UpdateCreatedAt()
+	})
+}
+
+// SetLogSeq sets the "log_seq" field.
+func (u *ProjectRunEventUpsertBulk) SetLogSeq(v int64) *ProjectRunEventUpsertBulk {
+	return u.Update(func(s *ProjectRunEventUpsert) {
+		s.SetLogSeq(v)
+	})
+}
+
+// AddLogSeq adds v to the "log_seq" field.
+func (u *ProjectRunEventUpsertBulk) AddLogSeq(v int64) *ProjectRunEventUpsertBulk {
+	return u.Update(func(s *ProjectRunEventUpsert) {
+		s.AddLogSeq(v)
+	})
+}
+
+// UpdateLogSeq sets the "log_seq" field to the value that was provided on create.
+func (u *ProjectRunEventUpsertBulk) UpdateLogSeq() *ProjectRunEventUpsertBulk {
+	return u.Update(func(s *ProjectRunEventUpsert) {
+		s.UpdateLogSeq()
+	})
+}
+
+// ClearLogSeq clears the value of the "log_seq" field.
+func (u *ProjectRunEventUpsertBulk) ClearLogSeq() *ProjectRunEventUpsertBulk {
+	return u.Update(func(s *ProjectRunEventUpsert) {
+		s.ClearLogSeq()
 	})
 }
 

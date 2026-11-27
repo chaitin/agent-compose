@@ -29,6 +29,9 @@ func (c *Controller) ReattachDetachedRun(ctx context.Context, run domain.Project
 	if err != nil {
 		return run, err
 	}
+	if finished, handled, err := c.completeCommittedAgentRun(transitionCtx, ctx, run, sandbox); handled {
+		return finished, err
+	}
 	if sandbox.Summary.VMStatus != domain.VMStatusRunning {
 		c.deleteRetainedFacadeTokens(transitionCtx, run)
 		transition := TransitionRequest{
@@ -71,21 +74,13 @@ func (c *Controller) ReattachDetachedRun(ctx context.Context, run domain.Project
 		// file the original run was writing, keeping pre-restart output intact.
 		logsPath = projectRunCommandTranscriptPath(run, sandbox)
 	}
-	var sendErr error
+	health := runLogHealthFor(transitionCtx, run, c.configDB)
 	writer := func(chunk domain.ExecChunk) {
-		if sendErr != nil {
-			return
-		}
 		filtered, visible := execution.FilterCommandStreamChunk(chunk)
 		if !visible {
 			return
 		}
-		offset, err := appendProjectRunLogChunk(logsPath, filtered)
-		if err != nil {
-			sendErr = err
-			return
-		}
-		c.publishRunLogChunk(run, filtered, offset)
+		health.appendOutput(c.runLogs, run, logsPath, filtered)
 	}
 
 	env := execution.BuildSandboxExecEnv(runCtx, c.config, sandbox, c.config.GuestHomePath)
@@ -123,9 +118,9 @@ func (c *Controller) ReattachDetachedRun(ctx context.Context, run domain.Project
 		LogsPath:           logsPath,
 		Result:             result.Result,
 		ExecErr:            execErr,
-		SendErr:            sendErr,
 		ResultFileFallback: true,
 	})
+	transition.LogIncomplete = transition.LogIncomplete || health.incomplete
 	if execErr != nil || transition.ExitCode != 0 {
 		return c.completeProjectRunError(transitionCtx, runCtx, transition, execErr)
 	}
@@ -153,18 +148,39 @@ func (c *Controller) reattachDetachedAgentRun(transitionCtx, runCtx context.Cont
 	if !ok {
 		return fail("detached agent run cannot be resumed: executor does not support resume")
 	}
-	cellID := agentCellIDFromLogsPath(run.LogsPath)
+	cellID := strings.TrimSpace(run.AgentCellID)
+	if cellID == "" && !usesRunLog(run) {
+		// Older runs persisted the cell identity only in their transcript path.
+		cellID = agentCellIDFromLogsPath(run.LogsPath)
+	}
 	if cellID == "" {
 		return fail("detached agent run cannot be resumed: run has no agent cell")
 	}
+	projector := newAgentRunProjector(transitionCtx, run, sandbox, run.LogsPath, c.runLogs)
+	projector.bindStore(c.configDB)
+	journalResume, err := projector.RestoreJournal()
+	if err != nil {
+		return fail(fmt.Sprintf("restore detached agent journal: %v", err))
+	}
+	agent := ""
+	if usesRunLog(run) {
+		config, err := c.projectRunAgentConfig(transitionCtx, run)
+		if err != nil {
+			return fail(fmt.Sprintf("resolve detached agent config: %v", err))
+		}
+		agent = config.Provider
+	}
 	cell, _, assistantEvent, execErr := resumer.ResumeAgentRequest(runCtx, sandbox, execution.ResumeAgentRequest{
-		RunID:       run.RunID,
-		CellID:      cellID,
-		ExecutionID: run.ExecutionID,
+		History: agentHistoryMode(run), Agent: agent, Message: run.Prompt,
+		JournalResume: journalResume,
+		RunID:         run.RunID,
+		CellID:        cellID,
+		ExecutionID:   run.ExecutionID,
 		Stream: projectRunAgentExecutionStream(transitionCtx, agentExecutionStreamRequest{
-			Run:     run,
-			Sandbox: sandbox,
-			Hub:     c.runLogs,
+			Projector: projector,
+			Run:       run,
+			Sandbox:   sandbox,
+			Hub:       c.runLogs,
 		}),
 	})
 	if errors.Is(execErr, ErrRunDisconnected) {
@@ -178,7 +194,7 @@ func (c *Controller) reattachDetachedAgentRun(transitionCtx, runCtx context.Cont
 		c.deleteRetainedFacadeTokens(transitionCtx, run)
 	}
 	return c.finishProjectRunAgent(transitionCtx, runCtx, agentRunOutcome{
-		Run: run, Sandbox: sandbox, Cell: cell, Assistant: assistantEvent, ExecErr: execErr,
+		Run: run, Sandbox: sandbox, Cell: cell, Assistant: assistantEvent, ExecErr: execErr, Projector: projector,
 	})
 }
 

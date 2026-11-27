@@ -447,6 +447,20 @@ func (s *schedulerStore) GetSchedulerRun(ctx context.Context, schedulerID, runID
 	return schedulerRunFromEntity(entity), nil
 }
 
+// GetSchedulerRunByID resolves a scheduler run by its id alone, which is
+// unique across schedulers.
+func (s *schedulerStore) GetSchedulerRunByID(ctx context.Context, runID string) (domain.SchedulerRunSummary, error) {
+	entity, err := s.client.SchedulerRun.Query().Where(schedulerrun.IDEQ(strings.TrimSpace(runID))).Only(ctx)
+	if err != nil {
+		if dao.IsNotFound(err) {
+			id := strings.TrimSpace(runID)
+			return domain.SchedulerRunSummary{}, domain.ResourceError(domain.ErrNotFound, "scheduler run", id, fmt.Sprintf("scheduler run %s not found", id), sql.ErrNoRows)
+		}
+		return domain.SchedulerRunSummary{}, err
+	}
+	return schedulerRunFromEntity(entity), nil
+}
+
 func (s *schedulerStore) ListSchedulerRuns(ctx context.Context, schedulerID string, limit int) ([]domain.SchedulerRunSummary, error) {
 	if limit <= 0 {
 		limit = 50

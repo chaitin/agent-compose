@@ -25,7 +25,7 @@ func TestToolIdentityIsScopedToTheTurnAcrossReopen(t *testing.T) {
 		mustEvent(t, w, `{"kind":"tool_call","id":"item_1","name":"shell","status":"completed","command":"ls"}`)
 		mustEvent(t, w, `{"kind":"tool_result","id":"item_1","ok":false,"output":"failed"}`)
 		mustEvent(t, w, `{"kind":"tool_result","id":"item_1","ok":false,"output":"failed"}`)
-		if _, err := w.EndTurn("stop", "done"); err != nil {
+		if _, err := w.EndTurn("stop", "done", nil); err != nil {
 			t.Fatal(err)
 		}
 	}

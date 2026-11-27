@@ -23,6 +23,7 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runhistory"
 	"github.com/chaitin/agent-compose/pkg/runinputs"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
@@ -120,11 +121,15 @@ func TestNewCleanupRunnerSeparatesWorkspaceAndSandboxRetentionPolicies(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.Policies) != 5 {
-		t.Fatalf("cleanup policies = %#v, want transient snapshots, workspace, sandbox retention, image cache, and run input uploads", runner.Policies)
+	if len(runner.Policies) != 6 {
+		t.Fatalf("cleanup policies = %#v, want transient snapshots, workspace, sandbox retention, run log archive, image cache, and run input uploads", runner.Policies)
 	}
-	if _, ok := runner.Policies[4].Cleaner.(runinputs.Cleaner); !ok {
-		t.Fatalf("run input upload cleaner = %T", runner.Policies[4].Cleaner)
+	if archiver, ok := runner.Policies[3].Cleaner.(*runhistory.LogArchiver); !ok || runner.Policies[3].TTL != 0 ||
+		archiver.ArchiveRoot != filepath.Join(root, "archives", "logs") {
+		t.Fatalf("run log archive policy = %#v, want a disabled archiver under the data root", runner.Policies[3])
+	}
+	if _, ok := runner.Policies[5].Cleaner.(runinputs.Cleaner); !ok {
+		t.Fatalf("run input upload cleaner = %T", runner.Policies[5].Cleaner)
 	}
 	if runner.Policies[1].TTL != 12*time.Hour {
 		t.Fatalf("workspace cleanup TTL = %s", runner.Policies[1].TTL)
@@ -542,4 +547,45 @@ func hasEchoRoute(app *echo.Echo, method string, path string) bool {
 		}
 	}
 	return false
+}
+
+// The daemon's RunService must serve scheduler step logs: an unknown
+// scheduler run is NOT_FOUND, never UNIMPLEMENTED.
+func TestRunServiceRouteServesSchedulerStepLogs(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("DATA_ROOT", root)
+	t.Setenv("SANDBOX_ROOT", filepath.Join(root, "sandboxes"))
+	t.Setenv("IMAGE_CACHE_ROOT", filepath.Join(root, "images"))
+	t.Setenv("RUNTIME_DRIVER", driverpkg.RuntimeDriverDocker)
+	t.Setenv("DOCKER_IMAGE", "guest:latest")
+	t.Setenv("SANDBOX_START_TIMEOUT", "1s")
+	t.Setenv("SANDBOX_STOP_TIMEOUT", "1s")
+	t.Setenv("JUPYTER_PROXY_BASE", "/agent-compose/jupyter/")
+	t.Setenv("LLM_API_ENDPOINT", "")
+
+	ctx := context.Background()
+	di := do.New()
+	appconfig.Setup(di)
+	do.ProvideValue(di, ctx)
+	do.ProvideValue(di, slog.Default())
+	do.ProvideValue(di, echo.New())
+	if err := Register(di); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	server := httptest.NewServer(do.MustInvoke[*echo.Echo](di))
+	defer server.Close()
+
+	client := agentcomposev2connect.NewRunServiceClient(server.Client(), server.URL)
+	stream, err := client.FollowRunLogs(ctx, connect.NewRequest(&agentcomposev2.FollowRunLogsRequest{
+		SchedulerRunId: "missing-run", CellId: "missing-cell",
+	}))
+	if err != nil {
+		t.Fatalf("FollowRunLogs: %v", err)
+	}
+	defer func() { _ = stream.Close() }()
+	for stream.Receive() {
+	}
+	if code := connect.CodeOf(stream.Err()); code != connect.CodeNotFound {
+		t.Fatalf("scheduler step FollowRunLogs = %v (%s), want not_found", stream.Err(), code)
+	}
 }

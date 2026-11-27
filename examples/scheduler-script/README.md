@@ -159,6 +159,12 @@ const reply = scheduler.agent(prompt, {
 });
 ```
 
+每次 `scheduler.agent` 调用都是 Scheduler 所属 project agent 的一次 Agent Run，可以用 `agent-compose logs --run` 查看，`scheduler runs` 不列出它。
+
+- `agent` 换用另一种 agent CLI 运行这个 project agent。和 agent 定义里的 provider 相同时不起作用；不同时不使用定义里的 model 和环境变量，因为它们属于定义里的 provider。
+- `timeout` 限制这一轮 agent 的时长，替代 daemon 的默认超时。
+- `title`、`driver`、`guestImage`、`workspaceId`、`sandboxEnv`、`volumes`、`jupyter` 描述 sandbox 本身。设置了其中任何一个，Scheduler 会按这些选项准备 sandbox，Agent Run 在其中运行，结束后由 Scheduler 停止这个 sandbox。
+
 `scheduler.agent(...)` 返回：
 
 ```js

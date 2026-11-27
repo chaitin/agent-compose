@@ -213,13 +213,14 @@ func (c *Controller) runCommandInteraction(ctx context.Context, runCtx interacti
 	defer func() { _ = session.Interaction.CloseSend() }()
 	go pumpRunAttachInput(receive, session.Interaction)
 	return c.receiveCommandInteractionFrames(commandInteractionReceive{
-		Run: session.Run, Sandbox: sandbox, LogsPath: session.LogsPath, Command: commandText, Interaction: session.Interaction, TTY: start.TTY,
+		Context: ctx, Run: session.Run, Sandbox: sandbox, LogsPath: session.LogsPath, Command: commandText, Interaction: session.Interaction, TTY: start.TTY,
 	}, send)
 }
 
 // commandInteractionReceive is the open command interaction and what its
 // output is recorded against.
 type commandInteractionReceive struct {
+	Context     context.Context
 	Run         domain.ProjectRunRecord
 	Sandbox     *domain.Sandbox
 	LogsPath    string
@@ -230,10 +231,12 @@ type commandInteractionReceive struct {
 
 // receiveCommandInteractionFrames records and forwards a command
 // interaction's output until it ends, and returns the run transition.
-func (c *Controller) receiveCommandInteractionFrames(in commandInteractionReceive, send RunAttachSender) (TransitionRequest, error) {
+func (c *Controller) receiveCommandInteractionFrames(in commandInteractionReceive, send RunAttachSender) (transition TransitionRequest, retErr error) {
 	run, sandbox, logsPath, commandText, interaction := in.Run, in.Sandbox, in.LogsPath, in.Command, in.Interaction
+	health := runLogHealthFor(in.Context, run, c.configDB)
+	defer func() { transition.LogIncomplete = transition.LogIncomplete || health.incomplete }()
 	start := struct{ TTY bool }{TTY: in.TTY}
-	transition := TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
+	transition = TransitionRequest{RunID: run.RunID, SandboxID: sandbox.Summary.ID, LogsPath: logsPath}
 	accumulator := execution.ExecStreamAccumulator{}
 	for {
 		frame, err := interaction.Recv()
@@ -261,15 +264,13 @@ func (c *Controller) receiveCommandInteractionFrames(in commandInteractionReceiv
 			}
 		case driverpkg.RuntimeOutputStdout, driverpkg.RuntimeOutputStderr:
 			stream := driverOutputStreamToRun(frame.Type)
-			chunk := domain.ExecChunk{Text: string(frame.Data), Stream: stream}
+			chunk := domain.ExecChunk{Text: string(frame.Data), Stream: stream, Journal: frame.Journal}
 			accumulator.WriteChunk(chunk)
-			offset, err := appendProjectRunLogChunk(logsPath, chunk)
-			if err != nil {
-				transition.ExitCode = 1
-				transition.Error = fmt.Sprintf("command execution failed: %v", err)
-				return transition, err
+			logChunk := chunk
+			if start.TTY {
+				logChunk.Stream = domain.StdioStream("tty")
 			}
-			c.publishRunLogChunk(run, chunk, offset)
+			health.appendOutput(c.runLogs, run, logsPath, logChunk)
 			if err := send(runAttachOutputResponse(frame.Data, stream, start.TTY)); err != nil {
 				transition.ExitCode = 1
 				transition.Error = fmt.Sprintf("command execution failed: %v", err)

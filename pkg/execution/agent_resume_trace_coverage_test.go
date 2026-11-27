@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -134,37 +133,5 @@ func TestResolveAgentThreadIDSkipsGuestReadWhenThreadIDAlreadyKnown(t *testing.T
 	})
 	if got != "thread-already-known" {
 		t.Fatalf("thread id = %q, want thread-already-known", got)
-	}
-}
-
-func TestAgentTraceDetails(t *testing.T) {
-	details, consumed := CollectAgentTraceDetails("agent.tool", []string{"one", "  ", "two"})
-	if details != "one" || consumed != 2 {
-		t.Fatalf("tool details=%q consumed=%d, want one/2", details, consumed)
-	}
-	details, consumed = CollectAgentTraceDetails("agent.assistant", []string{"one", "", "[tool: run]", "two"})
-	if details != "one\n" || consumed != 2 {
-		t.Fatalf("assistant details=%q consumed=%d, want one newline/2", details, consumed)
-	}
-	details, consumed = CollectAgentTraceDetails("agent.assistant", []string{"one", "two"})
-	if details != "one\ntwo" || consumed != 2 {
-		t.Fatalf("terminal details=%q consumed=%d, want all lines/2", details, consumed)
-	}
-
-	events := AgentTraceEvents("[tool: run]\n$ go test\n[hook: done]\nfinished", time.Unix(10, 0).UTC())
-	if len(events) != 2 {
-		t.Fatalf("events = %#v, want two events", events)
-	}
-	if events[0].Type != "agent.tool" || events[0].Message != "run\n$ go test" {
-		t.Fatalf("tool event = %#v", events[0])
-	}
-	if events[1].Type != "agent.hook" || events[1].Message != "done\nfinished" {
-		t.Fatalf("hook event = %#v", events[1])
-	}
-	if _, _, ok := ParseAgentTraceMarker("[tool: ]"); ok {
-		t.Fatal("empty tool marker parsed")
-	}
-	if _, _, ok := ParseAgentTraceMarker("[hook: ]"); ok {
-		t.Fatal("empty hook marker parsed")
 	}
 }

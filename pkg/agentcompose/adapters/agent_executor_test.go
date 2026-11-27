@@ -140,9 +140,11 @@ func TestAgentExecutorStreamsOnlyHumanVisibleAgentOutput(t *testing.T) {
 	payload := execution.AgentResultPrefix + `{"provider":"codex","threadId":"agent-thread-1","finalText":"done","transcript":"scheduler agent transcript","stopReason":"completed"}`
 	runtime := &fakeAgentRuntime{
 		streamChunks: []domain.ExecChunk{
-			{Text: payload},
-			{Text: "stdout transcript\n" + payload},
+			{Text: payload + "\n"},
+			{Text: "stdout transcript\n" + payload + "\n"},
 			{Text: "scheduler agent transcript\n", Stream: domain.StdioStderr},
+			{Text: "quoted "},
+			{Text: execution.AgentResultPrefix + "{}\n"},
 		},
 		result: domain.ExecResult{Stdout: payload, Output: payload, ExitCode: 0, Success: true},
 	}
@@ -169,7 +171,7 @@ func TestAgentExecutorStreamsOnlyHumanVisibleAgentOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteAgentRequest returned error: %v", err)
 	}
-	if len(chunks) != 2 {
+	if len(chunks) != 4 {
 		t.Fatalf("stream chunks = %#v", chunks)
 	}
 	if chunks[0].Text != "stdout transcript\n" || domain.NormalizeStdioStream(chunks[0].Stream) != domain.StdioStdout {
@@ -178,15 +180,18 @@ func TestAgentExecutorStreamsOnlyHumanVisibleAgentOutput(t *testing.T) {
 	if chunks[1].Text != "scheduler agent transcript\n" || domain.NormalizeStdioStream(chunks[1].Stream) != domain.StdioStderr {
 		t.Fatalf("stderr stream chunk = %#v", chunks[1])
 	}
+	if chunks[2].Text+chunks[3].Text != "quoted "+execution.AgentResultPrefix+"{}\n" {
+		t.Fatalf("quoted protocol marker was lost: %#v", chunks[2:])
+	}
 	for _, chunk := range chunks {
-		if strings.Contains(chunk.Text, execution.AgentResultPrefix) {
+		if strings.Contains(chunk.Text, payload) {
 			t.Fatalf("stream chunk leaked agent result payload: %#v", chunk)
 		}
 	}
 	if !strings.Contains(cell.Stdout, "stdout transcript") || !strings.Contains(cell.Stderr, "scheduler agent transcript") {
 		t.Fatalf("cell stdout/stderr = %q/%q", cell.Stdout, cell.Stderr)
 	}
-	if !strings.Contains(cell.Output, "stdout transcript") || !strings.Contains(cell.Output, "scheduler agent transcript") || strings.Contains(cell.Output, execution.AgentResultPrefix) {
+	if !strings.Contains(cell.Output, "stdout transcript") || !strings.Contains(cell.Output, "scheduler agent transcript") || strings.Contains(cell.Output, payload) {
 		t.Fatalf("cell output = %q", cell.Output)
 	}
 }
@@ -267,5 +272,92 @@ func TestAgentExecutorPersistsFailedCellWhenStreamCallbackFails(t *testing.T) {
 	}
 	if len(events) < 2 || events[len(events)-1].Type != "agent.assistant.failed" {
 		t.Fatalf("events = %#v, want failed assistant event", events)
+	}
+}
+
+func TestAgentExecutorRebuildsTranscriptFromAgentEvents(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:             root,
+		SandboxRoot:          filepath.Join(root, "sandboxes"),
+		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:         "guest:latest",
+		GuestWorkspacePath:   "/workspace",
+		GuestStateRoot:       "/data/state",
+		GuestHomePath:        "/root",
+		JupyterProxyBasePath: "/agent-compose/session",
+		SandboxStartTimeout:  2 * time.Second,
+		AgentTimeout:         2 * time.Second,
+	}
+	store, err := sandboxstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "agent events session", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeManual, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	events := `{"v":1,"seq":0,"type":"started","provider":"codex"}` + "\n" +
+		`{"v":1,"seq":1,"type":"agent_event","event":{"kind":"text_delta","text":"Checking.\n"}}` + "\n" +
+		`{"v":1,"seq":2,"type":"agent_event","event":{"kind":"tool_call","id":"c1","name":"shell","status":"completed","command":"ls"}}` + "\n" +
+		`{"v":1,"seq":3,"type":"agent_event","event":{"kind":"tool_result","id":"c1","ok":true,"output":"a.txt\n"}}` + "\n" +
+		`{"v":1,"seq":4,"type":"agent_event","event":{"kind":"text_delta","text":"All done."}}` + "\n" +
+		`{"v":1,"seq":5,"type":"agent_turn_completed","finalText":"All done."}` + "\n"
+	payload := `{"v":1,"seq":6,"type":"result","provider":"codex","threadId":"t","finalText":"All done.","transcript":"ignored","stopReason":"completed"}` + "\n"
+	runtime := &fakeAgentRuntime{
+		streamChunks: []domain.ExecChunk{
+			{Text: events[:40]},
+			{Text: events[40:] + payload},
+			{Text: "warning: slow disk\n", Stream: domain.StdioStderr},
+		},
+		result: domain.ExecResult{Stdout: events + payload, Stderr: "warning: slow disk\n", Output: events + payload + "warning: slow disk\n", Success: true},
+	}
+	runner := NewAgentRunner(AgentRunnerDeps{Config: config, Store: store, Runtimes: fakeRuntimeProvider{runtime: runtime}})
+	executor := NewAgentExecutor(config, store, nil, runner)
+	var forwarded []string
+	var frameKinds []string
+	stream := execution.AgentExecutionStream{
+		OnFrame: func(_ string, frame execution.AgentFrame) error {
+			frameKinds = append(frameKinds, frame.Type)
+			if frame.Type == "agent_event" {
+				forwarded = append(forwarded, string(frame.Event))
+			}
+			return nil
+		},
+	}
+	cell, _, _, err := executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
+		Agent:   "codex",
+		Message: "hello",
+		Stream:  stream,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAgentRequest returned error: %v", err)
+	}
+	if len(forwarded) != 4 {
+		t.Fatalf("forwarded events = %#v", forwarded)
+	}
+	if strings.Join(frameKinds, ",") != "started,agent_event,agent_event,agent_event,agent_event,agent_turn_completed,result" {
+		t.Fatalf("lifecycle frames=%v", frameKinds)
+	}
+	if _, ok := runtime.specs[0].Env["AGENT_COMPOSE_RUNTIME_EVENTS"]; ok {
+		t.Fatal("daemon still opts in to __AGENT_EVENT__ lines")
+	}
+	if got := runtime.specs[0].Env[execution.AgentOutputEnv]; got != "frames" {
+		t.Fatalf("%s = %q, want frames", execution.AgentOutputEnv, got)
+	}
+	for _, want := range []string{"Checking.\n", "[tool:shell]\n$ ls\n", "a.txt\n", "All done.", "warning: slow disk"} {
+		if !strings.Contains(cell.Output, want) {
+			t.Fatalf("cell output %q missing %q", cell.Output, want)
+		}
+	}
+	for _, leaked := range []string{`"type":"agent_event"`, execution.AgentResultPrefix} {
+		if strings.Contains(cell.Output+cell.Stdout+cell.Stderr, leaked) {
+			t.Fatalf("cell leaked %s: output=%q stdout=%q stderr=%q", leaked, cell.Output, cell.Stdout, cell.Stderr)
+		}
 	}
 }

@@ -13,17 +13,6 @@ const (
 	CommandResultPrefix = "__COMMAND_RESULT__"
 )
 
-type agentExecResponse struct {
-	Provider        string `json:"provider"`
-	ThreadID        string `json:"threadId"`
-	StopReason      string `json:"stopReason"`
-	FinalText       string `json:"finalText"`
-	FinalTextSource string `json:"finalTextSource"`
-	JSON            any    `json:"json"`
-	Transcript      string `json:"transcript"`
-	Stderr          string `json:"stderr"`
-}
-
 func ParseAgentExecResult(agent string, result domain.ExecResult) (domain.AgentRunResult, error) {
 	raw := firstNonEmpty(result.Stdout, result.Output)
 	if strings.TrimSpace(raw) == "" {
@@ -60,10 +49,10 @@ func ParseAgentExecResult(agent string, result domain.ExecResult) (domain.AgentR
 		Agent:           firstNonEmpty(strings.TrimSpace(payload.Provider), domain.NormalizeAgentKind(agent)),
 		DisplayOutput:   humanOutput,
 		FinalText:       finalText,
-		FinalTextSource: normalizeFinalTextSource(payload.FinalTextSource, finalText, transcript),
+		FinalTextSource: normalizeFinalTextSource(string(payload.FinalTextSource), finalText, transcript),
 		JSONText:        finalText,
 		Transcript:      transcript,
-		ThreadID:        strings.TrimSpace(payload.ThreadID),
+		ThreadID:        strings.TrimSpace(firstNonEmpty(payload.ThreadID, payload.SessionID)),
 		StopReason:      strings.TrimSpace(payload.StopReason),
 		ExitCode:        exitCode,
 		Success:         success,
@@ -110,7 +99,7 @@ func ParseCommandExecResult(result domain.ExecResult) (domain.RuntimeCommandResu
 }
 
 func SummarizeAgentExecFailure(result domain.ExecResult) string {
-	detail := strings.TrimSpace(firstNonEmpty(result.Stderr, result.Output, result.Stdout))
+	detail := strings.TrimSpace(firstNonEmpty(result.Stderr, StripAgentProtocolLines(result.Output), StripAgentProtocolLines(result.Stdout)))
 	if detail == "" {
 		return ""
 	}
@@ -140,7 +129,9 @@ func StripCommandResultPayload(raw string) string {
 
 func FilterAgentStreamChunk(chunk domain.ExecChunk) (domain.ExecChunk, bool) {
 	filtered := chunk
-	filtered.Text = StripAgentResultPayload(chunk.Text)
+	if domain.NormalizeStdioStream(chunk.Stream) != domain.StdioStderr {
+		filtered.Text = StripAgentProtocolLines(chunk.Text)
+	}
 	return filtered, filtered.Text != ""
 }
 
@@ -152,30 +143,41 @@ func FilterCommandStreamChunk(chunk domain.ExecChunk) (domain.ExecChunk, bool) {
 
 func SanitizeAgentExecResult(result domain.ExecResult) domain.ExecResult {
 	cleaned := result
-	cleaned.Stdout = StripAgentResultPayload(result.Stdout)
-	cleaned.Output = StripAgentResultPayload(result.Output)
+	cleaned.Stdout = StripAgentProtocolLines(result.Stdout)
+	cleaned.Output = StripAgentProtocolLines(result.Output)
 	return cleaned
 }
 
-func findAgentExecPayload(raw string) (agentExecResponse, bool) {
+func findAgentExecPayload(raw string) (AgentFrame, bool) {
 	lines := strings.Split(strings.TrimSpace(raw), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if line == "" {
+		frame, matched, err := DecodeAgentFrame([]byte(line))
+		if matched {
+			if err == nil && frame.Type == "result" {
+				return frame, true
+			}
 			continue
 		}
-		if strings.HasPrefix(line, AgentResultPrefix) {
-			line = strings.TrimSpace(strings.TrimPrefix(line, AgentResultPrefix))
-		}
-		if !strings.HasPrefix(line, "{") {
+		// Early custom guests emitted an unwrapped result JSON object. Keep
+		// that compatibility only for objects carrying result fields, never
+		// for arbitrary JSON diagnostics or an event-only stream.
+		var fields map[string]json.RawMessage
+		if json.Unmarshal([]byte(line), &fields) != nil || fields == nil {
 			continue
 		}
-		var payload agentExecResponse
-		if json.Unmarshal([]byte(line), &payload) == nil {
-			return payload, true
+		if fields["type"] != nil {
+			continue
+		}
+		if fields["finalText"] == nil && fields["stopReason"] == nil && fields["transcript"] == nil {
+			continue
+		}
+		if json.Unmarshal([]byte(line), &frame) == nil {
+			frame.Type = "result"
+			return frame, true
 		}
 	}
-	return agentExecResponse{}, false
+	return AgentFrame{}, false
 }
 
 func findCommandExecPayload(raw string) (domain.RuntimeCommandResult, bool) {

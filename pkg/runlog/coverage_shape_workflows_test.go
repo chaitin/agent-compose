@@ -3,15 +3,15 @@ package runlog
 import "testing"
 
 // TestIntegrationRunLogWorkflows runs the file-backed run log workflows as one
-// integration-shaped suite: writing and reopening a log, checkpoint recovery,
+// integration-shaped suite: writing and reopening a log, commit recovery,
 // the size cap, and reading it back by entry, by batch and as text.
 func TestIntegrationRunLogWorkflows(t *testing.T) {
 	TestReopenContinuesSequenceTurnAndToolDedup(t)
 	TestRecoverySkipsOversizedLinesAndTruncatesTornTail(t)
 	TestWriterAndReaderAgreeOnFinalLineBound(t)
-	TestCheckpointRecoversOnlyCommittedJournalEffects(t)
-	TestCheckpointPreservesCoalescedTextAndUnfinishedTool(t)
-	TestCheckpointPublishesOnlyCommittedEntries(t)
+	TestCommitRollsBackWhatItDidNotCover(t)
+	TestCommitWaitsForInputThatIsNotAnEntryYet(t)
+	TestCommitPublishesOnlyWhatItCovers(t)
 	TestJournalGapDoesNotActivateHostLogCap(t)
 	TestCapMarkerCountsTheBytesItDropped(t)
 	TestReadEntryBatchWalksTheLogInBatches(t)
@@ -19,7 +19,7 @@ func TestIntegrationRunLogWorkflows(t *testing.T) {
 	TestSummarizeLogMatchesSummarize(t)
 	TestTextViewMatchesTheRenderedLog(t)
 	TestTextViewFollowsAGrowingLogAndIgnoresATornTail(t)
-	TestTextViewSeesOnlyTheCheckpointedPrefix(t)
+	TestTextViewSeesOnlyTheCommittedPrefix(t)
 	TestEndTurnRecordsTheFinalTextOnlyOnTheTurnEnd(t)
 }
 

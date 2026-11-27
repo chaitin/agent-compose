@@ -33,6 +33,8 @@ const (
 	FieldStopReason = "stop_reason"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
+	// FieldLogSeq holds the string denoting the log_seq field in the database.
+	FieldLogSeq = "log_seq"
 	// Table holds the table name of the projectrunevent in the database.
 	Table = "project_run_event"
 )
@@ -51,6 +53,7 @@ var Columns = []string{
 	FieldExitCode,
 	FieldStopReason,
 	FieldCreatedAt,
+	FieldLogSeq,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -124,4 +127,9 @@ func ByStopReason(opts ...sql.OrderTermOption) OrderOption {
 // ByCreatedAt orders the results by the created_at field.
 func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldCreatedAt, opts...).ToFunc()
+}
+
+// ByLogSeq orders the results by the log_seq field.
+func ByLogSeq(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLogSeq, opts...).ToFunc()
 }

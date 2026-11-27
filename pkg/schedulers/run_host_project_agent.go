@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 
@@ -23,13 +24,28 @@ type HostProjectAgentRequest struct {
 	Volumes            []domain.VolumeMountSpec
 	SandboxPolicy      string
 	SandboxConfigHash  string
+	// SandboxID runs the agent in a sandbox the scheduler prepared for a
+	// request that sets its own sandbox; see ProjectAgent.
+	SandboxID string
+	// Provider and Timeout carry the script's agent and timeout options.
+	Provider string
+	Timeout  time.Duration
 }
 
 type HostProjectAgentRunner interface {
 	RunProjectAgent(ctx context.Context, request HostProjectAgentRequest) (domain.ProjectRunRecord, error, error)
 }
 
+// ProjectAgent runs one agent turn as an Agent Run of the scheduler's project
+// agent, so every scheduler.agent call has a run record and a run log. The
+// script's agent and timeout options become the run's provider and timeout.
+// Options that describe the sandbox itself (title, driver, image, workspace,
+// sandbox env, volumes, jupyter) get a sandbox the scheduler prepares, which
+// the run uses and the scheduler stops afterwards.
 func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request domain.SchedulerAgentRequest) (domain.SchedulerAgentResult, error) {
+	if strings.TrimSpace(h.scheduler.Summary.ProjectID) == "" || strings.TrimSpace(h.scheduler.Summary.AgentName) == "" {
+		return domain.SchedulerAgentResult{}, fmt.Errorf("scheduler.agent needs a scheduler of a project agent")
+	}
 	sandboxPolicy := domain.SchedulerSandboxPolicyNew
 	if strings.TrimSpace(h.scheduler.Summary.SandboxPolicy) != "" {
 		sandboxPolicy = NormalizeSandboxPolicy(h.scheduler.Summary.SandboxPolicy)
@@ -41,7 +57,7 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 	if err != nil {
 		return domain.SchedulerAgentResult{}, err
 	}
-	run, execErr, err := h.deps.ProjectAgentRunner.RunProjectAgent(ctx, HostProjectAgentRequest{
+	runRequest := HostProjectAgentRequest{
 		SchedulerID:        h.scheduler.Summary.ID,
 		SchedulerRunID:     h.execution.ID,
 		ProjectID:          h.scheduler.Summary.ProjectID,
@@ -54,7 +70,31 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 		Volumes:            request.Volumes,
 		SandboxPolicy:      sandboxPolicy,
 		SandboxConfigHash:  configHash,
-	})
+		Provider:           domain.NormalizeAgentKind(request.Agent),
+		Timeout:            request.Timeout,
+	}
+	var prepared *domain.Sandbox
+	if AgentRequestOverridesSession(request, true) {
+		session, eventType, err := h.deps.Sessions.Ensure(ctx, h.scheduler, request, true)
+		if err != nil {
+			return domain.SchedulerAgentResult{}, err
+		}
+		if eventType != "" {
+			_ = h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
+				EventType:       eventType,
+				Level:           "info",
+				Message:         "scheduler sandbox ready",
+				Payload:         map[string]any{"sandboxId": session.Summary.ID},
+				LinkedSandboxID: session.Summary.ID,
+			})
+		}
+		prepared = session
+		runRequest.SandboxID, runRequest.Volumes = session.Summary.ID, nil
+	}
+	run, execErr, err := h.deps.ProjectAgentRunner.RunProjectAgent(ctx, runRequest)
+	if prepared != nil {
+		defer h.shutdownSessionAndRecordEvent(ctx, prepared.Summary.ID, "scheduler sandbox after agent run", "scheduler sandbox stopped after agent run")
+	}
 	if err != nil {
 		return domain.SchedulerAgentResult{}, err
 	}
@@ -88,14 +128,4 @@ func (h *RuntimeHost) ProjectAgent(ctx context.Context, prompt string, request d
 func (h *RuntimeHost) nextProjectAgentRunID() string {
 	baseID := firstHostNonEmpty(h.execution.ID, uuid.NewString())
 	return fmt.Sprintf("%s:agent:%d", baseID, h.projectAgentRunSequence.Add(1))
-}
-
-func (h *RuntimeHost) useProjectAgentRun(request domain.SchedulerAgentRequest) bool {
-	if strings.TrimSpace(h.scheduler.Summary.ProjectID) == "" || strings.TrimSpace(h.scheduler.Summary.AgentName) == "" {
-		return false
-	}
-	if strings.TrimSpace(request.Agent) != "" || request.Timeout > 0 {
-		return false
-	}
-	return !AgentRequestOverridesSession(request, true)
 }

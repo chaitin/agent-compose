@@ -139,6 +139,9 @@ type ProjectSchedulerRecord struct {
 }
 
 type ProjectRunRecord struct {
+	// LogIncomplete reports a persistence failure or guest journal gap. It is sticky.
+	LogIncomplete bool `json:"log_incomplete,omitempty"`
+
 	RunID           string    `json:"run_id"`
 	ProjectID       string    `json:"project_id"`
 	ProjectName     string    `json:"project_name,omitempty"`
@@ -173,6 +176,12 @@ type ProjectRunRecord struct {
 	// ExecutionID identifies the guest-side detached execution (journal +
 	// supervisor) for a detach-capable run. Empty for runs on the legacy path.
 	ExecutionID string `json:"execution_id,omitempty"`
+	// AgentCellID is the legacy-named execution identity. New agent runs do not
+	// create notebook cells; historical cell IDs remain valid for recovery.
+	AgentCellID string `json:"agent_cell_id,omitempty"`
+	// AgentProvider is the agent CLI the run uses instead of its agent
+	// definition's provider; empty uses the definition.
+	AgentProvider string `json:"agent_provider,omitempty"`
 	// Detach reports that the run was started through the detached supervisor
 	// and can be re-attached after a daemon restart instead of being declared
 	// interrupted.
@@ -184,6 +193,11 @@ type ProjectRunRecord struct {
 	// Deadline is the absolute run deadline, persisted so a restarted daemon
 	// can re-arm the run's timeout without the original in-memory timer.
 	Deadline time.Time `json:"deadline,omitempty"`
+	// LogFormat is runlog.FormatJSONL when LogsPath is a run log; empty
+	// means a legacy text transcript.
+	LogFormat string `json:"log_format,omitempty"`
+	// SummaryJSON is the runlog.Summary folded from the run log at completion.
+	SummaryJSON string `json:"summary_json,omitempty"`
 	// Labels holds user-defined key/value pairs attached to the run at start
 	// time. It is not a column on project_run; it is populated by GetProjectRun
 	// from the project_run_label table on read, and by Coordinator.BeginRun on
@@ -244,6 +258,8 @@ type ProjectRunEventRecord struct {
 	ExitCode    int                 `json:"exit_code,omitempty"`
 	StopReason  string              `json:"stop_reason,omitempty"`
 	CreatedAt   time.Time           `json:"created_at"`
+	// LogSeq is the run log entry this message was taken from, or 0.
+	LogSeq uint64 `json:"log_seq,omitempty"`
 }
 
 // ProjectRunEventSandboxCursor describes the position a sandbox-scoped

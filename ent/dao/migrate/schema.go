@@ -311,6 +311,11 @@ var (
 		{Name: "detach", Type: field.TypeInt, Nullable: true},
 		{Name: "deadline", Type: field.TypeInt64, Nullable: true},
 		{Name: "detach_kind", Type: field.TypeString, Nullable: true},
+		{Name: "log_format", Type: field.TypeString, Nullable: true},
+		{Name: "summary_json", Type: field.TypeString, Nullable: true},
+		{Name: "agent_cell_id", Type: field.TypeString, Nullable: true},
+		{Name: "log_incomplete", Type: field.TypeInt, Nullable: true},
+		{Name: "agent_provider", Type: field.TypeString, Nullable: true},
 	}
 	// ProjectRunTable holds the schema information for the "project_run" table.
 	ProjectRunTable = &schema.Table{
@@ -350,6 +355,7 @@ var (
 		{Name: "exit_code", Type: field.TypeInt, Nullable: true},
 		{Name: "stop_reason", Type: field.TypeString, Nullable: true},
 		{Name: "created_at", Type: field.TypeInt64},
+		{Name: "log_seq", Type: field.TypeInt64, Nullable: true},
 	}
 	// ProjectRunEventTable holds the schema information for the "project_run_event" table.
 	ProjectRunEventTable = &schema.Table{

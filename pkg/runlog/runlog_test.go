@@ -50,7 +50,7 @@ func TestClaudeToolCallIsRecordedOnceWithItsArguments(t *testing.T) {
 	mustEvent(t, w, `{"kind":"tool_call","id":"t1","name":"Bash","toolKind":"execute","status":"completed","input":{"command":"ls"}}`)
 	mustEvent(t, w, `{"kind":"tool_result","id":"t1","ok":true,"output":"a\nb\n"}`)
 	mustEvent(t, w, `{"kind":"text_delta","text":"Two files."}`)
-	if _, err := w.EndTurn("stop", "Two files."); err != nil {
+	if _, err := w.EndTurn("stop", "Two files.", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
@@ -131,7 +131,7 @@ func TestTextIsCoalescedAtLineBoundaries(t *testing.T) {
 func TestEndTurnKeepsTheFinalTextOutOfTheProse(t *testing.T) {
 	w, path := openTest(t, Options{})
 	mustEvent(t, w, `{"kind":"text_delta","text":"The answer"}`)
-	if _, err := w.EndTurn("stop", "The answer is 42."); err != nil {
+	if _, err := w.EndTurn("stop", "The answer is 42.", nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = w.Close()
@@ -162,7 +162,7 @@ func TestReopenContinuesSequenceTurnAndToolDedup(t *testing.T) {
 	}
 	mustEvent(t, again, `{"kind":"tool_call","id":"t1","name":"Bash","status":"completed","command":"ls"}`)
 	mustEvent(t, again, `{"kind":"tool_result","id":"t1","ok":true,"output":"a"}`)
-	end, err := again.EndTurn("stop", "")
+	end, err := again.EndTurn("stop", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestCapMarkerCountsTheBytesItDropped(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		_ = w.AppendOutput("stdout", strings.Repeat("x", 100))
 	}
-	if _, err := w.EndTurn("stop", ""); err != nil {
+	if _, err := w.EndTurn("stop", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	// A second stretch, dropped after the turn end, is closed by Close.
@@ -273,14 +273,14 @@ func TestCapMarkerKeepsItsCountWhenItFailsToWrite(t *testing.T) {
 	writable := w.file
 	w.file = readOnly
 	w.mu.Unlock()
-	if _, err := w.EndTurn("stop", ""); err == nil {
+	if _, err := w.EndTurn("stop", "", nil); err == nil {
 		t.Fatal("EndTurn on a read-only file succeeded")
 	}
 	w.mu.Lock()
 	w.file = writable
 	w.mu.Unlock()
 	_ = readOnly.Close()
-	if _, err := w.EndTurn("stop", ""); err != nil {
+	if _, err := w.EndTurn("stop", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = w.Close()
@@ -338,7 +338,7 @@ func TestSummaryChoosesTheUsageScopePerTurn(t *testing.T) {
 	mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":10,"outputTokens":1}`)
 	mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":20,"outputTokens":2}`)
 	mustEvent(t, w, `{"kind":"usage","scope":"run","inputTokens":30,"outputTokens":3,"costUsd":0.5}`)
-	if _, err := w.EndTurn("stop", ""); err != nil {
+	if _, err := w.EndTurn("stop", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	// Turn 2 is cancelled before its total: only its steps were reported.
@@ -347,7 +347,7 @@ func TestSummaryChoosesTheUsageScopePerTurn(t *testing.T) {
 	}
 	mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":50,"outputTokens":5,"costUsd":0.25}`)
 	mustEvent(t, w, `{"kind":"usage","scope":"step","inputTokens":40,"outputTokens":4,"costUsd":0.25}`)
-	if _, err := w.EndTurn("cancelled", ""); err != nil {
+	if _, err := w.EndTurn("cancelled", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	// Turn 3 comes from a provider that reports per turn.
@@ -355,7 +355,7 @@ func TestSummaryChoosesTheUsageScopePerTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustEvent(t, w, `{"kind":"usage","scope":"turn","inputTokens":7,"outputTokens":7}`)
-	if _, err := w.EndTurn("stop", ""); err != nil {
+	if _, err := w.EndTurn("stop", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = w.Close()
@@ -373,7 +373,7 @@ func TestOnAppendSeesEntriesInOrder(t *testing.T) {
 	var seen []string
 	w, _ := openTest(t, Options{OnAppend: func(e Entry, rendered string) { seen = append(seen, string(e.Type)+":"+rendered) }})
 	_ = w.AppendOutput("stdout", "a")
-	_, _ = w.EndTurn("stop", "")
+	_, _ = w.EndTurn("stop", "", nil)
 	if strings.Join(seen, "|") != "output:a|turn_end:" {
 		t.Fatalf("seen = %v", seen)
 	}
@@ -409,7 +409,7 @@ func TestFollowUpUserInputIsShownOnItsOwnLine(t *testing.T) {
 	w, path := openTest(t, Options{})
 	_, _ = w.AppendInitialPrompt("first")
 	mustEvent(t, w, `{"kind":"text_delta","text":"no newline"}`)
-	_, _ = w.EndTurn("stop", "no newline")
+	_, _ = w.EndTurn("stop", "no newline", nil)
 	_, _ = w.AppendUser("second")
 	_, _ = w.AppendUser("third\n")
 	_ = w.Close()
@@ -423,7 +423,7 @@ func TestEndTurnWithoutAgentEventsKeepsTheAnswerOnlyInTheTurnEnd(t *testing.T) {
 	// An older runtime sends no events and mirrors its transcript as output.
 	w, path := openTest(t, Options{})
 	_ = w.AppendOutput("stderr", "The answer is 42.\n")
-	if _, err := w.EndTurn("stop", "The answer is 42."); err != nil {
+	if _, err := w.EndTurn("stop", "The answer is 42.", nil); err != nil {
 		t.Fatal(err)
 	}
 	_ = w.Close()
@@ -523,7 +523,7 @@ func TestOversizedEssentialEntriesAreKeptShrunk(t *testing.T) {
 	}
 	// A streamed answer this long is split across prose entries, not cut.
 	mustEvent(t, w, `{"kind":"text_delta","text":"`+huge("f")+`"}`)
-	end, err := w.EndTurn("stop", huge("f"))
+	end, err := w.EndTurn("stop", huge("f"), nil)
 	if err != nil || end.Seq == 0 {
 		t.Fatalf("turn end: seq=%d err=%v", end.Seq, err)
 	}

@@ -839,6 +839,11 @@ func projectRunFromEntity(entity *dao.ProjectRun) ProjectRunRecord {
 		Detach:          entity.Detach != 0,
 		Deadline:        storedtime.ParseStoredUnixTimeAuto(entity.Deadline),
 		DetachKind:      entity.DetachKind,
+		LogFormat:       entity.LogFormat,
+		SummaryJSON:     entity.SummaryJSON,
+		AgentCellID:     entity.AgentCellID,
+		AgentProvider:   entity.AgentProvider,
+		LogIncomplete:   entity.LogIncomplete != 0,
 	}
 	if entity.SchedulerRunID != nil {
 		item.SchedulerRunID = *entity.SchedulerRunID

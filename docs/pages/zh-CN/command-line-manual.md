@@ -746,7 +746,7 @@ agent-compose logs -t
 | `-t, --timestamp` | 文本输出显示 run 级时间戳。当前没有逐 chunk 时间戳，会使用该 run 的 `completed_at`、`updated_at`、`started_at` 中最合适的可用时间。 |
 | `--agent <agent>` | 按 agent 过滤。 |
 | `--run <run-id>` | 按 run 过滤。 |
-| `--sandbox <sandbox>` | 按 sandbox 过滤。 |
+| `--sandbox <sandbox>` | 显示在这个 sandbox 里执行过的内容：它的 run，以及 scheduler run 的 shell/exec 步骤，按开始时间从旧到新排列，各自带行前缀（步骤为 `<agent>-step-<id>`）。`--tail` 对每一项分别生效。步骤日志按当前内容输出，`--follow` 只跟随 run。 |
 | `--event <evt-id>` | 按事件总线事件 ID（`evt_...`）过滤，展示该事件及其关联事件触发的 run。 |
 
 `--run` 和 `--sandbox` 是互斥的资源选择器。同时指定二者会返回用法错误，且不会发送日志请求。
@@ -937,6 +937,8 @@ daemon 可以选择启用两条相互独立的定时保留策略。`WORKSPACE_CL
 sandbox retention 归档包含 metadata、VM/proxy 状态、logs、home、state、context 和 guest runtime 目录，并跳过 workspace 与顶层 `volumes` bridge 目录。archive 与 manifest 提交并重新校验身份、大小和 SHA-256 后，正式的 sandbox removal coordinator 才会删除 runtime、volume bridge、附件、列表索引、ownership record 和整个原 sandbox 目录。workspace 删除或归档失败时，尚存的原件会保留用于后续重试。
 
 归档以 `tar.zst` 和 SHA-256 JSON sidecar 写入 `SANDBOX_ARCHIVE_ROOT`，默认位置为 `<data-root>/archives/sandboxes`。daemon 会拒绝与 `SANDBOX_ROOT` 相同、位于其下或经 symlink 解析后进入其中的归档根目录。归档位于 sandbox ownership tree 之外并在自动删除后继续存在；当前版本不提供归档 list、download、restore、retention 或 delete API。归档可能包含 provider 状态、凭据、prompt 和日志，运维方必须保护并显式管理该目录。workspace source、声明的外部 volume（包括 BoxLite bind-mounted volume bridge）和 driver 私有 runtime 磁盘不会复制进归档；归档完成后由各 runtime 所有者的正式边界删除 driver 资源。
+
+使用 run log 的 run 把日志存放在 `<data-root>/runs/<run_id>/`，这个目录属于 run，而不属于它的 sandbox：上面的 sandbox 策略都不会归档或删除它，只有删除这个 run 的历史时才会一起删除。`RUN_LOG_RETENTION_TTL` 可选开启：run 结束超过这段时间后，把它的日志压缩移到 `RUN_LOG_ARCHIVE_ROOT`（默认 `<data-root>/archives/logs`）下的 `runs/<run_id>/run.log.jsonl.zst`，即日志相对数据根目录的原路径，格式是单个标准 zstd 流，可以直接用 `zstd -d` 解压。时长从 run 完成时算起，与 sandbox 的生命周期无关。归档文件落盘并校验通过后才删除原文件，并在 run 目录留下记录归档路径和 SHA-256 的 `archived.json`。此后对该 run 调用 `FollowRunLogs` 返回 `FAILED_PRECONDITION`，而保存在数据库里的 `ListRunMessages` 和 run 摘要仍然可用。删除这个 run 的历史时会一并删除它的归档日志。该配置接受非负 Go duration，默认 `0` 表示不归档；daemon 会拒绝归档根目录或其 `runs` 子目录解析后等于或位于 `<data-root>/runs` 之内的配置（包括通过符号链接指向的路径），因此 `RUN_LOG_ARCHIVE_ROOT` 不能等于 `DATA_ROOT`。scheduler shell/exec step 的日志不参与归档，它们随所属的 scheduler run 一起删除。
 
 `IMAGE_CACHE_CLEANUP_TTL` 独立清理 `IMAGE_CACHE_ROOT` 自有且未被引用的 OCI 与 materialized 数据，优先使用最后使用时间，没有时回退到拉取时间或文件修改时间；默认 `0`，即关闭该 cleaner。`CLEANUP_INTERVAL` 默认 `1h`，因此 duration 清理最多可能延迟一个 interval。自动清理不会处理 Docker daemon 镜像、BoxLite home 或 Microsandbox SDK cache，也不实现磁盘空间水位策略。
 

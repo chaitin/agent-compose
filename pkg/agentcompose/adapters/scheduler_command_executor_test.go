@@ -17,6 +17,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/llms"
 	"github.com/chaitin/agent-compose/pkg/llms/runtimefacade"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/storage/configstore"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
@@ -127,11 +128,14 @@ func TestSchedulerCommandExecutorFiltersCommandPayloadFromStreamingCellOutput(t 
 	result, err := executor.ExecuteSchedulerCommand(ctx, session, domain.SchedulerCommandRequest{
 		Mode:   "shell",
 		Script: "echo scheduler",
+		// A step of a persisted scheduler run, with the id its started event
+		// already names.
+		SchedulerID: "scheduler-1", SchedulerRunID: "run-1", CellID: "step-1",
 	})
 	if err != nil {
 		t.Fatalf("ExecuteSchedulerCommand returned error: %v", err)
 	}
-	if !result.Success || result.Stdout != "scheduler stdout\n" || result.Stderr != "scheduler stderr\n" {
+	if !result.Success || result.Stdout != "scheduler stdout\n" || result.Stderr != "scheduler stderr\n" || result.CellID != "step-1" {
 		t.Fatalf("scheduler result = %#v", result)
 	}
 
@@ -154,17 +158,25 @@ drained:
 	if got := outputText.String(); !strings.Contains(got, "scheduler stdout\n") || !strings.Contains(got, "scheduler stderr\n") {
 		t.Fatalf("stream output = %q", got)
 	}
+	// The step's history is its step log; the sandbox keeps no cell for it.
 	cells, err := store.ListCells(ctx, session.Summary.ID)
 	if err != nil {
 		t.Fatalf("ListCells returned error: %v", err)
 	}
-	if len(cells) == 0 {
-		t.Fatalf("no cells stored")
+	if len(cells) != 0 {
+		t.Fatalf("step stored notebook cells: %#v", cells)
 	}
-	for _, cell := range cells {
-		if strings.Contains(cell.Output, execution.CommandResultPrefix) {
-			t.Fatalf("cell leaked command payload: %#v", cell)
-		}
+	path, err := runlog.SchedulerCellPath(root, "scheduler-1", "run-1", "step-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := runlog.ReadEntries(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logged := runlog.RenderText(entries)
+	if !strings.Contains(logged, "scheduler stdout\n") || !strings.Contains(logged, "scheduler stderr\n") || strings.Contains(logged, execution.CommandResultPrefix) {
+		t.Fatalf("step log = %q", logged)
 	}
 }
 
@@ -503,5 +515,62 @@ func assertSchedulerCommandTokenState(t *testing.T, ctx context.Context, store *
 	}
 	if !wantPresent && !errors.Is(err, domain.ErrNotFound) {
 		t.Fatalf("scheduler command facade token error = %v, want not found", err)
+	}
+}
+
+func TestSchedulerCommandExecutorLogsAStepOfAPersistedSchedulerRun(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	config := &appconfig.Config{
+		DataRoot:             root,
+		SandboxRoot:          filepath.Join(root, "sandboxes"),
+		RuntimeDriver:        driverpkg.RuntimeDriverBoxlite,
+		DefaultImage:         "guest:latest",
+		GuestWorkspacePath:   "/workspace",
+		GuestStateRoot:       "/data/state",
+		GuestHomePath:        "/root",
+		JupyterProxyBasePath: "/agent-compose/session",
+		SandboxStartTimeout:  2 * time.Second,
+	}
+	store, err := sandboxstore.NewWithConfig(config)
+	if err != nil {
+		t.Fatalf("NewWithConfig returned error: %v", err)
+	}
+	session, err := store.CreateSandbox(ctx, "scheduler step sandbox", "", driverpkg.RuntimeDriverBoxlite, "guest:latest", "", domain.SandboxTypeScript, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("CreateSandbox returned error: %v", err)
+	}
+	session.Summary.VMStatus = domain.VMStatusRunning
+	if err := store.UpdateSandbox(ctx, session); err != nil {
+		t.Fatalf("UpdateSandbox returned error: %v", err)
+	}
+	executor := NewSchedulerCommandExecutor(SchedulerCommandExecutorDeps{Config: config, Store: store, Runtimes: fakeRuntimeProvider{runtime: fakeSchedulerCommandRuntime{}}, Streams: sandboxes.NewStreamBrokerForTest()})
+
+	result, err := executor.ExecuteSchedulerCommand(ctx, session, domain.SchedulerCommandRequest{
+		Mode: "shell", Script: "echo scheduler", SchedulerID: "sched-1", SchedulerRunID: "run-1",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteSchedulerCommand returned error: %v", err)
+	}
+	stepPath, err := runlog.SchedulerCellPath(root, "sched-1", "run-1", result.CellID)
+	if err != nil {
+		t.Fatalf("resolve step log: %v", err)
+	}
+	entries, err := runlog.ReadEntries(stepPath, 0)
+	if err != nil {
+		t.Fatalf("read step log: %v", err)
+	}
+	text := runlog.RenderText(entries)
+	if !strings.Contains(text, "scheduler stdout\n") || !strings.Contains(text, "scheduler stderr\n") || strings.Contains(text, execution.CommandResultPrefix) {
+		t.Fatalf("step log text = %q", text)
+	}
+
+	// An invocation is not a persisted scheduler run and keeps no step log.
+	invoked, err := executor.ExecuteSchedulerCommand(ctx, session, domain.SchedulerCommandRequest{Mode: "shell", Script: "echo scheduler"})
+	if err != nil {
+		t.Fatalf("ExecuteSchedulerCommand returned error: %v", err)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(root, "schedulers", "*", "runs", "*", "cells", invoked.CellID+"*")); len(matches) != 0 {
+		t.Fatalf("invocation wrote a step log: %v", matches)
 	}
 }

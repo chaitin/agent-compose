@@ -2,34 +2,16 @@ package runs
 
 import (
 	"context"
-	"encoding/json"
-	"strings"
-	"sync"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
-	"github.com/chaitin/agent-compose/pkg/runlog"
 )
 
+// promptAttachProjector adapts streamed runtime bytes and lifecycle effects to
+// the attach use case. Turn and run decisions live in agentRunProjector.
 type promptAttachProjector struct {
-	run                    domain.ProjectRunRecord
-	sandbox                *domain.Sandbox
-	logsPath               string
-	runLogs                *RunLogHub
-	mu                     sync.Mutex
-	buffer                 []byte
-	itemTexts              map[string]string
-	loggedProse            string
-	turnText               string
-	hasLoggedText          bool
-	logEndsWithNewline     bool
-	persistedAssistantTurn bool
-	eventCtx               context.Context
-	events                 structuredEventStore
-	humanIndex             uint64
+	projection *agentRunProjector
 }
 
-// persistentPromptAttachProjectorDeps groups the dependencies needed to build
-// a promptAttachProjector that also persists structured events.
 type persistentPromptAttachProjectorDeps struct {
 	Run        domain.ProjectRunRecord
 	Sandbox    *domain.Sandbox
@@ -39,253 +21,39 @@ type persistentPromptAttachProjectorDeps struct {
 }
 
 func newPersistentPromptAttachProjector(ctx context.Context, deps persistentPromptAttachProjectorDeps) *promptAttachProjector {
-	projector := newPromptAttachProjector(deps.Run, deps.Sandbox, deps.LogsPath, deps.Hub)
-	projector.eventCtx = ctx
-	projector.events, _ = deps.EventStore.(structuredEventStore)
-	return projector
+	p := &promptAttachProjector{projection: newAgentRunProjector(ctx, deps.Run, deps.Sandbox, deps.LogsPath, deps.Hub)}
+	p.projection.bindStore(deps.EventStore)
+	return p
 }
 
 func newPromptAttachProjector(run domain.ProjectRunRecord, sandbox *domain.Sandbox, logsPath string, hub *RunLogHub) *promptAttachProjector {
-	return &promptAttachProjector{
-		run:       run,
-		sandbox:   sandbox,
-		logsPath:  logsPath,
-		runLogs:   hub,
-		itemTexts: map[string]string{},
-	}
+	return &promptAttachProjector{projection: newAgentRunProjector(context.Background(), run, sandbox, logsPath, hub)}
 }
 
 func (p *promptAttachProjector) Project(data []byte) ([]RunAttachOutput, *TransitionRequest, error) {
-	p.buffer = append(p.buffer, data...)
-	lines := make([][]byte, 0)
-	for {
-		index := bytesIndexByte(p.buffer, '\n')
-		if index < 0 {
-			break
-		}
-		line := append([]byte(nil), p.buffer[:index]...)
-		p.buffer = append([]byte(nil), p.buffer[index+1:]...)
-		if strings.TrimSpace(string(line)) != "" {
-			lines = append(lines, line)
-		}
-	}
+	return p.ProjectChunk(domain.ExecChunk{Text: string(data)})
+}
+
+func (p *promptAttachProjector) ProjectChunk(chunk domain.ExecChunk) ([]RunAttachOutput, *TransitionRequest, error) {
 	var responses []RunAttachOutput
 	var transition *TransitionRequest
-	for _, line := range lines {
-		nextResponses, nextTransition, err := p.projectLine(line)
-		if err != nil {
-			return responses, transition, err
+	effects, err := p.projection.ProjectRuntimeOutput(chunk)
+	for _, effect := range effects {
+		if effect.Terminal != nil {
+			transition = effect.Terminal
 		}
-		responses = append(responses, nextResponses...)
-		if nextTransition != nil {
-			transition = nextTransition
+		switch {
+		case effect.FrameType == "result":
+		case effect.FrameType == "error":
+			responses = append(responses, runAttachErrorResponse(firstNonEmpty(effect.Code, "runtime_stream_error"), effect.Text, true))
+		case effect.TurnCompleted:
+			responses = append(responses, runAttachAgentTurnCompletedResponse(p.projection.run, string(effect.Payload), warningsFromRun(p.projection.run)))
+		default:
+			responses = append(responses, runAttachAgentEventResponse(firstNonEmpty(effect.Name, "agent_event"), effect.Text, string(effect.Payload)))
 		}
 	}
-	return responses, transition, nil
-}
 
-func (p *promptAttachProjector) projectLine(line []byte) ([]RunAttachOutput, *TransitionRequest, error) {
-	var frame struct {
-		Type            string                      `json:"type"`
-		Event           json.RawMessage             `json:"event"`
-		FinalText       string                      `json:"finalText"`
-		FinalTextSource domain.AgentFinalTextSource `json:"finalTextSource"`
-		SandboxID       string                      `json:"sandboxId"`
-		StopReason      string                      `json:"stopReason"`
-		Code            string                      `json:"code"`
-		Message         string                      `json:"message"`
-		Provider        string                      `json:"provider"`
-		Seq             uint64                      `json:"seq"`
-	}
-	if err := json.Unmarshal(line, &frame); err != nil {
-		return nil, nil, err
-	}
-	switch frame.Type {
-	case "started":
-		return []RunAttachOutput{runAttachAgentEventResponse("started", "", string(line))}, nil, nil
-	case "agent_event":
-		name, text := p.agentEventText(frame.Event)
-		if err := p.appendLogText(text, name == "text_delta"); err != nil {
-			return nil, nil, err
-		}
-		return []RunAttachOutput{runAttachAgentEventResponse(firstNonEmpty(name, "agent_event"), text, string(frame.Event))}, nil, nil
-	case "agent_turn_completed":
-		if err := p.appendLogFinalText(frame.FinalText); err != nil {
-			return nil, nil, err
-		}
-		if err := p.appendAssistantEvent(line, frame.Seq, agentTurnProjection{FinalText: frame.FinalText, FinalTextSource: frame.FinalTextSource, Provider: frame.Provider, StopReason: frame.StopReason}); err != nil {
-			return nil, nil, err
-		}
-		return []RunAttachOutput{runAttachAgentTurnCompletedResponse(p.run, string(line), warningsFromRun(p.run))}, nil, nil
-	case "result":
-		if err := p.appendLogFinalText(frame.FinalText); err != nil {
-			return nil, nil, err
-		}
-		transition := transitionFromPromptWrapperResult(p.run, p.sandbox, promptWrapperOutcome{LogsPath: p.logsPath, Payload: line, FinalText: frame.FinalText, StopReason: frame.StopReason})
-		transition.TerminalEvents = p.terminalTurnEvents(agentTurnProjection{FinalText: frame.FinalText, FinalTextSource: frame.FinalTextSource, Provider: frame.Provider, StopReason: frame.StopReason})
-		return nil, &transition, nil
-	case "error":
-		message := firstNonEmpty(frame.Message, "runtime stream error")
-		transition := transitionFromPromptWrapperResult(p.run, p.sandbox, promptWrapperOutcome{LogsPath: p.logsPath, Payload: line, StopReason: frame.StopReason, Message: message})
-		return []RunAttachOutput{runAttachErrorResponse(firstNonEmpty(frame.Code, "runtime_stream_error"), message, true)}, &transition, nil
-	default:
-		return []RunAttachOutput{runAttachAgentEventResponse(firstNonEmpty(frame.Type, "agent_event"), "", string(line))}, nil, nil
-	}
-}
-
-// agentEventText derives the frame's name and human-readable text from a
-// runtime agent event.
-//
-// The runtime publishes provider-neutral events: the frame name is the event
-// kind, and the transcript is assembled from the kinds a reader needs to
-// follow the run — assistant prose plus the tool activity that produced it.
-// Reasoning deliberately contributes no text, so a consumer reading just that
-// field never splices the model's thinking into the answer.
-func (p *promptAttachProjector) agentEventText(raw json.RawMessage) (string, string) {
-	var event struct {
-		Kind    string              `json:"kind"`
-		Text    string              `json:"text"`
-		Type    string              `json:"type"`
-		ID      string              `json:"id"`
-		Name    string              `json:"name"`
-		Command string              `json:"command"`
-		Input   json.RawMessage     `json:"input"`
-		Changes []runlog.FileChange `json:"changes"`
-		Output  string              `json:"output"`
-		Error   string              `json:"error"`
-	}
-	if err := json.Unmarshal(raw, &event); err != nil {
-		return "agent_event", ""
-	}
-	switch event.Kind {
-	case "":
-		// Legacy shape: a raw provider event with no neutral kind. Keep the
-		// frame addressable but contribute nothing to the transcript.
-		return firstNonEmpty(event.Type, "agent_event"), ""
-	case "text_delta":
-		return event.Kind, event.Text
-	case "tool_call":
-		// Rendered by the run log so this transcript and a run log's text
-		// view show a tool call the same way.
-		return event.Kind, p.newToolText(event.ID, runlog.Render(runlog.Entry{
-			Type: runlog.EntryToolCall,
-			Tool: &runlog.Tool{Name: event.Name, Command: event.Command, Input: event.Input, Changes: event.Changes},
-		}))
-	case "tool_result":
-		return event.Kind, p.newToolText(event.ID+"\x00result", runlog.Render(runlog.Entry{
-			Type: runlog.EntryToolResult,
-			Tool: &runlog.Tool{Output: event.Output, Error: event.Error},
-		}))
-	default:
-		return event.Kind, ""
-	}
-}
-
-// newToolText returns only the part of text not already written under key.
-//
-// Tool events are announced more than once and carry cumulative payloads:
-// claude re-emits a tool call once its arguments finish streaming, and codex
-// resends a command's aggregated output on every update. Without this the
-// transcript would repeat each tool's header and output.
-func (p *promptAttachProjector) newToolText(key, text string) string {
-	if text == "" {
-		return ""
-	}
-	previous := p.itemTexts[key]
-	p.itemTexts[key] = text
-	if previous != "" && strings.HasPrefix(text, previous) {
-		return text[len(previous):]
-	}
-	return text
-}
-
-// appendLogText writes text to the transcript, tracking assistant prose
-// separately from tool activity.
-//
-// appendLogFinalText reconciles the turn's final text against what the run
-// already streamed, and it does that by prefix. Only assistant prose can serve
-// as that prefix: tool headers, commands and output are interleaved into the
-// same transcript but never appear in FinalText, so counting them would break
-// the comparison and silently drop the final text's tail.
-func (p *promptAttachProjector) appendLogText(text string, prose bool) error {
-	if text == "" {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
-		return err
-	}
-	if prose {
-		p.loggedProse += text
-	}
-	p.turnText += text
-	return nil
-}
-
-// appendLogFinalText appends the part of the turn's final text that never
-// reached the transcript as a text_delta.
-//
-// Providers that deliver the answer only on the terminal frame land here whole;
-// providers that streamed it land here with nothing left to write. Both the
-// turn-completed and the result frame carry the same final text, so the second
-// one finds the first's work already done and appends nothing.
-func (p *promptAttachProjector) appendLogFinalText(finalText string) error {
-	if finalText == "" {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	text := finalText[streamedFinalTextOverlap(p.loggedProse, finalText):]
-	if text == "" {
-		return nil
-	}
-	if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
-		return err
-	}
-	p.loggedProse += text
-	p.turnText += text
-	return nil
-}
-
-// streamedFinalTextOverlap returns the length of the longest prefix of
-// finalText that the prose logged so far ends with.
-//
-// Requiring finalText to be prefixed by the whole prose log would only hold
-// for the first turn of a run that never used a tool: tool activity splits a
-// turn's prose in the transcript, and every turn after the first is preceded
-// by another turn's prose. Matching the overlap instead keeps the reconciliation
-// anchored on what this turn actually streamed, so an unstreamed tail still
-// lands in the log.
-//
-// The overlap is computed with the KMP prefix function over
-// finalText + sentinel + the tail of logged, keeping the cost linear in
-// len(finalText). The sentinel is only assumed to be rare, not absent, so the
-// result is verified before it is trusted.
-func streamedFinalTextOverlap(logged, finalText string) int {
-	if finalText == "" || logged == "" {
-		return 0
-	}
-	if len(logged) > len(finalText) {
-		logged = logged[len(logged)-len(finalText):]
-	}
-	combined := finalText + "\x00" + logged
-	failure := make([]int, len(combined))
-	for i := 1; i < len(combined); i++ {
-		length := failure[i-1]
-		for length > 0 && combined[i] != combined[length] {
-			length = failure[length-1]
-		}
-		if combined[i] == combined[length] {
-			length++
-		}
-		failure[i] = length
-	}
-	overlap := failure[len(combined)-1]
-	if overlap > len(finalText) || !strings.HasSuffix(logged, finalText[:overlap]) {
-		return 0
-	}
-	return overlap
+	return responses, transition, err
 }
 
 func (p *promptAttachProjector) AppendHumanMessage(message string) error {
@@ -293,109 +61,9 @@ func (p *promptAttachProjector) AppendHumanMessage(message string) error {
 }
 
 func (p *promptAttachProjector) AppendHumanMessageFrame(message, clientFrameID string) error {
-	text := promptAttachHumanLogText(message)
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.persistedAssistantTurn = false
-	if text != "" {
-		if p.hasLoggedText && !p.logEndsWithNewline {
-			text = "\n" + text
-		}
-		if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text}); err != nil {
-			return err
-		}
-	}
-	if p.events == nil || strings.TrimSpace(message) == "" {
-		return nil
-	}
-	p.humanIndex++
-	_, _, err := p.events.AppendProjectRunEvent(p.eventContext(), domain.ProjectRunEventRecord{
-		ID: attachedHumanEventID(p.run.RunID, clientFrameID, uint64(p.humanIndex), message), RunID: p.run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: message, Agent: p.run.AgentName,
-	})
-	return err
+	return p.projection.AppendHumanMessageFrame(message, clientFrameID)
 }
 
 func (p *promptAttachProjector) AppendStderr(text string) error {
-	if text == "" {
-		return nil
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if err := p.appendLogChunkLocked(domain.ExecChunk{Text: text, Stream: domain.StdioStderr}); err != nil {
-		return err
-	}
-	p.turnText += text
-	return nil
-}
-
-func (p *promptAttachProjector) appendAssistantEvent(line []byte, seq uint64, turn agentTurnProjection) error {
-	p.mu.Lock()
-	store := p.events
-	turn.Transcript = p.turnText
-	p.mu.Unlock()
-	if store == nil {
-		return nil
-	}
-	events := attachedAgentTurnEvents(p.run, seq, line, turn)
-	if len(events) > 0 {
-		if _, _, err := store.AppendProjectRunEvents(p.eventContext(), events); err != nil {
-			return err
-		}
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.turnText = ""
-	p.persistedAssistantTurn = len(events) > 0
-	return nil
-}
-
-func (p *promptAttachProjector) terminalTurnEvents(turn agentTurnProjection) []domain.ProjectRunEventRecord {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.persistedAssistantTurn {
-		return nil
-	}
-	turn.Transcript = p.turnText
-	events := terminalPromptTurnEvents(p.run, turn)
-	p.turnText = ""
-	return events
-}
-
-func (p *promptAttachProjector) eventContext() context.Context {
-	if p.eventCtx != nil {
-		return p.eventCtx
-	}
-	return context.Background()
-}
-
-func (p *promptAttachProjector) appendLogChunkLocked(chunk domain.ExecChunk) error {
-	offset, err := appendProjectRunLogChunk(p.logsPath, chunk)
-	if err != nil {
-		return err
-	}
-	if chunk.Text != "" {
-		p.hasLoggedText = true
-		p.logEndsWithNewline = strings.HasSuffix(chunk.Text, "\n")
-	}
-	publishRunLogChunk(p.runLogs, p.run, chunk, offset)
-	return nil
-}
-
-func promptAttachHumanLogText(message string) string {
-	if strings.TrimSpace(message) == "" {
-		return ""
-	}
-	if strings.HasSuffix(message, "\n") {
-		return message
-	}
-	return message + "\n"
-}
-
-func bytesIndexByte(data []byte, needle byte) int {
-	for i, value := range data {
-		if value == needle {
-			return i
-		}
-	}
-	return -1
+	return p.projection.AppendOutput(domain.ExecChunk{Text: text, Stream: domain.StdioStderr})
 }

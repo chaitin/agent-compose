@@ -15,6 +15,7 @@ import (
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	"github.com/chaitin/agent-compose/pkg/storage/sandboxstore"
@@ -89,13 +90,19 @@ func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain
 
 	cellID := uuid.NewString()
 	hostCellDir := filepath.Join(execution.HostSandboxDir(session), "state", "cells", cellID)
-	if err := os.MkdirAll(hostCellDir, 0o755); err != nil {
-		return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, fmt.Errorf("create agent cell state dir: %w", err)
+	if request.History == execution.AgentHistoryNotebook {
+		if err := os.MkdirAll(hostCellDir, 0o755); err != nil {
+			return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, fmt.Errorf("create agent cell state dir: %w", err)
+		}
 	}
 	startedAt := time.Now().UTC()
 	userEvent := domain.SandboxEvent{ID: uuid.NewString(), Type: "agent.user", Level: "info", Message: message, CreatedAt: startedAt}
-	if err := e.store.AddEvent(ctx, session.Summary.ID, userEvent); err != nil {
-		return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, err
+	// A run-log run keeps its history in the run log, which ListSandboxHistory
+	// reads back; watchers of the sandbox still see the turn live.
+	if request.History == execution.AgentHistoryNotebook {
+		if err := e.store.AddEvent(ctx, session.Summary.ID, userEvent); err != nil {
+			return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, err
+		}
 	}
 	if e.streams != nil {
 		e.streams.PublishEventAdded(session.Summary.ID, userEvent)
@@ -109,8 +116,10 @@ func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain
 		Agent:     agent,
 		Running:   true,
 	}
-	if err := e.store.AddCell(ctx, session, cell); err != nil {
-		return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, err
+	if request.History == execution.AgentHistoryNotebook {
+		if err := e.store.AddCell(ctx, session, cell); err != nil {
+			return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, err
+		}
 	}
 	if e.streams != nil {
 		e.streams.PublishCellStarted(session.Summary.ID, cell)
@@ -119,7 +128,7 @@ func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain
 	run := &agentCellRun{
 		e: e, ctx: ctx, session: session, agent: agent, message: message,
 		hostCellDir: hostCellDir, userEvent: userEvent, stream: request.Stream,
-		cancelExec: execCancel, cell: cell,
+		cancelExec: execCancel, cell: cell, history: request.History,
 	}
 	if request.Stream.OnStart != nil {
 		if err := request.Stream.OnStart(cell); err != nil {
@@ -130,9 +139,10 @@ func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain
 	var detach *AgentRunDetach
 	if request.Detach != nil {
 		detach = &AgentRunDetach{
-			ExecutionID: request.Detach.ExecutionID,
-			CursorPath:  agentCellCursorPath(hostCellDir),
-			OnStart:     request.Detach.OnStart,
+			ExecutionID:   request.Detach.ExecutionID,
+			CursorPath:    agentExecutionCursorPath(e.config, request.RunID, hostCellDir, request.History),
+			OnStart:       request.Detach.OnStart,
+			JournalResume: journalStreamResume(request.Stream),
 		}
 	}
 	execSession := cloneSessionForAgentExecution(session, request.ProviderEnvItems)
@@ -155,20 +165,9 @@ func (e *AgentExecutor) ExecuteAgentRequest(ctx context.Context, session *domain
 // would have. The returned user event is empty: it was recorded when the run
 // started.
 func (e *AgentExecutor) ResumeAgentRequest(ctx context.Context, session *domain.Sandbox, request execution.ResumeAgentRequest) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error) {
-	cells, err := e.store.ListCells(ctx, session.Summary.ID)
+	cell, err := e.resumeAgentCell(ctx, session, request)
 	if err != nil {
 		return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, err
-	}
-	var cell domain.NotebookCell
-	found := false
-	for _, candidate := range cells {
-		if candidate.ID == request.CellID {
-			cell, found = candidate, true
-			break
-		}
-	}
-	if !found {
-		return domain.NotebookCell{}, domain.SandboxEvent{}, domain.SandboxEvent{}, fmt.Errorf("agent cell %s not found", request.CellID)
 	}
 	agent := domain.NormalizeAgentKind(cell.Agent)
 	if agent == "" {
@@ -179,11 +178,16 @@ func (e *AgentExecutor) ResumeAgentRequest(ctx context.Context, session *domain.
 	hostCellDir := filepath.Join(execution.HostSandboxDir(session), "state", "cells", cell.ID)
 	run := &agentCellRun{
 		e: e, ctx: ctx, session: session, agent: agent, message: cell.Source,
-		hostCellDir: hostCellDir, stream: request.Stream, cancelExec: execCancel, cell: cell,
+		hostCellDir: hostCellDir, stream: request.Stream, cancelExec: execCancel, cell: cell, history: request.History,
+	}
+	if request.JournalResume != nil {
+		run.resumed = true
+		run.streamed.Restore(domain.ExecResult{Stdout: cell.Stdout, Stderr: cell.Stderr, Output: cell.Output})
+		run.stdout.Restore(request.JournalResume.Decoder)
 	}
 	execResult, result, err := e.runner.ResumeAgentRun(execCtx, AgentResumeRequest{
 		Session: session, Agent: agent, RunID: request.RunID,
-		Detach: &AgentRunDetach{ExecutionID: request.ExecutionID, CursorPath: agentCellCursorPath(hostCellDir)},
+		Detach: &AgentRunDetach{ExecutionID: request.ExecutionID, CursorPath: agentExecutionCursorPath(e.config, request.RunID, hostCellDir, request.History), JournalResume: request.JournalResume},
 	}, run.writeChunk)
 	return run.finish(execResult, result, err)
 }
@@ -204,11 +208,17 @@ type agentCellRun struct {
 	hostCellDir string
 	userEvent   domain.SandboxEvent
 	stream      execution.AgentExecutionStream
+	history     execution.AgentHistoryMode
 	cancelExec  context.CancelFunc
 
 	cellMu   sync.Mutex
 	cell     domain.NotebookCell
 	streamed execution.ExecStreamAccumulator
+	stdout   execution.AgentOutputDecoder
+	// transcript rebuilds the text transcript from agent events; nil until
+	// the runtime reports one (an older runtime mirrors text to stderr).
+	transcript *runlog.Merger
+	resumed    bool
 
 	streamErrMu sync.Mutex
 	streamErr   error
@@ -232,34 +242,20 @@ func (r *agentCellRun) deferredStreamErr() error {
 	return r.streamErr
 }
 
-func (r *agentCellRun) writeChunk(chunk domain.ExecChunk) {
-	filtered, visible := execution.FilterAgentStreamChunk(chunk)
-	if !visible {
-		return
-	}
-	isStderr := domain.NormalizeStdioStream(filtered.Stream) == domain.StdioStderr
+// mergeStreamed combines the exec's aggregated result with what was streamed.
+// The aggregate normally wins; once the transcript was rebuilt from agent
+// events, only the streamed side carries it, so the streamed side wins.
+func (r *agentCellRun) mergeStreamed(execResult domain.ExecResult, exitCode int, success bool) domain.ExecResult {
 	r.cellMu.Lock()
-	r.streamed.WriteChunk(filtered)
-	if isStderr {
-		r.cell.Stderr += filtered.Text
-	} else {
-		r.cell.Stdout += filtered.Text
-	}
-	r.cell.Output += filtered.Text
-	snapshot := r.cell
+	streamed := r.streamed.Result(exitCode, success)
 	r.cellMu.Unlock()
-	if err := r.e.store.AddCell(r.ctx, r.session, snapshot); err != nil {
-		r.setStreamErr(err)
-		return
+	if r.transcript == nil && !r.resumed {
+		return execution.MergeExecResults(execResult, streamed)
 	}
-	if r.e.streams != nil {
-		r.e.streams.PublishCellOutput(r.session.Summary.ID, snapshot.ID, filtered.Text, filtered.Stream)
-	}
-	if r.stream.OnChunk != nil {
-		if err := r.stream.OnChunk(snapshot.ID, filtered); err != nil {
-			r.setStreamErr(err)
-		}
-	}
+	merged := execution.MergeExecResults(streamed, execResult)
+	merged.ExitCode = execution.FirstNonZeroInt(execResult.ExitCode, exitCode)
+	merged.Success = execResult.Success || success
+	return merged
 }
 
 // finish turns the agent exec outcome into the finished cell. A disconnected
@@ -271,6 +267,7 @@ func (r *agentCellRun) finish(execResult domain.ExecResult, result domain.AgentR
 		r.cellMu.Unlock()
 		return cell, r.userEvent, domain.SandboxEvent{}, err
 	}
+	r.flushChunks()
 	if streamErr := r.deferredStreamErr(); streamErr != nil {
 		return r.fail(streamErr, execResult, result)
 	}
@@ -295,11 +292,14 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 		CreatedAt: time.Now().UTC(),
 		Message:   fmt.Sprintf("%s run failed: %v", r.agent, finalErr),
 	}
-	execResult = execution.MergeExecResults(execResult, r.streamed.Result(execution.FirstNonZeroInt(execResult.ExitCode, 1), false))
+	execResult = r.mergeStreamed(execResult, execution.FirstNonZeroInt(execResult.ExitCode, 1), false)
 	execResult.ExitCode = execution.FirstNonZeroInt(execResult.ExitCode, 1)
 	execResult.Success = false
 	if strings.TrimSpace(execResult.Output) == "" {
 		execResult.Output = assistantEvent.Message
+	}
+	if r.history == execution.AgentHistoryRunLog {
+		return r.completeRunStep(execResult, result, finalErr, assistantEvent)
 	}
 	if err := execution.WriteCellArtifacts(r.hostCellDir, execResult); err != nil {
 		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
@@ -337,9 +337,13 @@ func (r *agentCellRun) fail(finalErr error, execResult domain.ExecResult, result
 
 func (r *agentCellRun) succeed(execResult domain.ExecResult, result domain.AgentRunResult) (domain.NotebookCell, domain.SandboxEvent, domain.SandboxEvent, error) {
 	e, session, ctx := r.e, r.session, r.ctx
-	execResult = execution.MergeExecResults(execResult, r.streamed.Result(execResult.ExitCode, result.Success))
+	execResult = r.mergeStreamed(execResult, execResult.ExitCode, result.Success)
 	if strings.TrimSpace(execResult.Output) == "" {
 		execResult.Output = firstNonEmpty(result.DisplayOutput, result.Transcript, result.FinalText)
+	}
+	if r.history == execution.AgentHistoryRunLog {
+		assistant := domain.SandboxEvent{ID: uuid.NewString(), Type: "agent.assistant", Level: "info", CreatedAt: time.Now().UTC(), Message: agentAssistantMessage(result)}
+		return r.completeRunStep(execResult, result, nil, assistant)
 	}
 	if err := execution.WriteCellArtifacts(r.hostCellDir, execResult); err != nil {
 		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
@@ -372,14 +376,6 @@ func (r *agentCellRun) succeed(execResult domain.ExecResult, result domain.Agent
 		assistantEvent.Type = "agent.assistant.failed"
 		assistantEvent.Level = "error"
 	}
-	for _, event := range execution.AgentTraceEvents(result.Transcript, assistantEvent.CreatedAt) {
-		if err := e.store.AddEvent(ctx, session.Summary.ID, event); err != nil {
-			return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
-		}
-		if e.streams != nil {
-			e.streams.PublishEventAdded(session.Summary.ID, event)
-		}
-	}
 	if err := e.store.AddEvent(ctx, session.Summary.ID, assistantEvent); err != nil {
 		return domain.NotebookCell{}, r.userEvent, domain.SandboxEvent{}, err
 	}
@@ -409,4 +405,12 @@ func agentAssistantMessage(result domain.AgentRunResult) string {
 		return fmt.Sprintf("%s failed without output", result.Agent)
 	}
 	return ""
+}
+
+// A fresh structured consumer owns journal acknowledgement; it starts at zero.
+func journalStreamResume(stream execution.AgentExecutionStream) *execution.AgentJournalResume {
+	if stream.OnRuntimeOutput == nil {
+		return nil
+	}
+	return &execution.AgentJournalResume{}
 }

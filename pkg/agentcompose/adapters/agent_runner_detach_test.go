@@ -350,3 +350,22 @@ func TestAgentExecutorLeavesCellRunningOnDisconnect(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentRunnerResumeUsesCheckpointedResultWithoutReplay(t *testing.T) {
+	runtime := &detachAgentRuntime{journal: []string{`{"t":"exit","code":0,"reason":"completed"}`}}
+	fixture := newDetachRunnerFixture(t, runtime)
+	resultJSON := `{"v":1,"type":"result","provider":"claude","finalText":"done","finalTextSource":"provider_message"}`
+	var exitSeen bool
+	_, parsed, err := fixture.runner.ResumeAgentRun(context.Background(), AgentResumeRequest{
+		Session: fixture.session, Agent: "claude", RunID: "run-1",
+		Detach: &AgentRunDetach{ExecutionID: "exec-1", JournalResume: &execution.AgentJournalResume{Offset: 123, ResultJSON: resultJSON}},
+	}, func(chunk domain.ExecChunk) {
+		exitSeen = chunk.Journal != nil && chunk.Journal.Exit != nil && chunk.Journal.End == 123
+	})
+	if err != nil || parsed.FinalText != "done" || !exitSeen {
+		t.Fatalf("parsed=%+v exit=%t err=%v", parsed, exitSeen, err)
+	}
+	if args := strings.Join(runtime.execs[0].Args, " "); !strings.Contains(args, "--from 123") {
+		t.Fatalf("replayed journal: %s", args)
+	}
+}

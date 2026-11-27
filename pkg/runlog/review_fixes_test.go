@@ -61,7 +61,7 @@ func TestTextOffsetsFollowTheStoredEncoding(t *testing.T) {
 	}
 }
 
-func TestCheckpointKeepsBytesDroppedBeforeTheirMarker(t *testing.T) {
+func TestCommitWritesBytesDroppedBeforeTheirMarker(t *testing.T) {
 	w, path := openTest(t, Options{MaxBytes: 600})
 	if _, err := w.AppendInitialPrompt("go"); err != nil {
 		t.Fatal(err)
@@ -76,28 +76,30 @@ func TestCheckpointKeepsBytesDroppedBeforeTheirMarker(t *testing.T) {
 	if dropped == 0 || !w.truncated {
 		t.Fatalf("cap not reached: dropped=%d", dropped)
 	}
-	if err := w.Checkpoint(1, json.RawMessage(`{}`)); err != nil {
-		t.Fatal(err)
+	if ok, err := w.Commit(1, json.RawMessage(`{}`)); err != nil || !ok {
+		t.Fatalf("commit = %v, %v", ok, err)
 	}
-	// The daemon dies before the marker is written.
-	_ = w.file.Close()
-	w.file = nil
+	if w.dropped != 0 {
+		t.Fatalf("commit left %d dropped bytes without a marker", w.dropped)
+	}
+	// The daemon dies after the commit.
+	crash(w)
 
 	reopened, err := Open(path, Options{MaxBytes: 600})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reopened.truncated || reopened.dropped != dropped {
-		t.Fatalf("reopened: truncated=%v dropped=%d, want %d", reopened.truncated, reopened.dropped, dropped)
+	if !reopened.truncated || reopened.dropped != 0 {
+		t.Fatalf("reopened: truncated=%v dropped=%d", reopened.truncated, reopened.dropped)
 	}
 	if err := reopened.AppendOutput("stdout", line); err != nil {
 		t.Fatal(err)
 	}
 	// The next kept entry closes the dropped stretch with its marker.
-	if _, err := reopened.EndTurn("stop", ""); err != nil {
+	if _, err := reopened.EndTurn("stop", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := reopened.Checkpoint(2, json.RawMessage(`{}`)); err != nil {
+	if _, err := reopened.Commit(2, json.RawMessage(`{}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := reopened.Close(); err != nil {
@@ -118,7 +120,7 @@ func TestCheckpointKeepsBytesDroppedBeforeTheirMarker(t *testing.T) {
 	}
 }
 
-func TestCheckpointStaysSmallOverALongTurn(t *testing.T) {
+func TestCommitStaysSmallOverALongTurn(t *testing.T) {
 	w, path := openTest(t, Options{})
 	if _, err := w.AppendInitialPrompt("go"); err != nil {
 		t.Fatal(err)
@@ -136,24 +138,25 @@ func TestCheckpointStaysSmallOverALongTurn(t *testing.T) {
 		if err := w.AppendAgentEvent(call); err != nil {
 			t.Fatal(err)
 		}
-		// codex resends the call; its arguments must not come back into state.
 		if err := w.AppendAgentEvent(call); err != nil {
 			t.Fatal(err)
 		}
 		if err := w.AppendAgentEvent([]byte(`{"kind":"tool_result","id":"` + id + `","ok":true,"output":"ok"}`)); err != nil {
 			t.Fatal(err)
 		}
+		if ok, err := w.Commit(uint64(i+1), json.RawMessage(`{}`)); err != nil || !ok {
+			t.Fatalf("commit %d = %v, %v", i, ok, err)
+		}
 	}
-	if err := w.Checkpoint(1, json.RawMessage(`{}`)); err != nil {
-		t.Fatal(err)
-	}
-	info, err := os.Stat(checkpointPath(path))
+	// 2 MiB of prose and 5 MiB of tool input went by in this turn; a commit
+	// carries none of it.
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 2 MiB of prose and 5 MiB of tool input went by in this turn.
-	if info.Size() > 128<<10 {
-		t.Fatalf("checkpoint is %d bytes", info.Size())
+	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	if last := lines[len(lines)-1]; !strings.Contains(last, `"type":"commit"`) || len(last) > 256 {
+		t.Fatalf("last line is %d bytes: %.200s", len(last), last)
 	}
 }
 

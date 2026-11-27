@@ -39,6 +39,19 @@ const (
 	EntryTruncated  EntryType = "truncated"
 )
 
+// Control records are log lines without a sequence number. Every reader
+// decodes lines through decodeEntry, which requires one, so they never reach
+// the text view, the structured API or a summary. They bypass the size cap,
+// which bounds what a run shows, not what its recovery needs.
+const (
+	// EntryCommit makes a journaled log durable up to and including it; see
+	// Writer.Commit.
+	EntryCommit EntryType = "commit"
+	// EntryRecord keeps a fact the log's consumer needs after a restart and
+	// cannot derive from entries, such as a process exit; see AppendRecord.
+	EntryRecord EntryType = "record"
+)
+
 // Entry is one line of a run log. Only the fields of its Type are set.
 type Entry struct {
 	Seq        uint64    `json:"seq"`
@@ -46,8 +59,9 @@ type Entry struct {
 	Turn       uint32    `json:"turn,omitempty"`
 	TextOffset uint64    `json:"text_offset"`
 	Type       EntryType `json:"type"`
-	// SourceOffset is the end of the guest journal record that produced this entry.
-	// It is internal recovery metadata, omitted from transport responses.
+	// SourceOffset is the end of the guest journal record that produced this
+	// entry; on a commit, where its consumer resumes reading the journal. It
+	// is internal recovery metadata, omitted from transport responses.
 	SourceOffset uint64 `json:"src_offset,omitempty"`
 	// SourceGap distinguishes journal retention loss from the host log cap.
 	SourceGap bool `json:"src_gap,omitempty"`
@@ -82,6 +96,15 @@ type Entry struct {
 	// not the on-disk size the cap counts; for a journal gap (SourceGap), the
 	// guest journal bytes lost.
 	DroppedBytes uint64 `json:"dropped_bytes,omitempty"`
+
+	// commit: the size cap had been reached, so later entries keep being
+	// dropped after a restart.
+	Capped bool `json:"capped,omitempty"`
+	// record: which fact it keeps.
+	Name string `json:"name,omitempty"`
+	// commit, record and turn_end: consumer data runlog keeps without
+	// interpreting it. It is internal, omitted from transport responses.
+	Control json.RawMessage `json:"control,omitempty"`
 }
 
 // Tool describes a tool call (when it was issued) or its outcome.

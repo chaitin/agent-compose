@@ -12,6 +12,17 @@ type ExecStreamAccumulator struct {
 	output strings.Builder
 }
 
+// Restore seeds an accumulator from persisted process streams before following
+// new journal bytes. Output preserves their original interleaving.
+func (a *ExecStreamAccumulator) Restore(result domain.ExecResult) {
+	a.stdout.Reset()
+	a.stderr.Reset()
+	a.output.Reset()
+	a.stdout.WriteString(result.Stdout)
+	a.stderr.WriteString(result.Stderr)
+	a.output.WriteString(result.Output)
+}
+
 func (a *ExecStreamAccumulator) WriteChunk(chunk domain.ExecChunk) {
 	if chunk.Text == "" {
 		return
