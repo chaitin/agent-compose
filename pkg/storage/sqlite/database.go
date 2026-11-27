@@ -120,6 +120,12 @@ func sqliteDSN(path string, busyTimeout time.Duration) string {
 		}
 	}
 	query := uri.Query()
+	// Deferred write transactions that read before their first write cannot be
+	// upgraded past another writer: SQLite returns SQLITE_BUSY immediately
+	// instead of invoking the busy timeout. BEGIN IMMEDIATE takes the write
+	// lock up front so busy_timeout governs the wait; read-only transactions
+	// (sql.TxOptions.ReadOnly) keep the deferred BEGIN.
+	query.Set("_txlock", "immediate")
 	query.Add("_pragma", "foreign_keys(1)")
 	query.Add("_pragma", fmt.Sprintf("busy_timeout(%d)", busyTimeout.Milliseconds()))
 	query.Add("_pragma", "journal_mode(WAL)")
