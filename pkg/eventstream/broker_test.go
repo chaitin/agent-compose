@@ -270,3 +270,26 @@ func EncodeCursorMust(t *testing.T, broker *Broker, sequence uint64) string {
 	}
 	return EncodeCursor(epoch, sequence)
 }
+
+func TestEventCatalogAndSeverityParsing(t *testing.T) {
+	types := EventTypes()
+	if len(types) == 0 || types[0] != TypeRunStatus {
+		t.Fatalf("EventTypes = %#v", types)
+	}
+	types[0] = "mutated"
+	if EventTypes()[0] != TypeRunStatus {
+		t.Fatal("EventTypes returned its backing slice")
+	}
+	if !IsKnownType(TypeRunEvent) || IsKnownType("run.unknown") {
+		t.Fatal("IsKnownType mismatch")
+	}
+	for level, want := range map[string]Severity{"": SeverityInfo, "info": SeverityInfo, "warn": SeverityWarning, "warning": SeverityWarning, "error": SeverityError, "fatal": SeverityError} {
+		if got := ParseSeverity(level); got != want {
+			t.Fatalf("ParseSeverity(%q) = %v, want %v", level, got, want)
+		}
+	}
+	filter := mustFilter(t, nil, []string{"run.*"}, SeverityInfo, true)
+	if !filter.IncludeLogs() {
+		t.Fatal("IncludeLogs false for includeLogs filter")
+	}
+}

@@ -226,3 +226,110 @@ func TestStreamEventToProtoStructuredRunAndSchedulerUpdates(t *testing.T) {
 		t.Fatalf("scheduler update proto = %+v", update)
 	}
 }
+
+func TestEventStreamWatchEventsHeartbeat(t *testing.T) {
+	cfg := eventStreamTestConfig()
+	cfg.Heartbeat = time.Second
+	broker := eventstream.NewBroker(cfg)
+	defer broker.Close()
+	client, closeServer := newEventStreamTestClient(t, NewEventStreamHandler(broker))
+	defer closeServer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	stream, err := client.WatchEvents(ctx, connect.NewRequest(&agentcomposev2.WatchEventsRequest{}))
+	if err != nil {
+		t.Fatalf("WatchEvents: %v", err)
+	}
+	if !stream.Receive() || stream.Msg().GetControl().GetKind() != agentcomposev2.StreamControl_KIND_HELLO {
+		t.Fatalf("missing HELLO: %v", stream.Err())
+	}
+	if !stream.Receive() {
+		t.Fatalf("missing heartbeat: %v", stream.Err())
+	}
+	if stream.Msg().GetControl().GetKind() != agentcomposev2.StreamControl_KIND_HEARTBEAT {
+		t.Fatalf("heartbeat frame = %+v", stream.Msg())
+	}
+}
+
+func TestEventStreamWatchEventsSubscriberLimit(t *testing.T) {
+	cfg := eventStreamTestConfig()
+	cfg.MaxSubscribers = 1
+	broker := eventstream.NewBroker(cfg)
+	defer broker.Close()
+	client, closeServer := newEventStreamTestClient(t, NewEventStreamHandler(broker))
+	defer closeServer()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first, err := client.WatchEvents(ctx, connect.NewRequest(&agentcomposev2.WatchEventsRequest{}))
+	if err != nil {
+		t.Fatalf("first WatchEvents: %v", err)
+	}
+	if !first.Receive() {
+		t.Fatalf("first HELLO: %v", first.Err())
+	}
+	second, err := client.WatchEvents(ctx, connect.NewRequest(&agentcomposev2.WatchEventsRequest{}))
+	if err == nil {
+		for second.Receive() {
+		}
+		err = second.Err()
+	}
+	if connect.CodeOf(err) != connect.CodeResourceExhausted {
+		t.Fatalf("second stream code = %s, want ResourceExhausted (err=%v)", connect.CodeOf(err), err)
+	}
+}
+
+func TestStreamEventToProtoCoversEveryPayload(t *testing.T) {
+	events := []*eventstream.Event{
+		{Type: eventstream.TypeRunStatus, RunStatus: &eventstream.RunStatusEvent{Run: domain.ProjectRunRecord{RunID: "run-1"}}},
+		{Type: eventstream.TypeRunEvent, RunEvent: &eventstream.RunEvent{Event: domain.ProjectRunEventRecord{ID: "event-1", RunID: "run-1"}}},
+		{Type: eventstream.TypeRunLog, RunLog: &eventstream.RunLogEvent{RunID: "run-1", Data: "line"}},
+		{Type: eventstream.TypeSchedulerRunStatus, SchedulerRunStatus: &eventstream.SchedulerRunStatusEvent{Run: domain.SchedulerRunSummary{ID: "srun-1"}}},
+		{Type: eventstream.TypeSchedulerEvent, SchedulerEvent: &eventstream.SchedulerEvent{Event: domain.SchedulerEvent{ID: "se-1"}}},
+		{Type: eventstream.TypeSchedulerUpdate, SchedulerUpdate: &eventstream.SchedulerUpdateEvent{SchedulerID: "scheduler-1"}},
+		{Type: eventstream.TypeSandboxStatus, SandboxStatus: &eventstream.SandboxStatusEvent{Summary: domain.SandboxSummary{ID: "sandbox-1"}}},
+		{Type: eventstream.TypeSandboxEvent, SandboxEvent: &eventstream.SandboxEvent{SandboxID: "sandbox-1", Event: domain.SandboxEvent{ID: "be-1"}}},
+		{Type: eventstream.TypeSandboxCellOutput, SandboxCellOutput: &eventstream.SandboxCellOutputEvent{SandboxID: "sandbox-1", Data: "out"}},
+	}
+	for _, event := range events {
+		mapped := streamEventToProto(event)
+		if mapped == nil || mapped.GetPayload() == nil || mapped.GetType() != event.Type {
+			t.Fatalf("map %s = %+v", event.Type, mapped)
+		}
+	}
+}
+
+func TestWatchSeverityAndSubscribeError(t *testing.T) {
+	for _, test := range []struct {
+		value agentcomposev2.EventSeverity
+		want  eventstream.Severity
+	}{
+		{agentcomposev2.EventSeverity_EVENT_SEVERITY_UNSPECIFIED, eventstream.SeverityInfo},
+		{agentcomposev2.EventSeverity_EVENT_SEVERITY_INFO, eventstream.SeverityInfo},
+		{agentcomposev2.EventSeverity_EVENT_SEVERITY_WARNING, eventstream.SeverityWarning},
+		{agentcomposev2.EventSeverity_EVENT_SEVERITY_ERROR, eventstream.SeverityError},
+	} {
+		got, err := watchSeverity(test.value)
+		if err != nil || got != test.want {
+			t.Fatalf("watchSeverity(%s) = %v, %v", test.value, got, err)
+		}
+	}
+	if _, err := watchSeverity(agentcomposev2.EventSeverity(99)); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("unknown severity error = %v", err)
+	}
+	for _, test := range []struct {
+		err  error
+		code connect.Code
+	}{
+		{eventstream.ErrDisabled, connect.CodeFailedPrecondition},
+		{eventstream.ErrClosed, connect.CodeUnavailable},
+		{eventstream.ErrTooManySubscribers, connect.CodeResourceExhausted},
+		{eventstream.ErrInvalidCursor, connect.CodeInvalidArgument},
+		{context.Canceled, connect.CodeInternal},
+	} {
+		if got := connect.CodeOf(watchSubscribeError(test.err)); got != test.code {
+			t.Fatalf("watchSubscribeError(%v) = %s, want %s", test.err, got, test.code)
+		}
+	}
+}
