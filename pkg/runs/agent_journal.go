@@ -45,6 +45,11 @@ const (
 // agent's output to reach a line boundary before it is refused.
 var humanInputQuiescenceTimeout = 30 * time.Second
 
+// heldTextFlushDelay is how long the merger may hold prose without a newline
+// after the last journal record before it is written and committed. Until a
+// commit covers them, readers see none of the turn's newer entries.
+var heldTextFlushDelay = time.Second
+
 // RestoreJournal must run before opening the guest attach. A run whose log has
 // no commit (one from an older daemon, or one that stopped before its first
 // journal record) keeps the legacy recovery boundary.
@@ -269,7 +274,55 @@ func (p *agentRunProjector) ProjectRuntimeOutput(chunk domain.ExecChunk) ([]agen
 	if err != nil {
 		return effects, err
 	}
-	return effects, p.commitJournal()
+	committed, err := p.commitJournalNow()
+	if err == nil && !committed {
+		p.scheduleHeldTextFlush()
+	}
+	return effects, err
+}
+
+// scheduleHeldTextFlush arranges for prose the merger holds to be written and
+// committed once no journal record has arrived for heldTextFlushDelay. An
+// agent that pauses mid-paragraph, to run a tool or wait for its input,
+// would otherwise hold back every entry since the last commit. The prose
+// becomes an entry like any other, so the state it leaves can be rebuilt
+// from the log; only the paragraph is split in two entries.
+func (p *agentRunProjector) scheduleHeldTextFlush() {
+	if !p.journal || p.logFailed || !p.decoder.Quiescent() {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.finished {
+		return
+	}
+	if p.heldText != nil {
+		p.heldText.Stop()
+	}
+	p.heldText = time.AfterFunc(heldTextFlushDelay, p.flushHeldText)
+}
+
+func (p *agentRunProjector) flushHeldText() {
+	p.serial <- struct{}{}
+	defer func() { <-p.serial }()
+	p.mu.Lock()
+	done := p.finished || p.terminal != nil || p.processExit != nil
+	p.mu.Unlock()
+	if done || !p.journal || p.logFailed || !p.decoder.Quiescent() {
+		return
+	}
+	p.writeLog(func(w *runlog.Writer) error { return w.Flush() })
+	_, _ = p.commitJournalNow() // A failed write is already recorded as a log fault.
+}
+
+// stopHeldTextFlush ends held-prose flushing once the execution is over.
+func (p *agentRunProjector) stopHeldTextFlush() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.finished = true
+	if p.heldText != nil {
+		p.heldText.Stop()
+	}
 }
 
 // completeCommittedAgentRun handles a crash after process exit was committed

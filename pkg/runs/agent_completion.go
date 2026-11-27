@@ -68,6 +68,7 @@ func (p *agentRunProjector) CompleteCell(cell domain.NotebookCell, assistant dom
 // frames. Both transports finish through mergeAgentExecutionOutcome; adapters
 // supply their own artifact and output representations.
 func (p *agentRunProjector) CompleteExecution(result domain.ExecResult, execErr error) (TransitionRequest, error) {
+	p.stopHeldTextFlush()
 	p.mu.Lock()
 	terminal := p.terminal
 	p.mu.Unlock()

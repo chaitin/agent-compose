@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -52,6 +53,10 @@ type agentRunProjector struct {
 	// progress is closed after each journal record, for human input waiting
 	// for the decoder to reach a line boundary; see AppendHumanMessageFrame.
 	progress chan struct{}
+	// heldText flushes prose the merger holds once the agent pauses
+	// mid-paragraph; see scheduleHeldTextFlush. finished stops it.
+	heldText *time.Timer
+	finished bool
 }
 
 // agentProjection contains use-case effects, leaving transport response mapping

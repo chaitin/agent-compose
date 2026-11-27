@@ -218,8 +218,9 @@ func (f *runLogE2E) exerciseAgent(t *testing.T, scenario string) {
 			return err == nil && runlog.Summarize(entries).ToolCalls == 1
 		})
 		writeE2EWorkspaceFile(t, f.ctx, f.execs, f.sandboxID, scenario+".phase1", "release")
-		// The answer's text is held for coalescing, so no commit covers it: the
-		// hard restart must rebuild it by replaying the journal.
+		// The answer is mid-paragraph. Whether the daemon still holds it for
+		// coalescing or already committed it after the pause, the hard restart
+		// must end with it once.
 		f.wait(t, "answer held mid-paragraph", func() bool {
 			return e2eWorkspaceFileExists(t, f.ctx, f.execs, f.sandboxID, scenario+".middle-emitted")
 		})

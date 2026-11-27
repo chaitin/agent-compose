@@ -168,3 +168,36 @@ func TestExitCommitsTextTheMergerStillHeld(t *testing.T) {
 		t.Fatalf("text=%q", text)
 	}
 }
+
+func TestHeldProseIsCommittedOnceTheAgentPauses(t *testing.T) {
+	previous := heldTextFlushDelay
+	heldTextFlushDelay = 20 * time.Millisecond
+	t.Cleanup(func() { heldTextFlushDelay = previous })
+	h := newJournalHarness(t)
+	h.push("{\"v\":1,\"seq\":1,\"type\":\"agent_event\",\"event\":{\"kind\":\"tool_call\",\"id\":\"tool-1\",\"name\":\"shell\",\"command\":\"pwd\"}}\n")
+	// The agent starts a paragraph and pauses: nothing covers the tool call
+	// yet, since the merger holds the prose for coalescing.
+	h.push("{\"v\":1,\"seq\":2,\"type\":\"agent_event\",\"event\":{\"kind\":\"text_delta\",\"text\":\"thinking \"}}\n")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		entries := committedEntries(t, h.run)
+		if text := runlog.RenderText(entries); runlog.Summarize(entries).ToolCalls == 1 && strings.HasSuffix(text, "thinking ") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("held prose never committed: %+v", entries)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// The paragraph continues in a new entry, and a restart replays nothing
+	// twice.
+	h.push("{\"v\":1,\"seq\":3,\"type\":\"agent_event\",\"event\":{\"kind\":\"text_delta\",\"text\":\"done\"}}\n")
+	h.restart()
+	h.push("{\"v\":1,\"seq\":4,\"type\":\"result\",\"finalText\":\"thinking done\",\"finalTextSource\":\"provider_message\"}\n")
+	if _, err := h.p.CompleteExecution(domain.ExecResult{Success: true}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if text := runlog.RenderText(committedEntries(t, h.run)); strings.Count(text, "thinking ") != 1 || strings.Count(text, "done") != 1 {
+		t.Fatalf("text=%q", text)
+	}
+}
