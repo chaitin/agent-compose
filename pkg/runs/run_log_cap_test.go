@@ -29,7 +29,7 @@ func TestProjectRunLogIsCappedButKeepsItsOutcome(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := w.EndTurn("stop", "done"); err != nil {
+	if _, err := w.EndTurn("stop", "done", nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := closeRunLog(context.Background(), path); err != nil {

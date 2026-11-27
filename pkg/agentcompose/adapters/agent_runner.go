@@ -333,7 +333,6 @@ func (r *AgentRunner) ResumeAgentRun(ctx context.Context, req AgentResumeRequest
 		return execution.SanitizeAgentExecResult(result), domain.AgentRunResult{}, err
 	}
 	if resume := req.Detach.JournalResume; resume != nil {
-		result.Stdout = resume.Decoder.Pending + result.Stdout
 		if resume.ResultJSON != "" {
 			result.Stdout += "\n" + resume.ResultJSON + "\n"
 		}

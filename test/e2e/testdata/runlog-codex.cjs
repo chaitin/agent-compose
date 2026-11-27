@@ -26,6 +26,8 @@ async function main() {
   if (mode === "gated") await wait("phase1");
   text += "middle:";
   emit({ type: "item.updated", item: { id: "answer", type: "agent_message", text } });
+  // The answer is now mid-paragraph, held by the daemon and not yet in its log.
+  if (mode === "gated") fs.writeFileSync(`/workspace/${token}.middle-emitted`, "");
   if (mode === "gated") await wait("finish");
   emit({ type: "item.completed", item: { id: "tool-1", type: "command_execution", command: "printf fixture-tool", aggregated_output: "fixture-tool", exit_code: 0, status: "completed" } });
   text += "after";

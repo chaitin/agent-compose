@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -138,14 +137,35 @@ func TestArchiveLogKeepsTheOriginalWhenTheArchiveDoesNotMatch(t *testing.T) {
 }
 
 func TestArchiveLogArchivesOnlyTheCommittedPrefix(t *testing.T) {
-	path, original := writeArchivableLog(t)
-	torn := append(append([]byte{}, original...), []byte(`{"seq":99`)...)
-	if err := os.WriteFile(path, torn, 0o644); err != nil {
+	dir := t.TempDir()
+	path := filepath.Join(dir, FileName)
+	w, err := Open(path, Options{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(checkpointPath(path), []byte(`{"v":1,"src_offset":0,"log_bytes":`+strconv.Itoa(len(original))+"}\n{\"state\":null,\"merger\":{}}"), 0o644); err != nil {
+	if _, err := w.AppendInitialPrompt("go"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := w.Commit(0, nil); err != nil {
+		t.Fatal(err)
+	}
+	w.SetSourceOffset(10)
+	if err := w.AppendOutput("stdout", "committed\n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Commit(10, nil); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The daemon died after appending a record it had not committed.
+	w.SetSourceOffset(20)
+	if err := w.AppendOutput("stdout", "uncommitted\n"); err != nil {
+		t.Fatal(err)
+	}
+	crash(w)
 	dst := filepath.Join(t.TempDir(), ArchivedFileName)
 	if _, err := ArchiveLog(path, dst, time.Now()); err != nil {
 		t.Fatal(err)
@@ -156,8 +176,5 @@ func TestArchiveLogArchivesOnlyTheCommittedPrefix(t *testing.T) {
 	}
 	if string(restored) != string(original) {
 		t.Fatalf("archived %d bytes, want the %d committed", len(restored), len(original))
-	}
-	if _, err := os.Stat(checkpointPath(path)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("checkpoint remains: %v", err)
 	}
 }

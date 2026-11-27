@@ -22,7 +22,7 @@ func TestFollowRunLogsReportsAnArchivedLogAsAFailedPrecondition(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = w.AppendInitialPrompt("go")
-	_, _ = w.EndTurn("stop", "done")
+	_, _ = w.EndTurn("stop", "done", nil)
 	_ = w.Close()
 	if _, err := runlog.ArchiveLog(path, filepath.Join(root, "archives", "runs", "run-1", runlog.ArchivedFileName), time.Now()); err != nil {
 		t.Fatal(err)

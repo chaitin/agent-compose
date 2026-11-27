@@ -226,12 +226,10 @@ func writeArchiveMarker(dir string, marker ArchiveMarker) error {
 	return syncDir(dir)
 }
 
-// finishArchive removes the original log and its checkpoint once the archive
-// the marker names is confirmed intact.
+// finishArchive removes the original log once the archive the marker names
+// is confirmed intact.
 func finishArchive(path string, marker ArchiveMarker) error {
-	_, logErr := os.Lstat(path)
-	_, checkpointErr := os.Lstat(checkpointPath(path))
-	if errors.Is(logErr, os.ErrNotExist) && errors.Is(checkpointErr, os.ErrNotExist) {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	digest, err := fileDigest(marker.Path)
@@ -241,10 +239,8 @@ func finishArchive(path string, marker ArchiveMarker) error {
 	if digest != marker.SHA256 {
 		return fmt.Errorf("run log archive %s does not match its marker; the original is kept", marker.Path)
 	}
-	for _, name := range []string{path, checkpointPath(path)} {
-		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove archived run log: %w", err)
-		}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove archived run log: %w", err)
 	}
 	return syncDir(filepath.Dir(path))
 }

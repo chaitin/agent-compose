@@ -2,6 +2,7 @@ package runlog
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,11 +45,10 @@ type Options struct {
 	// OnAppend runs after each entry is appended, with the entry's rendered
 	// text. It is called with the writer's lock held, in order.
 	//
-	// Once the log has a checkpoint, an entry only counts once the next
-	// Checkpoint commits it: until then a crash rolls it back. OnAppend is
-	// then deferred to that Checkpoint, and entries appended after the last
-	// one are never reported, not even by Close; the next Open rolls them
-	// back and replaying the journal appends and reports them again.
+	// Once the log has a commit, an entry only counts once the next Commit
+	// covers it: until then a crash rolls it back. OnAppend is then deferred
+	// to that Commit; the next Open rolls back entries no commit covered, and
+	// replaying the journal appends and reports them again.
 	OnAppend func(entry Entry, rendered string)
 }
 
@@ -75,21 +75,23 @@ type Writer struct {
 	size         int64
 	truncated    bool
 	// dropped counts the rendered bytes dropped since the last marker.
-	dropped       uint64
-	sourceOffset  uint64
-	recovery      *Recovery
+	dropped      uint64
+	sourceOffset uint64
+	// resume is the last commit, nil until the log has one.
+	resume *Resume
+	// pendingRecords are records appended since the last commit.
+	pendingRecords map[string]json.RawMessage
+	// uncommitted reports whether lines were appended since the last commit.
+	uncommitted   bool
 	notifications []Entry
-	// changed reports whether merger or writer state moved since the last
-	// checkpoint, including changes that wrote no bytes: text held for
-	// coalescing, or entries the cap dropped.
-	changed bool
 }
 
 // Open opens the run log at path for appending, creating it if needed. An
 // existing log is scanned so sequence numbers, text offsets, the current
 // turn and the tool calls already recorded continue where they stopped,
-// which is what a re-attached run needs after a daemon restart. A line torn
-// by a crash mid-write is cut off.
+// which is what a re-attached run needs after a daemon restart. A journaled
+// log is first rolled back to its last commit, and a line torn by a crash
+// mid-write is cut off.
 func Open(path string, opts Options) (*Writer, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -106,13 +108,8 @@ func Open(path string, opts Options) (*Writer, error) {
 		return nil, archived
 	}
 	w := &Writer{opts: opts, merger: NewMerger(opts.ToolOutputHalf), textEndsLine: true}
-	recovery, err := recoverCheckpoint(path)
-	if err != nil {
+	if _, err := rollBack(path); err != nil {
 		return nil, err
-	}
-	w.recovery = recovery
-	if recovery != nil {
-		w.sourceOffset = recovery.SourceOffset
 	}
 	if err := w.recover(path); err != nil {
 		return nil, err
@@ -122,15 +119,6 @@ func Open(path string, opts Options) (*Writer, error) {
 		return nil, fmt.Errorf("open run log %s: %w", path, err)
 	}
 	w.file = file
-	if recovery != nil && recovery.merger != nil {
-		w.merger.restoreCheckpoint(recovery.merger)
-	}
-	if recovery != nil && recovery.writer != nil {
-		// Entries dropped by the cap before the checkpoint leave no line
-		// until their marker is written; only the checkpoint remembers them.
-		w.truncated = w.truncated || recovery.writer.Truncated
-		w.dropped = recovery.writer.Dropped
-	}
 	return w, nil
 }
 
@@ -161,9 +149,13 @@ func (w *Writer) recover(path string) error {
 		good += line.bytes
 		w.size = good
 		entry, ok := decodeEntry(line.data)
+		if !ok {
+			w.recoverControl(line.data)
+			continue
+		}
 		// Sequence numbers only grow; a line that would move them back did
 		// not come from this writer and must not reset its position.
-		if !ok || entry.Seq <= w.seq {
+		if entry.Seq <= w.seq {
 			continue
 		}
 		w.seq = entry.Seq
@@ -180,7 +172,37 @@ func (w *Writer) recover(path string) error {
 		}
 		w.merger.Recover(entry)
 	}
+	if w.resume != nil {
+		w.resume.Records, w.pendingRecords = w.pendingRecords, nil
+		if w.resume.Records == nil {
+			w.resume.Records = map[string]json.RawMessage{}
+		}
+		w.sourceOffset = w.resume.Offset
+	}
 	return nil
+}
+
+// recoverControl takes in a control line of the log being reopened. Rollback
+// already cut off everything after the last commit, so every record seen is
+// committed by the time the scan ends.
+func (w *Writer) recoverControl(line []byte) {
+	var control Entry
+	if line == nil || json.Unmarshal(line, &control) != nil || control.Seq != 0 {
+		return
+	}
+	switch control.Type {
+	case EntryCommit:
+		w.resume = &Resume{Offset: control.SourceOffset, State: bytes.Clone(control.Control)}
+		w.truncated = w.truncated || control.Capped
+	case EntryRecord:
+		if control.Name == "" {
+			return
+		}
+		if w.pendingRecords == nil {
+			w.pendingRecords = map[string]json.RawMessage{}
+		}
+		w.pendingRecords[control.Name] = bytes.Clone(control.Control)
+	}
 }
 
 // Seq is the sequence number of the last entry, 0 for an empty log.
@@ -237,15 +259,21 @@ func (w *Writer) AppendAgentEvent(raw []byte) error {
 	return w.appendAllLocked(pending)
 }
 
-// EndTurn closes the current turn and returns its turn end entry.
-func (w *Writer) EndTurn(stopReason, finalText string) (Entry, error) {
+// EndTurn closes the current turn and returns its turn end entry. control,
+// when set, is kept on the entry for the consumer, like a record.
+func (w *Writer) EndTurn(stopReason, finalText string, control json.RawMessage) (Entry, error) {
+	if len(control) > 0 && !json.Valid(control) {
+		return Entry{}, errors.New("invalid run log turn end control")
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	pending := w.merger.EndTurn(stopReason, finalText)
 	if err := w.appendAllLocked(pending[:len(pending)-1]); err != nil {
 		return Entry{}, err
 	}
-	return w.appendLocked(pending[len(pending)-1])
+	end := pending[len(pending)-1]
+	end.Entry.Control = control
+	return w.appendLocked(end)
 }
 
 // Flush writes text still buffered for coalescing.
@@ -255,36 +283,43 @@ func (w *Writer) Flush() error {
 	return w.appendAllLocked(w.merger.FlushText())
 }
 
-// Close flushes buffered text and closes the file. Entries a checkpointed
-// log appended since its last Checkpoint are not reported to OnAppend; see
-// Options.OnAppend.
+// Close flushes buffered text, writes the marker for bytes the cap dropped and
+// closes the file. Closing finishes the log: its run is over, nothing will
+// replay its journal, so a journaled log gets a last commit covering all of
+// it, whatever the merger still held.
 func (w *Writer) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.file == nil {
 		return nil
 	}
-	// Close writes the text still held for coalescing and the marker for
-	// bytes the cap dropped. On a checkpointed log readers see only what the
-	// last checkpoint committed. When nothing changed since then, these come
-	// from state that checkpoint already held, so they are committed too, with
-	// the consumer's state unchanged. Otherwise they may include input the
-	// consumer will replay from the checkpoint, and stay uncommitted.
-	committed := w.recovery != nil && !w.changed
 	flushErr := w.appendAllLocked(w.merger.FlushText())
 	if flushErr == nil {
 		flushErr = w.writeDroppedLocked(w.turn)
 	}
-	if flushErr == nil && committed && w.size != w.recovery.LogBytes {
-		flushErr = w.checkpointLocked(w.recovery.SourceOffset, w.recovery.State)
+	if flushErr == nil && w.resume != nil && (w.uncommitted || len(w.notifications) > 0) {
+		flushErr = w.commitLocked(w.sourceOffset, w.resume.State)
 	}
 	closeErr := w.file.Close()
 	w.file = nil
 	return errors.Join(flushErr, closeErr)
 }
 
+// Abandon closes the file the way a daemon stopping does: nothing the merger
+// holds is flushed and nothing is committed, so the next Open rolls the log
+// back to its last commit. Use Close when the log's run is over.
+func (w *Writer) Abandon() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.file == nil {
+		return nil
+	}
+	err := w.file.Close()
+	w.file = nil
+	return err
+}
+
 func (w *Writer) appendAllLocked(pending []Pending) error {
-	w.changed = true
 	for _, p := range pending {
 		if _, err := w.appendLocked(p); err != nil {
 			return err
@@ -295,7 +330,6 @@ func (w *Writer) appendAllLocked(pending []Pending) error {
 
 // appendLocked gives the entry its position and writes it, applying the cap.
 func (w *Writer) appendLocked(p Pending) (Entry, error) {
-	w.changed = true
 	if w.file == nil {
 		return Entry{}, errors.New("run log is closed")
 	}
@@ -374,8 +408,9 @@ func (w *Writer) writeLocked(entry Entry) (Entry, error) {
 		w.textEndsLine = strings.HasSuffix(rendered, "\n")
 	}
 	w.size += int64(len(line))
+	w.uncommitted = true
 	if w.opts.OnAppend != nil {
-		if w.recovery != nil {
+		if w.resume != nil {
 			w.notifications = append(w.notifications, entry)
 		} else {
 			w.opts.OnAppend(entry, rendered)

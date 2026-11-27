@@ -72,7 +72,7 @@ func (v *TextView) Size() uint64 {
 }
 
 // Refresh extends the view to the complete lines committed since the last
-// Refresh. A log cut back by checkpoint recovery is taken in from scratch.
+// Refresh. A log rolled back to its last commit is taken in from scratch.
 func (v *TextView) Refresh() error {
 	limit, err := committedLogBytes(v.file)
 	if err != nil {

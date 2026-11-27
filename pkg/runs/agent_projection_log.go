@@ -1,19 +1,56 @@
 package runs
 
 import (
+	"errors"
 	"strings"
+	"time"
 
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runlog"
 )
 
+// AppendHumanMessageFrame records human input before it is sent to the agent.
+// A journaled run commits it on its own first: the journal cannot replay
+// input that came from the host. A commit needs the decoder at a line
+// boundary, so the input waits for the agent's output to reach one.
 func (p *agentRunProjector) AppendHumanMessageFrame(message, clientFrameID string) error {
-	p.serial <- struct{}{}
+	if err := p.acquireQuiescent(); err != nil {
+		return err
+	}
 	defer func() { <-p.serial }()
 	if err := p.appendHumanMessageFrame(message, clientFrameID); err != nil {
 		return err
 	}
-	return p.checkpointJournal()
+	committed, err := p.commitJournalNow()
+	if err != nil {
+		return err
+	}
+	if p.journal && !p.logFailed && !committed {
+		return errors.New("human message could not be committed to the run log")
+	}
+	return nil
+}
+
+// acquireQuiescent takes serial once the decoder holds no partial protocol
+// line, or the run needs no commit.
+func (p *agentRunProjector) acquireQuiescent() error {
+	timeout := time.NewTimer(humanInputQuiescenceTimeout)
+	defer timeout.Stop()
+	for {
+		progress := p.progressSignal()
+		p.serial <- struct{}{}
+		if !p.journal || p.logFailed || p.decoder.Quiescent() {
+			return nil
+		}
+		<-p.serial
+		select {
+		case <-progress:
+		case <-timeout.C:
+			return errors.New("human message not sent: the agent's output did not reach a line boundary")
+		case <-p.eventCtx.Done():
+			return p.eventCtx.Err()
+		}
+	}
 }
 
 func (p *agentRunProjector) appendHumanMessageFrame(message, clientFrameID string) error {
@@ -72,7 +109,7 @@ func (p *agentRunProjector) AppendOutput(chunk domain.ExecChunk) error {
 	if err := p.appendOutput(chunk); err != nil {
 		return err
 	}
-	return p.checkpointJournal()
+	return p.commitJournal()
 }
 
 func (p *agentRunProjector) appendOutput(chunk domain.ExecChunk) error {

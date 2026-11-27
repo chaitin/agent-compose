@@ -29,7 +29,7 @@ func (c *Controller) ReattachDetachedRun(ctx context.Context, run domain.Project
 	if err != nil {
 		return run, err
 	}
-	if finished, handled, err := c.completeCheckpointedAgentRun(transitionCtx, ctx, run, sandbox); handled {
+	if finished, handled, err := c.completeCommittedAgentRun(transitionCtx, ctx, run, sandbox); handled {
 		return finished, err
 	}
 	if sandbox.Summary.VMStatus != domain.VMStatusRunning {

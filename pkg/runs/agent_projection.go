@@ -49,6 +49,9 @@ type agentRunProjector struct {
 	terminal           *TransitionRequest
 	lastFrameSeq       uint64
 	hasFrameSeq        bool
+	// progress is closed after each journal record, for human input waiting
+	// for the decoder to reach a line boundary; see AppendHumanMessageFrame.
+	progress chan struct{}
 }
 
 // agentProjection contains use-case effects, leaving transport response mapping
@@ -76,7 +79,7 @@ func (p *agentRunProjector) ProjectFrame(frame execution.AgentFrame) (agentProje
 	if err != nil {
 		return effect, err
 	}
-	return effect, p.checkpointJournal()
+	return effect, p.commitJournal()
 }
 
 func (p *agentRunProjector) projectFrameOnce(frame execution.AgentFrame) (agentProjection, error) {
@@ -102,12 +105,20 @@ func (p *agentRunProjector) projectFrameOnce(frame execution.AgentFrame) (agentP
 	if sequenced {
 		p.lastFrameSeq, p.hasFrameSeq = frame.Seq, true
 	}
+	var terminal *TransitionRequest
 	if projection.Terminal != nil {
-		terminal := *projection.Terminal
-		terminal.TerminalEvents = append([]domain.ProjectRunEventRecord(nil), terminal.TerminalEvents...)
-		p.terminal = &terminal
+		copied := *projection.Terminal
+		copied.TerminalEvents = append([]domain.ProjectRunEventRecord(nil), copied.TerminalEvents...)
+		p.terminal, terminal = &copied, &copied
 	}
 	p.mu.Unlock()
+	if terminal != nil {
+		// The terminal frame is behind the commit a restart resumes from, so
+		// its outcome is kept rather than replayed.
+		if err := p.appendRecord(agentTerminalRecord, terminal); err != nil {
+			return projection, err
+		}
+	}
 	return projection, nil
 }
 
@@ -160,7 +171,7 @@ func (p *agentRunProjector) projectFrame(frame execution.AgentFrame) (agentProje
 		if err := p.appendAgentEvent(event, "", false); err != nil {
 			return out, err
 		}
-		if _, err := p.endTurn(firstNonEmpty(frame.StopReason, "error"), "", ""); err != nil {
+		if _, err := p.endTurn(firstNonEmpty(frame.StopReason, "error"), "", "", nil); err != nil {
 			return out, err
 		}
 		transition := transitionFromAgentFrame(p.run, p.sandbox, agentFrameOutcome{
@@ -189,8 +200,14 @@ func (p *agentRunProjector) closeTurn(frame execution.AgentFrame) error {
 		p.pendingMessages = append(p.pendingMessages, p.turnMessages...)
 		p.messageProjected = true
 	}
+	// A completed interactive turn persists its messages before the record
+	// that closed it commits; a run's last turn persists them with the run.
+	control, err := json.Marshal(agentTurnControl{Messages: p.turnMessages, Persisted: frame.Type == "agent_turn_completed"})
 	p.mu.Unlock()
-	seq, err := p.endTurn(frame.StopReason, frame.FinalText, frame.FinalTextSource)
+	if err != nil {
+		return fmt.Errorf("encode agent turn end: %w", err)
+	}
+	seq, err := p.endTurn(frame.StopReason, frame.FinalText, frame.FinalTextSource, control)
 	if err != nil {
 		return err
 	}
@@ -207,7 +224,7 @@ func (p *agentRunProjector) closeTurn(frame execution.AgentFrame) error {
 	return nil
 }
 
-func (p *agentRunProjector) endTurn(stopReason, finalText string, source domain.AgentFinalTextSource) (uint64, error) {
+func (p *agentRunProjector) endTurn(stopReason, finalText string, source domain.AgentFinalTextSource, control json.RawMessage) (uint64, error) {
 	p.mu.Lock()
 	closed, seq := p.turnEnded, p.turnEndSeq
 	p.mu.Unlock()
@@ -235,7 +252,7 @@ func (p *agentRunProjector) endTurn(stopReason, finalText string, source domain.
 					return err
 				}
 			}
-			entry, err := w.EndTurn(stopReason, finalText)
+			entry, err := w.EndTurn(stopReason, finalText, control)
 			if err == nil {
 				seq = entry.Seq
 			}

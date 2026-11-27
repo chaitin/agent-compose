@@ -18,11 +18,10 @@ func TestIntegrationAgentJournalRestoresSplitFramesAndTurnLifecycle(t *testing.T
 			store := &projectorEventStore{keys: map[string]struct{}{}}
 			p := newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)
 			p.events = store
+			var journal testJournal
 			var offset uint64
-			push := func(text string, stream domain.StdioStream) {
+			deliver := func(chunk domain.ExecChunk) {
 				t.Helper()
-				offset += uint64(len(text))
-				chunk := domain.ExecChunk{Text: text, Stream: stream, Journal: &domain.JournalPosition{End: offset}}
 				if transport == "exec" {
 					callbacks := projectRunAgentExecutionStream(context.Background(), agentExecutionStreamRequest{Run: run, Projector: p})
 					if err := callbacks.OnRuntimeOutput(chunk); err != nil {
@@ -35,36 +34,41 @@ func TestIntegrationAgentJournalRestoresSplitFramesAndTurnLifecycle(t *testing.T
 					}
 				}
 			}
+			push := func(text string, stream domain.StdioStream) {
+				t.Helper()
+				offset += uint64(len(text))
+				deliver(journal.record(domain.ExecChunk{Text: text, Stream: stream, Journal: &domain.JournalPosition{End: offset}}))
+			}
+			// restart stops the daemon without closing the log, then reads the
+			// journal again from where the projector resumes.
 			restart := func() *execution.AgentJournalResume {
 				t.Helper()
-				if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
-					t.Fatal(err)
-				}
+				abandonRunLog(t, run.LogsPath)
 				p = newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)
 				p.events = store
 				resume, err := p.RestoreJournal()
-				if err != nil || resume == nil || resume.Offset != offset {
+				if err != nil || resume == nil || resume.Offset > offset {
 					t.Fatalf("resume=%+v offset=%d err=%v", resume, offset, err)
+				}
+				for _, chunk := range journal.after(resume.Offset) {
+					deliver(chunk)
 				}
 				return resume
 			}
 			push(`{"v":1,"seq":1,"type":"agent_event","event":{"kind":"text_delta","text":"hel`, domain.StdioStdout)
+			splitAt := offset
 			push("warning\n", domain.StdioStderr)
-			recovery := restart()
-			if !strings.HasSuffix(recovery.Decoder.Pending, "hel") {
-				t.Fatalf("decoder=%+v", recovery.Decoder)
+			// Half a frame cannot be committed: the restart replays it whole.
+			if resume := restart(); resume.Offset >= splitAt {
+				t.Fatalf("committed inside a split frame: %+v", resume)
 			}
 			push("lo\"}}\n", domain.StdioStdout)
-			tool := "{\"v\":1,\"seq\":2,\"type\":\"agent_event\",\"event\":{\"kind\":\"tool_call\",\"id\":\"same\",\"name\":\"shell\",\"command\":\"pwd\"}}\n"
-			push(tool, domain.StdioStdout)
+			push("{\"v\":1,\"seq\":2,\"type\":\"agent_event\",\"event\":{\"kind\":\"tool_call\",\"id\":\"same\",\"name\":\"shell\",\"command\":\"pwd\"}}\n", domain.StdioStdout)
 			restart()
-			push(tool, domain.StdioStdout)
-			completion := "{\"v\":1,\"seq\":3,\"type\":\"agent_turn_completed\",\"finalText\":\"hello done\",\"finalTextSource\":\"provider_message\"}\n"
-			push(completion, domain.StdioStdout)
+			push("{\"v\":1,\"seq\":3,\"type\":\"agent_turn_completed\",\"finalText\":\"hello done\",\"finalTextSource\":\"provider_message\"}\n", domain.StdioStdout)
 			restart()
-			push(completion, domain.StdioStdout)
 			push("{\"v\":1,\"seq\":4,\"type\":\"result\",\"finalText\":\"hello done\",\"finalTextSource\":\"provider_message\"}\n", domain.StdioStdout)
-			recovery = restart()
+			recovery := restart()
 			if !json.Valid([]byte(recovery.ResultJSON)) {
 				t.Fatalf("lost terminal result: %+v", recovery)
 			}
@@ -95,21 +99,23 @@ func TestIntegrationAgentJournalRestoresSplitFramesAndTurnLifecycle(t *testing.T
 func TestIntegrationAgentJournalRestoresGapAndKeepsLaterOutput(t *testing.T) {
 	run := projectionTestRun(t)
 	p := newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)
+	var journal testJournal
 	push := func(p *agentRunProjector, chunk domain.ExecChunk) {
 		t.Helper()
 		if _, err := p.ProjectRuntimeOutput(chunk); err != nil {
 			t.Fatal(err)
 		}
 	}
-	push(p, domain.ExecChunk{Text: `{"type":"agent_event","event":`, Journal: &domain.JournalPosition{End: 30}})
-	push(p, domain.ExecChunk{Journal: &domain.JournalPosition{End: 90, Gap: &domain.JournalGap{From: 30, To: 90}}})
-	if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
-		t.Fatal(err)
-	}
+	push(p, journal.record(domain.ExecChunk{Text: `{"type":"agent_event","event":`, Journal: &domain.JournalPosition{End: 30}}))
+	push(p, journal.record(domain.ExecChunk{Journal: &domain.JournalPosition{End: 90, Gap: &domain.JournalGap{From: 30, To: 90}}}))
+	abandonRunLog(t, run.LogsPath)
 	p = newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)
 	recovery, err := p.RestoreJournal()
-	if err != nil || recovery == nil || recovery.Offset != 90 {
-		t.Fatalf("recovery=%+v err=%v", recovery, err)
+	if err != nil || recovery == nil || recovery.Offset != 0 {
+		t.Fatalf("recovery=%+v err=%v; a line discarded after a gap is not a commit point", recovery, err)
+	}
+	for _, chunk := range journal.after(recovery.Offset) {
+		push(p, chunk)
 	}
 	push(p, domain.ExecChunk{Text: "broken suffix\n{\"type\":\"result\",\"finalText\":\"after gap\",\"finalTextSource\":\"provider_message\"}\n", Journal: &domain.JournalPosition{End: 200}})
 	entries := readProjectionLog(t, run)
@@ -128,7 +134,7 @@ func TestIntegrationAgentJournalRestoresGapAndKeepsLaterOutput(t *testing.T) {
 	}
 }
 
-func TestIntegrationCheckpointedAgentExitCompletesWithoutGuestJournal(t *testing.T) {
+func TestIntegrationCommittedAgentExitCompletesWithoutGuestJournal(t *testing.T) {
 	for _, kind := range []string{domain.DetachKindAgent, domain.DetachKindInteractivePrompt} {
 		for _, exitCode := range []int{0, 7} {
 			t.Run(kind+string(rune('0'+exitCode)), func(t *testing.T) {
@@ -154,10 +160,9 @@ func TestIntegrationCheckpointedAgentExitCompletesWithoutGuestJournal(t *testing
 				if _, err := p.ProjectRuntimeOutput(domain.ExecChunk{Journal: &domain.JournalPosition{End: 100, Exit: &domain.JournalExit{Result: domain.ExecResult{ExitCode: exitCode, Success: exitCode == 0}}}}); err != nil {
 					t.Fatal(err)
 				}
-				if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
-					t.Fatal(err)
-				}
-				// Simulate restart after journal cleanup and even sandbox shutdown.
+				// The daemon dies after committing the exit, before the run's
+				// terminal transaction; the journal and even the sandbox are gone.
+				abandonRunLog(t, run.LogsPath)
 				sandbox.Summary.VMStatus = domain.VMStatusStopped
 				if err := controller.store.UpdateSandbox(context.Background(), sandbox); err != nil {
 					t.Fatal(err)
@@ -175,7 +180,7 @@ func TestIntegrationCheckpointedAgentExitCompletesWithoutGuestJournal(t *testing
 					t.Fatalf("run=%+v resume=%+v", got, resumer.resumed)
 				}
 				if got.Output != "done" {
-					t.Fatalf("lost checkpointed result: %+v", got)
+					t.Fatalf("lost the committed result: %+v", got)
 				}
 			})
 		}
@@ -191,9 +196,7 @@ func TestIntegrationAgentJournalFlushesFinalResultWithoutNewline(t *testing.T) {
 	if _, err := p.ProjectRuntimeOutput(domain.ExecChunk{Journal: &domain.JournalPosition{End: 90, Exit: &domain.JournalExit{Result: domain.ExecResult{Success: true}}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := closeRunLog(context.Background(), run.LogsPath); err != nil {
-		t.Fatal(err)
-	}
+	abandonRunLog(t, run.LogsPath)
 	p = newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)
 	recovered, err := p.RestoreJournal()
 	if err != nil || recovered == nil || recovered.Exit == nil || recovered.ResultJSON == "" {

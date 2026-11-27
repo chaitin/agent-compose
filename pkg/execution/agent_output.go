@@ -88,7 +88,9 @@ func (d *AgentOutputDecoder) Push(chunk domain.ExecChunk, emit func(AgentOutput)
 // marker is an error, rather than visible user output.
 func (d *AgentOutputDecoder) Flush(emit func(AgentOutput) error) error {
 	if d.discard {
+		// Nothing follows a final flush, so the discarded line ends here.
 		d.partial.Reset()
+		d.discard = false
 		return nil
 	}
 	if d.partial.Len() == 0 {
@@ -137,25 +139,28 @@ func StripAgentProtocolLines(text string) string {
 	return visible.String()
 }
 
-// AgentDecoderState preserves a stdout line split across journal records.
+// AgentDecoderState is what the decoder carries across a commit: whether the
+// next stdout byte continues an ordinary output line. A consumer only commits
+// where the decoder is quiescent, so there is never half a protocol line to
+// keep; replaying the journal from the commit delivers the next line whole.
 type AgentDecoderState struct {
-	Pending string `json:"pending,omitempty"`
-	Plain   bool   `json:"plain,omitempty"`
-	Discard bool   `json:"discard,omitempty"`
+	Plain bool `json:"plain,omitempty"`
 }
 
 func (d *AgentOutputDecoder) Snapshot() AgentDecoderState {
-	return AgentDecoderState{Pending: d.partial.String(), Plain: d.plain, Discard: d.discard}
+	return AgentDecoderState{Plain: d.plain}
 }
 
-func (d *AgentOutputDecoder) Restore(state AgentDecoderState) error {
-	if len(state.Pending) > maxAgentFrameBytes {
-		return fmt.Errorf("saved agent protocol line exceeds %d bytes", maxAgentFrameBytes)
-	}
+func (d *AgentOutputDecoder) Restore(state AgentDecoderState) {
 	d.partial.Reset()
-	d.partial.WriteString(state.Pending)
-	d.plain, d.discard = state.Plain, state.Discard
-	return nil
+	d.plain, d.discard = state.Plain, false
+}
+
+// Quiescent reports whether everything pushed so far has been delivered: no
+// protocol line is waiting for its newline and no line is being discarded
+// after a gap. Only then does Snapshot describe the decoder fully.
+func (d *AgentOutputDecoder) Quiescent() bool {
+	return d.partial.Len() == 0 && !d.discard
 }
 
 // DiscardGap abandons an interrupted stdout line after journal retention loss.

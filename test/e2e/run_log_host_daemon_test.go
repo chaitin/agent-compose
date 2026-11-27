@@ -1,7 +1,6 @@
 package e2e
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -13,6 +12,7 @@ import (
 
 	"connectrpc.com/connect"
 
+	"github.com/chaitin/agent-compose/pkg/runlog"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
 	"github.com/chaitin/agent-compose/proto/agentcompose/v2/agentcomposev2connect"
 )
@@ -36,7 +36,7 @@ func TestE2ERunLogHostDaemon(t *testing.T) {
 			t.Fatalf("unknown driver %q", driver)
 		}
 		t.Run(driver, func(t *testing.T) {
-			for _, scenario := range []string{"normal", "restart", "log-failure-restart", "interactive-restart", "interactive-log-failure-restart"} {
+			for _, scenario := range []string{"normal", "restart", "interactive-restart"} {
 				t.Run(scenario, func(t *testing.T) {
 					if driver == "k8s" && strings.HasPrefix(scenario, "interactive-") {
 						t.Skip("k8s currently rejects interactive command transport (native_exec/wrapper stream unsupported)")
@@ -190,7 +190,6 @@ agents:
 func (f *runLogE2E) exerciseAgent(t *testing.T, scenario string) {
 	t.Helper()
 	interactive := strings.HasPrefix(scenario, "interactive-")
-	fault := strings.Contains(scenario, "log-failure")
 	mode := "gated"
 	if scenario == "normal" {
 		mode = "immediate"
@@ -209,35 +208,25 @@ func (f *runLogE2E) exerciseAgent(t *testing.T, scenario string) {
 	}
 	logPath := filepath.Join(f.root, "data", "runs", runID, "run.log.jsonl")
 	if scenario != "normal" {
-		f.wait(t, "persisted partial answer", func() bool {
+		f.wait(t, "committed tool call", func() bool {
 			run := f.get(t, runID)
 			f.sandboxID = run.GetSummary().GetSandboxId()
 			if status := run.GetSummary().GetStatus(); status == agentcomposev2.RunStatus_RUN_STATUS_FAILED || status == agentcomposev2.RunStatus_RUN_STATUS_CANCELED {
-				t.Fatalf("run failed before checkpoint: %s\ndaemon log:\n%s", run, f.daemon.logs.String())
+				t.Fatalf("run failed before its first commit: %s\ndaemon log:\n%s", run, f.daemon.logs.String())
 			}
-			data, err := os.ReadFile(logPath + ".checkpoint.json")
-			return err == nil && bytes.Contains(data, []byte("before:"))
+			entries, err := runlog.ReadEntries(logPath, 0)
+			return err == nil && runlog.Summarize(entries).ToolCalls == 1
 		})
-		if fault {
-			if err := os.Rename(logPath+".checkpoint.json", logPath+".checkpoint.saved"); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Mkdir(logPath+".checkpoint.json", 0o755); err != nil {
-				t.Fatal(err)
-			}
-		}
 		writeE2EWorkspaceFile(t, f.ctx, f.execs, f.sandboxID, scenario+".phase1", "release")
-		f.wait(t, "committed middle answer", func() bool {
-			if fault {
-				return f.get(t, runID).GetSummary().GetLogIncomplete()
-			}
-			data, err := os.ReadFile(logPath + ".checkpoint.json")
-			return err == nil && bytes.Contains(data, []byte("middle:"))
+		// The answer's text is held for coalescing, so no commit covers it: the
+		// hard restart must rebuild it by replaying the journal.
+		f.wait(t, "answer held mid-paragraph", func() bool {
+			return e2eWorkspaceFileExists(t, f.ctx, f.execs, f.sandboxID, scenario+".middle-emitted")
 		})
 		oldDaemon := f.daemon
 		oldDaemon.hardKill(t)
 		f.restart(t)
-		t.Logf("hard restart completed: driver=%s run=%s log_failure=%t interactive=%t", f.driver, runID, fault, interactive)
+		t.Logf("hard restart completed: driver=%s run=%s interactive=%t", f.driver, runID, interactive)
 		writeE2EWorkspaceFile(t, f.ctx, f.execs, f.sandboxID, scenario+".finish", "release")
 	}
 	expected := []string{runLogE2EAnswer(scenario)}
@@ -250,23 +239,19 @@ func (f *runLogE2E) exerciseAgent(t *testing.T, scenario string) {
 	})
 	run := f.get(t, runID)
 	f.sandboxID = run.GetSummary().GetSandboxId()
-	if run.GetSummary().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED || run.GetSummary().GetLogIncomplete() != fault {
+	if run.GetSummary().GetStatus() != agentcomposev2.RunStatus_RUN_STATUS_SUCCEEDED || run.GetSummary().GetLogIncomplete() {
 		t.Fatalf("run outcome: %s", run)
 	}
-	f.assertMessages(t, runID, expected, fault)
-	if !fault {
-		f.assertLog(t, runID, expected)
-	}
+	f.assertMessages(t, runID, expected, false)
+	f.assertLog(t, runID, expected)
 	f.assertNoAgentCells(t)
 	// History belongs to the run and must survive removal of its sandbox.
 	if _, err := f.sandboxes.RemoveSandbox(f.ctx, connect.NewRequest(&agentcomposev2.RemoveSandboxRequest{SandboxId: f.sandboxID, Force: true})); err != nil {
 		t.Fatal(err)
 	}
 	f.sandboxID = ""
-	f.assertMessages(t, runID, expected, fault)
-	if !fault {
-		f.assertLog(t, runID, expected)
-	}
+	f.assertMessages(t, runID, expected, false)
+	f.assertLog(t, runID, expected)
 	t.Logf("verified outcome, messages, log health, storage and removal: driver=%s scenario=%s", f.driver, scenario)
 }
 
@@ -297,4 +282,10 @@ func (f *runLogE2E) wait(t *testing.T, description string, ready func() bool) {
 		case <-ticker.C:
 		}
 	}
+}
+
+func e2eWorkspaceFileExists(t *testing.T, ctx context.Context, client agentcomposev2connect.ExecServiceClient, sandboxID, name string) bool {
+	t.Helper()
+	result := runE2EWorkspaceCommand(t, ctx, client, sandboxID, "test", "-f", cleanE2EWorkspaceRelativePath(t, name))
+	return result.GetSuccess() && result.GetExitCode() == 0
 }

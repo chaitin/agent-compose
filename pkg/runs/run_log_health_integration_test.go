@@ -15,26 +15,20 @@ import (
 
 type logHealthTestStore struct {
 	projectorEventStore
-	incomplete    bool
-	checkpoint    string
-	checkpointErr error
+	incomplete bool
 }
 
 func (s *logHealthTestStore) MarkProjectRunLogIncomplete(context.Context, string) error {
 	s.incomplete = true
 	return nil
 }
-func (s *logHealthTestStore) SaveProjectRunExecutionCheckpoint(_ context.Context, _, checkpoint string) error {
-	if s.checkpointErr != nil {
-		return s.checkpointErr
-	}
-	s.incomplete, s.checkpoint = true, checkpoint
-	return nil
-}
 
-func TestIntegrationAgentLogFailurePreservesOutcomeAndRecovery(t *testing.T) {
+// A run whose log cannot be written still finishes with its real outcome and
+// is marked incomplete. With no commit to resume from, a restart falls back to
+// replaying the journal from the start.
+func TestIntegrationAgentLogFailurePreservesOutcome(t *testing.T) {
 	for _, transport := range []string{"exec", "attach"} {
-		for _, fault := range []string{"open", "append", "checkpoint"} {
+		for _, fault := range []string{"open", "append"} {
 			t.Run(transport+"/"+fault, func(t *testing.T) {
 				ctx := context.Background()
 				run := projectionTestRun(t)
@@ -51,26 +45,13 @@ func TestIntegrationAgentLogFailurePreservesOutcomeAndRecovery(t *testing.T) {
 						t.Fatal(err)
 					}
 					// Leave the cached writer closed to simulate an append I/O failure.
-					if err := w.Close(); err != nil {
-						t.Fatal(err)
-					}
-				case "checkpoint":
-					if _, err := runLogWriter(context.Background(), run, nil); err != nil {
-						t.Fatal(err)
-					}
-					// A directory at the checkpoint destination makes atomic publication fail.
-					if err := os.Mkdir(run.LogsPath+".checkpoint.json", 0o755); err != nil {
+					if err := w.Abandon(); err != nil {
 						t.Fatal(err)
 					}
 				}
 				store := &logHealthTestStore{projectorEventStore: projectorEventStore{keys: map[string]struct{}{}}}
 				p := newAgentRunProjector(ctx, run, nil, run.LogsPath, nil)
 				p.bindStore(store)
-				if fault == "append" {
-					if err := p.AppendOutput(domain.ExecChunk{Text: "warning"}); err != nil {
-						t.Fatal(err)
-					}
-				}
 				var offset uint64
 				push := func(text string) {
 					t.Helper()
@@ -88,15 +69,8 @@ func TestIntegrationAgentLogFailurePreservesOutcomeAndRecovery(t *testing.T) {
 					}
 				}
 				push(`{"v":1,"seq":1,"type":"agent_event","event":{"kind":"text_delta","text":"hel`)
-				if !store.incomplete || store.checkpoint == "" {
-					t.Fatalf("missing health/recovery: %+v", store)
-				}
-				run.LogIncomplete, run.ExecutionCheckpointJSON = true, store.checkpoint
-				p = newAgentRunProjector(ctx, run, nil, run.LogsPath, nil)
-				p.bindStore(store)
-				resume, err := p.RestoreJournal()
-				if err != nil || resume == nil || resume.Offset != offset || resume.Decoder.Pending == "" {
-					t.Fatalf("resume=%+v err=%v", resume, err)
+				if !store.incomplete {
+					t.Fatalf("log fault not recorded: %+v", store)
 				}
 				push("lo\"}}\n")
 				completed := "{\"v\":1,\"seq\":2,\"type\":\"agent_turn_completed\",\"finalText\":\"hello\",\"finalTextSource\":\"provider_message\"}\n"
@@ -109,13 +83,6 @@ func TestIntegrationAgentLogFailurePreservesOutcomeAndRecovery(t *testing.T) {
 				if _, err := p.ProjectRuntimeOutput(domain.ExecChunk{Journal: &domain.JournalPosition{End: offset, Exit: &domain.JournalExit{Result: domain.ExecResult{Success: true}}}}); err != nil {
 					t.Fatal(err)
 				}
-				run.ExecutionCheckpointJSON = store.checkpoint
-				p = newAgentRunProjector(ctx, run, nil, run.LogsPath, nil)
-				p.bindStore(store)
-				restored, err := p.RestoreJournal()
-				if err != nil || restored == nil || restored.Exit == nil || restored.ResultJSON == "" {
-					t.Fatalf("lost confirmed exit: %+v %v", restored, err)
-				}
 				transition, err := p.CompleteExecution(domain.ExecResult{Success: true}, nil)
 				if err != nil || transition.ExitCode != 0 || transition.Error != "" || !transition.LogIncomplete {
 					t.Fatalf("transition=%+v err=%v", transition, err)
@@ -125,23 +92,15 @@ func TestIntegrationAgentLogFailurePreservesOutcomeAndRecovery(t *testing.T) {
 				if err == nil || transition.ExitCode != 7 || !transition.LogIncomplete {
 					t.Fatalf("failure was masked: %+v %v", transition, err)
 				}
+				abandonRunLog(t, run.LogsPath)
+				run.LogIncomplete = true
+				restarted := newAgentRunProjector(ctx, run, nil, run.LogsPath, nil)
+				restarted.bindStore(store)
+				if resume, err := restarted.RestoreJournal(); err != nil || resume != nil {
+					t.Fatalf("resume=%+v err=%v; nothing was committed", resume, err)
+				}
 			})
 		}
-	}
-}
-
-func TestIntegrationAgentRecoveryFailureDoesNotAcknowledgeJournal(t *testing.T) {
-	run := projectionTestRun(t)
-	if err := os.Mkdir(run.LogsPath, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	persistenceErr := errors.New("recovery database unavailable")
-	store := &logHealthTestStore{checkpointErr: persistenceErr}
-	p := newAgentRunProjector(context.Background(), run, nil, run.LogsPath, nil)
-	p.bindStore(store)
-	_, err := p.ProjectRuntimeOutput(domain.ExecChunk{Text: "hello", Journal: &domain.JournalPosition{End: 5}})
-	if !errors.Is(err, persistenceErr) || store.checkpoint != "" || !store.incomplete {
-		t.Fatalf("err=%v checkpoint=%s incomplete=%v", err, store.checkpoint, store.incomplete)
 	}
 }
 

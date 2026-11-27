@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -12,118 +13,223 @@ import (
 	"github.com/chaitin/agent-compose/pkg/runlog"
 )
 
-// agentJournalState is the lifecycle state paired with one durable log prefix.
-// The merger recovers tool identities from that prefix; decoder state preserves
-// frames split between journal records, even across intervening stderr records.
-type agentJournalState struct {
-	LogIncomplete    bool                           `json:"log_incomplete,omitempty"`
-	ProcessExit      *domain.JournalExit            `json:"process_exit,omitempty"`
-	Version          int                            `json:"v"`
-	Decoder          execution.AgentDecoderState    `json:"decoder"`
-	ItemTexts        map[string]string              `json:"item_texts,omitempty"`
-	LoggedProse      string                         `json:"logged_prose,omitempty"`
-	TurnText         string                         `json:"turn_text,omitempty"`
-	HumanIndex       uint64                         `json:"human_index,omitempty"`
-	TurnEnded        bool                           `json:"turn_ended,omitempty"`
-	TurnNotified     bool                           `json:"turn_notified,omitempty"`
-	TurnEndSeq       uint64                         `json:"turn_end_seq,omitempty"`
-	TurnMessages     []domain.ProjectRunEventRecord `json:"turn_messages,omitempty"`
-	PendingMessages  []domain.ProjectRunEventRecord `json:"pending_messages,omitempty"`
-	MessageProjected bool                           `json:"message_projected,omitempty"`
-	Terminal         *TransitionRequest             `json:"terminal,omitempty"`
-	LastFrameSeq     uint64                         `json:"last_frame_seq,omitempty"`
-	HasFrameSeq      bool                           `json:"has_frame_seq,omitempty"`
+// A detached agent run's projector consumes the guest journal and commits its
+// run log after the records it processed (runlog.Writer.Commit). After a
+// daemon restart the log is rolled back to its last commit, the projector is
+// rebuilt from the committed entries (rebuildFromLog) and the journal is read
+// again from the commit's offset. Only two facts cannot be rebuilt from
+// entries, the process exit and the terminal outcome, and they are kept as
+// records.
+
+// agentCommitState is what the projector keeps on a commit: how the decoder
+// continues at the commit's journal offset.
+type agentCommitState struct {
+	Decoder execution.AgentDecoderState `json:"decoder"`
 }
 
-// RestoreJournal must run before opening the guest attach. A missing checkpoint
-// identifies runs from older daemons, which keep their legacy recovery boundary.
+// agentTurnControl is what a turn_end entry keeps for the projector: the
+// conversation messages the turn produced, and whether they were persisted
+// with the turn, as a completed interactive turn's are, rather than with the
+// run's terminal transition.
+type agentTurnControl struct {
+	Messages  []domain.ProjectRunEventRecord `json:"messages,omitempty"`
+	Persisted bool                           `json:"persisted,omitempty"`
+}
+
+const (
+	agentExitRecord     = "exit"
+	agentTerminalRecord = "terminal"
+)
+
+// humanInputQuiescenceTimeout bounds how long human input waits for the
+// agent's output to reach a line boundary before it is refused.
+var humanInputQuiescenceTimeout = 30 * time.Second
+
+// RestoreJournal must run before opening the guest attach. A run whose log has
+// no commit (one from an older daemon, or one that stopped before its first
+// journal record) keeps the legacy recovery boundary.
 func (p *agentRunProjector) RestoreJournal() (*execution.AgentJournalResume, error) {
 	if !usesRunLog(p.run) {
 		return nil, nil
 	}
-	var recovery *runlog.Recovery
-	if p.run.ExecutionCheckpointJSON != "" {
-		if err := json.Unmarshal([]byte(p.run.ExecutionCheckpointJSON), &recovery); err != nil {
-			return nil, fmt.Errorf("decode independent execution checkpoint: %w", err)
-		}
-		p.logFailed = true
-	} else {
-		p.writeLog(func(w *runlog.Writer) error { recovery = w.Recovery(); return nil })
-	}
-	if recovery == nil {
+	var resume *runlog.Resume
+	p.writeLog(func(w *runlog.Writer) error { resume = w.Resume(); return nil })
+	if resume == nil {
 		return nil, nil
 	}
-	var state agentJournalState
-	if err := json.Unmarshal(recovery.State, &state); err != nil {
-		return nil, fmt.Errorf("decode agent lifecycle checkpoint: %w", err)
+	var state agentCommitState
+	if len(resume.State) > 0 {
+		if err := json.Unmarshal(resume.State, &state); err != nil {
+			return nil, fmt.Errorf("decode agent run log commit: %w", err)
+		}
 	}
-	if state.Version != 1 {
-		return nil, fmt.Errorf("unsupported agent lifecycle checkpoint version %d", state.Version)
-	}
-	if err := p.decoder.Restore(state.Decoder); err != nil {
+	if err := p.rebuildFromLog(); err != nil {
 		return nil, err
 	}
-	p.health.incomplete = p.health.incomplete || state.LogIncomplete
-	p.itemTexts = state.ItemTexts
-	if p.itemTexts == nil {
-		p.itemTexts = map[string]string{}
+	if raw := resume.Records[agentExitRecord]; raw != nil {
+		var exit domain.JournalExit
+		if err := json.Unmarshal(raw, &exit); err != nil {
+			return nil, fmt.Errorf("decode agent process exit record: %w", err)
+		}
+		p.processExit = &exit
 	}
-	p.loggedProse, p.turnText = state.LoggedProse, state.TurnText
-	p.humanIndex, p.turnEnded, p.turnNotified = state.HumanIndex, state.TurnEnded, state.TurnNotified
-	p.turnEndSeq, p.turnMessages, p.pendingMessages = state.TurnEndSeq, state.TurnMessages, state.PendingMessages
-	p.messageProjected, p.terminal = state.MessageProjected, state.Terminal
-	p.lastFrameSeq, p.hasFrameSeq = state.LastFrameSeq, state.HasFrameSeq
-	p.journal, p.sourceOffset, p.processExit = true, recovery.SourceOffset, state.ProcessExit
-	resume := &execution.AgentJournalResume{Offset: recovery.SourceOffset, Decoder: state.Decoder, Exit: state.ProcessExit}
+	if raw := resume.Records[agentTerminalRecord]; raw != nil {
+		var terminal TransitionRequest
+		if err := json.Unmarshal(raw, &terminal); err != nil {
+			return nil, fmt.Errorf("decode agent terminal record: %w", err)
+		}
+		p.terminal = &terminal
+	}
+	p.decoder.Restore(state.Decoder)
+	p.journal, p.sourceOffset = true, resume.Offset
+	out := &execution.AgentJournalResume{Offset: resume.Offset, Decoder: state.Decoder, Exit: p.processExit}
 	if p.terminal != nil {
-		resume.ResultJSON = p.terminal.ResultJSON
+		out.ResultJSON = p.terminal.ResultJSON
 	}
-	return resume, nil
+	return out, nil
 }
 
-func (p *agentRunProjector) checkpointJournal() error {
-	if !p.journal {
-		return nil
+// rebuildFromLog derives the projector's turn state from the committed log,
+// the same way the live projector built it while appending those entries.
+func (p *agentRunProjector) rebuildFromLog() error {
+	var (
+		humanIndex        uint64
+		turnEnded         bool
+		turnEndSeq        uint64
+		prose, transcript strings.Builder
+		turnMessages      []domain.ProjectRunEventRecord
+		pending           []domain.ProjectRunEventRecord
+		decodeErr         error
+	)
+	err := runlog.ScanEntries(strings.TrimSpace(p.run.LogsPath), func(entry runlog.Entry) bool {
+		switch entry.Type {
+		case runlog.EntryUser:
+			if entry.Initial {
+				return true
+			}
+			humanIndex++
+			if turnEnded {
+				prose.Reset()
+				transcript.Reset()
+			}
+			turnEnded, turnEndSeq, turnMessages = false, 0, nil
+		case runlog.EntryTurnEnd:
+			turnEnded, turnEndSeq, turnMessages = true, entry.Seq, nil
+			if len(entry.Control) == 0 {
+				return true
+			}
+			var control agentTurnControl
+			if err := json.Unmarshal(entry.Control, &control); err != nil {
+				decodeErr = fmt.Errorf("decode agent turn end %d: %w", entry.Seq, err)
+				return false
+			}
+			for _, message := range control.Messages {
+				message.LogSeq = entry.Seq
+				turnMessages = append(turnMessages, message)
+				if !control.Persisted {
+					pending = append(pending, message)
+				}
+			}
+		case runlog.EntryText:
+			prose.WriteString(entry.Text)
+			transcript.WriteString(entry.Text)
+		default:
+			transcript.WriteString(runlog.Render(entry))
+		}
+		return true
+	})
+	if err == nil {
+		err = decodeErr
+	}
+	if err != nil {
+		return fmt.Errorf("rebuild agent run from its log: %w", err)
 	}
 	p.mu.Lock()
-	state := agentJournalState{Version: 1, LogIncomplete: p.health.incomplete, ProcessExit: p.processExit, Decoder: p.decoder.Snapshot(), ItemTexts: p.itemTexts,
-		LoggedProse: p.loggedProse, TurnText: p.turnText, HumanIndex: p.humanIndex,
-		TurnEnded: p.turnEnded, TurnNotified: p.turnNotified, TurnEndSeq: p.turnEndSeq,
-		TurnMessages: p.turnMessages, PendingMessages: p.pendingMessages,
-		MessageProjected: p.messageProjected, Terminal: p.terminal,
-		LastFrameSeq: p.lastFrameSeq, HasFrameSeq: p.hasFrameSeq}
-	// Marshal while holding only the state lock; no I/O occurs here.
-	data, err := json.Marshal(state)
-	p.mu.Unlock()
-	if err != nil {
-		return fmt.Errorf("encode agent lifecycle checkpoint: %w", err)
+	defer p.mu.Unlock()
+	p.humanIndex, p.turnEnded, p.turnEndSeq = humanIndex, turnEnded, turnEndSeq
+	// A committed turn end follows its messages' persistence, and a duplicate
+	// completion of a closed turn is ignored as before the restart.
+	p.turnNotified, p.messageProjected = turnEnded, turnEnded
+	p.turnMessages, p.pendingMessages = turnMessages, pending
+	p.loggedProse, p.turnText = prose.String(), transcript.String()
+	p.itemTexts = map[string]string{}
+	return nil
+}
+
+// commitJournal makes the effects of the journal records processed so far
+// durable where a restart can rebuild the projector from the log: the decoder
+// holds no protocol line waiting for its newline. Otherwise the next record
+// commits, and a restart replays from the previous commit.
+func (p *agentRunProjector) commitJournal() error {
+	_, err := p.commitJournalNow()
+	return err
+}
+
+func (p *agentRunProjector) commitJournalNow() (bool, error) {
+	if !p.journal || p.logFailed || !p.decoder.Quiescent() {
+		return false, nil
 	}
-	p.writeLog(func(w *runlog.Writer) error { return w.Checkpoint(p.sourceOffset, data) })
-	if !p.logFailed || p.health.store == nil {
+	state, err := json.Marshal(agentCommitState{Decoder: p.decoder.Snapshot()})
+	if err != nil {
+		return false, fmt.Errorf("encode agent run log commit: %w", err)
+	}
+	committed := false
+	p.writeLog(func(w *runlog.Writer) error {
+		var err error
+		committed, err = w.Commit(p.sourceOffset, state)
+		return err
+	})
+	return committed, nil
+}
+
+// appendRecord keeps a fact a restart cannot rebuild from entries. Only a
+// journaled run is ever rebuilt.
+func (p *agentRunProjector) appendRecord(name string, value any) error {
+	if !p.journal || !usesRunLog(p.run) {
 		return nil
 	}
-	checkpoint, err := json.Marshal(runlog.Recovery{SourceOffset: p.sourceOffset, State: data})
+	data, err := json.Marshal(value)
 	if err != nil {
-		return fmt.Errorf("encode independent execution checkpoint: %w", err)
+		return fmt.Errorf("encode agent %s record: %w", name, err)
 	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.eventCtx), 5*time.Second)
-	defer cancel()
-	// This is execution state, not observability: failure must not acknowledge
-	// the journal because the next daemon would otherwise lose lifecycle effects.
-	return p.health.store.SaveProjectRunExecutionCheckpoint(ctx, p.run.RunID, string(checkpoint))
+	p.writeLog(func(w *runlog.Writer) error { return w.AppendRecord(name, data) })
+	return nil
+}
+
+// signalProgress wakes human input waiting for the decoder to reach a line
+// boundary.
+func (p *agentRunProjector) signalProgress() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.progress != nil {
+		close(p.progress)
+	}
+	p.progress = make(chan struct{})
+}
+
+func (p *agentRunProjector) progressSignal() <-chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.progress == nil {
+		p.progress = make(chan struct{})
+	}
+	return p.progress
 }
 
 // ProjectRuntimeOutput is shared by exec and interactive attach. A journal
-// record is acknowledged only after its log, decoder and lifecycle effects are
+// record is acknowledged only after its log and lifecycle effects are
 // committed together. serial orders whole operations, including human input;
 // the state mutex is never held across I/O.
 func (p *agentRunProjector) ProjectRuntimeOutput(chunk domain.ExecChunk) ([]agentProjection, error) {
 	p.serial <- struct{}{}
 	defer func() { <-p.serial }()
+	defer p.signalProgress()
 	if chunk.Journal != nil && usesRunLog(p.run) {
 		if !p.journal {
 			p.journal = true
-			if err := p.checkpointJournal(); err != nil {
+			// The first commit precedes anything a journal record produces,
+			// so the prompt and whatever came before stay committed.
+			if err := p.commitJournal(); err != nil {
 				return nil, err
 			}
 		}
@@ -134,13 +240,19 @@ func (p *agentRunProjector) ProjectRuntimeOutput(chunk domain.ExecChunk) ([]agen
 				return nil, err
 			}
 			p.processExit = exit
-			return nil, p.checkpointJournal()
+			if err := p.appendRecord(agentExitRecord, exit); err != nil {
+				return nil, err
+			}
+			// Nothing follows the exit: what the merger still holds came from
+			// the records before it, so the exit commits with all of it.
+			p.writeLog(func(w *runlog.Writer) error { return w.Settle() })
+			return nil, p.commitJournal()
 		}
 		if gap := chunk.Journal.Gap; gap != nil {
 			p.decoder.DiscardGap()
 			p.health.record(fmt.Errorf("guest journal gap: %d..%d", gap.From, gap.To))
 			p.writeLog(func(w *runlog.Writer) error { return w.AppendJournalGap(gap.From, gap.To) })
-			return nil, p.checkpointJournal()
+			return nil, p.commitJournal()
 		}
 	}
 	var effects []agentProjection
@@ -157,14 +269,14 @@ func (p *agentRunProjector) ProjectRuntimeOutput(chunk domain.ExecChunk) ([]agen
 	if err != nil {
 		return effects, err
 	}
-	return effects, p.checkpointJournal()
+	return effects, p.commitJournal()
 }
 
-// completeCheckpointedAgentRun handles a crash after process exit was committed
+// completeCommittedAgentRun handles a crash after process exit was committed
 // but before the run's terminal database transaction. The guest journal may
 // already have been cleaned up, so confirmed local completion precedes runtime
 // health checks and never requires another attach.
-func (c *Controller) completeCheckpointedAgentRun(ctx context.Context, runCtx context.Context, run domain.ProjectRunRecord, sandbox *domain.Sandbox) (domain.ProjectRunRecord, bool, error) {
+func (c *Controller) completeCommittedAgentRun(ctx context.Context, runCtx context.Context, run domain.ProjectRunRecord, sandbox *domain.Sandbox) (domain.ProjectRunRecord, bool, error) {
 	if !usesRunLog(run) || (run.DetachKind != domain.DetachKindAgent && run.DetachKind != domain.DetachKindInteractivePrompt) {
 		return run, false, nil
 	}
@@ -199,10 +311,11 @@ func (c *Controller) completeCheckpointedAgentRun(ctx context.Context, runCtx co
 func (p *agentRunProjector) FlushRuntimeOutput() error {
 	p.serial <- struct{}{}
 	defer func() { <-p.serial }()
+	defer p.signalProgress()
 	if err := p.flushRuntimeOutput(); err != nil {
 		return err
 	}
-	return p.checkpointJournal()
+	return p.commitJournal()
 }
 
 func (p *agentRunProjector) flushRuntimeOutput() error {

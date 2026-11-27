@@ -14,7 +14,6 @@ import (
 // sticky so a concurrent status transition cannot clear an earlier log fault.
 type runLogHealthStore interface {
 	MarkProjectRunLogIncomplete(context.Context, string) error
-	SaveProjectRunExecutionCheckpoint(context.Context, string, string) error
 }
 
 type runLogHealth struct {

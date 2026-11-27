@@ -97,7 +97,7 @@ func TestFollowRunLogsStructuredReturnsEntriesAfterStartSeq(t *testing.T) {
 	_, _ = w.AppendInitialPrompt("go")
 	_ = w.AppendAgentEvent([]byte(`{"kind":"tool_call","id":"t","name":"Bash","status":"completed","command":"ls"}`))
 	_ = w.AppendAgentEvent([]byte(`{"kind":"tool_result","id":"t","ok":false,"exitCode":2,"output":"no"}`))
-	_, _ = w.EndTurn("stop", "done")
+	_, _ = w.EndTurn("stop", "done", nil)
 	_ = w.Close()
 	store := &apiProjectRunStore{runs: map[string]domain.ProjectRunRecord{
 		"run-1":  {RunID: "run-1", ProjectID: "project-1", Status: domain.ProjectRunStatusSucceeded, LogsPath: path, LogFormat: runlog.FormatJSONL, SummaryJSON: `{"tool_calls":1,"tool_failures":1}`},
@@ -202,7 +202,7 @@ func TestIntegrationRunLogFileChangesAndRepeatedToolIDsReachBothViews(t *testing
 		if err := w.AppendAgentEvent([]byte(`{"kind":"tool_result","id":"item_1","ok":true}`)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := w.EndTurn("stop", "done"); err != nil {
+		if _, err := w.EndTurn("stop", "done", nil); err != nil {
 			t.Fatal(err)
 		}
 	}

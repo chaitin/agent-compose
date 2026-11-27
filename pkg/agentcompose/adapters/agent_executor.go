@@ -183,9 +183,7 @@ func (e *AgentExecutor) ResumeAgentRequest(ctx context.Context, session *domain.
 	if request.JournalResume != nil {
 		run.resumed = true
 		run.streamed.Restore(domain.ExecResult{Stdout: cell.Stdout, Stderr: cell.Stderr, Output: cell.Output})
-		if err := run.stdout.Restore(request.JournalResume.Decoder); err != nil {
-			return run.fail(err, domain.ExecResult{}, domain.AgentRunResult{})
-		}
+		run.stdout.Restore(request.JournalResume.Decoder)
 	}
 	execResult, result, err := e.runner.ResumeAgentRun(execCtx, AgentResumeRequest{
 		Session: session, Agent: agent, RunID: request.RunID,

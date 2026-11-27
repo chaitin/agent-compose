@@ -5,32 +5,57 @@ import (
 	"testing"
 )
 
-func TestAgentDecoderRestoresSplitFrameAcrossStderr(t *testing.T) {
+func TestAgentDecoderIsQuiescentOnlyBetweenProtocolLines(t *testing.T) {
+	var d AgentOutputDecoder
+	emit := func(AgentOutput) error { return nil }
+	if !d.Quiescent() {
+		t.Fatal("a fresh decoder holds nothing")
+	}
+	if err := d.Push(domain.ExecChunk{Text: `{"v":1,"type":"result","finalText":"hel`}, emit); err != nil {
+		t.Fatal(err)
+	}
+	// stderr between the halves of a frame does not complete it.
+	if err := d.Push(domain.ExecChunk{Text: "warning", Stream: domain.StdioStderr}, emit); err != nil {
+		t.Fatal(err)
+	}
+	if d.Quiescent() {
+		t.Fatal("half a frame must not be committed")
+	}
+	if err := d.Push(domain.ExecChunk{Text: "lo\"}\n"}, emit); err != nil {
+		t.Fatal(err)
+	}
+	if !d.Quiescent() {
+		t.Fatal("a complete frame leaves nothing behind")
+	}
+	d.DiscardGap()
+	if d.Quiescent() {
+		t.Fatal("a line discarded after a gap must not be committed")
+	}
+}
+
+func TestAgentDecoderRestoresAnOrdinaryLineInProgress(t *testing.T) {
 	var first, resumed AgentOutputDecoder
-	var frames []AgentFrame
 	var text string
 	emit := func(out AgentOutput) error {
 		if out.Frame != nil {
-			frames = append(frames, *out.Frame)
-		} else {
-			text += out.Chunk.Text
+			t.Fatalf("ordinary output decoded as a frame: %+v", out.Frame)
 		}
+		text += out.Chunk.Text
 		return nil
 	}
-	if err := first.Push(domain.ExecChunk{Text: `{"v":1,"type":"result","finalText":"hel`}, emit); err != nil {
+	if err := first.Push(domain.ExecChunk{Text: "progress "}, emit); err != nil {
 		t.Fatal(err)
 	}
-	if err := first.Push(domain.ExecChunk{Text: "warning", Stream: domain.StdioStderr}, emit); err != nil {
+	if !first.Quiescent() {
+		t.Fatal("ordinary output is delivered as it comes")
+	}
+	resumed.Restore(first.Snapshot())
+	// The rest of the line looks like JSON, but it continues ordinary output.
+	if err := resumed.Push(domain.ExecChunk{Text: "{50%}\n"}, emit); err != nil {
 		t.Fatal(err)
 	}
-	if err := resumed.Restore(first.Snapshot()); err != nil {
-		t.Fatal(err)
-	}
-	if err := resumed.Push(domain.ExecChunk{Text: "lo\"}\n"}, emit); err != nil {
-		t.Fatal(err)
-	}
-	if len(frames) != 1 || frames[0].FinalText != "hello" || text != "warning" {
-		t.Fatalf("frames=%+v text=%q", frames, text)
+	if text != "progress {50%}\n" {
+		t.Fatalf("text=%q", text)
 	}
 }
 

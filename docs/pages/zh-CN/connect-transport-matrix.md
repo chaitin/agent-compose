@@ -23,7 +23,7 @@
 
 `StartAgentRun(interactive=true)` 可直接启动相同的 detached prompt session，而无需保持提交请求。普通 `StartAgentRun` 调用仍是非交互任务。
 
-使用 guest supervisor 的 detached prompt run，在 sandbox 和保留的执行仍可用时，可以在 daemon 重启后恢复；daemon 完成恢复后，客户端可再次连接。journal 游标、未完成的协议帧和轮次状态与已提交日志一起恢复，也包含进程退出前已收到的 result。其他 attachment 仍要求 daemon 进程存活；runtime 句柄无法重建时，attach 会明确失败。持久化历史始终可读取。页面刷新或 IM/Web 切换后，客户端应先通过 `ListRunMessages`（对话）和 `FollowRunLogs`（run 日志；传 `structured` 拿结构化条目，用 `start_seq` 续读）恢复历史，再订阅 attachment 实时输出。
+使用 guest supervisor 的 detached prompt run，在 sandbox 和保留的执行仍可用时，可以在 daemon 重启后恢复；daemon 完成恢复后，客户端可再次连接。daemon 从 run 日志最后一次提交的位置恢复：轮次状态由已提交的日志重建，guest journal 从该位置重新读取；重启前已收到的 result 和进程退出结果随日志保留。其他 attachment 仍要求 daemon 进程存活；runtime 句柄无法重建时，attach 会明确失败。持久化历史始终可读取。页面刷新或 IM/Web 切换后，客户端应先通过 `ListRunMessages`（对话）和 `FollowRunLogs`（run 日志；传 `structured` 拿结构化条目，用 `start_seq` 续读）恢复历史，再订阅 attachment 实时输出。
 
 `RunSummary.log_incomplete` 表示日志存储失败或 guest journal 出现缺口。这些问题不改变执行结果，输出流和对话消息继续处理。新 run log 取代 agent cell 的重复输出和 trace 事件；已有 notebook 历史仍可读取。
 
