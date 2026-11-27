@@ -122,7 +122,9 @@ type Config struct {
 	// EventDeliveryScope bounds which Projects receive an event a Project
 	// published. Project content cannot change it.
 	EventDeliveryScope domain.EventDeliveryScope
-	RuntimeDriver      string
+	// EventStream bounds the opt-in daemon observation-event subscription.
+	EventStream   EventStreamConfig
+	RuntimeDriver string
 	// EgressUnenforceablePolicy decides whether a declared network policy the
 	// selected driver cannot apply warns and runs or refuses the sandbox.
 	EgressUnenforceablePolicy EgressUnenforceablePolicy
@@ -339,6 +341,7 @@ type configSources struct {
 	SandboxTimeouts  sandboxTimeoutsConfig
 	HTTPLimits       httpLimitsConfig
 	EventDelivery    domain.EventDeliveryScope
+	EventStream      EventStreamConfig
 	EgressEnforce    EgressUnenforceablePolicy
 	GlobalPolicy     *egress.NetworkDeclaration
 	GlobalPolicyInfo GlobalNetworkPolicyInfo
@@ -398,6 +401,10 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 	if err != nil {
 		return configSources{}, err
 	}
+	eventStream, err := loadEventStreamConfig()
+	if err != nil {
+		return configSources{}, err
+	}
 	egressEnforce, err := loadEgressUnenforceablePolicy()
 	if err != nil {
 		return configSources{}, err
@@ -441,6 +448,7 @@ func loadConfigSources(logger *slog.Logger, dataRoot string) (configSources, err
 		SandboxTimeouts:  sandboxTimeouts,
 		HTTPLimits:       loadHTTPLimitsConfig(logger),
 		EventDelivery:    eventDelivery,
+		EventStream:      eventStream,
 		EgressEnforce:    egressEnforce,
 		GlobalPolicy:     globalPolicy,
 		GlobalPolicyInfo: globalPolicyInfo,
@@ -520,6 +528,7 @@ func buildConfig(sources configSources, normalized configPathsToNormalize) *Conf
 		AgentTimeout:                    timeouts.AgentTimeout,
 		SchedulerRunTimeout:             timeouts.SchedulerRunTimeout,
 		EventDeliveryScope:              sources.EventDelivery,
+		EventStream:                     sources.EventStream,
 		RuntimeDriver:                   drivers.RuntimeDriver,
 		EgressUnenforceablePolicy:       sources.EgressEnforce,
 		GlobalNetworkPolicy:             sources.GlobalPolicy,

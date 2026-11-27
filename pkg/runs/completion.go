@@ -59,6 +59,7 @@ type CompletionManager struct {
 	lifecycle CompletionSandboxLifecycle
 	removal   SandboxRemoval
 	logger    *slog.Logger
+	observer  RunObserver
 	now       func() time.Time
 
 	mu      sync.Mutex
@@ -77,6 +78,7 @@ type CompletionManagerDeps struct {
 	Lifecycle CompletionSandboxLifecycle
 	Removal   SandboxRemoval
 	Logger    *slog.Logger
+	Observer  RunObserver
 }
 
 func NewCompletionManager(deps CompletionManagerDeps) *CompletionManager {
@@ -85,8 +87,14 @@ func NewCompletionManager(deps CompletionManagerDeps) *CompletionManager {
 		logger = slog.Default()
 	}
 	return &CompletionManager{
-		store: deps.Store, sandboxes: deps.Sandboxes, lifecycle: deps.Lifecycle, removal: deps.Removal, logger: logger,
+		store: deps.Store, sandboxes: deps.Sandboxes, lifecycle: deps.Lifecycle, removal: deps.Removal, logger: logger, observer: deps.Observer,
 		now: func() time.Time { return time.Now().UTC() }, locks: map[string]*sync.Mutex{}, wake: make(chan struct{}, 1),
+	}
+}
+
+func (m *CompletionManager) observeStatus(ctx context.Context, before, after domain.ProjectRunRecord) {
+	if m != nil && m.observer != nil && before.Status != after.Status {
+		m.observer.RunStatusChanged(ctx, before, after)
 	}
 }
 
@@ -311,7 +319,12 @@ func (m *CompletionManager) process(ctx context.Context, runID string) (domain.P
 	if err != nil {
 		return run, err
 	}
-	return m.store.FinalizeProjectRunCompletion(ctx, next, statusEvent)
+	finalized, err := m.store.FinalizeProjectRunCompletion(ctx, next, statusEvent)
+	if err != nil {
+		return run, err
+	}
+	m.observeStatus(ctx, run, finalized)
+	return finalized, nil
 }
 
 // abandonCleanup finalizes a run whose sandbox cleanup kept failing. The run
@@ -330,6 +343,7 @@ func (m *CompletionManager) abandonCleanup(ctx context.Context, run domain.Proje
 	if err != nil {
 		return run, errors.Join(cleanupErr, err)
 	}
+	m.observeStatus(ctx, run, finalized)
 	m.logger.Warn("abandoning project run sandbox cleanup after repeated failures",
 		"run_id", run.RunID, "sandbox_id", run.SandboxID, "action", completion.CleanupAction,
 		"attempt", attempt, "cleanup_error", cleanupErr)

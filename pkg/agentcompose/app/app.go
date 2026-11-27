@@ -27,6 +27,7 @@ import (
 	"github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/events"
 	"github.com/chaitin/agent-compose/pkg/events/webhooks"
+	"github.com/chaitin/agent-compose/pkg/eventstream"
 	"github.com/chaitin/agent-compose/pkg/imagecache"
 	"github.com/chaitin/agent-compose/pkg/llms"
 	domain "github.com/chaitin/agent-compose/pkg/model"
@@ -92,7 +93,9 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewVolumeManager)
 	do.Provide(di, NewCapProxyServer)
 	do.Provide(di, schedulers.NewBus)
-	do.Provide(di, sandboxes.NewStreamBroker)
+	do.Provide(di, NewSandboxStreamBroker)
+	do.Provide(di, NewEventStreamBroker)
+	do.Provide(di, NewEventStreamBridge)
 	do.Provide(di, NewRunLogHub)
 	do.Provide(di, NewEventDispatcher)
 	do.Provide(di, NewDashboardOverviewAggregator)
@@ -214,6 +217,8 @@ func RegisterRoutes(di do.Injector) {
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewDashboardServiceHandler(api.NewDashboardV2Handler(do.MustInvoke[*dashboard.Hub](di)), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
+	path, handler = agentcomposev2connect.NewEventServiceHandler(api.NewEventStreamHandler(do.MustInvoke[*eventstream.Broker](di)), handlerOptions...)
+	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewCapabilityServiceHandler(api.NewCapabilityV2Handler(do.MustInvoke[capabilities.Provider](di), capabilityRuntimeConfig{config: do.MustInvoke[*appconfig.Config](di)}), handlerOptions...)
 	app.Any(path+"*", echo.WrapHandler(handler))
 	path, handler = agentcomposev2connect.NewEngineServiceHandler(api.NewEngineCapabilitiesV2Handler(do.MustInvoke[capmatrix.Snapshot](di), do.MustInvoke[*appconfig.Config](di)), handlerOptions...)
@@ -263,6 +268,12 @@ func NewSandboxRemovalCoordinator(di do.Injector) (*sandboxes.RemovalCoordinator
 		AccessRevoker: do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 		Residues:      adapters.NewRuntimeResidueManager(config, do.MustInvoke[*adapters.SandboxDriver](di)),
 		Locks:         do.MustInvoke[*sandboxes.LifecycleLocks](di),
+		StatusObserver: func(summary *domain.SandboxSummary) {
+			do.MustInvoke[*sandboxes.StreamBroker](di).PublishSandboxUpdated(summary)
+		},
+		RemovedObserver: func(summary *domain.SandboxSummary) {
+			do.MustInvoke[*sandboxes.StreamBroker](di).PublishSandboxRemoved(summary)
+		},
 	}, nil
 }
 
@@ -660,7 +671,13 @@ func NewDatabase(di do.Injector) (*storagedb.Database, error) {
 
 func NewConfigStore(di do.Injector) (*configstore.ConfigStore, error) {
 	database := do.MustInvoke[*storagedb.Database](di)
-	return configstore.FromDBWithDialect(database.DB(), database.Dialect()), nil
+	store := configstore.FromDBWithDialect(database.DB(), database.Dialect())
+	if cfg, err := do.Invoke[*appconfig.Config](di); err == nil && cfg.EventStream.Enabled {
+		if bridge, bridgeErr := do.Invoke[*eventStreamBridge](di); bridgeErr == nil && bridge != nil {
+			store.SetRunEventObserver(bridge.RunEventsAppended)
+		}
+	}
+	return store, nil
 }
 
 func NewSandboxStore(di do.Injector) (*sandboxstore.Store, error) {
@@ -759,8 +776,27 @@ func NewDashboardOverviewHub(di do.Injector) (*dashboard.Hub, error) {
 	return dashboard.NewHub(do.MustInvoke[context.Context](di), do.MustInvoke[*dashboard.Aggregator](di), 250*time.Millisecond), nil
 }
 
-func NewRunLogHub(do.Injector) (*runs.RunLogHub, error) {
-	return runs.NewRunLogHub(), nil
+func NewSandboxStreamBroker(di do.Injector) (*sandboxes.StreamBroker, error) {
+	broker, err := sandboxes.NewStreamBroker(di)
+	if err != nil {
+		return nil, err
+	}
+	if cfg, cfgErr := do.Invoke[*appconfig.Config](di); cfgErr == nil && cfg.EventStream.Enabled {
+		if bridge, bridgeErr := do.Invoke[*eventStreamBridge](di); bridgeErr == nil && bridge != nil {
+			broker.SetObserver(bridge.PublishSandboxWatch)
+		}
+	}
+	return broker, nil
+}
+
+func NewRunLogHub(di do.Injector) (*runs.RunLogHub, error) {
+	hub := runs.NewRunLogHub()
+	if cfg, cfgErr := do.Invoke[*appconfig.Config](di); cfgErr == nil && cfg.EventStream.Enabled {
+		if bridge, err := do.Invoke[*eventStreamBridge](di); err == nil && bridge != nil {
+			hub.SetObserver(bridge.PublishRunLog)
+		}
+	}
+	return hub, nil
 }
 
 func registerProxyRoutes(app *echo.Echo, di do.Injector) {

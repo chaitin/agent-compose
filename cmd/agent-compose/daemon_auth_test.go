@@ -31,6 +31,9 @@ func TestDaemonAuthMiddleware(t *testing.T) {
 		{name: "jupyter exempt", token: "secret", path: "/jupyter/s-1/lab", method: http.MethodGet, wantStatus: http.StatusNoContent},
 		{name: "webhook ingestion exempt", token: "secret", path: "/api/webhooks/webhook.github.push", method: http.MethodPost, wantStatus: http.StatusNoContent},
 		{name: "webhook management protected", token: "secret", path: "/api/webhook-sources", method: http.MethodGet, wantStatus: http.StatusUnauthorized},
+		{name: "event stream protected", token: "secret", path: "/agentcompose.v2.EventService/WatchEvents", method: http.MethodPost, wantStatus: http.StatusUnauthorized},
+		{name: "event stream capabilities protected", token: "secret", path: "/agentcompose.v2.EventService/GetEventStreamCapabilities", method: http.MethodPost, wantStatus: http.StatusUnauthorized},
+		{name: "event stream authenticated", token: "secret", header: "Bearer secret", path: "/agentcompose.v2.EventService/WatchEvents", method: http.MethodPost, wantStatus: http.StatusNoContent},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

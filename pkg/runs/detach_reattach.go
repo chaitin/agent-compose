@@ -85,7 +85,7 @@ func (c *Controller) ReattachDetachedRun(ctx context.Context, run domain.Project
 			sendErr = err
 			return
 		}
-		c.publishRunLogChunk(run.RunID, filtered, offset)
+		c.publishRunLogChunk(run, filtered, offset)
 	}
 
 	env := execution.BuildSandboxExecEnv(runCtx, c.config, sandbox, c.config.GuestHomePath)

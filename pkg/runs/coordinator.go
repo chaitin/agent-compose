@@ -65,6 +65,7 @@ type Coordinator struct {
 	store       Store
 	stableRunID StableRunIDFunc
 	now         func() time.Time
+	observer    RunObserver
 }
 
 func NewCoordinator(store Store, stableRunID StableRunIDFunc) *Coordinator {
@@ -75,6 +76,11 @@ func NewCoordinator(store Store, stableRunID StableRunIDFunc) *Coordinator {
 			return time.Now().UTC()
 		},
 	}
+}
+
+func (c *Coordinator) WithObserver(observer RunObserver) *Coordinator {
+	c.observer = observer
+	return c
 }
 
 func (c *Coordinator) SetNow(now func() time.Time) {
@@ -190,6 +196,9 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 	if err != nil {
 		return domain.ProjectRunRecord{}, err
 	}
+	if c.observer != nil {
+		c.observer.RunStatusChanged(ctx, domain.ProjectRunRecord{}, created)
+	}
 	return created, nil
 }
 
@@ -304,6 +313,9 @@ func (c *Coordinator) TransitionRun(ctx context.Context, req TransitionRequest) 
 	updated, err := c.store.UpdateProjectRunWithEvents(ctx, next, batch)
 	if err != nil {
 		return domain.ProjectRunRecord{}, err
+	}
+	if c.observer != nil && current.Status != updated.Status {
+		c.observer.RunStatusChanged(ctx, current, updated)
 	}
 	return updated, nil
 }

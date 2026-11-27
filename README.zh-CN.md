@@ -42,6 +42,23 @@
 
 **daemon** 是唯一的状态权威：负责持久化、scheduler 执行、runtime 生命周期和控制面 API。**CLI** 是一个轻客户端 —— 读取本地 `agent-compose.yml`，做本地校验，再调用 daemon。compose 文件描述的是 *project 和 agent*，不是已经在跑的 sandbox。**Web UI** 是独立服务（[agent-compose-ui](https://github.com/chaitin/agent-compose-ui)），不由 daemon 托管。
 
+### 事件订阅（可选）
+
+daemon 可以向外提供一个 opt-in 的观察事件流。上层应用使用与其他控制面 API
+相同的 daemon Bearer Token，打开 Connect server-stream
+`EventService.WatchEvents`，daemon 就在这条连接上推送 `run.status`、`run.event`、`run.log`、
+`scheduler.run.status`、`scheduler.event`、`scheduler.updated`、
+`sandbox.status`、`sandbox.event`、`sandbox.cell.output` 和 `sandbox.removed`。该能力默认关闭；设置 `EVENT_STREAM_ENABLED=true`
+开启。第一个订阅会激活 broker，最后一个订阅断开并空闲超过
+`EVENT_STREAM_IDLE_TIMEOUT` 后，broker 清空 replay ring。
+
+控制面事件在内存 ring 内可重放；日志事件只做实时投递，断线后可按事件的
+`offset` 调用 `FollowRunLogs` 回填。显式选择日志类型时总会投递；只有通配或
+空 `event_types` 需要 `include_logs=true` 才包含日志。cursor 超出 ring
+或属于旧的 daemon epoch 时，服务端返回 `SYNC_REQUIRED`，应用通过现有
+List/Get API 对账。它是通知通道，不是审计日志；持久历史仍以数据库记录和
+run log 文件为准。`EVENT_STREAM_*` 的具体限制见 `.env.example`。
+
 ## 快速开始
 
 ### 方式 A —— 部署服务器（推荐）

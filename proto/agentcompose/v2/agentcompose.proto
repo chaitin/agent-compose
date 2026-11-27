@@ -2,10 +2,10 @@ syntax = "proto3";
 
 package agentcompose.v2;
 
-import "google/protobuf/timestamp.proto";
-import "google/protobuf/duration.proto";
 import "agentcompose/v2/errors.proto";
 import "agentcompose/v2/sandbox_workspace.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/chaitin/agent-compose/proto/agentcompose/v2;agentcomposev2";
 
@@ -205,6 +205,19 @@ service EngineService {
   rpc GetCapabilities(GetEngineCapabilitiesRequest) returns (GetEngineCapabilitiesResponse);
 }
 
+// EventService is the daemon's opt-in observation-event subscription surface.
+// It is disabled unless EVENT_STREAM_ENABLED is set; the first WatchEvents
+// subscription activates the in-process broker.
+service EventService {
+  // Capabilities reports whether the feature is enabled and the limits the
+  // daemon applies to WatchEvents.
+  rpc GetEventStreamCapabilities(GetEventStreamCapabilitiesRequest) returns (GetEventStreamCapabilitiesResponse);
+  // WatchEvents streams daemon observation events. The daemon pushes events
+  // on this connection; the client does not poll. Log events require
+  // include_logs=true.
+  rpc WatchEvents(WatchEventsRequest) returns (stream WatchEventsResponse);
+}
+
 enum ProjectValidationSeverity {
   PROJECT_VALIDATION_SEVERITY_UNSPECIFIED = 0;
   PROJECT_VALIDATION_SEVERITY_WARNING = 1;
@@ -336,7 +349,6 @@ enum StreamAgentRunEventType {
 }
 
 enum RunSandboxCleanupPolicy {
-
   RUN_SANDBOX_CLEANUP_POLICY_UNSPECIFIED = 0;
   RUN_SANDBOX_CLEANUP_POLICY_STOP_ON_COMPLETION = 1;
   RUN_SANDBOX_CLEANUP_POLICY_KEEP_RUNNING = 2;
@@ -396,7 +408,6 @@ enum MetricStatus {
 }
 
 enum CacheDomain {
-
   CACHE_DOMAIN_UNSPECIFIED = 0;
   CACHE_DOMAIN_OCI_IMAGE_STORE = 1;
   CACHE_DOMAIN_MATERIALIZED_IMAGE_CACHE = 2;
@@ -629,7 +640,6 @@ message ListProjectsResponse {
 }
 
 message RemoveProjectRequest {
-
   ProjectRef project = 1;
   bool remove_history = 2;
   bool stop_running_sandboxes = 3;
@@ -744,7 +754,6 @@ message ProjectAgentLatestRun {
 }
 
 message ProjectScheduler {
-
   string project_id = 1;
   string agent_name = 2;
   string scheduler_id = 3;
@@ -1318,7 +1327,6 @@ message K8sDriverSpec {
 }
 
 message RunAgentRequest {
-
   string project_id = 1;
   string agent_name = 2;
   string prompt = 3;
@@ -1755,7 +1763,6 @@ message SandboxStats {
 }
 
 message RunSummary {
-
   string run_id = 1;
   string project_id = 2;
   string project_name = 3;
@@ -1798,7 +1805,6 @@ message RunDetail {
 }
 
 message ExecRequest {
-
   oneof target {
     string sandbox_id = 1;
     string run_id = 2;
@@ -1831,7 +1837,6 @@ message ExecResponse {
 }
 
 message StreamExecResponse {
-
   StreamExecEventType event_type = 1;
   string exec_id = 2;
   string sandbox_id = 3;
@@ -1892,8 +1897,7 @@ message AttachStdin {
   bytes data = 1;
 }
 
-message AttachStdinEOF {
-}
+message AttachStdinEOF {}
 
 message AttachResize {
   AttachTerminalSize terminal_size = 1;
@@ -1963,7 +1967,6 @@ message AttachError {
 }
 
 message ExecResult {
-
   string exec_id = 1;
   string sandbox_id = 2;
   string run_id = 3;
@@ -2119,7 +2122,6 @@ message RemoveCacheResponse {
 }
 
 message CacheItem {
-
   string cache_id = 1;
   CacheDomain domain = 2;
   string driver = 3;
@@ -2344,14 +2346,18 @@ message DashboardOverview {
   google.protobuf.Timestamp updated_at = 2;
 }
 
-message GetDashboardOverviewResponse { DashboardOverview overview = 1; }
+message GetDashboardOverviewResponse {
+  DashboardOverview overview = 1;
+}
 message WatchDashboardOverviewResponse {
   DashboardOverview overview = 1;
   string reason = 2;
 }
 
 message GetGlobalEnvRequest {}
-message GetGlobalEnvResponse { repeated EnvVarSpec env = 1; }
+message GetGlobalEnvResponse {
+  repeated EnvVarSpec env = 1;
+}
 message UpdateGlobalEnvRequest {
   // Complete replacement keyed by EnvVarUpdateSpec.name. An empty list clears
   // all global environment variables; omitted existing names are deleted.
@@ -2359,21 +2365,27 @@ message UpdateGlobalEnvRequest {
   // value with the same name. An explicitly empty value clears it.
   repeated EnvVarUpdateSpec env = 1;
 }
-message UpdateGlobalEnvResponse { repeated EnvVarSpec env = 1; }
+message UpdateGlobalEnvResponse {
+  repeated EnvVarSpec env = 1;
+}
 
 message GetCapabilityGatewayConfigRequest {}
 message CapabilityGatewayConfig {
   string addr = 1;
   bool token_set = 2;
 }
-message GetCapabilityGatewayConfigResponse { CapabilityGatewayConfig config = 1; }
+message GetCapabilityGatewayConfigResponse {
+  CapabilityGatewayConfig config = 1;
+}
 message UpdateCapabilityGatewayConfigRequest {
   // Field patch: absent is no-op; present empty explicitly clears the address.
   optional string addr = 1;
   // Field patch: absent is no-op; present empty explicitly clears the token.
   optional string token = 2;
 }
-message UpdateCapabilityGatewayConfigResponse { CapabilityGatewayConfig config = 1; }
+message UpdateCapabilityGatewayConfigResponse {
+  CapabilityGatewayConfig config = 1;
+}
 
 // Bounds which Projects receive an event published from a Project: by a
 // scheduler script (scheduler.event.publish) or by the Engine on the Project's
@@ -2387,7 +2399,9 @@ enum EventDeliveryScope {
   EVENT_DELIVERY_SCOPE_DAEMON = 2;
 }
 message GetEventDeliveryScopeRequest {}
-message GetEventDeliveryScopeResponse { EventDeliveryScope scope = 1; }
+message GetEventDeliveryScopeResponse {
+  EventDeliveryScope scope = 1;
+}
 
 message WorkspacePreset {
   string id = 1;
@@ -2428,9 +2442,13 @@ message UpdateWorkspacePresetRequest {
   // Replacement value. Empty explicitly clears the comment.
   string comment = 5;
 }
-message DeleteWorkspacePresetRequest { string preset_id = 1; }
+message DeleteWorkspacePresetRequest {
+  string preset_id = 1;
+}
 message DeleteWorkspacePresetResponse {}
-message WorkspacePresetResponse { WorkspacePreset preset = 1; }
+message WorkspacePresetResponse {
+  WorkspacePreset preset = 1;
+}
 
 message GetCapabilityStatusRequest {}
 message CapabilityStatusResponse {
@@ -2460,7 +2478,9 @@ message ListCapabilitySetsResponse {
   // Total matching resources before offset and limit are applied.
   uint32 total = 2;
 }
-message GetCapabilityCatalogRequest { string capset_id = 1; }
+message GetCapabilityCatalogRequest {
+  string capset_id = 1;
+}
 message CapabilityEndpoint {
   string protocol = 1;
   string endpoint = 2;
@@ -2539,6 +2559,7 @@ enum SandboxWatchEventType {
   SANDBOX_WATCH_EVENT_TYPE_CELL_OUTPUT = 3;
   SANDBOX_WATCH_EVENT_TYPE_CELL_COMPLETED = 4;
   SANDBOX_WATCH_EVENT_TYPE_EVENT_ADDED = 5;
+  SANDBOX_WATCH_EVENT_TYPE_SANDBOX_REMOVED = 6;
 }
 
 message WatchSandboxResponse {
@@ -2679,10 +2700,19 @@ message LLMProviderSpec {
   // empty set clears it. IDs are literals, not references.
   optional LLMProviderModels models = 8;
 }
-message CreateProviderRequest { LLMProviderSpec provider = 1; }
-message CreateProviderResponse { LLMProvider provider = 1; }
-message GetProviderRequest { string id = 1; }
-message GetProviderResponse { LLMProvider provider = 1; }
+message CreateProviderRequest {
+  LLMProviderSpec provider = 1;
+}
+message CreateProviderResponse {
+  LLMProvider provider = 1;
+}
+message GetProviderRequest {
+  string id = 1;
+}
+message GetProviderResponse {
+  LLMProvider provider = 1;
+}
+
 // Lists API-owned providers, including disabled providers, ordered by ID.
 message ListProvidersRequest {
   uint32 offset = 1;
@@ -2692,10 +2722,17 @@ message ListProvidersResponse {
   repeated LLMProvider providers = 1;
   uint32 total = 2;
 }
-message UpdateProviderRequest { LLMProviderSpec provider = 1; }
-message UpdateProviderResponse { LLMProvider provider = 1; }
+message UpdateProviderRequest {
+  LLMProviderSpec provider = 1;
+}
+message UpdateProviderResponse {
+  LLMProvider provider = 1;
+}
+
 // Deletes API-owned configuration and invalidates provider-bound facade tokens.
-message DeleteProviderRequest { string id = 1; }
+message DeleteProviderRequest {
+  string id = 1;
+}
 message DeleteProviderResponse {}
 
 // LLMModelSpec declares one model a connection serves. The upstream model ID is
@@ -2722,7 +2759,9 @@ message LLMModelSpec {
 // LLMProviderModels carries a declared model set so presence is observable: an
 // absent field preserves the stored set on update, while a present empty set
 // clears it. A bare repeated field could not tell those two apart.
-message LLMProviderModels { repeated LLMModelSpec models = 1; }
+message LLMProviderModels {
+  repeated LLMModelSpec models = 1;
+}
 
 // LLMProtocolProbe reports what one protocol probe observed.
 message LLMProtocolProbe {
@@ -2756,8 +2795,12 @@ message GetDefaultModelResponse {
   // Absent when no default model is configured at all.
   LLMModelReference model = 1;
 }
-message SetDefaultModelRequest { LLMModelReference model = 1; }
-message SetDefaultModelResponse { LLMModelReference model = 1; }
+message SetDefaultModelRequest {
+  LLMModelReference model = 1;
+}
+message SetDefaultModelResponse {
+  LLMModelReference model = 1;
+}
 message ClearDefaultModelRequest {}
 message ClearDefaultModelResponse {}
 message GetEngineCapabilitiesRequest {}
@@ -3021,3 +3064,175 @@ message RemoveRunHistoryRequest {
 }
 
 message RemoveRunHistoryResponse {}
+
+// EventSeverity classifies an observation event. A subscription can require
+// at least a given severity.
+enum EventSeverity {
+  EVENT_SEVERITY_UNSPECIFIED = 0;
+  EVENT_SEVERITY_INFO = 1;
+  EVENT_SEVERITY_WARNING = 2;
+  EVENT_SEVERITY_ERROR = 3;
+}
+
+message GetEventStreamCapabilitiesRequest {}
+
+message GetEventStreamCapabilitiesResponse {
+  // False when EVENT_STREAM_ENABLED is not set. WatchEvents then returns
+  // FAILED_PRECONDITION.
+  bool enabled = 1;
+  // Stable event type names this daemon can emit.
+  repeated string event_types = 2;
+  uint32 max_subscribers = 3;
+  uint32 subscriber_buffer_events = 4;
+  uint32 replay_events = 5;
+  uint32 heartbeat_seconds = 6;
+}
+
+message WatchEventsRequest {
+  // Empty selects every project visible to the daemon token. At most 100.
+  repeated string project_ids = 1;
+  // Exact event type or a prefix ending in ".*". Empty selects every
+  // non-log type unless include_logs is true.
+  repeated string event_types = 2;
+  EventSeverity min_severity = 3;
+  // Include log types matched by a wildcard or an empty event_types list.
+  // Explicitly listed log types are always included. Excluding them by default
+  // prevents an accidental run.* subscription from flooding the control plane.
+  bool include_logs = 4;
+  // Opaque cursor from a previous response. Empty starts at the current head.
+  string cursor = 5;
+  // Requested maximum events in one response. The daemon caps it.
+  uint32 max_batch_events = 6;
+}
+
+message WatchEventsResponse {
+  repeated StreamEvent events = 1;
+  // Safe resume point: event batches use their last event; HELLO/heartbeat use
+  // the last event successfully sent to this connection, never ahead of unsent
+  // replay or queued events.
+  string next_cursor = 2;
+  // Present for HELLO, heartbeat, gap, and sync-required control frames.
+  StreamControl control = 3;
+}
+
+message StreamControl {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_HELLO = 1; // First frame: epoch, safe cursor, replay floor, heartbeat.
+    KIND_HEARTBEAT = 2;
+    KIND_SYNC_REQUIRED = 3;
+    KIND_GAP = 4;
+  }
+  Kind kind = 1;
+  string epoch = 2;
+  // 当前连接已成功发送的安全恢复点；HELLO 有重放时为客户端请求 cursor。
+  string cursor = 3;
+  string replay_floor = 4;
+  uint32 heartbeat_seconds = 5;
+  string reason = 6;
+  uint64 dropped_events = 7;
+  string first_dropped_cursor = 8;
+  string last_dropped_cursor = 9;
+}
+
+message StreamEvent {
+  // Stable event identity. Replay can repeat an event, so consumers dedupe by
+  // this value.
+  string id = 1;
+  // Opaque resume token for this event.
+  string cursor = 2;
+  // Monotonic within one daemon epoch. Zero is reserved for control frames.
+  uint64 sequence = 3;
+  google.protobuf.Timestamp occurred_at = 4;
+  // One of run.status, run.event, run.log, scheduler.run.status,
+  // scheduler.event, scheduler.updated, sandbox.status, sandbox.event,
+  // sandbox.cell.output, or sandbox.removed.
+  string type = 5;
+  // Empty when the source cannot attribute the event to a project.
+  string project_id = 6;
+  EventSeverity severity = 7;
+  oneof payload {
+    StreamRunStatus run_status = 10;
+    StreamRunLog run_log = 11;
+    RunEvent run_event = 17;
+    StreamSchedulerUpdate scheduler_update = 18;
+    StreamSchedulerRunStatus scheduler_run_status = 12;
+    SchedulerEvent scheduler_event = 13;
+    StreamSandboxStatus sandbox_status = 14;
+    StreamSandboxEvent sandbox_event = 15;
+    StreamSandboxCellOutput sandbox_cell_output = 16;
+    StreamSandboxRemoved sandbox_removed = 19;
+  }
+}
+
+message StreamRunStatus {
+  RunSummary run = 1;
+  RunStatus previous_status = 2;
+  string cleanup_error = 3;
+  string error_stack = 4;
+}
+
+message StreamRunLog {
+  string run_id = 1;
+  string project_id = 2;
+  string sandbox_id = 3;
+  // End offset of this chunk in the run log file, usable as FollowRunLogs
+  // start_offset.
+  uint64 offset = 4;
+  string stream = 5;
+  string data = 6;
+  // "text" for the current run log; "jsonl" once structured run logs are
+  // wired.
+  string format = 7;
+  string entry_type = 8;
+}
+
+message StreamSchedulerRunStatus {
+  SchedulerRun run = 1;
+  SchedulerRunStatus previous_status = 2;
+}
+
+message StreamSchedulerUpdate {
+  string scheduler_id = 1;
+  string project_id = 2;
+  string agent_name = 3;
+  bool enabled = 4;
+  // Set when the change targets one trigger rather than the scheduler itself.
+  string trigger_id = 5;
+  bool trigger_enabled = 6;
+  // scheduler_enabled, scheduler_disabled, trigger_enabled, trigger_disabled,
+  // config_changed, or scheduler_removed.
+  string reason = 7;
+}
+
+message StreamSandboxStatus {
+  string sandbox_id = 1;
+  string project_id = 2;
+  string title = 3;
+  string driver = 4;
+  string vm_status = 5;
+  string previous_vm_status = 6;
+  string error = 7;
+}
+
+message StreamSandboxEvent {
+  string sandbox_id = 1;
+  string project_id = 2;
+  string event_id = 3;
+  string type = 4;
+  string level = 5;
+  string message = 6;
+}
+
+message StreamSandboxRemoved {
+  string sandbox_id = 1;
+  string project_id = 2;
+}
+
+message StreamSandboxCellOutput {
+  string sandbox_id = 1;
+  string project_id = 2;
+  string cell_id = 3;
+  string stream = 4;
+  string data = 5;
+}

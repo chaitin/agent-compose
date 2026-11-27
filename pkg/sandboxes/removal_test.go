@@ -25,7 +25,10 @@ func TestRemovalCoordinatorPersistsAndResumesStages(t *testing.T) {
 	})
 	store := &removalTestStore{sandboxes: map[string]*domain.Sandbox{sandbox.Summary.ID: sandbox}}
 	runtime := &removalTestRuntime{removeErrors: []error{errors.New("injected remove failure")}}
-	coordinator := &sandboxes.RemovalCoordinator{SandboxRoot: root, Store: store, Runtime: runtime}
+	var removed []*domain.SandboxSummary
+	coordinator := &sandboxes.RemovalCoordinator{SandboxRoot: root, Store: store, Runtime: runtime, RemovedObserver: func(summary *domain.SandboxSummary) {
+		removed = append(removed, summary)
+	}}
 
 	if _, err := coordinator.Remove(context.Background(), sandbox.Summary.ID, false); !errors.Is(err, sandboxes.ErrSandboxRunning) {
 		t.Fatalf("Remove running without force error = %v", err)
@@ -56,6 +59,9 @@ func TestRemovalCoordinatorPersistsAndResumesStages(t *testing.T) {
 	}
 	if _, err := sandboxes.ReadOwnershipRecord(root, sandbox.Summary.ID); !os.IsNotExist(err) {
 		t.Fatalf("ownership record remains: %v", err)
+	}
+	if len(removed) != 1 || removed[0].ID != sandbox.Summary.ID {
+		t.Fatalf("removed observer = %+v", removed)
 	}
 }
 
@@ -526,6 +532,39 @@ func removalTestSandbox(t *testing.T, spec removalTestSandboxSpec) *domain.Sandb
 		t.Fatal(err)
 	}
 	return sandbox
+}
+
+func TestRemovalCoordinatorPublishesTombstoneWhenSandboxRecordIsAlreadyGone(t *testing.T) {
+	root := t.TempDir()
+	sandboxID := "sandbox-retry-removed-record"
+	if err := sandboxes.WriteOwnershipRecord(root, sandboxes.OwnershipRecord{
+		Version: sandboxes.OwnershipRecordVersion, SandboxID: sandboxID, Driver: "docker",
+		SandboxPath:    filepath.Join(root, sandboxID),
+		LifecycleState: "deleting", CompletedStages: []sandboxes.DeletionStage{
+			sandboxes.DeletionStageIntent,
+			sandboxes.DeletionStageRuntimeStop,
+			sandboxes.DeletionStageRuntime,
+			sandboxes.DeletionStageAccessories,
+		},
+	}); err != nil {
+		t.Fatalf("WriteOwnershipRecord: %v", err)
+	}
+	var removed []*domain.SandboxSummary
+	coordinator := &sandboxes.RemovalCoordinator{
+		SandboxRoot: root,
+		Store:       &removalTestStore{sandboxes: map[string]*domain.Sandbox{}},
+		Runtime:     &removalTestRuntime{},
+		RemovedObserver: func(summary *domain.SandboxSummary) {
+			removed = append(removed, summary)
+		},
+	}
+	result, err := coordinator.Remove(context.Background(), sandboxID, true)
+	if err != nil || !result.Removed {
+		t.Fatalf("Remove result=%+v err=%v", result, err)
+	}
+	if len(removed) != 1 || removed[0].ID != sandboxID {
+		t.Fatalf("removed observer = %+v", removed)
+	}
 }
 
 type removalTestStore struct {

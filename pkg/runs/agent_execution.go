@@ -91,7 +91,7 @@ func projectRunAgentExecutionStream(ctx context.Context, req agentExecutionStrea
 			if err != nil {
 				return err
 			}
-			publishRunLogChunk(hub, run.RunID, chunk, offset)
+			publishRunLogChunk(hub, run, chunk, offset)
 			if sink == nil || sink.SendChunk == nil {
 				return nil
 			}

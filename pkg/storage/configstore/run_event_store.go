@@ -43,6 +43,7 @@ func (s *projectStore) AppendProjectRunEvents(ctx context.Context, events []doma
 	if err := tx.Commit(); err != nil {
 		return nil, nil, fmt.Errorf("commit run event: %w", err)
 	}
+	s.notifyRunEventsByRunID(ctx, results, created)
 	return results, created, nil
 }
 

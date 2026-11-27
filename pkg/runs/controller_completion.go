@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 
-	"github.com/chaitin/agent-compose/internal/projects"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
 	agentcomposev2 "github.com/chaitin/agent-compose/proto/agentcompose/v2"
@@ -66,14 +65,19 @@ func (c *Controller) completeProjectRunWithoutJournal(ctx context.Context, trans
 				policy = agentcomposev2.RunSandboxCleanupPolicy_RUN_SANDBOX_CLEANUP_POLICY_REMOVE_ON_COMPLETION
 			}
 			if err := c.cleanupProjectRunSandboxByPolicy(ctx, SandboxResult{Sandbox: sandbox, Created: current.SandboxCreated}, policy); err != nil {
+				before := current
 				current.Status = domain.ProjectRunStatusRunning
 				current.CleanupError = err.Error()
 				applyProjectRunTransitionFields(&current, transition)
-				return c.configDB.UpdateProjectRun(ctx, current)
+				updated, updateErr := c.configDB.UpdateProjectRun(ctx, current)
+				if updateErr == nil {
+					c.observeRunStatus(ctx, before, updated)
+				}
+				return updated, updateErr
 			}
 		}
 	}
-	return NewCoordinator(c.configDB, projects.StableProjectRunID).TransitionRun(ctx, transition)
+	return c.newCoordinator().TransitionRun(ctx, transition)
 }
 
 type controllerCompletionStopper struct{ controller *Controller }
@@ -113,6 +117,7 @@ func (c *Controller) completionManager() (*CompletionManager, error) {
 		Lifecycle: controllerCompletionStopper{controller: c},
 		Removal:   removal,
 		Logger:    slog.Default(),
+		Observer:  c.observer,
 	})
 	return c.completion, nil
 }

@@ -114,6 +114,12 @@ type RemovalCoordinator struct {
 	Residues      RuntimeResidueManager
 	Locks         *LifecycleLocks
 	Now           func() time.Time
+	// StatusObserver receives a sandbox summary after a lifecycle status
+	// change such as the deletion intent or a rollback. It must not block.
+	StatusObserver func(*domain.SandboxSummary)
+	// RemovedObserver receives the last summary after the sandbox record and
+	// lifecycle journal have been removed. It must not block.
+	RemovedObserver func(*domain.SandboxSummary)
 
 	locks LifecycleLocks
 }
@@ -164,6 +170,7 @@ func (c *RemovalCoordinator) Remove(ctx context.Context, sandboxID string, force
 		if err := c.Store.UpdateSandbox(ctx, sandbox); err != nil {
 			return RemovalResult{}, fmt.Errorf("persist sandbox deletion intent: %w", err)
 		}
+		c.observeStatus(&sandbox.Summary)
 	}
 
 	result := RemovalResult{SandboxID: sandboxID, Stopped: record.StopRequired && record.StageCompleted(DeletionStageRuntimeStop)}
@@ -227,6 +234,11 @@ func (c *RemovalCoordinator) Remove(ctx context.Context, sandboxID string, force
 		return result, fmt.Errorf("remove sandbox lifecycle journal: %w", err)
 	}
 	result.Removed = true
+	summary := &domain.SandboxSummary{ID: sandboxID, VMStatus: domain.VMStatusDeleting, UpdatedAt: record.UpdatedAt}
+	if sandbox != nil {
+		summary = &sandbox.Summary
+	}
+	c.observeRemoved(summary)
 	return result, nil
 }
 
@@ -372,7 +384,20 @@ func (c *RemovalCoordinator) rollbackDeletionIntent(ctx context.Context, sandbox
 	if err := c.Store.UpdateSandbox(ctx, sandbox); err != nil {
 		return errors.Join(cause, fmt.Errorf("roll back sandbox deletion status: %w", err))
 	}
+	c.observeStatus(&sandbox.Summary)
 	return cause
+}
+
+func (c *RemovalCoordinator) observeRemoved(summary *domain.SandboxSummary) {
+	if c != nil && c.RemovedObserver != nil && summary != nil {
+		c.RemovedObserver(summary)
+	}
+}
+
+func (c *RemovalCoordinator) observeStatus(summary *domain.SandboxSummary) {
+	if c != nil && c.StatusObserver != nil && summary != nil {
+		c.StatusObserver(summary)
+	}
 }
 
 func ownershipFromSandbox(root string, sandbox *domain.Sandbox) OwnershipRecord {

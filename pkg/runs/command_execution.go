@@ -104,7 +104,7 @@ func (c *Controller) executeProjectRunCommand(ctx context.Context, exec projectR
 			sendErr = err
 			return
 		}
-		c.publishRunLogChunk(run.RunID, filtered, offset)
+		c.publishRunLogChunk(run, filtered, offset)
 		if sink != nil && sink.SendChunk != nil {
 			sendErr = sink.SendChunk(run.RunID, filtered, time.Now().UTC())
 		}

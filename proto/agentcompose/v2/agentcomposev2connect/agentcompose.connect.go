@@ -47,6 +47,8 @@ const (
 	ResourceServiceName = "agentcompose.v2.ResourceService"
 	// EngineServiceName is the fully-qualified name of the EngineService service.
 	EngineServiceName = "agentcompose.v2.EngineService"
+	// EventServiceName is the fully-qualified name of the EventService service.
+	EventServiceName = "agentcompose.v2.EventService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -311,6 +313,12 @@ const (
 	// EngineServiceGetCapabilitiesProcedure is the fully-qualified name of the EngineService's
 	// GetCapabilities RPC.
 	EngineServiceGetCapabilitiesProcedure = "/agentcompose.v2.EngineService/GetCapabilities"
+	// EventServiceGetEventStreamCapabilitiesProcedure is the fully-qualified name of the EventService's
+	// GetEventStreamCapabilities RPC.
+	EventServiceGetEventStreamCapabilitiesProcedure = "/agentcompose.v2.EventService/GetEventStreamCapabilities"
+	// EventServiceWatchEventsProcedure is the fully-qualified name of the EventService's WatchEvents
+	// RPC.
+	EventServiceWatchEventsProcedure = "/agentcompose.v2.EventService/WatchEvents"
 )
 
 // ProjectServiceClient is a client for the agentcompose.v2.ProjectService service.
@@ -3320,4 +3328,110 @@ type UnimplementedEngineServiceHandler struct{}
 
 func (UnimplementedEngineServiceHandler) GetCapabilities(context.Context, *connect.Request[v2.GetEngineCapabilitiesRequest]) (*connect.Response[v2.GetEngineCapabilitiesResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.EngineService.GetCapabilities is not implemented"))
+}
+
+// EventServiceClient is a client for the agentcompose.v2.EventService service.
+type EventServiceClient interface {
+	// Capabilities reports whether the feature is enabled and the limits the
+	// daemon applies to WatchEvents.
+	GetEventStreamCapabilities(context.Context, *connect.Request[v2.GetEventStreamCapabilitiesRequest]) (*connect.Response[v2.GetEventStreamCapabilitiesResponse], error)
+	// WatchEvents streams daemon observation events. The daemon pushes events
+	// on this connection; the client does not poll. Log events require
+	// include_logs=true.
+	WatchEvents(context.Context, *connect.Request[v2.WatchEventsRequest]) (*connect.ServerStreamForClient[v2.WatchEventsResponse], error)
+}
+
+// NewEventServiceClient constructs a client for the agentcompose.v2.EventService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewEventServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) EventServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	eventServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("EventService").Methods()
+	return &eventServiceClient{
+		getEventStreamCapabilities: connect.NewClient[v2.GetEventStreamCapabilitiesRequest, v2.GetEventStreamCapabilitiesResponse](
+			httpClient,
+			baseURL+EventServiceGetEventStreamCapabilitiesProcedure,
+			connect.WithSchema(eventServiceMethods.ByName("GetEventStreamCapabilities")),
+			connect.WithClientOptions(opts...),
+		),
+		watchEvents: connect.NewClient[v2.WatchEventsRequest, v2.WatchEventsResponse](
+			httpClient,
+			baseURL+EventServiceWatchEventsProcedure,
+			connect.WithSchema(eventServiceMethods.ByName("WatchEvents")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// eventServiceClient implements EventServiceClient.
+type eventServiceClient struct {
+	getEventStreamCapabilities *connect.Client[v2.GetEventStreamCapabilitiesRequest, v2.GetEventStreamCapabilitiesResponse]
+	watchEvents                *connect.Client[v2.WatchEventsRequest, v2.WatchEventsResponse]
+}
+
+// GetEventStreamCapabilities calls agentcompose.v2.EventService.GetEventStreamCapabilities.
+func (c *eventServiceClient) GetEventStreamCapabilities(ctx context.Context, req *connect.Request[v2.GetEventStreamCapabilitiesRequest]) (*connect.Response[v2.GetEventStreamCapabilitiesResponse], error) {
+	return c.getEventStreamCapabilities.CallUnary(ctx, req)
+}
+
+// WatchEvents calls agentcompose.v2.EventService.WatchEvents.
+func (c *eventServiceClient) WatchEvents(ctx context.Context, req *connect.Request[v2.WatchEventsRequest]) (*connect.ServerStreamForClient[v2.WatchEventsResponse], error) {
+	return c.watchEvents.CallServerStream(ctx, req)
+}
+
+// EventServiceHandler is an implementation of the agentcompose.v2.EventService service.
+type EventServiceHandler interface {
+	// Capabilities reports whether the feature is enabled and the limits the
+	// daemon applies to WatchEvents.
+	GetEventStreamCapabilities(context.Context, *connect.Request[v2.GetEventStreamCapabilitiesRequest]) (*connect.Response[v2.GetEventStreamCapabilitiesResponse], error)
+	// WatchEvents streams daemon observation events. The daemon pushes events
+	// on this connection; the client does not poll. Log events require
+	// include_logs=true.
+	WatchEvents(context.Context, *connect.Request[v2.WatchEventsRequest], *connect.ServerStream[v2.WatchEventsResponse]) error
+}
+
+// NewEventServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewEventServiceHandler(svc EventServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	eventServiceMethods := v2.File_agentcompose_v2_agentcompose_proto.Services().ByName("EventService").Methods()
+	eventServiceGetEventStreamCapabilitiesHandler := connect.NewUnaryHandler(
+		EventServiceGetEventStreamCapabilitiesProcedure,
+		svc.GetEventStreamCapabilities,
+		connect.WithSchema(eventServiceMethods.ByName("GetEventStreamCapabilities")),
+		connect.WithHandlerOptions(opts...),
+	)
+	eventServiceWatchEventsHandler := connect.NewServerStreamHandler(
+		EventServiceWatchEventsProcedure,
+		svc.WatchEvents,
+		connect.WithSchema(eventServiceMethods.ByName("WatchEvents")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/agentcompose.v2.EventService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case EventServiceGetEventStreamCapabilitiesProcedure:
+			eventServiceGetEventStreamCapabilitiesHandler.ServeHTTP(w, r)
+		case EventServiceWatchEventsProcedure:
+			eventServiceWatchEventsHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedEventServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedEventServiceHandler struct{}
+
+func (UnimplementedEventServiceHandler) GetEventStreamCapabilities(context.Context, *connect.Request[v2.GetEventStreamCapabilitiesRequest]) (*connect.Response[v2.GetEventStreamCapabilitiesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.EventService.GetEventStreamCapabilities is not implemented"))
+}
+
+func (UnimplementedEventServiceHandler) WatchEvents(context.Context, *connect.Request[v2.WatchEventsRequest], *connect.ServerStream[v2.WatchEventsResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("agentcompose.v2.EventService.WatchEvents is not implemented"))
 }

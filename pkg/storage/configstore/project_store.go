@@ -30,6 +30,8 @@ type projectStore struct {
 	db      *sql.DB
 	dialect dialect.Dialect
 	client  *dao.Client
+
+	runEventObserver RunEventObserver
 }
 
 func (s *projectStore) UpsertProject(ctx context.Context, project ProjectRecord) (ProjectRecord, error) {
