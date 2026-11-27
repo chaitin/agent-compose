@@ -92,12 +92,12 @@ func (s *ConfigStore) withRunHistoryFence(ctx context.Context, id runhistory.Ide
 			return fmt.Errorf("lock run history tables: %w", err)
 		}
 	}
-	// Write first: a deferred SQLite transaction that reads before its first
-	// write can fail to upgrade once another writer commits. On PostgreSQL the
-	// table lock above supplies the same exclusion; the project row update is
-	// still a harmless write fence for the project itself.
-	// Kept as SQL: no-op write that upgrades the deferred SQLite transaction to
-	// a writer before it reads; it must not read or change the stored value.
+	// Write first: the no-op project update gives the transaction a writer's
+	// lock before it reads, matching SQLite's immediate BEGIN (see sqliteDSN)
+	// and keeping the ordering explicit if that mode changes. On PostgreSQL the
+	// table lock above supplies the exclusion; the project row update remains a
+	// harmless project-scoped fence.
+	// Kept as SQL: no-op write that must not read or change the stored value.
 	if _, err := tx.ExecContext(ctx, "UPDATE project SET updated_at=updated_at WHERE id=?", id.ProjectID); err != nil {
 		return err
 	}
