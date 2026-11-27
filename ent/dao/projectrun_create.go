@@ -508,20 +508,6 @@ func (_c *ProjectRunCreate) SetNillableLogIncomplete(v *int) *ProjectRunCreate {
 	return _c
 }
 
-// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
-func (_c *ProjectRunCreate) SetExecutionCheckpointJSON(v string) *ProjectRunCreate {
-	_c.mutation.SetExecutionCheckpointJSON(v)
-	return _c
-}
-
-// SetNillableExecutionCheckpointJSON sets the "execution_checkpoint_json" field if the given value is not nil.
-func (_c *ProjectRunCreate) SetNillableExecutionCheckpointJSON(v *string) *ProjectRunCreate {
-	if v != nil {
-		_c.SetExecutionCheckpointJSON(*v)
-	}
-	return _c
-}
-
 // SetID sets the "id" field.
 func (_c *ProjectRunCreate) SetID(v string) *ProjectRunCreate {
 	_c.mutation.SetID(v)
@@ -757,10 +743,6 @@ func (_c *ProjectRunCreate) createSpec() (*ProjectRun, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.LogIncomplete(); ok {
 		_spec.SetField(projectrun.FieldLogIncomplete, field.TypeInt, value)
 		_node.LogIncomplete = value
-	}
-	if value, ok := _c.mutation.ExecutionCheckpointJSON(); ok {
-		_spec.SetField(projectrun.FieldExecutionCheckpointJSON, field.TypeString, value)
-		_node.ExecutionCheckpointJSON = value
 	}
 	return _node, _spec
 }
@@ -1519,24 +1501,6 @@ func (u *ProjectRunUpsert) AddLogIncomplete(v int) *ProjectRunUpsert {
 // ClearLogIncomplete clears the value of the "log_incomplete" field.
 func (u *ProjectRunUpsert) ClearLogIncomplete() *ProjectRunUpsert {
 	u.SetNull(projectrun.FieldLogIncomplete)
-	return u
-}
-
-// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
-func (u *ProjectRunUpsert) SetExecutionCheckpointJSON(v string) *ProjectRunUpsert {
-	u.Set(projectrun.FieldExecutionCheckpointJSON, v)
-	return u
-}
-
-// UpdateExecutionCheckpointJSON sets the "execution_checkpoint_json" field to the value that was provided on create.
-func (u *ProjectRunUpsert) UpdateExecutionCheckpointJSON() *ProjectRunUpsert {
-	u.SetExcluded(projectrun.FieldExecutionCheckpointJSON)
-	return u
-}
-
-// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
-func (u *ProjectRunUpsert) ClearExecutionCheckpointJSON() *ProjectRunUpsert {
-	u.SetNull(projectrun.FieldExecutionCheckpointJSON)
 	return u
 }
 
@@ -2411,27 +2375,6 @@ func (u *ProjectRunUpsertOne) UpdateLogIncomplete() *ProjectRunUpsertOne {
 func (u *ProjectRunUpsertOne) ClearLogIncomplete() *ProjectRunUpsertOne {
 	return u.Update(func(s *ProjectRunUpsert) {
 		s.ClearLogIncomplete()
-	})
-}
-
-// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
-func (u *ProjectRunUpsertOne) SetExecutionCheckpointJSON(v string) *ProjectRunUpsertOne {
-	return u.Update(func(s *ProjectRunUpsert) {
-		s.SetExecutionCheckpointJSON(v)
-	})
-}
-
-// UpdateExecutionCheckpointJSON sets the "execution_checkpoint_json" field to the value that was provided on create.
-func (u *ProjectRunUpsertOne) UpdateExecutionCheckpointJSON() *ProjectRunUpsertOne {
-	return u.Update(func(s *ProjectRunUpsert) {
-		s.UpdateExecutionCheckpointJSON()
-	})
-}
-
-// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
-func (u *ProjectRunUpsertOne) ClearExecutionCheckpointJSON() *ProjectRunUpsertOne {
-	return u.Update(func(s *ProjectRunUpsert) {
-		s.ClearExecutionCheckpointJSON()
 	})
 }
 
@@ -3472,27 +3415,6 @@ func (u *ProjectRunUpsertBulk) UpdateLogIncomplete() *ProjectRunUpsertBulk {
 func (u *ProjectRunUpsertBulk) ClearLogIncomplete() *ProjectRunUpsertBulk {
 	return u.Update(func(s *ProjectRunUpsert) {
 		s.ClearLogIncomplete()
-	})
-}
-
-// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
-func (u *ProjectRunUpsertBulk) SetExecutionCheckpointJSON(v string) *ProjectRunUpsertBulk {
-	return u.Update(func(s *ProjectRunUpsert) {
-		s.SetExecutionCheckpointJSON(v)
-	})
-}
-
-// UpdateExecutionCheckpointJSON sets the "execution_checkpoint_json" field to the value that was provided on create.
-func (u *ProjectRunUpsertBulk) UpdateExecutionCheckpointJSON() *ProjectRunUpsertBulk {
-	return u.Update(func(s *ProjectRunUpsert) {
-		s.UpdateExecutionCheckpointJSON()
-	})
-}
-
-// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
-func (u *ProjectRunUpsertBulk) ClearExecutionCheckpointJSON() *ProjectRunUpsertBulk {
-	return u.Update(func(s *ProjectRunUpsert) {
-		s.ClearExecutionCheckpointJSON()
 	})
 }
 

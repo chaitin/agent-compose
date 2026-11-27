@@ -35,12 +35,8 @@ func TestIntegrationRunLogHealthSurvivesStaleStatusUpdates(t *testing.T) {
 			if err := store.MarkProjectRunLogIncomplete(ctx, stale.RunID); err != nil {
 				t.Fatal(err)
 			}
-			checkpoint := `{"src_offset":42,"state":{"v":1}}`
-			if err := store.SaveProjectRunExecutionCheckpoint(ctx, stale.RunID, checkpoint); err != nil {
-				t.Fatal(err)
-			}
+			// A status update carrying the stale false must not clear the mark.
 			stale.Status = domain.ProjectRunStatusRunning
-			stale.ExecutionCheckpointJSON = `{"src_offset":1}`
 			if events {
 				_, err = store.UpdateProjectRunWithEvents(ctx, stale, []domain.ProjectRunEventRecord{{ID: "done", RunID: stale.RunID, Kind: domain.ProjectRunEventKindStatus}})
 			} else {
@@ -50,7 +46,7 @@ func TestIntegrationRunLogHealthSurvivesStaleStatusUpdates(t *testing.T) {
 				t.Fatal(err)
 			}
 			got, err := store.GetProjectRun(ctx, stale.RunID)
-			if err != nil || !got.LogIncomplete || got.Status != domain.ProjectRunStatusRunning || got.ExecutionCheckpointJSON != checkpoint {
+			if err != nil || !got.LogIncomplete || got.Status != domain.ProjectRunStatusRunning {
 				t.Fatalf("run=%+v err=%v", got, err)
 			}
 			got.Status = domain.ProjectRunStatusSucceeded
@@ -58,11 +54,8 @@ func TestIntegrationRunLogHealthSurvivesStaleStatusUpdates(t *testing.T) {
 				t.Fatal(err)
 			}
 			terminal, err := store.GetProjectRun(ctx, got.RunID)
-			if err != nil || terminal.ExecutionCheckpointJSON != "" || !terminal.LogIncomplete {
-				t.Fatalf("terminal recovery not retired: %+v %v", terminal, err)
-			}
-			if err := store.SaveProjectRunExecutionCheckpoint(ctx, stale.RunID, "broken"); err == nil {
-				t.Fatal("accepted malformed checkpoint")
+			if err != nil || !terminal.LogIncomplete {
+				t.Fatalf("terminal run lost its log fault: %+v %v", terminal, err)
 			}
 		})
 	}

@@ -13781,62 +13781,61 @@ func (m *ProjectRevisionMutation) ResetEdge(name string) error {
 // ProjectRunMutation represents an operation that mutates the ProjectRun nodes in the graph.
 type ProjectRunMutation struct {
 	config
-	op                        Op
-	typ                       string
-	id                        *string
-	project_id                *string
-	project_name              *string
-	project_revision          *int64
-	addproject_revision       *int64
-	agent_name                *string
-	agent_id                  *string
-	source                    *string
-	scheduler_id              *string
-	scheduler_run_id          *string
-	trigger_id                *string
-	status                    *string
-	sandbox_id                *string
-	exit_code                 *int
-	addexit_code              *int
-	error                     *string
-	error_stack               *string
-	prompt                    *string
-	output                    *string
-	result_json               *string
-	logs_path                 *string
-	artifacts_dir             *string
-	cleanup_error             *string
-	cleanup_policy            *string
-	sandbox_created           *int
-	addsandbox_created        *int
-	_driver                   *string
-	image_ref                 *string
-	started_at                *int64
-	addstarted_at             *int64
-	completed_at              *int64
-	addcompleted_at           *int64
-	duration_ms               *int64
-	addduration_ms            *int64
-	created_at                *int64
-	addcreated_at             *int64
-	updated_at                *int64
-	addupdated_at             *int64
-	execution_id              *string
-	detach                    *int
-	adddetach                 *int
-	deadline                  *int64
-	adddeadline               *int64
-	detach_kind               *string
-	log_format                *string
-	summary_json              *string
-	agent_cell_id             *string
-	log_incomplete            *int
-	addlog_incomplete         *int
-	execution_checkpoint_json *string
-	clearedFields             map[string]struct{}
-	done                      bool
-	oldValue                  func(context.Context) (*ProjectRun, error)
-	predicates                []predicate.ProjectRun
+	op                  Op
+	typ                 string
+	id                  *string
+	project_id          *string
+	project_name        *string
+	project_revision    *int64
+	addproject_revision *int64
+	agent_name          *string
+	agent_id            *string
+	source              *string
+	scheduler_id        *string
+	scheduler_run_id    *string
+	trigger_id          *string
+	status              *string
+	sandbox_id          *string
+	exit_code           *int
+	addexit_code        *int
+	error               *string
+	error_stack         *string
+	prompt              *string
+	output              *string
+	result_json         *string
+	logs_path           *string
+	artifacts_dir       *string
+	cleanup_error       *string
+	cleanup_policy      *string
+	sandbox_created     *int
+	addsandbox_created  *int
+	_driver             *string
+	image_ref           *string
+	started_at          *int64
+	addstarted_at       *int64
+	completed_at        *int64
+	addcompleted_at     *int64
+	duration_ms         *int64
+	addduration_ms      *int64
+	created_at          *int64
+	addcreated_at       *int64
+	updated_at          *int64
+	addupdated_at       *int64
+	execution_id        *string
+	detach              *int
+	adddetach           *int
+	deadline            *int64
+	adddeadline         *int64
+	detach_kind         *string
+	log_format          *string
+	summary_json        *string
+	agent_cell_id       *string
+	log_incomplete      *int
+	addlog_incomplete   *int
+	clearedFields       map[string]struct{}
+	done                bool
+	oldValue            func(context.Context) (*ProjectRun, error)
+	predicates          []predicate.ProjectRun
 }
 
 var _ ent.Mutation = (*ProjectRunMutation)(nil)
@@ -15933,55 +15932,6 @@ func (m *ProjectRunMutation) ResetLogIncomplete() {
 	delete(m.clearedFields, projectrun.FieldLogIncomplete)
 }
 
-// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
-func (m *ProjectRunMutation) SetExecutionCheckpointJSON(s string) {
-	m.execution_checkpoint_json = &s
-}
-
-// ExecutionCheckpointJSON returns the value of the "execution_checkpoint_json" field in the mutation.
-func (m *ProjectRunMutation) ExecutionCheckpointJSON() (r string, exists bool) {
-	v := m.execution_checkpoint_json
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldExecutionCheckpointJSON returns the old "execution_checkpoint_json" field's value of the ProjectRun entity.
-// If the ProjectRun object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *ProjectRunMutation) OldExecutionCheckpointJSON(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldExecutionCheckpointJSON is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldExecutionCheckpointJSON requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldExecutionCheckpointJSON: %w", err)
-	}
-	return oldValue.ExecutionCheckpointJSON, nil
-}
-
-// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
-func (m *ProjectRunMutation) ClearExecutionCheckpointJSON() {
-	m.execution_checkpoint_json = nil
-	m.clearedFields[projectrun.FieldExecutionCheckpointJSON] = struct{}{}
-}
-
-// ExecutionCheckpointJSONCleared returns if the "execution_checkpoint_json" field was cleared in this mutation.
-func (m *ProjectRunMutation) ExecutionCheckpointJSONCleared() bool {
-	_, ok := m.clearedFields[projectrun.FieldExecutionCheckpointJSON]
-	return ok
-}
-
-// ResetExecutionCheckpointJSON resets all changes to the "execution_checkpoint_json" field.
-func (m *ProjectRunMutation) ResetExecutionCheckpointJSON() {
-	m.execution_checkpoint_json = nil
-	delete(m.clearedFields, projectrun.FieldExecutionCheckpointJSON)
-}
-
 // Where appends a list predicates to the ProjectRunMutation builder.
 func (m *ProjectRunMutation) Where(ps ...predicate.ProjectRun) {
 	m.predicates = append(m.predicates, ps...)
@@ -16016,7 +15966,7 @@ func (m *ProjectRunMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProjectRunMutation) Fields() []string {
-	fields := make([]string, 0, 38)
+	fields := make([]string, 0, 37)
 	if m.project_id != nil {
 		fields = append(fields, projectrun.FieldProjectID)
 	}
@@ -16128,9 +16078,6 @@ func (m *ProjectRunMutation) Fields() []string {
 	if m.log_incomplete != nil {
 		fields = append(fields, projectrun.FieldLogIncomplete)
 	}
-	if m.execution_checkpoint_json != nil {
-		fields = append(fields, projectrun.FieldExecutionCheckpointJSON)
-	}
 	return fields
 }
 
@@ -16213,8 +16160,6 @@ func (m *ProjectRunMutation) Field(name string) (ent.Value, bool) {
 		return m.AgentCellID()
 	case projectrun.FieldLogIncomplete:
 		return m.LogIncomplete()
-	case projectrun.FieldExecutionCheckpointJSON:
-		return m.ExecutionCheckpointJSON()
 	}
 	return nil, false
 }
@@ -16298,8 +16243,6 @@ func (m *ProjectRunMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldAgentCellID(ctx)
 	case projectrun.FieldLogIncomplete:
 		return m.OldLogIncomplete(ctx)
-	case projectrun.FieldExecutionCheckpointJSON:
-		return m.OldExecutionCheckpointJSON(ctx)
 	}
 	return nil, fmt.Errorf("unknown ProjectRun field %s", name)
 }
@@ -16568,13 +16511,6 @@ func (m *ProjectRunMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetLogIncomplete(v)
 		return nil
-	case projectrun.FieldExecutionCheckpointJSON:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetExecutionCheckpointJSON(v)
-		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun field %s", name)
 }
@@ -16839,9 +16775,6 @@ func (m *ProjectRunMutation) ClearedFields() []string {
 	if m.FieldCleared(projectrun.FieldLogIncomplete) {
 		fields = append(fields, projectrun.FieldLogIncomplete)
 	}
-	if m.FieldCleared(projectrun.FieldExecutionCheckpointJSON) {
-		fields = append(fields, projectrun.FieldExecutionCheckpointJSON)
-	}
 	return fields
 }
 
@@ -16954,9 +16887,6 @@ func (m *ProjectRunMutation) ClearField(name string) error {
 		return nil
 	case projectrun.FieldLogIncomplete:
 		m.ClearLogIncomplete()
-		return nil
-	case projectrun.FieldExecutionCheckpointJSON:
-		m.ClearExecutionCheckpointJSON()
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun nullable field %s", name)
@@ -17076,9 +17006,6 @@ func (m *ProjectRunMutation) ResetField(name string) error {
 		return nil
 	case projectrun.FieldLogIncomplete:
 		m.ResetLogIncomplete()
-		return nil
-	case projectrun.FieldExecutionCheckpointJSON:
-		m.ResetExecutionCheckpointJSON()
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun field %s", name)

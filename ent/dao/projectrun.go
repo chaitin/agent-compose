@@ -90,9 +90,7 @@ type ProjectRun struct {
 	AgentCellID string `json:"agent_cell_id,omitempty"`
 	// LogIncomplete holds the value of the "log_incomplete" field.
 	LogIncomplete int `json:"log_incomplete,omitempty"`
-	// ExecutionCheckpointJSON holds the value of the "execution_checkpoint_json" field.
-	ExecutionCheckpointJSON string `json:"execution_checkpoint_json,omitempty"`
-	selectValues            sql.SelectValues
+	selectValues  sql.SelectValues
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -102,7 +100,7 @@ func (*ProjectRun) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case projectrun.FieldProjectRevision, projectrun.FieldExitCode, projectrun.FieldSandboxCreated, projectrun.FieldStartedAt, projectrun.FieldCompletedAt, projectrun.FieldDurationMs, projectrun.FieldCreatedAt, projectrun.FieldUpdatedAt, projectrun.FieldDetach, projectrun.FieldDeadline, projectrun.FieldLogIncomplete:
 			values[i] = new(sql.NullInt64)
-		case projectrun.FieldID, projectrun.FieldProjectID, projectrun.FieldProjectName, projectrun.FieldAgentName, projectrun.FieldAgentID, projectrun.FieldSource, projectrun.FieldSchedulerID, projectrun.FieldSchedulerRunID, projectrun.FieldTriggerID, projectrun.FieldStatus, projectrun.FieldSandboxID, projectrun.FieldError, projectrun.FieldErrorStack, projectrun.FieldPrompt, projectrun.FieldOutput, projectrun.FieldResultJSON, projectrun.FieldLogsPath, projectrun.FieldArtifactsDir, projectrun.FieldCleanupError, projectrun.FieldCleanupPolicy, projectrun.FieldDriver, projectrun.FieldImageRef, projectrun.FieldExecutionID, projectrun.FieldDetachKind, projectrun.FieldLogFormat, projectrun.FieldSummaryJSON, projectrun.FieldAgentCellID, projectrun.FieldExecutionCheckpointJSON:
+		case projectrun.FieldID, projectrun.FieldProjectID, projectrun.FieldProjectName, projectrun.FieldAgentName, projectrun.FieldAgentID, projectrun.FieldSource, projectrun.FieldSchedulerID, projectrun.FieldSchedulerRunID, projectrun.FieldTriggerID, projectrun.FieldStatus, projectrun.FieldSandboxID, projectrun.FieldError, projectrun.FieldErrorStack, projectrun.FieldPrompt, projectrun.FieldOutput, projectrun.FieldResultJSON, projectrun.FieldLogsPath, projectrun.FieldArtifactsDir, projectrun.FieldCleanupError, projectrun.FieldCleanupPolicy, projectrun.FieldDriver, projectrun.FieldImageRef, projectrun.FieldExecutionID, projectrun.FieldDetachKind, projectrun.FieldLogFormat, projectrun.FieldSummaryJSON, projectrun.FieldAgentCellID:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -348,12 +346,6 @@ func (_m *ProjectRun) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.LogIncomplete = int(value.Int64)
 			}
-		case projectrun.FieldExecutionCheckpointJSON:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field execution_checkpoint_json", values[i])
-			} else if value.Valid {
-				_m.ExecutionCheckpointJSON = value.String
-			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -502,9 +494,6 @@ func (_m *ProjectRun) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("log_incomplete=")
 	builder.WriteString(fmt.Sprintf("%v", _m.LogIncomplete))
-	builder.WriteString(", ")
-	builder.WriteString("execution_checkpoint_json=")
-	builder.WriteString(_m.ExecutionCheckpointJSON)
 	builder.WriteByte(')')
 	return builder.String()
 }

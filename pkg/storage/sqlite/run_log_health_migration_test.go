@@ -24,12 +24,12 @@ func TestIntegrationRunLogHealthMigrationPreservesV23Runs(t *testing.T) {
 	if err := applyMigrationSet(ctx, db, chain); err != nil {
 		t.Fatal(err)
 	}
-	var status, output, cell, checkpoint string
+	var status, output, cell string
 	var incomplete int
-	if err := db.QueryRowContext(ctx, `SELECT status,output,agent_cell_id,log_incomplete,execution_checkpoint_json FROM project_run WHERE run_id='r'`).Scan(&status, &output, &cell, &incomplete, &checkpoint); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT status,output,agent_cell_id,log_incomplete FROM project_run WHERE run_id='r'`).Scan(&status, &output, &cell, &incomplete); err != nil {
 		t.Fatal(err)
 	}
-	if status != "succeeded" || output != "answer" || cell != "step-1" || incomplete != 0 || checkpoint != "" {
-		t.Fatalf("status=%q output=%q cell=%q incomplete=%d checkpoint=%q", status, output, cell, incomplete, checkpoint)
+	if status != "succeeded" || output != "answer" || cell != "step-1" || incomplete != 0 {
+		t.Fatalf("status=%q output=%q cell=%q incomplete=%d", status, output, cell, incomplete)
 	}
 }

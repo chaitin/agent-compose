@@ -45,8 +45,7 @@ func applyProjectRunCreateFields(create *dao.ProjectRunCreate, run ProjectRunRec
 		SetLogFormat(run.LogFormat).
 		SetSummaryJSON(run.SummaryJSON).
 		SetAgentCellID(run.AgentCellID).
-		SetLogIncomplete(BoolToInt(run.LogIncomplete)).
-		SetExecutionCheckpointJSON(run.ExecutionCheckpointJSON)
+		SetLogIncomplete(BoolToInt(run.LogIncomplete))
 	if includeLifecycle {
 		create = create.
 			SetExecutionID(run.ExecutionID).
@@ -98,12 +97,6 @@ func applyProjectRunUpdateFields(update *dao.ProjectRunUpdate, run ProjectRunRec
 	// carrying a stale false must not clear it.
 	if run.LogIncomplete {
 		update = update.SetLogIncomplete(1)
-	}
-	// An active execution checkpoint belongs to the narrow checkpoint update; a
-	// status snapshot must not overwrite it. A terminal run clears it.
-	switch run.Status {
-	case domain.ProjectRunStatusSucceeded, domain.ProjectRunStatusFailed, domain.ProjectRunStatusCanceled:
-		update = update.SetExecutionCheckpointJSON("")
 	}
 	if ptr := schedulerRunIDPtr(run.SchedulerRunID); ptr != nil {
 		update = update.SetSchedulerRunID(*ptr)

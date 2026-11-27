@@ -247,11 +247,6 @@ func LogIncomplete(v int) predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldEQ(FieldLogIncomplete, v))
 }
 
-// ExecutionCheckpointJSON applies equality check predicate on the "execution_checkpoint_json" field. It's identical to ExecutionCheckpointJSONEQ.
-func ExecutionCheckpointJSON(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldEQ(FieldExecutionCheckpointJSON, v))
-}
-
 // ProjectIDEQ applies the EQ predicate on the "project_id" field.
 func ProjectIDEQ(v string) predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldEQ(FieldProjectID, v))
@@ -2710,81 +2705,6 @@ func LogIncompleteIsNil() predicate.ProjectRun {
 // LogIncompleteNotNil applies the NotNil predicate on the "log_incomplete" field.
 func LogIncompleteNotNil() predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldNotNull(FieldLogIncomplete))
-}
-
-// ExecutionCheckpointJSONEQ applies the EQ predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONEQ(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldEQ(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONNEQ applies the NEQ predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONNEQ(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldNEQ(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONIn applies the In predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONIn(vs ...string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldIn(FieldExecutionCheckpointJSON, vs...))
-}
-
-// ExecutionCheckpointJSONNotIn applies the NotIn predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONNotIn(vs ...string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldNotIn(FieldExecutionCheckpointJSON, vs...))
-}
-
-// ExecutionCheckpointJSONGT applies the GT predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONGT(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldGT(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONGTE applies the GTE predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONGTE(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldGTE(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONLT applies the LT predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONLT(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldLT(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONLTE applies the LTE predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONLTE(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldLTE(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONContains applies the Contains predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONContains(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldContains(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONHasPrefix applies the HasPrefix predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONHasPrefix(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldHasPrefix(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONHasSuffix applies the HasSuffix predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONHasSuffix(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldHasSuffix(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONIsNil applies the IsNil predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONIsNil() predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldIsNull(FieldExecutionCheckpointJSON))
-}
-
-// ExecutionCheckpointJSONNotNil applies the NotNil predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONNotNil() predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldNotNull(FieldExecutionCheckpointJSON))
-}
-
-// ExecutionCheckpointJSONEqualFold applies the EqualFold predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONEqualFold(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldEqualFold(FieldExecutionCheckpointJSON, v))
-}
-
-// ExecutionCheckpointJSONContainsFold applies the ContainsFold predicate on the "execution_checkpoint_json" field.
-func ExecutionCheckpointJSONContainsFold(v string) predicate.ProjectRun {
-	return predicate.ProjectRun(sql.FieldContainsFold(FieldExecutionCheckpointJSON, v))
 }
 
 // And groups predicates with the AND operator between them.

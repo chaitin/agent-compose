@@ -141,8 +141,6 @@ type ProjectSchedulerRecord struct {
 type ProjectRunRecord struct {
 	// LogIncomplete reports a persistence failure or guest journal gap. It is sticky.
 	LogIncomplete bool `json:"log_incomplete,omitempty"`
-	// ExecutionCheckpointJSON preserves execution recovery when the log is unavailable.
-	ExecutionCheckpointJSON string `json:"-"`
 
 	RunID           string    `json:"run_id"`
 	ProjectID       string    `json:"project_id"`

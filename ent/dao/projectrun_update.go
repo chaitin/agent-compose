@@ -821,26 +821,6 @@ func (_u *ProjectRunUpdate) ClearLogIncomplete() *ProjectRunUpdate {
 	return _u
 }
 
-// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
-func (_u *ProjectRunUpdate) SetExecutionCheckpointJSON(v string) *ProjectRunUpdate {
-	_u.mutation.SetExecutionCheckpointJSON(v)
-	return _u
-}
-
-// SetNillableExecutionCheckpointJSON sets the "execution_checkpoint_json" field if the given value is not nil.
-func (_u *ProjectRunUpdate) SetNillableExecutionCheckpointJSON(v *string) *ProjectRunUpdate {
-	if v != nil {
-		_u.SetExecutionCheckpointJSON(*v)
-	}
-	return _u
-}
-
-// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
-func (_u *ProjectRunUpdate) ClearExecutionCheckpointJSON() *ProjectRunUpdate {
-	_u.mutation.ClearExecutionCheckpointJSON()
-	return _u
-}
-
 // Mutation returns the ProjectRunMutation object of the builder.
 func (_u *ProjectRunUpdate) Mutation() *ProjectRunMutation {
 	return _u.mutation
@@ -1130,12 +1110,6 @@ func (_u *ProjectRunUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	}
 	if _u.mutation.LogIncompleteCleared() {
 		_spec.ClearField(projectrun.FieldLogIncomplete, field.TypeInt)
-	}
-	if value, ok := _u.mutation.ExecutionCheckpointJSON(); ok {
-		_spec.SetField(projectrun.FieldExecutionCheckpointJSON, field.TypeString, value)
-	}
-	if _u.mutation.ExecutionCheckpointJSONCleared() {
-		_spec.ClearField(projectrun.FieldExecutionCheckpointJSON, field.TypeString)
 	}
 	_spec.AddModifiers(_u.modifiers...)
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
@@ -1952,26 +1926,6 @@ func (_u *ProjectRunUpdateOne) ClearLogIncomplete() *ProjectRunUpdateOne {
 	return _u
 }
 
-// SetExecutionCheckpointJSON sets the "execution_checkpoint_json" field.
-func (_u *ProjectRunUpdateOne) SetExecutionCheckpointJSON(v string) *ProjectRunUpdateOne {
-	_u.mutation.SetExecutionCheckpointJSON(v)
-	return _u
-}
-
-// SetNillableExecutionCheckpointJSON sets the "execution_checkpoint_json" field if the given value is not nil.
-func (_u *ProjectRunUpdateOne) SetNillableExecutionCheckpointJSON(v *string) *ProjectRunUpdateOne {
-	if v != nil {
-		_u.SetExecutionCheckpointJSON(*v)
-	}
-	return _u
-}
-
-// ClearExecutionCheckpointJSON clears the value of the "execution_checkpoint_json" field.
-func (_u *ProjectRunUpdateOne) ClearExecutionCheckpointJSON() *ProjectRunUpdateOne {
-	_u.mutation.ClearExecutionCheckpointJSON()
-	return _u
-}
-
 // Mutation returns the ProjectRunMutation object of the builder.
 func (_u *ProjectRunUpdateOne) Mutation() *ProjectRunMutation {
 	return _u.mutation
@@ -2291,12 +2245,6 @@ func (_u *ProjectRunUpdateOne) sqlSave(ctx context.Context) (_node *ProjectRun, 
 	}
 	if _u.mutation.LogIncompleteCleared() {
 		_spec.ClearField(projectrun.FieldLogIncomplete, field.TypeInt)
-	}
-	if value, ok := _u.mutation.ExecutionCheckpointJSON(); ok {
-		_spec.SetField(projectrun.FieldExecutionCheckpointJSON, field.TypeString, value)
-	}
-	if _u.mutation.ExecutionCheckpointJSONCleared() {
-		_spec.ClearField(projectrun.FieldExecutionCheckpointJSON, field.TypeString)
 	}
 	_spec.AddModifiers(_u.modifiers...)
 	_node = &ProjectRun{config: _u.config}
