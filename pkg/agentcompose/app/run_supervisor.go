@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -97,7 +98,12 @@ func (s *RunSupervisor) StartRun(ctx context.Context, req runs.RunAgentRequest) 
 	go func() {
 		defer s.wg.Done()
 		defer s.unregister(started.Run.RunID)
-		_, _, _ = started.Execute(execCtx, nil)
+		defer cancel(nil)
+		// Execution failures are part of the saved run result. The third
+		// return value reports infrastructure/completion failures instead.
+		if _, _, err := started.Execute(execCtx, nil); err != nil {
+			slog.Error("asynchronous project run failed", "run_id", started.Run.RunID, "error", err)
+		}
 	}()
 	return started.Run, nil
 }
@@ -271,7 +277,7 @@ func (s *RunSupervisor) StopActiveRun(ctx context.Context, runID, reason string)
 	}
 	s.mu.Unlock()
 	if !ok {
-		return false, nil
+		return false, s.checkInactiveRunCompletion(ctx, runID)
 	}
 	active.stopOnce.Do(func() {
 		reason = strings.TrimSpace(reason)

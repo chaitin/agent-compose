@@ -444,7 +444,9 @@ agent-compose run reviewer --jupyter --jupyter-expose --prompt "Inspect the note
 - `run -i --prompt` 仅支持可复用 provider conversation 的 Codex、Claude、OpenCode、Pi 和 DSH（`dsh`、`deepseek`、`deepseek-harness`、`deepseek_harness`）。
 - run 通常只有在 completion cleanup 成功后才进入终态。默认策略停止 sandbox；remove-on-completion 会完整删除由本 run 新建的 sandbox，但复用的 sandbox 只会停止；keep-running 是不执行清理的显式例外。
 - cleanup 失败时 run 保持 `running` 并写入 `cleanup_error`，daemon 会立即重试并采用有上限的退避，重启后也会继续。重试有上限：达到次数上限后，run 会以首个 completion 写入者选定的终态落终态（成功执行或正常关闭 prompt 会话为 `succeeded`，中断执行中的 turn 为 `canceled`）并保留 `cleanup_error`，未完成的 completion 被放弃而不再无限重试。前台与流式调用在自身的完成等待 deadline 到达后停止等待并返回错误，错误中给出 run 停留的状态；run 本身仍由这些后台重试收敛。detached start 仍立即返回。
+- 首次写入完成记录失败时，daemon 会在内存中保留原结果，并采用延迟有上限的退避重试；调用方退出不影响后台继续处理。重试只保存结果和执行完成清理，不会重新执行 agent 或 command。后续 stop 或中断请求不能替换完成处理器已接管的结果。在完成记录落库前，daemon 崩溃后的原结果恢复依赖现有的持久执行记录；仅靠内存保留不能保证崩溃恢复。关闭 daemon 时会报告仍未首次成功落库的结果。
 - `StopRun` 可能返回 `stop_requested=true` 而 run 仍为 `running`。对于 prompt interactive session，Engine 根据自身 turn 状态决定终态：turn 已完成后的空闲会话正常关闭并提交 `succeeded`；执行中的 turn 被中断并提交 `canceled`；执行自身报错则提交 `failed`。请求中的 reason 只用于审计，不参与状态选择。command 与非交互 run 保持原有取消语义。配置的 cleanup 完成后才提交终态；daemon 重启后遗留的 running/pending run 也通过同一路径在清理后变为 `failed`，错误为 `daemon interrupted`。
+- `StopRun` 发现非终态 run 既没有活跃执行者，也没有待处理的完成结果时，会返回 `failed_precondition`，明确提示缺少恢复责任方。完成处理器已接管的 run 会保留原结果并继续收尾。
 - 卡住的 cleanup 也可以显式放弃，见 `abandon-completion`。
 
 ## `abandon-completion`：结束 cleanup 无法收敛的 run
