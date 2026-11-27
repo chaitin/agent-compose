@@ -214,9 +214,7 @@ func NewController(deps ControllerDependencies) *Controller {
 
 func (c *Controller) newCoordinator() *Coordinator {
 	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
-	if c != nil {
-		coordinator.WithObserver(c.observer)
-	}
+	coordinator.WithObserver(c.observer)
 	return coordinator
 }
 
