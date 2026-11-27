@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/chaitin/agent-compose/pkg/eventstream"
 )
 
 const (
@@ -18,33 +20,12 @@ const (
 	eventStreamMaxBatchEventsName   = "EVENT_STREAM_MAX_BATCH_EVENTS"
 )
 
-// EventStreamConfig bounds the opt-in daemon observation stream. The zero value
-// is not meaningful; loadEventStreamConfig fills every field. The broker has
-// its own fallback defaults for direct construction and tests.
-type EventStreamConfig struct {
-	Enabled          bool
-	MaxSubscribers   int
-	SubscriberBuffer int
-	ReplayEvents     int
-	IdleTimeout      time.Duration
-	Heartbeat        time.Duration
-	MaxBatchEvents   int
-}
-
-func defaultEventStreamConfig() EventStreamConfig {
-	return EventStreamConfig{
-		Enabled:          false,
-		MaxSubscribers:   32,
-		SubscriberBuffer: 512,
-		ReplayEvents:     4096,
-		IdleTimeout:      5 * time.Minute,
-		Heartbeat:        15 * time.Second,
-		MaxBatchEvents:   128,
-	}
-}
+// EventStreamConfig is the broker's runtime configuration. The broker owns
+// the model and defaults; this package only parses environment overrides.
+type EventStreamConfig = eventstream.Config
 
 func loadEventStreamConfig() (EventStreamConfig, error) {
-	cfg := defaultEventStreamConfig()
+	cfg := eventstream.DefaultConfig()
 	raw := strings.TrimSpace(os.Getenv(eventStreamEnabledName))
 	if raw != "" {
 		enabled, err := strconv.ParseBool(raw)

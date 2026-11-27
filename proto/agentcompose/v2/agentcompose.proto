@@ -3090,12 +3090,13 @@ message GetEventStreamCapabilitiesResponse {
 message WatchEventsRequest {
   // Empty selects every project visible to the daemon token. At most 100.
   repeated string project_ids = 1;
-  // Exact event type or a prefix ending in ".*". Empty selects every type;
-  // log types still require include_logs.
+  // Exact event type or a prefix ending in ".*". Empty selects every
+  // non-log type unless include_logs is true.
   repeated string event_types = 2;
   EventSeverity min_severity = 3;
-  // Log events (run.log, sandbox.cell.output) are high volume and are excluded
-  // unless this is true.
+  // Include log types matched by a wildcard or an empty event_types list.
+  // Explicitly listed log types are always included. Excluding them by default
+  // prevents an accidental run.* subscription from flooding the control plane.
   bool include_logs = 4;
   // Opaque cursor from a previous response. Empty starts at the current head.
   string cursor = 5;
@@ -3142,8 +3143,9 @@ message StreamEvent {
   // Monotonic within one daemon epoch. Zero is reserved for control frames.
   uint64 sequence = 3;
   google.protobuf.Timestamp occurred_at = 4;
-  // One of run.status, run.log, scheduler.run.status, scheduler.event,
-  // sandbox.status, sandbox.event, or sandbox.cell.output.
+  // One of run.status, run.event, run.log, scheduler.run.status,
+  // scheduler.event, scheduler.updated, sandbox.status, sandbox.event,
+  // sandbox.cell.output, or sandbox.removed.
   string type = 5;
   // Empty when the source cannot attribute the event to a project.
   string project_id = 6;
@@ -3158,6 +3160,7 @@ message StreamEvent {
     StreamSandboxStatus sandbox_status = 14;
     StreamSandboxEvent sandbox_event = 15;
     StreamSandboxCellOutput sandbox_cell_output = 16;
+    StreamSandboxRemoved sandbox_removed = 19;
   }
 }
 
@@ -3218,6 +3221,11 @@ message StreamSandboxEvent {
   string type = 4;
   string level = 5;
   string message = 6;
+}
+
+message StreamSandboxRemoved {
+  string sandbox_id = 1;
+  string project_id = 2;
 }
 
 message StreamSandboxCellOutput {

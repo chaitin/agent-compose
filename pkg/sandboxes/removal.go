@@ -117,6 +117,9 @@ type RemovalCoordinator struct {
 	// StatusObserver receives a sandbox summary after a lifecycle status
 	// change such as the deletion intent or a rollback. It must not block.
 	StatusObserver func(*domain.SandboxSummary)
+	// RemovedObserver receives the last summary after the sandbox record and
+	// lifecycle journal have been removed. It must not block.
+	RemovedObserver func(*domain.SandboxSummary)
 
 	locks LifecycleLocks
 }
@@ -231,6 +234,9 @@ func (c *RemovalCoordinator) Remove(ctx context.Context, sandboxID string, force
 		return result, fmt.Errorf("remove sandbox lifecycle journal: %w", err)
 	}
 	result.Removed = true
+	if sandbox != nil {
+		c.observeRemoved(&sandbox.Summary)
+	}
 	return result, nil
 }
 
@@ -378,6 +384,12 @@ func (c *RemovalCoordinator) rollbackDeletionIntent(ctx context.Context, sandbox
 	}
 	c.observeStatus(&sandbox.Summary)
 	return cause
+}
+
+func (c *RemovalCoordinator) observeRemoved(summary *domain.SandboxSummary) {
+	if c != nil && c.RemovedObserver != nil && summary != nil {
+		c.RemovedObserver(summary)
+	}
 }
 
 func (c *RemovalCoordinator) observeStatus(summary *domain.SandboxSummary) {

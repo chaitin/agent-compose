@@ -281,6 +281,9 @@ message StreamEvent {
     StreamSandboxStatus sandbox_status = 14;
     StreamSandboxEvent sandbox_event = 15;
     StreamSandboxCellOutput sandbox_cell_output = 16;
+    RunEvent run_event = 17;
+    StreamSchedulerUpdate scheduler_update = 18;
+    StreamSandboxRemoved sandbox_removed = 19;
   }
 }
 ```
@@ -348,10 +351,11 @@ message StreamSandboxCellOutput {
 | `sandbox.status` | `StreamSandboxStatus` | `StreamBroker.PublishSandboxUpdated` | info / error | 低 | 是 |
 | `sandbox.event` | `StreamSandboxEvent` | `StreamBroker.PublishEventAdded` | level 映射 | 中 | 是 |
 | `sandbox.cell.output` | `StreamSandboxCellOutput` | `StreamBroker.PublishCellOutput` | info | 高 | 否 |
+| `sandbox.removed` | `StreamSandboxRemoved` | sandbox 删除成功、lifecycle journal 清除后 | info | 低 | 是 |
 
-日志类型（`run.log`、`sandbox.cell.output`）默认不投递；订阅时必须显式 `include_logs=true`。原因：一条 chatty agent 的输出可以轻松到每秒数千 chunk，不能让它拖垮控制面事件。
+日志类型（`run.log`、`sandbox.cell.output`）显式出现在 `event_types` 时总是投递；`include_logs` 只控制通配或空列表是否匹配日志类型，默认 false，避免 `run.*` 意外打开高吞吐日志。原因：一条 chatty agent 的输出可以轻松到每秒数千 chunk，不能让它拖垮控制面事件。
 
-过滤校验：`event_types` 里出现未知的精确类型时返回 `InvalidArgument`（避免拼写错误静默变成“收不到任何事件”）；精确指定 `run.log` / `sandbox.cell.output` 但 `include_logs=false` 时也返回 `InvalidArgument`。通配（如 `run.*`）不报错，只是日志类型在 `include_logs=false` 时被排除。前缀通配只允许 `foo.*` 形式，且不能匹配空后缀。
+过滤校验：`event_types` 里出现未知的精确类型时返回 `InvalidArgument`（避免拼写错误静默变成“收不到任何事件”）。通配（如 `run.*`）在 `include_logs=false` 时排除日志类型。前缀通配只允许 `foo.*` 形式，且不能匹配空后缀。
 
 `StreamRunLog` 同时兼容当前和未来的日志格式：
 
@@ -441,7 +445,8 @@ run.log 事件 offset 跳变 / 收到 GAP
 | `run.log` | `runs.RunLogHub` 增加全局 listener（或 `publishRunLogChunk` 双写） | 小 | 当前事件只有 `RunID/Offset/Data`；project/sandbox 由 adapter 按 run 元数据解析并缓存 |
 | `sandbox.status` | `sandboxes.StreamBroker` 增加全局 listener，监听 `PublishSandboxUpdated` | 小 | 覆盖 lifecycle、project run、adapter 三条路径；adapter 缓存 lastVMStatus，只在 VM 状态变化时发布 |
 | `sandbox.event` | 同上，监听 `PublishEventAdded` | 小 | 覆盖 `Store.AddEvent` 之后已有的 fan-out 调用点 |
-| `sandbox.cell.output` | 同上，监听 `PublishCellOutput` | 小 | 高吞吐，受 `include_logs` 控制 |
+| `sandbox.cell.output` | 同上，监听 `PublishCellOutput` | 小 | 高吞吐；显式类型直接投递，通配受 `include_logs` 控制 |
+| `sandbox.removed` | `RemovalCoordinator` 删除成功后通过 `StreamBroker` 发布 | 小 | tombstone；成功删除后必须发布，避免订阅端永久停在 DELETING |
 
 推荐做法：给 `RunLogHub` 和 `StreamBroker` 各加一个“全局 observer”回调（不引入对 `eventstream` 的依赖），在 `pkg/agentcompose/app` 组装时把它接到 broker。这样：
 

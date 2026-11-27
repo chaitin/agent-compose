@@ -26,3 +26,13 @@ func TestStreamBrokerNotifiesGlobalObserver(t *testing.T) {
 		t.Fatalf("observed = %+v", observed)
 	}
 }
+
+func TestStreamBrokerPublishesSandboxRemovedTombstone(t *testing.T) {
+	broker := NewStreamBrokerForTest()
+	var observed []WatchEvent
+	broker.SetObserver(func(event WatchEvent) { observed = append(observed, event) })
+	broker.PublishSandboxRemoved(&domain.SandboxSummary{ID: "sandbox-removed", VMStatus: domain.VMStatusDeleting})
+	if len(observed) != 1 || observed[0].EventType != WatchEventTypeSandboxRemoved || observed[0].Sandbox == nil || observed[0].Sandbox.ID != "sandbox-removed" {
+		t.Fatalf("observed = %+v", observed)
+	}
+}

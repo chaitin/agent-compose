@@ -271,6 +271,9 @@ func NewSandboxRemovalCoordinator(di do.Injector) (*sandboxes.RemovalCoordinator
 		StatusObserver: func(summary *domain.SandboxSummary) {
 			do.MustInvoke[*sandboxes.StreamBroker](di).PublishSandboxUpdated(summary)
 		},
+		RemovedObserver: func(summary *domain.SandboxSummary) {
+			do.MustInvoke[*sandboxes.StreamBroker](di).PublishSandboxRemoved(summary)
+		},
 	}, nil
 }
 

@@ -368,6 +368,11 @@ func streamEventToProto(event *eventstream.Event) *agentcomposev2.StreamEvent {
 			Level:     event.SandboxEvent.Event.Level,
 			Message:   event.SandboxEvent.Event.Message,
 		}}
+	case event.SandboxRemoved != nil:
+		out.Payload = &agentcomposev2.StreamEvent_SandboxRemoved{SandboxRemoved: &agentcomposev2.StreamSandboxRemoved{
+			SandboxId: event.SandboxRemoved.SandboxID,
+			ProjectId: event.SandboxRemoved.ProjectID,
+		}}
 	case event.SandboxCellOutput != nil:
 		out.Payload = &agentcomposev2.StreamEvent_SandboxCellOutput{SandboxCellOutput: &agentcomposev2.StreamSandboxCellOutput{
 			SandboxId: event.SandboxCellOutput.SandboxID,

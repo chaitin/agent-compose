@@ -29,15 +29,7 @@ type eventStreamBridge struct {
 
 func NewEventStreamBroker(di do.Injector) (*eventstream.Broker, error) {
 	cfg := do.MustInvoke[*appconfig.Config](di).EventStream
-	broker := eventstream.NewBroker(eventstream.Config{
-		Enabled:          cfg.Enabled,
-		MaxSubscribers:   cfg.MaxSubscribers,
-		SubscriberBuffer: cfg.SubscriberBuffer,
-		ReplayEvents:     cfg.ReplayEvents,
-		IdleTimeout:      cfg.IdleTimeout,
-		Heartbeat:        cfg.Heartbeat,
-		MaxBatchEvents:   cfg.MaxBatchEvents,
-	})
+	broker := eventstream.NewBroker(cfg)
 	if cfg.Enabled {
 		if root, err := do.Invoke[context.Context](di); err == nil && root != nil {
 			go func() {
@@ -199,6 +191,22 @@ func (b *eventStreamBridge) PublishSandboxWatch(event sandboxes.WatchEvent) {
 				PreviousVMStatus: previous,
 			},
 		})
+	case sandboxes.WatchEventTypeSandboxRemoved:
+		if event.Sandbox == nil {
+			return
+		}
+		projectID := b.sandboxProjectFromSummary(event.Sandbox)
+		b.broker.Publish(&eventstream.Event{
+			Type:       eventstream.TypeSandboxRemoved,
+			ProjectID:  projectID,
+			Severity:   eventstream.SeverityInfo,
+			OccurredAt: firstTime(event.Sandbox.UpdatedAt, time.Now().UTC()),
+			SandboxRemoved: &eventstream.SandboxRemovedEvent{
+				SandboxID: event.SandboxID,
+				ProjectID: projectID,
+			},
+		})
+		b.forgetSandbox(event.SandboxID)
 	case sandboxes.WatchEventTypeEventAdded:
 		if event.Event == nil {
 			return
@@ -263,6 +271,13 @@ func (b *eventStreamBridge) rememberSandbox(projectID, sandboxID string) {
 		b.sandboxProjects = make(map[string]string)
 	}
 	b.sandboxProjects[sandboxID] = projectID
+	b.mu.Unlock()
+}
+
+func (b *eventStreamBridge) forgetSandbox(sandboxID string) {
+	b.mu.Lock()
+	delete(b.sandboxProjects, sandboxID)
+	delete(b.sandboxVMStatus, sandboxID)
 	b.mu.Unlock()
 }
 

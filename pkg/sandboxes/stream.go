@@ -20,6 +20,7 @@ const (
 	WatchEventTypeCellOutput
 	WatchEventTypeCellCompleted
 	WatchEventTypeEventAdded
+	WatchEventTypeSandboxRemoved
 )
 
 type WatchEvent struct {
@@ -102,6 +103,20 @@ func (b *StreamBroker) PublishSandboxUpdated(summary *domain.SandboxSummary) {
 	b.publish(WatchEvent{
 		SandboxID: summary.ID,
 		EventType: WatchEventTypeSandboxUpdated,
+		Sandbox:   cloneSandboxSummary(summary),
+	})
+}
+
+// PublishSandboxRemoved publishes a tombstone after the sandbox record and
+// lifecycle journal are gone. The summary is the last snapshot retained by the
+// removal path so subscribers can attribute and remove the object.
+func (b *StreamBroker) PublishSandboxRemoved(summary *domain.SandboxSummary) {
+	if summary == nil {
+		return
+	}
+	b.publish(WatchEvent{
+		SandboxID: summary.ID,
+		EventType: WatchEventTypeSandboxRemoved,
 		Sandbox:   cloneSandboxSummary(summary),
 	})
 }

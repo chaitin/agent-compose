@@ -9,8 +9,6 @@ import (
 var (
 	// ErrInvalidEventType rejects an unknown exact type or a malformed prefix.
 	ErrInvalidEventType = errors.New("invalid event type")
-	// ErrLogEventsDisabled rejects an exact log type when include_logs is false.
-	ErrLogEventsDisabled = errors.New("log events require include_logs")
 )
 
 // Filter is a compiled subscription filter. It is immutable after NewFilter.
@@ -20,12 +18,17 @@ type Filter struct {
 	allTypes    bool
 	minSeverity Severity
 	includeLogs bool
+	// explicitLogs are log types the caller selected by exact name. They are
+	// delivered even when includeLogs is false, which remains the wildcard and
+	// empty-list gate that prevents accidental high-volume subscriptions.
+	explicitLogs map[string]struct{}
 }
 
 // NewFilter validates and compiles a subscription filter. An empty project
 // list selects every project; an empty type list selects every type subject to
-// includeLogs. Exact log types are rejected when includeLogs is false, while a
-// wildcard such as "run.*" simply excludes logs in that case.
+// includeLogs. An exact log type is always included; includeLogs controls log
+// types matched by a wildcard or by the empty list, so "run.*" does not
+// accidentally opt into high-volume logs.
 func NewFilter(projectIDs, types []string, minSeverity Severity, includeLogs bool) (Filter, error) {
 	if minSeverity < SeverityInfo || minSeverity > SeverityError {
 		return Filter{}, fmt.Errorf("invalid minimum severity %d", minSeverity)
@@ -64,8 +67,11 @@ func NewFilter(projectIDs, types []string, minSeverity Severity, includeLogs boo
 		if !IsKnownType(eventType) {
 			return Filter{}, fmt.Errorf("%w: %q", ErrInvalidEventType, raw)
 		}
-		if IsLogType(eventType) && !includeLogs {
-			return Filter{}, fmt.Errorf("%w: %q", ErrLogEventsDisabled, raw)
+		if IsLogType(eventType) {
+			if filter.explicitLogs == nil {
+				filter.explicitLogs = make(map[string]struct{})
+			}
+			filter.explicitLogs[eventType] = struct{}{}
 		}
 		filter.patterns = append(filter.patterns, eventType)
 	}
@@ -86,7 +92,9 @@ func (f Filter) Matches(event *Event) bool {
 		}
 	}
 	if IsLogType(event.Type) && !f.includeLogs {
-		return false
+		if _, explicit := f.explicitLogs[event.Type]; !explicit {
+			return false
+		}
 	}
 	if f.allTypes {
 		return true
@@ -105,7 +113,8 @@ func (f Filter) Matches(event *Event) bool {
 	return false
 }
 
-// IncludeLogs reports whether the filter admits log event types.
+// IncludeLogs reports whether a wildcard or empty type list admits log
+// event types. Explicitly selected log types are always admitted.
 func (f Filter) IncludeLogs() bool {
 	return f.includeLogs
 }

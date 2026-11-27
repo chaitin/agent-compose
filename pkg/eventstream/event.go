@@ -22,6 +22,7 @@ const (
 	TypeSandboxStatus      = "sandbox.status"
 	TypeSandboxEvent       = "sandbox.event"
 	TypeSandboxCellOutput  = "sandbox.cell.output"
+	TypeSandboxRemoved     = "sandbox.removed"
 )
 
 // eventTypes is the stable order reported by GetEventStreamCapabilities.
@@ -35,6 +36,7 @@ var eventTypes = []string{
 	TypeSandboxStatus,
 	TypeSandboxEvent,
 	TypeSandboxCellOutput,
+	TypeSandboxRemoved,
 }
 
 // EventTypes returns the stable list of event types this daemon can emit.
@@ -53,9 +55,9 @@ func IsKnownType(eventType string) bool {
 	return false
 }
 
-// IsLogType reports whether an event is high-volume log output. Log events are
-// delivered only when a subscription sets IncludeLogs and never enter the
-// replay ring.
+// IsLogType reports whether an event is high-volume log output. Log events
+// never enter the replay ring. An explicit type selects them directly;
+// IncludeLogs gates logs matched by a wildcard or an empty type list.
 func IsLogType(eventType string) bool {
 	return eventType == TypeRunLog || eventType == TypeSandboxCellOutput
 }
@@ -103,6 +105,7 @@ type Event struct {
 	SandboxStatus      *SandboxStatusEvent
 	SandboxEvent       *SandboxEvent
 	SandboxCellOutput  *SandboxCellOutputEvent
+	SandboxRemoved     *SandboxRemovedEvent
 }
 
 // RunStatusEvent carries the current run snapshot so a consumer can apply it
@@ -149,6 +152,14 @@ type SchedulerEvent struct {
 	Event     domain.SchedulerEvent
 	ProjectID string
 	AgentName string
+}
+
+// SandboxRemovedEvent is a tombstone published after a sandbox is fully
+// removed. Consumers remove the sandbox object instead of leaving it in
+// DELETING forever.
+type SandboxRemovedEvent struct {
+	SandboxID string
+	ProjectID string
 }
 
 // SchedulerUpdateEvent reports an enable/disable, trigger enable/disable, or

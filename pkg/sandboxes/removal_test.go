@@ -25,7 +25,10 @@ func TestRemovalCoordinatorPersistsAndResumesStages(t *testing.T) {
 	})
 	store := &removalTestStore{sandboxes: map[string]*domain.Sandbox{sandbox.Summary.ID: sandbox}}
 	runtime := &removalTestRuntime{removeErrors: []error{errors.New("injected remove failure")}}
-	coordinator := &sandboxes.RemovalCoordinator{SandboxRoot: root, Store: store, Runtime: runtime}
+	var removed []*domain.SandboxSummary
+	coordinator := &sandboxes.RemovalCoordinator{SandboxRoot: root, Store: store, Runtime: runtime, RemovedObserver: func(summary *domain.SandboxSummary) {
+		removed = append(removed, summary)
+	}}
 
 	if _, err := coordinator.Remove(context.Background(), sandbox.Summary.ID, false); !errors.Is(err, sandboxes.ErrSandboxRunning) {
 		t.Fatalf("Remove running without force error = %v", err)
@@ -56,6 +59,9 @@ func TestRemovalCoordinatorPersistsAndResumesStages(t *testing.T) {
 	}
 	if _, err := sandboxes.ReadOwnershipRecord(root, sandbox.Summary.ID); !os.IsNotExist(err) {
 		t.Fatalf("ownership record remains: %v", err)
+	}
+	if len(removed) != 1 || removed[0].ID != sandbox.Summary.ID {
+		t.Fatalf("removed observer = %+v", removed)
 	}
 }
 

@@ -291,6 +291,7 @@ func TestStreamEventToProtoCoversEveryPayload(t *testing.T) {
 		{Type: eventstream.TypeSandboxStatus, SandboxStatus: &eventstream.SandboxStatusEvent{Summary: domain.SandboxSummary{ID: "sandbox-1"}}},
 		{Type: eventstream.TypeSandboxEvent, SandboxEvent: &eventstream.SandboxEvent{SandboxID: "sandbox-1", Event: domain.SandboxEvent{ID: "be-1"}}},
 		{Type: eventstream.TypeSandboxCellOutput, SandboxCellOutput: &eventstream.SandboxCellOutputEvent{SandboxID: "sandbox-1", Data: "out"}},
+		{Type: eventstream.TypeSandboxRemoved, SandboxRemoved: &eventstream.SandboxRemovedEvent{SandboxID: "sandbox-1", ProjectID: "p1"}},
 	}
 	for _, event := range events {
 		mapped := streamEventToProto(event)
@@ -445,5 +446,44 @@ func TestSendEventBatchesAdvancesSafeCursorOnlyAfterSend(t *testing.T) {
 	}
 	if len(stream.frames) != 2 || stream.frames[1].GetNextCursor() != "cursor-2" {
 		t.Fatalf("frames = %+v", stream.frames)
+	}
+}
+
+func TestStreamEventToProtoSandboxRemoved(t *testing.T) {
+	mapped := streamEventToProto(&eventstream.Event{
+		Type: eventstream.TypeSandboxRemoved, ProjectID: "p1",
+		SandboxRemoved: &eventstream.SandboxRemovedEvent{SandboxID: "sandbox-1", ProjectID: "p1"},
+	})
+	if mapped.GetSandboxRemoved().GetSandboxId() != "sandbox-1" || mapped.GetSandboxRemoved().GetProjectId() != "p1" {
+		t.Fatalf("sandbox removed proto = %+v", mapped)
+	}
+}
+
+func TestEventStreamExplicitLogTypeDoesNotRequireIncludeLogs(t *testing.T) {
+	broker := eventstream.NewBroker(eventStreamTestConfig())
+	defer broker.Close()
+	client, closeServer := newEventStreamTestClient(t, NewEventStreamHandler(broker))
+	defer closeServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.WatchEvents(ctx, connect.NewRequest(&agentcomposev2.WatchEventsRequest{
+		EventTypes:  []string{eventstream.TypeRunLog},
+		IncludeLogs: false,
+	}))
+	if err != nil {
+		t.Fatalf("WatchEvents: %v", err)
+	}
+	if !stream.Receive() || stream.Msg().GetControl().GetKind() != agentcomposev2.StreamControl_KIND_HELLO {
+		t.Fatalf("missing HELLO: %v", stream.Err())
+	}
+	broker.Publish(&eventstream.Event{
+		Type: eventstream.TypeRunLog, ProjectID: "p1",
+		RunLog: &eventstream.RunLogEvent{RunID: "run-1", ProjectID: "p1", Data: "line"},
+	})
+	if !stream.Receive() {
+		t.Fatalf("missing explicit log: %v", stream.Err())
+	}
+	if got := stream.Msg().GetEvents(); len(got) != 1 || got[0].GetType() != eventstream.TypeRunLog {
+		t.Fatalf("event = %+v", got)
 	}
 }

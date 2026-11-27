@@ -100,8 +100,12 @@ func TestBrokerFiltersProjectTypeAndSeverity(t *testing.T) {
 }
 
 func TestBrokerLogFiltering(t *testing.T) {
-	if _, err := NewFilter(nil, []string{TypeRunLog}, SeverityInfo, false); !errors.Is(err, ErrLogEventsDisabled) {
-		t.Fatalf("exact log type error = %v, want ErrLogEventsDisabled", err)
+	explicit, err := NewFilter(nil, []string{TypeRunLog}, SeverityInfo, false)
+	if err != nil {
+		t.Fatalf("explicit log type rejected: %v", err)
+	}
+	if !explicit.Matches(testEvent(TypeRunLog, "p1", SeverityInfo)) || explicit.Matches(testEvent(TypeSandboxCellOutput, "p1", SeverityInfo)) {
+		t.Fatal("explicit log type must include only that log type")
 	}
 	broker := NewBroker(testConfig())
 	defer broker.Close()
@@ -111,13 +115,25 @@ func TestBrokerLogFiltering(t *testing.T) {
 	}
 	defer sub.Close()
 	if broker.Publish(testEvent(TypeRunLog, "p1", SeverityInfo)) {
-		t.Fatal("log event delivered without include_logs")
+		t.Fatal("log event delivered by a wildcard without include_logs")
 	}
 	if !broker.Publish(testEvent(TypeRunStatus, "p1", SeverityInfo)) {
 		t.Fatal("run status event was not delivered")
 	}
 	if event := receive(t, sub.Events()); event.Type != TypeRunStatus {
 		t.Fatalf("event type = %q", event.Type)
+	}
+
+	exactSub, _, err := broker.Subscribe(explicit, "")
+	if err != nil {
+		t.Fatalf("Subscribe explicit log: %v", err)
+	}
+	defer exactSub.Close()
+	if !broker.Publish(testEvent(TypeRunLog, "p1", SeverityInfo)) {
+		t.Fatal("explicit log type was not delivered")
+	}
+	if event := receive(t, exactSub.Events()); event.Type != TypeRunLog {
+		t.Fatalf("explicit event type = %q", event.Type)
 	}
 }
 

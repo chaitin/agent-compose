@@ -196,3 +196,17 @@ func TestEventStreamBridgeStructuredRunAndSchedulerUpdates(t *testing.T) {
 		t.Fatalf("scheduler update = %+v", schedulerEvent)
 	}
 }
+
+func TestEventStreamBridgePublishesSandboxRemovedTombstone(t *testing.T) {
+	bridge, sub := testEventStreamBridge(t)
+	bridge.PublishSandboxWatch(sandboxes.WatchEvent{
+		SandboxID: "sandbox-removed",
+		EventType: sandboxes.WatchEventTypeSandboxRemoved,
+		Sandbox:   &domain.SandboxSummary{ID: "sandbox-removed", VMStatus: domain.VMStatusDeleting, Tags: []domain.SandboxTag{{Name: "project", Value: "p1"}}},
+	})
+	event := receiveBridgeEvent(t, sub)
+	if event.Type != eventstream.TypeSandboxRemoved || event.ProjectID != "p1" ||
+		event.SandboxRemoved == nil || event.SandboxRemoved.SandboxID != "sandbox-removed" {
+		t.Fatalf("sandbox removed event = %+v", event)
+	}
+}
