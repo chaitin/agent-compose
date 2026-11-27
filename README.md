@@ -56,18 +56,16 @@ hosted by the daemon.
 The daemon can expose an opt-in observation stream. An upper-layer application
 opens the authenticated Connect server-stream `EventService.WatchEvents` (the
 same daemon Bearer Token as every other control-plane call), and the daemon
-pushes `run.status`, `run.log`, `scheduler.run.status`, `scheduler.event`,
-`sandbox.status`, `sandbox.event`, and `sandbox.cell.output` events over that
-connection. The feature is off by default; set `EVENT_STREAM_ENABLED=true` to
+pushes `run.status`, `run.event`, `run.log`, `scheduler.run.status`,
+`scheduler.event`, `scheduler.updated`, `sandbox.status`, `sandbox.event`, and
+`sandbox.cell.output` events over that connection. The feature is off by default; set `EVENT_STREAM_ENABLED=true` to
 enable it. The first subscription activates the broker, and the broker clears
 its replay ring after the last subscriber has been idle for
 `EVENT_STREAM_IDLE_TIMEOUT`.
 
 Control-plane events are replayable within the in-memory ring. Log events
 require `include_logs=true`, are live-only, and can be backfilled from a run's
-log with `FollowRunLogs` using the event's `offset`. A live chunk larger than
-64 KiB is truncated and marked `truncated`; the full content remains available
-from the log or cell artifact. When a cursor is older than
+log with `FollowRunLogs` using the event's `offset`. When a cursor is older than
 the ring or belongs to a previous daemon epoch, the stream returns
 `SYNC_REQUIRED` and the application reconciles through the existing List/Get
 APIs. This is a notification channel, not an audit log; durable history remains

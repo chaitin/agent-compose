@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +9,7 @@ import (
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/runs"
 	"github.com/chaitin/agent-compose/pkg/sandboxes"
+	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
 
 func testEventStreamBridge(t *testing.T) (*eventStreamBridge, *eventstream.Subscription) {
@@ -158,27 +158,6 @@ func TestEventStreamBridgeSandboxAttributionAndCellOutput(t *testing.T) {
 	}
 }
 
-func TestEventStreamBridgeTruncatesOversizedLogChunks(t *testing.T) {
-	bridge, sub := testEventStreamBridge(t)
-	oversized := strings.Repeat("a", maxLogEventDataBytes+32)
-	bridge.PublishRunLog(runs.RunLogEvent{
-		RunID: "run-1", ProjectID: "p1", SandboxID: "s1", Stream: "stdout", Data: oversized,
-	})
-	event := receiveBridgeEvent(t, sub)
-	if event.RunLog == nil || !event.RunLog.Truncated || len(event.RunLog.Data) != maxLogEventDataBytes {
-		t.Fatalf("run log truncation = %+v", event.RunLog)
-	}
-
-	bridge.PublishSandboxWatch(sandboxes.WatchEvent{
-		SandboxID: "s1", EventType: sandboxes.WatchEventTypeCellOutput, CellID: "cell-1",
-		Chunk: oversized, Stream: domain.StdioStdout,
-	})
-	cellEvent := receiveBridgeEvent(t, sub)
-	if cellEvent.SandboxCellOutput == nil || !cellEvent.SandboxCellOutput.Truncated || len(cellEvent.SandboxCellOutput.Data) != maxLogEventDataBytes {
-		t.Fatalf("cell output truncation = %+v", cellEvent.SandboxCellOutput)
-	}
-}
-
 func TestEventStreamBridgeAttributionsFromSandboxTags(t *testing.T) {
 	bridge, sub := testEventStreamBridge(t)
 	summary := domain.SandboxSummary{
@@ -191,5 +170,29 @@ func TestEventStreamBridgeAttributionsFromSandboxTags(t *testing.T) {
 	event := receiveBridgeEvent(t, sub)
 	if event.ProjectID != "p2" {
 		t.Fatalf("sandbox event project = %q, want p2", event.ProjectID)
+	}
+}
+
+func TestEventStreamBridgeStructuredRunAndSchedulerUpdates(t *testing.T) {
+	bridge, sub := testEventStreamBridge(t)
+	run := domain.ProjectRunRecord{RunID: "run-1", ProjectID: "p1", SandboxID: "s1"}
+	bridge.RunEventsAppended(context.Background(), run, []domain.ProjectRunEventRecord{{
+		ID: "event-1", RunID: "run-1", Sequence: 3, Kind: domain.ProjectRunEventKindAgentMessage, Text: "done",
+	}})
+	runEvent := receiveBridgeEvent(t, sub)
+	if runEvent.Type != eventstream.TypeRunEvent || runEvent.ProjectID != "p1" ||
+		runEvent.RunEvent == nil || runEvent.RunEvent.Event.Sequence != 3 || runEvent.RunEvent.Event.Text != "done" {
+		t.Fatalf("structured run event = %+v", runEvent)
+	}
+
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{
+		ID: "scheduler-1", ProjectID: "p1", AgentName: "worker", Enabled: false,
+	}}
+	bridge.SchedulerUpdated(context.Background(), scheduler, schedulers.SchedulerChange{Reason: schedulers.SchedulerChangeDisabled})
+	schedulerEvent := receiveBridgeEvent(t, sub)
+	if schedulerEvent.Type != eventstream.TypeSchedulerUpdate || schedulerEvent.SchedulerUpdate == nil ||
+		schedulerEvent.SchedulerUpdate.SchedulerID != "scheduler-1" || schedulerEvent.SchedulerUpdate.Reason != schedulers.SchedulerChangeDisabled ||
+		schedulerEvent.SchedulerUpdate.Enabled {
+		t.Fatalf("scheduler update = %+v", schedulerEvent)
 	}
 }

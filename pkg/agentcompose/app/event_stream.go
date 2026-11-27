@@ -19,8 +19,6 @@ import (
 // eventStreamBridge adapts daemon domain notifications to the eventstream
 // broker. It owns only in-memory attribution caches; sources have already
 // persisted the state the event describes.
-const maxLogEventDataBytes = 64 << 10
-
 type eventStreamBridge struct {
 	broker *eventstream.Broker
 
@@ -83,12 +81,30 @@ func (b *eventStreamBridge) RunStatusChanged(_ context.Context, before, after do
 	})
 }
 
+func (b *eventStreamBridge) RunEventsAppended(_ context.Context, run domain.ProjectRunRecord, events []domain.ProjectRunEventRecord) {
+	if b == nil || b.broker == nil || !b.broker.Enabled() || len(events) == 0 {
+		return
+	}
+	b.rememberSandbox(run.ProjectID, run.SandboxID)
+	for _, event := range events {
+		b.broker.Publish(&eventstream.Event{
+			Type:       eventstream.TypeRunEvent,
+			ProjectID:  run.ProjectID,
+			Severity:   runEventSeverity(event),
+			OccurredAt: firstTime(event.CreatedAt, time.Now().UTC()),
+			RunEvent: &eventstream.RunEvent{
+				Event:     event,
+				ProjectID: run.ProjectID,
+			},
+		})
+	}
+}
+
 func (b *eventStreamBridge) PublishRunLog(event runs.RunLogEvent) {
 	if b == nil || b.broker == nil || !b.broker.Enabled() || event.Data == "" {
 		return
 	}
 	b.rememberSandbox(event.ProjectID, event.SandboxID)
-	data, truncated := truncateLogData(event.Data)
 	b.broker.Publish(&eventstream.Event{
 		Type:       eventstream.TypeRunLog,
 		ProjectID:  event.ProjectID,
@@ -100,9 +116,8 @@ func (b *eventStreamBridge) PublishRunLog(event runs.RunLogEvent) {
 			SandboxID: event.SandboxID,
 			Offset:    event.Offset,
 			Stream:    event.Stream,
-			Data:      data,
+			Data:      event.Data,
 			Format:    "text",
-			Truncated: truncated,
 		},
 	})
 }
@@ -121,6 +136,27 @@ func (b *eventStreamBridge) SchedulerRunStatusChanged(_ context.Context, previou
 			PreviousStatus: previousStatus,
 			ProjectID:      projectID,
 			AgentName:      agentName,
+		},
+	})
+}
+
+func (b *eventStreamBridge) SchedulerUpdated(_ context.Context, scheduler domain.Scheduler, change schedulers.SchedulerChange) {
+	if b == nil || b.broker == nil || !b.broker.Enabled() {
+		return
+	}
+	b.broker.Publish(&eventstream.Event{
+		Type:       eventstream.TypeSchedulerUpdate,
+		ProjectID:  scheduler.Summary.ProjectID,
+		Severity:   eventstream.SeverityInfo,
+		OccurredAt: time.Now().UTC(),
+		SchedulerUpdate: &eventstream.SchedulerUpdateEvent{
+			SchedulerID:    scheduler.Summary.ID,
+			ProjectID:      scheduler.Summary.ProjectID,
+			AgentName:      scheduler.Summary.AgentName,
+			Enabled:        scheduler.Summary.Enabled,
+			TriggerID:      change.TriggerID,
+			TriggerEnabled: change.TriggerEnabled,
+			Reason:         change.Reason,
 		},
 	})
 }
@@ -182,7 +218,6 @@ func (b *eventStreamBridge) PublishSandboxWatch(event sandboxes.WatchEvent) {
 		if strings.TrimSpace(event.Chunk) == "" {
 			return
 		}
-		data, truncated := truncateLogData(event.Chunk)
 		b.broker.Publish(&eventstream.Event{
 			Type:       eventstream.TypeSandboxCellOutput,
 			ProjectID:  b.sandboxProject(event.SandboxID),
@@ -193,18 +228,10 @@ func (b *eventStreamBridge) PublishSandboxWatch(event sandboxes.WatchEvent) {
 				ProjectID: b.sandboxProject(event.SandboxID),
 				CellID:    event.CellID,
 				Stream:    string(event.Stream),
-				Data:      data,
-				Truncated: truncated,
+				Data:      event.Chunk,
 			},
 		})
 	}
-}
-
-func truncateLogData(data string) (string, bool) {
-	if len(data) <= maxLogEventDataBytes {
-		return data, false
-	}
-	return strings.ToValidUTF8(data[:maxLogEventDataBytes], ""), true
 }
 
 func (b *eventStreamBridge) sandboxProjectFromSummary(summary *domain.SandboxSummary) string {
@@ -257,6 +284,16 @@ func (b *eventStreamBridge) setSandboxVMStatus(sandboxID, status string) string 
 		b.sandboxVMStatus[sandboxID] = status
 	}
 	return previous
+}
+
+func runEventSeverity(event domain.ProjectRunEventRecord) eventstream.Severity {
+	if event.Kind != domain.ProjectRunEventKindStatus || event.Success {
+		return eventstream.SeverityInfo
+	}
+	if strings.Contains(strings.ToLower(event.StopReason), "cancel") {
+		return eventstream.SeverityWarning
+	}
+	return eventstream.SeverityError
 }
 
 func runSeverity(status string) eventstream.Severity {

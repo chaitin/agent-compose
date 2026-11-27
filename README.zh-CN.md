@@ -46,16 +46,14 @@
 
 daemon 可以向外提供一个 opt-in 的观察事件流。上层应用使用与其他控制面 API
 相同的 daemon Bearer Token，打开 Connect server-stream
-`EventService.WatchEvents`，daemon 就在这条连接上推送 `run.status`、`run.log`、
-`scheduler.run.status`、`scheduler.event`、`sandbox.status`、`sandbox.event`
-和 `sandbox.cell.output`。该能力默认关闭；设置 `EVENT_STREAM_ENABLED=true`
+`EventService.WatchEvents`，daemon 就在这条连接上推送 `run.status`、`run.event`、`run.log`、
+`scheduler.run.status`、`scheduler.event`、`scheduler.updated`、
+`sandbox.status`、`sandbox.event` 和 `sandbox.cell.output`。该能力默认关闭；设置 `EVENT_STREAM_ENABLED=true`
 开启。第一个订阅会激活 broker，最后一个订阅断开并空闲超过
 `EVENT_STREAM_IDLE_TIMEOUT` 后，broker 清空 replay ring。
 
 控制面事件在内存 ring 内可重放；日志事件需要 `include_logs=true`，只做实时
-投递，断线后可按事件的 `offset` 调用 `FollowRunLogs` 回填。单条实时日志 chunk
-超过 64 KiB 时会被截断并标记 `truncated`，完整内容仍可从 run log 或 cell
-artifact 获取。cursor 超出 ring
+投递，断线后可按事件的 `offset` 调用 `FollowRunLogs` 回填。cursor 超出 ring
 或属于旧的 daemon epoch 时，服务端返回 `SYNC_REQUIRED`，应用通过现有
 List/Get API 对账。它是通知通道，不是审计日志；持久历史仍以数据库记录和
 run log 文件为准。`EVENT_STREAM_*` 的具体限制见 `.env.example`。

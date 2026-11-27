@@ -26,6 +26,7 @@ func (s *projectStore) StageProjectRunCompletion(ctx context.Context, completion
 		return domain.ProjectRunCompletionRecord{}, false, err
 	}
 	now := time.Now().UTC()
+	var stagedEvents []domain.ProjectRunEventRecord
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("begin stage project run completion: %w", err)
@@ -70,9 +71,11 @@ func (s *projectStore) StageProjectRunCompletion(ctx context.Context, completion
 		return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("insert project run completion %s: %w", completion.RunID, createErr)
 	}
 	if created {
-		if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
+		appended, createdEvents, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events)
+		if err != nil {
 			return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("append staged project run completion events: %w", err)
 		}
+		stagedEvents = createdRunEvents(appended, createdEvents)
 		// Kept as SQL: the update guards started_at with CASE over the existing
 		// row, which ent's update setters cannot express.
 		if _, err := tx.ExecContext(ctx, `UPDATE project_run SET status = 'running', cleanup_error = '',
@@ -87,6 +90,11 @@ func (s *projectStore) StageProjectRunCompletion(ctx context.Context, completion
 	}
 	if err := tx.Commit(); err != nil {
 		return domain.ProjectRunCompletionRecord{}, false, fmt.Errorf("commit staged project run completion: %w", err)
+	}
+	if len(stagedEvents) > 0 {
+		if run, loadErr := s.GetProjectRun(ctx, completion.RunID); loadErr == nil {
+			s.notifyRunEvents(ctx, run, stagedEvents)
+		}
 	}
 	return stored, created, nil
 }
@@ -196,7 +204,8 @@ func (s *projectStore) finalizeProjectRunCompletion(ctx context.Context, run dom
 	if affected == 0 {
 		return domain.ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", run.RunID, "project run not found", nil)
 	}
-	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, []domain.ProjectRunEventRecord{statusEvent}); err != nil {
+	appended, createdEvents, err := appendProjectRunEventsTx(ctx, tx, s.dialect, []domain.ProjectRunEventRecord{statusEvent})
+	if err != nil {
 		return domain.ProjectRunRecord{}, fmt.Errorf("append terminal project run status event: %w", err)
 	}
 	if _, err := client.ProjectRunCompletion.Delete().
@@ -211,6 +220,7 @@ func (s *projectStore) finalizeProjectRunCompletion(ctx context.Context, run dom
 	if err := tx.Commit(); err != nil {
 		return domain.ProjectRunRecord{}, fmt.Errorf("commit finalized project run completion: %w", err)
 	}
+	s.notifyRunEvents(ctx, stored, createdRunEvents(appended, createdEvents))
 	return stored, nil
 }
 

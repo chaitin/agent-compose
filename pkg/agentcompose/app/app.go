@@ -668,7 +668,13 @@ func NewDatabase(di do.Injector) (*storagedb.Database, error) {
 
 func NewConfigStore(di do.Injector) (*configstore.ConfigStore, error) {
 	database := do.MustInvoke[*storagedb.Database](di)
-	return configstore.FromDBWithDialect(database.DB(), database.Dialect()), nil
+	store := configstore.FromDBWithDialect(database.DB(), database.Dialect())
+	if cfg, err := do.Invoke[*appconfig.Config](di); err == nil && cfg.EventStream.Enabled {
+		if bridge, bridgeErr := do.Invoke[*eventStreamBridge](di); bridgeErr == nil && bridge != nil {
+			store.SetRunEventObserver(bridge.RunEventsAppended)
+		}
+	}
+	return store, nil
 }
 
 func NewSandboxStore(di do.Injector) (*sandboxstore.Store, error) {

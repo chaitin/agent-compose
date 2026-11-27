@@ -340,9 +340,11 @@ message StreamSandboxCellOutput {
 | type | payload | 产生位置 | 默认 severity | 量级 | 可 replay |
 | --- | --- | --- | --- | --- | --- |
 | `run.status` | `StreamRunStatus{run, previous_status}` | run 状态落库后 | info / error | 低 | 是 |
+| `run.event` | 复用现有 `RunEvent` | `project_run_event` 提交后 | info / error | 中 | 是 |
 | `run.log` | `StreamRunLog` | run 日志 append 后 | info | 高 | 否（按 offset 回填） |
 | `scheduler.run.status` | `StreamSchedulerRunStatus{run, previous_status}` | `UpdateSchedulerRun` 后 | info / error | 低 | 是 |
 | `scheduler.event` | 现有 `SchedulerEvent` | `AddSchedulerEventRecord` 后 | level 映射 | 中 | 是 |
+| `scheduler.updated` | `StreamSchedulerUpdate` | scheduler/trigger 启停或配置刷新后 | info | 低 | 是 |
 | `sandbox.status` | `StreamSandboxStatus` | `StreamBroker.PublishSandboxUpdated` | info / error | 低 | 是 |
 | `sandbox.event` | `StreamSandboxEvent` | `StreamBroker.PublishEventAdded` | level 映射 | 中 | 是 |
 | `sandbox.cell.output` | `StreamSandboxCellOutput` | `StreamBroker.PublishCellOutput` | info | 高 | 否 |
@@ -747,8 +749,8 @@ Phase 1 已按本方案落地，主要落点如下：
 | API | `pkg/agentcompose/api/event_stream.go`：鉴权后的 Connect server-stream、批量、心跳、`SYNC_REQUIRED`、`GAP` |
 | 配置 | `pkg/config/event_stream.go`：`EVENT_STREAM_*`，默认关闭，启动时校验 |
 | 组装 | `pkg/agentcompose/app/event_stream.go`：broker 生命周期与领域事件到事件模型的桥接 |
-| run | `Coordinator` / `CompletionManager` 的状态观察者；`RunLogHub` 全局 observer |
-| scheduler | `Controller` / `RunExecutor` 的观察者；事件落库后发布 |
+| run | `Coordinator` / `CompletionManager` 的状态观察者；`RunLogHub` 全局 observer；`ConfigStore` 结构事件 observer |
+| scheduler | `Controller` / `RunExecutor` 的观察者；事件落库后发布；scheduler/trigger 启停与 `Refresh` 配置差异发布 |
 | sandbox | `StreamBroker` 全局 observer；project 归属由 run 状态/日志缓存，无法归属时留空 |
 | 测试 | broker、API、bridge、config、run/scheduler/sandbox observer、认证、race |
 

@@ -201,3 +201,28 @@ func assertEventStreamHeaders(t *testing.T, headers http.Header) {
 		t.Fatalf("stream headers = %#v", headers)
 	}
 }
+
+func TestStreamEventToProtoStructuredRunAndSchedulerUpdates(t *testing.T) {
+	runEvent := streamEventToProto(&eventstream.Event{
+		Type: eventstream.TypeRunEvent, ProjectID: "p1",
+		RunEvent: &eventstream.RunEvent{Event: domain.ProjectRunEventRecord{
+			ID: "event-1", RunID: "run-1", Sequence: 4, Kind: domain.ProjectRunEventKindAgentMessage, Text: "done",
+		}},
+	})
+	if runEvent.GetRunEvent().GetId() != "event-1" || runEvent.GetRunEvent().GetSeq() != 4 || runEvent.GetRunEvent().GetText() != "done" {
+		t.Fatalf("run event proto = %+v", runEvent)
+	}
+
+	schedulerEvent := streamEventToProto(&eventstream.Event{
+		Type: eventstream.TypeSchedulerUpdate, ProjectID: "p1",
+		SchedulerUpdate: &eventstream.SchedulerUpdateEvent{
+			SchedulerID: "scheduler-1", ProjectID: "p1", AgentName: "worker", Enabled: false,
+			TriggerID: "trigger-1", TriggerEnabled: true, Reason: "trigger_disabled",
+		},
+	})
+	update := schedulerEvent.GetSchedulerUpdate()
+	if update.GetSchedulerId() != "scheduler-1" || update.GetTriggerId() != "trigger-1" ||
+		!update.GetTriggerEnabled() || update.GetReason() != "trigger_disabled" {
+		t.Fatalf("scheduler update proto = %+v", update)
+	}
+}

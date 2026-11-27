@@ -57,7 +57,8 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 	default:
 		return ProjectRunRecord{}, fmt.Errorf("insert project run %s: %w", run.RunID, err)
 	}
-	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
+	appended, created, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events)
+	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("append create project run events: %w", err)
 	}
 	stored, err := getProjectRunByClient(ctx, client, run.RunID)
@@ -67,6 +68,7 @@ func (s *projectStore) CreateProjectRunWithEvents(ctx context.Context, run Proje
 	if err := tx.Commit(); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("commit create project run transaction: %w", err)
 	}
+	s.notifyRunEvents(ctx, stored, createdRunEvents(appended, created))
 	return stored, nil
 }
 
@@ -98,7 +100,8 @@ func (s *projectStore) UpdateProjectRunWithEvents(ctx context.Context, run Proje
 	if affected == 0 {
 		return ProjectRunRecord{}, domain.ResourceError(domain.ErrNotFound, "project run", run.RunID, fmt.Sprintf("project run %s not found", run.RunID), nil)
 	}
-	if _, _, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events); err != nil {
+	appended, created, err := appendProjectRunEventsTx(ctx, tx, s.dialect, events)
+	if err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("append update project run events: %w", err)
 	}
 	updated, err := getProjectRunByClient(ctx, client, run.RunID)
@@ -108,6 +111,7 @@ func (s *projectStore) UpdateProjectRunWithEvents(ctx context.Context, run Proje
 	if err := tx.Commit(); err != nil {
 		return ProjectRunRecord{}, fmt.Errorf("commit update project run transaction: %w", err)
 	}
+	s.notifyRunEvents(ctx, updated, createdRunEvents(appended, created))
 	return updated, nil
 }
 

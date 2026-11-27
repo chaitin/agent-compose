@@ -39,7 +39,24 @@ type ControllerNotifier interface {
 type Observer interface {
 	SchedulerEventAdded(ctx context.Context, event domain.SchedulerEvent, projectID, agentName string)
 	SchedulerRunStatusChanged(ctx context.Context, previousStatus string, run domain.SchedulerRunSummary, projectID, agentName string)
+	SchedulerUpdated(ctx context.Context, scheduler domain.Scheduler, change SchedulerChange)
 }
+
+// SchedulerChange explains why a scheduler.updated event was emitted.
+type SchedulerChange struct {
+	Reason         string
+	TriggerID      string
+	TriggerEnabled bool
+}
+
+const (
+	SchedulerChangeEnabled    = "scheduler_enabled"
+	SchedulerChangeDisabled   = "scheduler_disabled"
+	SchedulerChangeTriggerOn  = "trigger_enabled"
+	SchedulerChangeTriggerOff = "trigger_disabled"
+	SchedulerChangeConfig     = "config_changed"
+	SchedulerChangeRemoved    = "scheduler_removed"
+)
 
 type ControllerPublisher interface {
 	Publish(event domain.SchedulerTopicEvent) bool
@@ -244,12 +261,14 @@ func (c *Controller) Refresh(ctx context.Context) error {
 	for _, item := range items {
 		next[item.Summary.ID] = CloneScheduler(item)
 	}
+	previous := c.CachedSchedulersMap()
 	c.mu.Lock()
 	clear(c.schedulers)
 	for id, item := range next {
 		c.schedulers[id] = item
 	}
 	c.mu.Unlock()
+	c.observeSchedulerConfigChanges(ctx, previous, next)
 	c.WakeScheduler()
 	return nil
 }
@@ -266,7 +285,16 @@ func (c *Controller) SetSchedulerEnabled(ctx context.Context, schedulerID string
 		return domain.Scheduler{}, err
 	}
 	c.notify("scheduler_updated")
-	return c.deps.Store.GetScheduler(ctx, schedulerID)
+	scheduler, err := c.deps.Store.GetScheduler(ctx, schedulerID)
+	if err != nil {
+		return domain.Scheduler{}, err
+	}
+	reason := SchedulerChangeDisabled
+	if enabled {
+		reason = SchedulerChangeEnabled
+	}
+	c.observeSchedulerUpdated(ctx, scheduler, SchedulerChange{Reason: reason})
+	return scheduler, nil
 }
 
 func (c *Controller) SetSchedulerTriggerEnabled(ctx context.Context, schedulerID, triggerID string, enabled bool) (domain.Scheduler, error) {
@@ -277,7 +305,16 @@ func (c *Controller) SetSchedulerTriggerEnabled(ctx context.Context, schedulerID
 		return domain.Scheduler{}, err
 	}
 	c.notify("scheduler_updated")
-	return c.deps.Store.GetScheduler(ctx, schedulerID)
+	scheduler, err := c.deps.Store.GetScheduler(ctx, schedulerID)
+	if err != nil {
+		return domain.Scheduler{}, err
+	}
+	reason := SchedulerChangeTriggerOff
+	if enabled {
+		reason = SchedulerChangeTriggerOn
+	}
+	c.observeSchedulerUpdated(ctx, scheduler, SchedulerChange{Reason: reason, TriggerID: triggerID, TriggerEnabled: enabled})
+	return scheduler, nil
 }
 
 // RunNowRequest describes a manually triggered scheduler run.
@@ -488,6 +525,29 @@ func (c *Controller) AnyTargetBusy(targets []EventTarget) bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return AnyTargetBusy(targets, c.running)
+}
+
+func (c *Controller) observeSchedulerUpdated(ctx context.Context, scheduler domain.Scheduler, change SchedulerChange) {
+	if c.deps.Observer != nil {
+		c.deps.Observer.SchedulerUpdated(ctx, scheduler, change)
+	}
+}
+
+func (c *Controller) observeSchedulerConfigChanges(ctx context.Context, previous, next map[string]domain.Scheduler) {
+	if c.deps.Observer == nil {
+		return
+	}
+	for id, scheduler := range next {
+		old, existed := previous[id]
+		if !existed || old.Summary.ProjectRevision != scheduler.Summary.ProjectRevision {
+			c.observeSchedulerUpdated(ctx, scheduler, SchedulerChange{Reason: SchedulerChangeConfig})
+		}
+	}
+	for id, scheduler := range previous {
+		if _, exists := next[id]; !exists {
+			c.observeSchedulerUpdated(ctx, scheduler, SchedulerChange{Reason: SchedulerChangeRemoved})
+		}
+	}
 }
 
 func (c *Controller) schedulerIdentity(ctx context.Context, schedulerID string) (string, string) {

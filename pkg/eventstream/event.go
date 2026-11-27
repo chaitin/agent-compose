@@ -14,9 +14,11 @@ import (
 // daemon can actually emit them; clients use them for filtering.
 const (
 	TypeRunStatus          = "run.status"
+	TypeRunEvent           = "run.event"
 	TypeRunLog             = "run.log"
 	TypeSchedulerRunStatus = "scheduler.run.status"
 	TypeSchedulerEvent     = "scheduler.event"
+	TypeSchedulerUpdate    = "scheduler.updated"
 	TypeSandboxStatus      = "sandbox.status"
 	TypeSandboxEvent       = "sandbox.event"
 	TypeSandboxCellOutput  = "sandbox.cell.output"
@@ -25,9 +27,11 @@ const (
 // eventTypes is the stable order reported by GetEventStreamCapabilities.
 var eventTypes = []string{
 	TypeRunStatus,
+	TypeRunEvent,
 	TypeRunLog,
 	TypeSchedulerRunStatus,
 	TypeSchedulerEvent,
+	TypeSchedulerUpdate,
 	TypeSandboxStatus,
 	TypeSandboxEvent,
 	TypeSandboxCellOutput,
@@ -91,9 +95,11 @@ type Event struct {
 	Severity   Severity
 
 	RunStatus          *RunStatusEvent
+	RunEvent           *RunEvent
 	RunLog             *RunLogEvent
 	SchedulerRunStatus *SchedulerRunStatusEvent
 	SchedulerEvent     *SchedulerEvent
+	SchedulerUpdate    *SchedulerUpdateEvent
 	SandboxStatus      *SandboxStatusEvent
 	SandboxEvent       *SandboxEvent
 	SandboxCellOutput  *SandboxCellOutputEvent
@@ -108,6 +114,14 @@ type RunStatusEvent struct {
 	ErrorStack     string
 }
 
+// RunEvent is one persisted structured run event (user message, agent
+// message, agent activity, or status). It mirrors ListRunEvents so a
+// subscriber does not need to poll that API.
+type RunEvent struct {
+	Event     domain.ProjectRunEventRecord
+	ProjectID string
+}
+
 // RunLogEvent is one run log chunk. Offset is the end offset of the chunk in
 // the run log file and can be passed to FollowRunLogs as start_offset.
 type RunLogEvent struct {
@@ -119,7 +133,6 @@ type RunLogEvent struct {
 	Data      string
 	Format    string
 	EntryType string
-	Truncated bool
 }
 
 // SchedulerRunStatusEvent carries a scheduler run snapshot.
@@ -136,6 +149,18 @@ type SchedulerEvent struct {
 	Event     domain.SchedulerEvent
 	ProjectID string
 	AgentName string
+}
+
+// SchedulerUpdateEvent reports an enable/disable, trigger enable/disable, or
+// scheduler configuration change. Consumers can call GetScheduler for details.
+type SchedulerUpdateEvent struct {
+	SchedulerID    string
+	ProjectID      string
+	AgentName      string
+	Enabled        bool
+	TriggerID      string
+	TriggerEnabled bool
+	Reason         string
 }
 
 // SandboxStatusEvent carries a sandbox summary snapshot. Error is best effort;
@@ -160,5 +185,4 @@ type SandboxCellOutputEvent struct {
 	CellID    string
 	Stream    string
 	Data      string
-	Truncated bool
 }

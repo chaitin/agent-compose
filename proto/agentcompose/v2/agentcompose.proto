@@ -3149,6 +3149,8 @@ message StreamEvent {
   oneof payload {
     StreamRunStatus run_status = 10;
     StreamRunLog run_log = 11;
+    RunEvent run_event = 17;
+    StreamSchedulerUpdate scheduler_update = 18;
     StreamSchedulerRunStatus scheduler_run_status = 12;
     SchedulerEvent scheduler_event = 13;
     StreamSandboxStatus sandbox_status = 14;
@@ -3177,12 +3179,24 @@ message StreamRunLog {
   // wired.
   string format = 7;
   string entry_type = 8;
-  bool truncated = 9;
 }
 
 message StreamSchedulerRunStatus {
   SchedulerRun run = 1;
   SchedulerRunStatus previous_status = 2;
+}
+
+message StreamSchedulerUpdate {
+  string scheduler_id = 1;
+  string project_id = 2;
+  string agent_name = 3;
+  bool enabled = 4;
+  // Set when the change targets one trigger rather than the scheduler itself.
+  string trigger_id = 5;
+  bool trigger_enabled = 6;
+  // scheduler_enabled, scheduler_disabled, trigger_enabled, trigger_disabled,
+  // config_changed, or scheduler_removed.
+  string reason = 7;
 }
 
 message StreamSandboxStatus {
@@ -3210,7 +3224,4 @@ message StreamSandboxCellOutput {
   string cell_id = 3;
   string stream = 4;
   string data = 5;
-  // True when the daemon truncated the live chunk to its per-event limit.
-  // The full output remains available from the sandbox cell artifact.
-  bool truncated = 6;
 }

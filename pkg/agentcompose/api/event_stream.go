@@ -285,6 +285,8 @@ func streamEventToProto(event *eventstream.Event) *agentcomposev2.StreamEvent {
 			CleanupError:   event.RunStatus.CleanupError,
 			ErrorStack:     event.RunStatus.ErrorStack,
 		}}
+	case event.RunEvent != nil:
+		out.Payload = &agentcomposev2.StreamEvent_RunEvent{RunEvent: runEventToProto(event.RunEvent.Event)}
 	case event.RunLog != nil:
 		out.Payload = &agentcomposev2.StreamEvent_RunLog{RunLog: &agentcomposev2.StreamRunLog{
 			RunId:     event.RunLog.RunID,
@@ -295,7 +297,6 @@ func streamEventToProto(event *eventstream.Event) *agentcomposev2.StreamEvent {
 			Data:      event.RunLog.Data,
 			Format:    event.RunLog.Format,
 			EntryType: event.RunLog.EntryType,
-			Truncated: event.RunLog.Truncated,
 		}}
 	case event.SchedulerRunStatus != nil:
 		scheduler := domain.ProjectSchedulerRecord{
@@ -306,6 +307,16 @@ func streamEventToProto(event *eventstream.Event) *agentcomposev2.StreamEvent {
 		out.Payload = &agentcomposev2.StreamEvent_SchedulerRunStatus{SchedulerRunStatus: &agentcomposev2.StreamSchedulerRunStatus{
 			Run:            schedulerRunToProto(event.SchedulerRunStatus.Run, scheduler),
 			PreviousStatus: schedulerRunStatusToProto(event.SchedulerRunStatus.PreviousStatus),
+		}}
+	case event.SchedulerUpdate != nil:
+		out.Payload = &agentcomposev2.StreamEvent_SchedulerUpdate{SchedulerUpdate: &agentcomposev2.StreamSchedulerUpdate{
+			SchedulerId:    event.SchedulerUpdate.SchedulerID,
+			ProjectId:      event.SchedulerUpdate.ProjectID,
+			AgentName:      event.SchedulerUpdate.AgentName,
+			Enabled:        event.SchedulerUpdate.Enabled,
+			TriggerId:      event.SchedulerUpdate.TriggerID,
+			TriggerEnabled: event.SchedulerUpdate.TriggerEnabled,
+			Reason:         event.SchedulerUpdate.Reason,
 		}}
 	case event.SchedulerEvent != nil:
 		scheduler := domain.ProjectSchedulerRecord{
@@ -340,7 +351,6 @@ func streamEventToProto(event *eventstream.Event) *agentcomposev2.StreamEvent {
 			CellId:    event.SandboxCellOutput.CellID,
 			Stream:    event.SandboxCellOutput.Stream,
 			Data:      event.SandboxCellOutput.Data,
-			Truncated: event.SandboxCellOutput.Truncated,
 		}}
 	default:
 		return nil
