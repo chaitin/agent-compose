@@ -61,6 +61,13 @@ type DashboardNotifier interface {
 	Notify(reason string)
 }
 
+// RunObserver receives status changes after they have been persisted. The
+// implementation must not block the execution path; the event stream broker
+// drops events for slow subscribers instead.
+type RunObserver interface {
+	RunStatusChanged(ctx context.Context, before, after domain.ProjectRunRecord)
+}
+
 type CapabilitySandboxIndexer interface {
 	IndexSandbox(*domain.Sandbox, []domain.TrustedHeader)
 	RevokeSandbox(string)
@@ -120,6 +127,7 @@ type Controller struct {
 	streams             *sandboxes.StreamBroker
 	bus                 TopicPublisher
 	dashboard           DashboardNotifier
+	observer            RunObserver
 	capTokens           CapabilitySandboxIndexer
 	runLogs             *RunLogHub
 	lifecycleLocks      *sandboxes.LifecycleLocks
@@ -154,6 +162,7 @@ type ControllerDependencies struct {
 	Streams             *sandboxes.StreamBroker
 	Bus                 TopicPublisher
 	Dashboard           DashboardNotifier
+	Observer            RunObserver
 	CapTokens           CapabilitySandboxIndexer
 	RunLogs             *RunLogHub
 	LifecycleLocks      *sandboxes.LifecycleLocks
@@ -190,6 +199,7 @@ func NewController(deps ControllerDependencies) *Controller {
 		streams:             deps.Streams,
 		bus:                 deps.Bus,
 		dashboard:           deps.Dashboard,
+		observer:            deps.Observer,
 		capTokens:           deps.CapTokens,
 		runLogs:             deps.RunLogs,
 		lifecycleLocks:      deps.LifecycleLocks,
@@ -199,6 +209,20 @@ func NewController(deps ControllerDependencies) *Controller {
 		recorder:            deps.Recorder,
 		detachCache:         &detachCapabilityCache{},
 		uploads:             deps.Uploads,
+	}
+}
+
+func (c *Controller) newCoordinator() *Coordinator {
+	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
+	if c != nil {
+		coordinator.WithObserver(c.observer)
+	}
+	return coordinator
+}
+
+func (c *Controller) observeRunStatus(ctx context.Context, before, after domain.ProjectRunRecord) {
+	if c != nil && c.observer != nil && before.Status != after.Status {
+		c.observer.RunStatusChanged(ctx, before, after)
 	}
 }
 
@@ -271,7 +295,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		}
 	}
 	warnings := resolved.Warnings
-	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
+	coordinator := c.newCoordinator()
 	startRequest := StartRequest{
 		ProjectID:       req.ProjectID,
 		AgentName:       req.AgentName,

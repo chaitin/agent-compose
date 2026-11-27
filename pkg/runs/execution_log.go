@@ -22,19 +22,22 @@ func projectRunCommandTranscriptPath(run domain.ProjectRunRecord, sandbox *domai
 	return filepath.Join(projectRunCommandArtifactsDir(run, sandbox), "transcript.txt")
 }
 
-func (c *Controller) publishRunLogChunk(runID string, chunk domain.ExecChunk, offset uint64) {
+func (c *Controller) publishRunLogChunk(run domain.ProjectRunRecord, chunk domain.ExecChunk, offset uint64) {
 	if c == nil {
 		return
 	}
-	publishRunLogChunk(c.runLogs, runID, chunk, offset)
+	publishRunLogChunk(c.runLogs, run, chunk, offset)
 }
 
-func publishRunLogChunk(hub *RunLogHub, runID string, chunk domain.ExecChunk, offset uint64) {
+func publishRunLogChunk(hub *RunLogHub, run domain.ProjectRunRecord, chunk domain.ExecChunk, offset uint64) {
 	if hub == nil {
 		return
 	}
 	_ = hub.Publish(RunLogEvent{
-		RunID:     runID,
+		RunID:     run.RunID,
+		ProjectID: run.ProjectID,
+		SandboxID: run.SandboxID,
+		Stream:    string(chunk.Stream),
 		Data:      chunk.Text,
 		Offset:    offset,
 		CreatedAt: time.Now().UTC(),

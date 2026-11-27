@@ -539,6 +539,8 @@ func (h *RuntimeHost) trackCommandSession(sessionID string, cleanup bool) {
 // CreatedAt, or PayloadJSON be silently ignored.
 type SchedulerEventInput struct {
 	SchedulerID         string
+	ProjectID           string
+	AgentName           string
 	RunID               string
 	TriggerID           string
 	EventType           string
@@ -555,6 +557,7 @@ func (h *RuntimeHost) addSchedulerEvent(ctx context.Context, event SchedulerEven
 		return nil
 	}
 	event.SchedulerID, event.RunID, event.TriggerID = h.scheduler.Summary.ID, h.execution.ID, h.execution.TriggerID
+	event.ProjectID, event.AgentName = h.scheduler.Summary.ProjectID, h.scheduler.Summary.AgentName
 	return h.deps.Events.Add(ctx, event)
 }
 
@@ -563,6 +566,7 @@ func (h *RuntimeHost) addSchedulerEventRecord(ctx context.Context, event Schedul
 		return domain.SchedulerEvent{}, nil
 	}
 	event.SchedulerID, event.RunID, event.TriggerID = h.scheduler.Summary.ID, h.execution.ID, h.execution.TriggerID
+	event.ProjectID, event.AgentName = h.scheduler.Summary.ProjectID, h.scheduler.Summary.AgentName
 	return h.deps.Events.AddRecord(ctx, event)
 }
 

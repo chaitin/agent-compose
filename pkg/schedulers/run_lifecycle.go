@@ -78,6 +78,7 @@ type RunExecutorDependencies struct {
 	AddSchedulerEvent          func(ctx context.Context, event SchedulerEventInput) error
 	UpdateTriggerEventDelivery func(ctx context.Context, run domain.SchedulerRunSummary)
 	Notify                     func(reason string)
+	Observer                   Observer
 	Refresh                    func(ctx context.Context) error
 }
 
@@ -91,6 +92,13 @@ const schedulerHistoryRemovingMessage = "scheduler run history removal in progre
 
 func NewRunExecutor(deps RunExecutorDependencies) *RunExecutor {
 	return &RunExecutor{deps: deps}
+}
+
+func (e *RunExecutor) observeRunStatus(ctx context.Context, previousStatus string, run domain.SchedulerRunSummary, scheduler domain.Scheduler) {
+	if e.deps.Observer == nil {
+		return
+	}
+	e.deps.Observer.SchedulerRunStatusChanged(ctx, previousStatus, run, scheduler.Summary.ProjectID, scheduler.Summary.AgentName)
 }
 
 func (e *RunExecutor) Run(ctx context.Context, req RunTriggerRequest, triggerEventAck ...func(context.Context) error) (domain.SchedulerRunSummary, error) {
@@ -156,6 +164,7 @@ func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (Prepa
 		}
 		e.updateTriggerEventDelivery(ctx, run)
 		e.notify("scheduler_run_updated")
+		e.observeRunStatus(ctx, "", run, scheduler)
 		_ = e.deps.Store.UpdateSchedulerLastError(ctx, scheduler.Summary.ID, run.Error)
 		_ = e.addSchedulerEvent(ctx, schedulerRunEventInput{
 			SchedulerID: scheduler.Summary.ID,
@@ -181,6 +190,7 @@ func (e *RunExecutor) Prepare(ctx context.Context, req RunTriggerRequest) (Prepa
 	}
 	e.updateTriggerEventDelivery(ctx, run)
 	e.notify("scheduler_run_updated")
+	e.observeRunStatus(ctx, "", run, scheduler)
 	_ = e.addSchedulerEvent(ctx, schedulerRunEventInput{
 		SchedulerID: scheduler.Summary.ID,
 		RunID:       run.ID,
@@ -200,6 +210,7 @@ func (e *RunExecutor) Execute(ctx context.Context, prepared PreparedRun) (domain
 	defer e.leaveRun(prepared.Scheduler.Summary.ID)
 	ctx = events.WithPublisherProject(ctx, prepared.Scheduler.Summary.ProjectID)
 	run := prepared.Run
+	previousStatus := run.Status
 	host := e.deps.HostFactory(prepared.Scheduler, RuntimeExecutionContext{
 		ID:        run.ID,
 		TriggerID: run.TriggerID,
@@ -279,6 +290,7 @@ func (e *RunExecutor) Execute(ctx context.Context, prepared PreparedRun) (domain
 	if err := e.deps.Store.UpdateSchedulerRun(writeCtx, run); err != nil {
 		return domain.SchedulerRunSummary{}, err
 	}
+	e.observeRunStatus(writeCtx, previousStatus, run, prepared.Scheduler)
 	e.updateTriggerEventDelivery(writeCtx, run)
 	e.notify("scheduler_run_updated")
 	if e.deps.Refresh != nil {
@@ -299,6 +311,7 @@ func (e *RunExecutor) Abort(ctx context.Context, prepared PreparedRun, reason st
 		reason = "scheduler run aborted before execution"
 	}
 	run := prepared.Run
+	previousStatus := run.Status
 	completedAt := time.Now().UTC()
 	run.Status = domain.SchedulerRunStatusFailed
 	run.CompletedAt = completedAt
@@ -316,6 +329,8 @@ func (e *RunExecutor) Abort(ctx context.Context, prepared PreparedRun, reason st
 	})
 	if err := e.deps.Store.UpdateSchedulerRun(ctx, run); err != nil {
 		slog.Warn("failed to abort prepared scheduler run", "scheduler_id", prepared.Scheduler.Summary.ID, "run_id", run.ID, "error", err)
+	} else {
+		e.observeRunStatus(ctx, previousStatus, run, prepared.Scheduler)
 	}
 	e.updateTriggerEventDelivery(ctx, run)
 	e.notify("scheduler_run_updated")

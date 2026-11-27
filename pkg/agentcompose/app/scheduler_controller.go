@@ -52,6 +52,7 @@ func NewSchedulerController(di do.Injector) (*schedulers.Controller, error) {
 		Engine:             do.MustInvoke[schedulers.SchedulerEngine](di),
 		Publisher:          bus,
 		Notifier:           notifier,
+		Observer:           do.MustInvoke[*eventStreamBridge](di),
 		Artifacts:          schedulers.FSArtifacts{DataRoot: config.DataRoot},
 		ReserveSlots: func(event domain.SchedulerTopicEvent, count int) ([]*webhooks.Reservation, bool) {
 			return reserveSchedulerEventQueueSlots(config, &queue, event, count)

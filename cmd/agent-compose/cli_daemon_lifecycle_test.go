@@ -444,6 +444,7 @@ func testDaemonAppRegistersCoreRoutes(t *testing.T) {
 		{method: http.MethodPost, path: "/agentcompose.v2.RunService/*"},
 		{method: http.MethodPost, path: "/agentcompose.v2.ExecService/*"},
 		{method: http.MethodPost, path: "/agentcompose.v2.ImageService/*"},
+		{method: http.MethodPost, path: "/agentcompose.v2.EventService/*"},
 		{method: http.MethodGet, path: "/api/webhook-sources"},
 		{method: http.MethodGet, path: "/api/agent-compose/workspaces/:workspaceID/files"},
 		{method: http.MethodGet, path: "/jupyter/:sessionID"},

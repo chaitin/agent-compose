@@ -377,7 +377,7 @@ func (p *promptAttachProjector) appendLogChunkLocked(chunk domain.ExecChunk) err
 		p.hasLoggedText = true
 		p.logEndsWithNewline = strings.HasSuffix(chunk.Text, "\n")
 	}
-	publishRunLogChunk(p.runLogs, p.run.RunID, chunk, offset)
+	publishRunLogChunk(p.runLogs, p.run, chunk, offset)
 	return nil
 }
 

@@ -37,6 +37,7 @@ type StreamBroker struct {
 	mu          sync.RWMutex
 	nextID      int
 	subscribers map[string]map[int]chan WatchEvent
+	observer    func(WatchEvent)
 }
 
 func NewStreamBroker(do.Injector) (*StreamBroker, error) {
@@ -45,6 +46,19 @@ func NewStreamBroker(do.Injector) (*StreamBroker, error) {
 
 func NewStreamBrokerForTest() *StreamBroker {
 	return &StreamBroker{subscribers: map[string]map[int]chan WatchEvent{}}
+}
+
+// SetObserver installs a process-wide listener for every published watch
+// event. It is used by the daemon's event stream and must be set once during
+// composition. The observer is called after the per-sandbox fan-out and must
+// not block.
+func (b *StreamBroker) SetObserver(observer func(WatchEvent)) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	b.observer = observer
+	b.mu.Unlock()
 }
 
 func (b *StreamBroker) Subscribe(sandboxID string) (<-chan WatchEvent, func()) {
@@ -131,12 +145,16 @@ func (b *StreamBroker) publish(event WatchEvent) {
 		return
 	}
 	b.mu.RLock()
-	defer b.mu.RUnlock()
 	for _, ch := range b.subscribers[event.SandboxID] {
 		select {
 		case ch <- event:
 		default:
 		}
+	}
+	observer := b.observer
+	b.mu.RUnlock()
+	if observer != nil {
+		observer(event)
 	}
 }
 

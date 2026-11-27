@@ -34,6 +34,13 @@ type ControllerNotifier interface {
 	Notify(reason string)
 }
 
+// Observer receives scheduler lifecycle notifications after persistence. The
+// implementation must not block the scheduler execution path.
+type Observer interface {
+	SchedulerEventAdded(ctx context.Context, event domain.SchedulerEvent, projectID, agentName string)
+	SchedulerRunStatusChanged(ctx context.Context, previousStatus string, run domain.SchedulerRunSummary, projectID, agentName string)
+}
+
 type ControllerPublisher interface {
 	Publish(event domain.SchedulerTopicEvent) bool
 }
@@ -71,6 +78,7 @@ type ControllerDependencies struct {
 	Engine       SchedulerEngine
 	HostFactory  RunHostFactory
 	Notifier     ControllerNotifier
+	Observer     Observer
 	Publisher    ControllerPublisher
 	Artifacts    ControllerArtifacts
 	Wake         chan struct{}
@@ -151,6 +159,7 @@ func (c *Controller) init() {
 			AddSchedulerEvent:          c.AddSchedulerEvent,
 			UpdateTriggerEventDelivery: c.UpdateTriggerEventDelivery,
 			Notify:                     c.notify,
+			Observer:                   c.deps.Observer,
 			Refresh:                    c.Refresh,
 		})
 	}
@@ -481,6 +490,24 @@ func (c *Controller) AnyTargetBusy(targets []EventTarget) bool {
 	return AnyTargetBusy(targets, c.running)
 }
 
+func (c *Controller) schedulerIdentity(ctx context.Context, schedulerID string) (string, string) {
+	schedulerID = strings.TrimSpace(schedulerID)
+	if schedulerID == "" {
+		return "", ""
+	}
+	c.mu.RLock()
+	scheduler, ok := c.schedulers[schedulerID]
+	c.mu.RUnlock()
+	if !ok {
+		loaded, err := c.deps.Store.GetScheduler(ctx, schedulerID)
+		if err != nil {
+			return "", ""
+		}
+		scheduler = loaded
+	}
+	return scheduler.Summary.ProjectID, scheduler.Summary.AgentName
+}
+
 func (c *Controller) AddSchedulerEvent(ctx context.Context, event SchedulerEventInput) error {
 	_, err := c.AddSchedulerEventRecord(ctx, event)
 	return err
@@ -507,6 +534,19 @@ func (c *Controller) AddSchedulerEventRecord(ctx context.Context, input Schedule
 	}
 	if err := c.deps.Store.AddSchedulerEvent(ctx, event); err != nil {
 		return domain.SchedulerEvent{}, err
+	}
+	if c.deps.Observer != nil {
+		projectID, agentName := strings.TrimSpace(input.ProjectID), strings.TrimSpace(input.AgentName)
+		if projectID == "" || agentName == "" {
+			resolvedProjectID, resolvedAgentName := c.schedulerIdentity(ctx, event.SchedulerID)
+			if projectID == "" {
+				projectID = resolvedProjectID
+			}
+			if agentName == "" {
+				agentName = resolvedAgentName
+			}
+		}
+		c.deps.Observer.SchedulerEventAdded(ctx, event, projectID, agentName)
 	}
 	return event, nil
 }

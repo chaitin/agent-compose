@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chaitin/agent-compose/internal/projects"
 	appconfig "github.com/chaitin/agent-compose/pkg/config"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -40,7 +39,7 @@ func (c *Controller) executeStartedProjectRunAttach(ctx context.Context, attach 
 	warnings := attach.Warnings
 	start := attach.Start
 	mode := attach.Mode
-	coordinator := NewCoordinator(c.configDB, projects.StableProjectRunID)
+	coordinator := c.newCoordinator()
 	transitionCtx := context.WithoutCancel(ctx)
 	// Only a detached interactive task may outlive the daemon; preparation and
 	// a direct interaction stop with it, as before detach existed.
@@ -270,7 +269,7 @@ func (c *Controller) receiveCommandInteractionFrames(in commandInteractionReceiv
 				transition.Error = fmt.Sprintf("command execution failed: %v", err)
 				return transition, err
 			}
-			c.publishRunLogChunk(run.RunID, chunk, offset)
+			c.publishRunLogChunk(run, chunk, offset)
 			if err := send(runAttachOutputResponse(frame.Data, stream, start.TTY)); err != nil {
 				transition.ExitCode = 1
 				transition.Error = fmt.Sprintf("command execution failed: %v", err)

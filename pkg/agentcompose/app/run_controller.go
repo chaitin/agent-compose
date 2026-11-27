@@ -54,6 +54,7 @@ func NewRunController(di do.Injector) (*runs.Controller, error) {
 		Streams:         do.MustInvoke[*sandboxes.StreamBroker](di),
 		Bus:             do.MustInvoke[*schedulers.Bus](di),
 		Dashboard:       dashboardHub,
+		Observer:        do.MustInvoke[*eventStreamBridge](di),
 		CapTokens:       do.MustInvoke[*adapters.CapabilitySandboxResolver](di),
 		RunLogs:         do.MustInvoke[*runs.RunLogHub](di),
 		LifecycleLocks:  do.MustInvoke[*sandboxes.LifecycleLocks](di),
@@ -105,6 +106,7 @@ func NewRunCompletionManager(di do.Injector) (*runs.CompletionManager, error) {
 		Lifecycle: stopper,
 		Removal:   do.MustInvoke[*sandboxes.RemovalCoordinator](di),
 		Logger:    do.MustInvoke[*slog.Logger](di),
+		Observer:  do.MustInvoke[*eventStreamBridge](di),
 	}), nil
 }
 

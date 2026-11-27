@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/chaitin/agent-compose/internal/projects"
 	"github.com/chaitin/agent-compose/pkg/capabilities"
 	driverpkg "github.com/chaitin/agent-compose/pkg/driver"
 	"github.com/chaitin/agent-compose/pkg/execution"
@@ -190,7 +189,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 			if err := c.validateSandboxRuntimeDriver(driver); err != nil {
 				return SandboxResult{Sandbox: sandbox}, err
 			}
-			if _, err := NewCoordinator(c.configDB, projects.StableProjectRunID).BindSandbox(ctx, run.RunID, sandboxID, false); err != nil {
+			if _, err := c.newCoordinator().BindSandbox(ctx, run.RunID, sandboxID, false); err != nil {
 				return SandboxResult{Sandbox: sandbox}, fmt.Errorf("bind reused sandbox to project run: %w", err)
 			}
 			if sandbox.Summary.VMStatus != domain.VMStatusRunning {
@@ -266,7 +265,7 @@ func (c *Controller) ensureProjectRunSandbox(ctx context.Context, run domain.Pro
 	if err != nil {
 		return SandboxResult{}, err
 	}
-	if _, err := NewCoordinator(c.configDB, projects.StableProjectRunID).BindSandbox(ctx, run.RunID, sandbox.Summary.ID, true); err != nil {
+	if _, err := c.newCoordinator().BindSandbox(ctx, run.RunID, sandbox.Summary.ID, true); err != nil {
 		bindErr := fmt.Errorf("bind created sandbox to project run: %w", err)
 		if c.removal == nil {
 			return SandboxResult{Sandbox: sandbox, Created: true, Warnings: volumeWarnings}, bindErr

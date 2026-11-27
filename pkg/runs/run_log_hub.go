@@ -9,6 +9,9 @@ const defaultRunLogSubscriptionBuffer = 64
 
 type RunLogEvent struct {
 	RunID     string
+	ProjectID string
+	SandboxID string
+	Stream    string
 	Data      string
 	Offset    uint64
 	CreatedAt time.Time
@@ -41,6 +44,7 @@ type RunLogHub struct {
 	mu          sync.RWMutex
 	subscribers map[string]map[*RunLogSubscription]struct{}
 	buffer      int
+	observer    func(RunLogEvent)
 }
 
 func NewRunLogHub() *RunLogHub {
@@ -48,6 +52,18 @@ func NewRunLogHub() *RunLogHub {
 		subscribers: make(map[string]map[*RunLogSubscription]struct{}),
 		buffer:      defaultRunLogSubscriptionBuffer,
 	}
+}
+
+// SetObserver installs a process-wide listener for every published chunk. It
+// is used by the daemon's event stream and must be set once during
+// composition, before runs start.
+func (h *RunLogHub) SetObserver(observer func(RunLogEvent)) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.observer = observer
+	h.mu.Unlock()
 }
 
 func (h *RunLogHub) Subscribe(runID string) *RunLogSubscription {
@@ -91,6 +107,9 @@ func (h *RunLogHub) Publish(event RunLogEvent) bool {
 			delivered = true
 		default:
 		}
+	}
+	if h.observer != nil {
+		h.observer(event)
 	}
 	return delivered
 }
