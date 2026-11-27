@@ -87,3 +87,37 @@ func TestSchedulerEventPageSupportsTailBoundaryAndAscendingRange(t *testing.T) {
 		t.Fatalf("ascending bounded page = %#v, err=%v", page, err)
 	}
 }
+
+func TestListSandboxSchedulerStepsReturnsTheSandboxsStepEvents(t *testing.T) {
+	ctx := context.Background()
+	store := FromDB(newMemoryDB(t))
+	if err := store.initSchema(ctx); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	if _, err := upsertNativeTestScheduler(ctx, store, domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-a", Runtime: domain.SchedulerRuntimeScheduler, ProjectID: "project-1", AgentName: "agent-1", ProjectSchedulerID: "scheduler-1"}, Script: "function main() {}"}); err != nil {
+		t.Fatalf("upsert scheduler: %v", err)
+	}
+	at := time.UnixMilli(1_720_000_000_000).UTC()
+	if err := store.CreateSchedulerRun(ctx, domain.SchedulerRunSummary{ID: "run-a", SchedulerID: "scheduler-a", TriggerID: "trigger-a", Status: domain.SchedulerRunStatusRunning, StartedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range []domain.SchedulerEvent{
+		{SchedulerID: "scheduler-a", ID: "done", RunID: "run-a", Type: "scheduler.command.completed", LinkedSandboxID: "sandbox-1", LinkedCellID: "step-1", CreatedAt: at.Add(2 * time.Second)},
+		{SchedulerID: "scheduler-a", ID: "start", RunID: "run-a", Type: "scheduler.command.started", LinkedSandboxID: "sandbox-1", LinkedCellID: "step-1", CreatedAt: at.Add(time.Second)},
+		// Not steps of this sandbox.
+		{SchedulerID: "scheduler-a", ID: "ready", RunID: "run-a", Type: "scheduler.sandbox.created", LinkedSandboxID: "sandbox-1", CreatedAt: at},
+		{SchedulerID: "scheduler-a", ID: "agent", RunID: "run-a", Type: "scheduler.agent.completed", LinkedSandboxID: "sandbox-1", LinkedCellID: "cell-agent", CreatedAt: at},
+		{SchedulerID: "scheduler-a", ID: "other", RunID: "run-a", Type: "scheduler.command.completed", LinkedSandboxID: "sandbox-2", LinkedCellID: "step-2", CreatedAt: at},
+	} {
+		if err := store.AddSchedulerEvent(ctx, event); err != nil {
+			t.Fatalf("add event %s: %v", event.ID, err)
+		}
+	}
+	steps, err := store.ListSandboxSchedulerSteps(ctx, "sandbox-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 2 || steps[0].ID != "start" || steps[1].ID != "done" || steps[0].TriggerID != "trigger-a" {
+		t.Fatalf("steps = %#v", steps)
+	}
+}

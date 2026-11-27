@@ -128,11 +128,14 @@ func TestSchedulerCommandExecutorFiltersCommandPayloadFromStreamingCellOutput(t 
 	result, err := executor.ExecuteSchedulerCommand(ctx, session, domain.SchedulerCommandRequest{
 		Mode:   "shell",
 		Script: "echo scheduler",
+		// A step of a persisted scheduler run, with the id its started event
+		// already names.
+		SchedulerID: "scheduler-1", SchedulerRunID: "run-1", CellID: "step-1",
 	})
 	if err != nil {
 		t.Fatalf("ExecuteSchedulerCommand returned error: %v", err)
 	}
-	if !result.Success || result.Stdout != "scheduler stdout\n" || result.Stderr != "scheduler stderr\n" {
+	if !result.Success || result.Stdout != "scheduler stdout\n" || result.Stderr != "scheduler stderr\n" || result.CellID != "step-1" {
 		t.Fatalf("scheduler result = %#v", result)
 	}
 
@@ -155,17 +158,25 @@ drained:
 	if got := outputText.String(); !strings.Contains(got, "scheduler stdout\n") || !strings.Contains(got, "scheduler stderr\n") {
 		t.Fatalf("stream output = %q", got)
 	}
+	// The step's history is its step log; the sandbox keeps no cell for it.
 	cells, err := store.ListCells(ctx, session.Summary.ID)
 	if err != nil {
 		t.Fatalf("ListCells returned error: %v", err)
 	}
-	if len(cells) == 0 {
-		t.Fatalf("no cells stored")
+	if len(cells) != 0 {
+		t.Fatalf("step stored notebook cells: %#v", cells)
 	}
-	for _, cell := range cells {
-		if strings.Contains(cell.Output, execution.CommandResultPrefix) {
-			t.Fatalf("cell leaked command payload: %#v", cell)
-		}
+	path, err := runlog.SchedulerCellPath(root, "scheduler-1", "run-1", "step-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := runlog.ReadEntries(path, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logged := runlog.RenderText(entries)
+	if !strings.Contains(logged, "scheduler stdout\n") || !strings.Contains(logged, "scheduler stderr\n") || strings.Contains(logged, execution.CommandResultPrefix) {
+		t.Fatalf("step log = %q", logged)
 	}
 }
 

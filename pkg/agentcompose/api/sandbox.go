@@ -132,6 +132,7 @@ type SandboxHandler struct {
 	// runHistory rebuilds the run-log Agent Runs a sandbox hosted, which
 	// store no notebook history of their own.
 	runHistory SandboxRunHistoryStore
+	steps      sandboxStepHistory
 }
 
 func (h *SandboxHandler) WithWorkspaceFiles(files workspaces.SandboxFiles) *SandboxHandler {
@@ -267,13 +268,19 @@ func (h *SandboxHandler) ListSandboxHistory(ctx context.Context, req *connect.Re
 	if err != nil {
 		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
 	}
+	stepHistory, err := h.loadSandboxStepHistory(ctx, sandboxID, cells)
+	if err != nil {
+		return nil, ConnectErrorForDomainKind(err, ResourceSandbox)
+	}
 	cells = append(cells, runHistory.cells...)
+	cells = append(cells, stepHistory.cells...)
 	events = append(events, runHistory.events...)
 	response, err := paginateSandboxHistory(cells, events, req.Msg.GetOffset(), req.Msg.GetLimit())
 	if err != nil {
 		return nil, err
 	}
 	fillSandboxRunOutput(response, runHistory.logs)
+	fillSandboxRunOutput(response, stepHistory.logs)
 	return connect.NewResponse(response), nil
 }
 

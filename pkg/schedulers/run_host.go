@@ -9,6 +9,7 @@ import (
 
 	"github.com/chaitin/agent-compose/pkg/events"
 	domain "github.com/chaitin/agent-compose/pkg/model"
+	"github.com/google/uuid"
 )
 
 type HostStore interface {
@@ -248,6 +249,7 @@ func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerComma
 		})
 	}
 	h.trackCommandSession(session.Summary.ID, cleanupSession)
+	request.CellID = uuid.NewString()
 	if err := h.persistCommandSandboxLink(ctx, request, session.Summary.ID); err != nil {
 		return domain.SchedulerCommandResult{}, err
 	}
@@ -287,12 +289,15 @@ func (h *RuntimeHost) persistCommandSandboxLink(ctx context.Context, request dom
 	if h.execution.Kind != ExecutionKindTrigger || h.deps.Events == nil {
 		return nil
 	}
+	// The step's id is on its started event, so a running step's log can be
+	// followed and a step the daemon was interrupted in can be closed.
 	if err := h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
 		EventType:       "scheduler.command.started",
 		Level:           "info",
 		Message:         "scheduler command started",
-		Payload:         map[string]any{"sandboxId": sandboxID},
+		Payload:         map[string]any{"sandboxId": sandboxID, "cellId": request.CellID, "source": CommandCellSource(request)},
 		LinkedSandboxID: sandboxID,
+		LinkedCellID:    request.CellID,
 	}); err != nil {
 		persistErr := fmt.Errorf("persist scheduler command sandbox link: %w", err)
 		failedEventErr := h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{

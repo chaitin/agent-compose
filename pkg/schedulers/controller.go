@@ -79,6 +79,11 @@ func (a FSArtifacts) RunDir(schedulerID, runID string) string {
 	return filepath.Join(parts...)
 }
 
+// StepLogPath is where a shell/exec step of a scheduler run logs its output.
+func (a FSArtifacts) StepLogPath(schedulerID, runID, cellID string) string {
+	return ArtifactDirs{DataRoot: a.DataRoot}.SchedulerStepLogPath(schedulerID, runID, cellID)
+}
+
 func (a FSArtifacts) Write(dir, name, content string) error {
 	if strings.TrimSpace(dir) == "" || strings.TrimSpace(name) == "" || strings.TrimSpace(content) == "" {
 		return nil

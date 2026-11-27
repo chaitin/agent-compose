@@ -45,11 +45,11 @@ const sandboxRunHistoryPage = 200
 type sandboxRunHistory struct {
 	cells  []domain.NotebookCell
 	events []domain.SandboxEvent
-	logs   map[string]domain.ProjectRunRecord // by cell id
+	logs   map[string]string // log path by cell id
 }
 
 func (h *SandboxHandler) loadSandboxRunHistory(ctx context.Context, sandboxID string, stored []domain.NotebookCell) (sandboxRunHistory, error) {
-	history := sandboxRunHistory{logs: map[string]domain.ProjectRunRecord{}}
+	history := sandboxRunHistory{logs: map[string]string{}}
 	if h.runHistory == nil {
 		return history, nil
 	}
@@ -108,7 +108,7 @@ func (h *SandboxHandler) loadSandboxRunHistory(ctx context.Context, sandboxID st
 	for _, run := range runsByID {
 		cell := sandboxRunCell(run, agents[run.RunID], stopReasons[run.RunID])
 		history.cells = append(history.cells, cell)
-		history.logs[cell.ID] = run
+		history.logs[cell.ID] = run.LogsPath
 		if run.Status == domain.ProjectRunStatusFailed && strings.TrimSpace(run.Error) != "" {
 			history.events = append(history.events, domain.SandboxEvent{
 				ID: run.RunID + ":failed", Type: "agent.assistant.failed", Level: "error",
@@ -147,13 +147,13 @@ func firstTime(times ...time.Time) time.Time {
 
 // fillSandboxRunOutput renders the output of the rebuilt cells that made it
 // onto the page; the rest are never read.
-func fillSandboxRunOutput(response *agentcomposev2.ListSandboxHistoryResponse, logs map[string]domain.ProjectRunRecord) {
+func fillSandboxRunOutput(response *agentcomposev2.ListSandboxHistoryResponse, logs map[string]string) {
 	for _, cell := range response.GetCells() {
-		run, ok := logs[cell.GetId()]
+		path, ok := logs[cell.GetId()]
 		if !ok {
 			continue
 		}
-		cell.Output = sandboxRunOutput(run.LogsPath)
+		cell.Output = sandboxRunOutput(path)
 	}
 }
 

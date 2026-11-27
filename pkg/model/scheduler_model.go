@@ -180,6 +180,9 @@ type SchedulerCommandRequest struct {
 	// They are set by the daemon and never part of a script's request.
 	SchedulerID    string `json:"-"`
 	SchedulerRunID string `json:"-"`
+	// CellID identifies the step. The daemon picks it before the step
+	// starts, so its started event can point at the step's log.
+	CellID string `json:"-"`
 }
 
 type SchedulerCommandResult struct {

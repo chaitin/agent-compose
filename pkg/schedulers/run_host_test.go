@@ -781,14 +781,16 @@ func (hostAgentDefinitionsFake) ResolveSchedulerAgentDefinition(context.Context,
 }
 
 type hostCommandExecutorFake struct {
+	request   domain.SchedulerCommandRequest
 	calls     int
 	result    domain.SchedulerCommandResult
 	err       error
 	onExecute func()
 }
 
-func (e *hostCommandExecutorFake) ExecuteSchedulerCommand(context.Context, *domain.Sandbox, domain.SchedulerCommandRequest) (domain.SchedulerCommandResult, error) {
+func (e *hostCommandExecutorFake) ExecuteSchedulerCommand(_ context.Context, _ *domain.Sandbox, request domain.SchedulerCommandRequest) (domain.SchedulerCommandResult, error) {
 	e.calls++
+	e.request = request
 	if e.onExecute != nil {
 		e.onExecute()
 	}
@@ -860,3 +862,29 @@ func firstNonEmptyTest(values ...string) string {
 	return ""
 }
 
+func TestRuntimeHostCommandNamesItsStepBeforeItStarts(t *testing.T) {
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-step", Runtime: domain.SchedulerRuntimeScheduler}}
+	run := &domain.SchedulerRunSummary{ID: "run-step", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-step"}
+	events := &hostEventsFake{}
+	executor := &hostCommandExecutorFake{result: domain.SchedulerCommandResult{Success: true, SandboxID: "session-step"}}
+	host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+		Store: &hostStoreFake{}, Events: events, CommandExecutor: executor,
+		Sessions: &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-step", VMStatus: domain.VMStatusRunning}}},
+	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{})
+	if _, err := host.Command(context.Background(), domain.SchedulerCommandRequest{Mode: "shell", Script: "echo hi"}); err != nil {
+		t.Fatal(err)
+	}
+	cellID := executor.request.CellID
+	if cellID == "" || executor.request.SchedulerRunID != run.ID {
+		t.Fatalf("command request = %#v", executor.request)
+	}
+	for _, event := range events.items {
+		if event.Type == "scheduler.command.started" {
+			if event.LinkedCellID != cellID || !strings.Contains(event.PayloadJSON, `"source":"echo hi"`) {
+				t.Fatalf("started event = %#v, want step %s", event, cellID)
+			}
+			return
+		}
+	}
+	t.Fatalf("no started event: %#v", events.types())
+}
