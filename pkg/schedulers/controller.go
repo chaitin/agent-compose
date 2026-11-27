@@ -499,6 +499,9 @@ func (c *Controller) schedulerIdentity(ctx context.Context, schedulerID string) 
 	scheduler, ok := c.schedulers[schedulerID]
 	c.mu.RUnlock()
 	if !ok {
+		if c.deps.Store == nil {
+			return "", ""
+		}
 		loaded, err := c.deps.Store.GetScheduler(ctx, schedulerID)
 		if err != nil {
 			return "", ""
