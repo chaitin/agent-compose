@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"connectrpc.com/connect"
@@ -29,6 +30,19 @@ type EventStreamHandler struct {
 
 func NewEventStreamHandler(broker *eventstream.Broker) *EventStreamHandler {
 	return &EventStreamHandler{broker: broker}
+}
+
+// watchEventsStream is the small transport surface used by the handler. It is
+// satisfied by *connect.ServerStream and by test recorders.
+type watchEventsStream interface {
+	Send(*agentcomposev2.WatchEventsResponse) error
+	ResponseHeader() http.Header
+}
+
+type followOptions struct {
+	maxBatch       int
+	heartbeat      time.Duration
+	lastSentCursor *string
 }
 
 func (h *EventStreamHandler) GetEventStreamCapabilities(_ context.Context, _ *connect.Request[agentcomposev2.GetEventStreamCapabilitiesRequest]) (*connect.Response[agentcomposev2.GetEventStreamCapabilitiesResponse], error) {
@@ -72,12 +86,20 @@ func (h *EventStreamHandler) WatchEvents(ctx context.Context, req *connect.Reque
 	}
 	PrepareStreamingHeaders(stream.ResponseHeader())
 	heartbeatSeconds := uint32(cfg.Heartbeat / time.Second)
+	// HELLO must not acknowledge replay events that have not been sent yet. If
+	// a replay is pending, echo the client's last consumed cursor; otherwise the
+	// head is the safe live position.
+	helloCursor := resume.HeadCursor
+	if !resume.SyncRequired && len(resume.Replay) > 0 && req.Msg.GetCursor() != "" {
+		helloCursor = req.Msg.GetCursor()
+	}
+	lastSentCursor := helloCursor
 	if err := stream.Send(&agentcomposev2.WatchEventsResponse{
-		NextCursor: resume.HeadCursor,
+		NextCursor: helloCursor,
 		Control: &agentcomposev2.StreamControl{
 			Kind:             agentcomposev2.StreamControl_KIND_HELLO,
 			Epoch:            resume.Epoch,
-			Cursor:           resume.HeadCursor,
+			Cursor:           helloCursor,
 			ReplayFloor:      resume.ReplayFloor,
 			HeartbeatSeconds: heartbeatSeconds,
 		},
@@ -100,11 +122,11 @@ func (h *EventStreamHandler) WatchEvents(ctx context.Context, req *connect.Reque
 		}
 	}
 	if len(resume.Replay) > 0 {
-		if err := h.sendEventBatches(stream, resume.Replay, maxBatch); err != nil {
+		if err := h.sendEventBatches(stream, resume.Replay, maxBatch, &lastSentCursor); err != nil {
 			return err
 		}
 	}
-	return h.follow(ctx, sub, stream, maxBatch, cfg.Heartbeat)
+	return h.follow(ctx, sub, stream, followOptions{maxBatch: maxBatch, heartbeat: cfg.Heartbeat, lastSentCursor: &lastSentCursor})
 }
 
 func watchFilter(msg *agentcomposev2.WatchEventsRequest) (eventstream.Filter, error) {
@@ -150,9 +172,9 @@ func watchSubscribeError(err error) error {
 	}
 }
 
-func (h *EventStreamHandler) follow(ctx context.Context, sub *eventstream.Subscription, stream *connect.ServerStream[agentcomposev2.WatchEventsResponse], maxBatch int, heartbeat time.Duration) error {
+func (h *EventStreamHandler) follow(ctx context.Context, sub *eventstream.Subscription, stream watchEventsStream, opts followOptions) error {
 	events := sub.Events()
-	ticker := time.NewTicker(heartbeat)
+	ticker := time.NewTicker(opts.heartbeat)
 	defer ticker.Stop()
 	for {
 		select {
@@ -162,11 +184,11 @@ func (h *EventStreamHandler) follow(ctx context.Context, sub *eventstream.Subscr
 			if !ok {
 				return nil
 			}
-			batch := make([]*eventstream.Event, 0, maxBatch)
+			batch := make([]*eventstream.Event, 0, opts.maxBatch)
 			batch = append(batch, event)
 			closed := false
 		drain:
-			for len(batch) < maxBatch {
+			for len(batch) < opts.maxBatch {
 				select {
 				case next, ok := <-events:
 					if !ok {
@@ -181,7 +203,7 @@ func (h *EventStreamHandler) follow(ctx context.Context, sub *eventstream.Subscr
 			if err := h.sendGap(stream, sub); err != nil {
 				return err
 			}
-			if err := h.sendEventBatches(stream, batch, maxBatch); err != nil {
+			if err := h.sendEventBatches(stream, batch, opts.maxBatch, opts.lastSentCursor); err != nil {
 				return err
 			}
 			if closed {
@@ -191,14 +213,14 @@ func (h *EventStreamHandler) follow(ctx context.Context, sub *eventstream.Subscr
 			if err := h.sendGap(stream, sub); err != nil {
 				return err
 			}
-			if err := h.sendHeartbeat(stream); err != nil {
+			if err := h.sendHeartbeat(stream, *opts.lastSentCursor); err != nil {
 				return err
 			}
 		}
 	}
 }
 
-func (h *EventStreamHandler) sendGap(stream *connect.ServerStream[agentcomposev2.WatchEventsResponse], sub *eventstream.Subscription) error {
+func (h *EventStreamHandler) sendGap(stream watchEventsStream, sub *eventstream.Subscription) error {
 	count, first, last := sub.TakeDropped()
 	if count == 0 {
 		return nil
@@ -216,17 +238,16 @@ func (h *EventStreamHandler) sendGap(stream *connect.ServerStream[agentcomposev2
 	return nil
 }
 
-func (h *EventStreamHandler) sendHeartbeat(stream *connect.ServerStream[agentcomposev2.WatchEventsResponse]) error {
-	_, head, _ := h.broker.Head()
-	if head == "" {
+func (h *EventStreamHandler) sendHeartbeat(stream watchEventsStream, cursor string) error {
+	if cursor == "" {
 		return nil
 	}
 	heartbeatSeconds := uint32(h.broker.Config().Heartbeat / time.Second)
 	if err := stream.Send(&agentcomposev2.WatchEventsResponse{
-		NextCursor: head,
+		NextCursor: cursor,
 		Control: &agentcomposev2.StreamControl{
 			Kind:             agentcomposev2.StreamControl_KIND_HEARTBEAT,
-			Cursor:           head,
+			Cursor:           cursor,
 			HeartbeatSeconds: heartbeatSeconds,
 		},
 	}); err != nil {
@@ -235,7 +256,7 @@ func (h *EventStreamHandler) sendHeartbeat(stream *connect.ServerStream[agentcom
 	return nil
 }
 
-func (h *EventStreamHandler) sendEventBatches(stream *connect.ServerStream[agentcomposev2.WatchEventsResponse], events []*eventstream.Event, maxBatch int) error {
+func (h *EventStreamHandler) sendEventBatches(stream watchEventsStream, events []*eventstream.Event, maxBatch int, lastSentCursor *string) error {
 	if maxBatch <= 0 {
 		maxBatch = 1
 	}
@@ -259,6 +280,9 @@ func (h *EventStreamHandler) sendEventBatches(stream *connect.ServerStream[agent
 		}
 		if err := stream.Send(&agentcomposev2.WatchEventsResponse{Events: items, NextCursor: nextCursor}); err != nil {
 			return connect.NewError(connect.CodeUnknown, err)
+		}
+		if lastSentCursor != nil {
+			*lastSentCursor = nextCursor
 		}
 	}
 	return nil

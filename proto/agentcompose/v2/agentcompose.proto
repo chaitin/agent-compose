@@ -3105,8 +3105,9 @@ message WatchEventsRequest {
 
 message WatchEventsResponse {
   repeated StreamEvent events = 1;
-  // Cursor of the last event in this response; when events is empty it is the
-  // current head (or heartbeat cursor).
+  // Safe resume point: event batches use their last event; HELLO/heartbeat use
+  // the last event successfully sent to this connection, never ahead of unsent
+  // replay or queued events.
   string next_cursor = 2;
   // Present for HELLO, heartbeat, gap, and sync-required control frames.
   StreamControl control = 3;
@@ -3115,13 +3116,14 @@ message WatchEventsResponse {
 message StreamControl {
   enum Kind {
     KIND_UNSPECIFIED = 0;
-    KIND_HELLO = 1;
+    KIND_HELLO = 1; // First frame: epoch, safe cursor, replay floor, heartbeat.
     KIND_HEARTBEAT = 2;
     KIND_SYNC_REQUIRED = 3;
     KIND_GAP = 4;
   }
   Kind kind = 1;
   string epoch = 2;
+  // 当前连接已成功发送的安全恢复点；HELLO 有重放时为客户端请求 cursor。
   string cursor = 3;
   string replay_floor = 4;
   uint32 heartbeat_seconds = 5;

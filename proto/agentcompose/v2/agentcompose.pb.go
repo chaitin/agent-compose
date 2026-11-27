@@ -2083,7 +2083,7 @@ type StreamControl_Kind int32
 
 const (
 	StreamControl_KIND_UNSPECIFIED   StreamControl_Kind = 0
-	StreamControl_KIND_HELLO         StreamControl_Kind = 1
+	StreamControl_KIND_HELLO         StreamControl_Kind = 1 // First frame: epoch, safe cursor, replay floor, heartbeat.
 	StreamControl_KIND_HEARTBEAT     StreamControl_Kind = 2
 	StreamControl_KIND_SYNC_REQUIRED StreamControl_Kind = 3
 	StreamControl_KIND_GAP           StreamControl_Kind = 4
@@ -23332,8 +23332,9 @@ func (x *WatchEventsRequest) GetMaxBatchEvents() uint32 {
 type WatchEventsResponse struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Events []*StreamEvent         `protobuf:"bytes,1,rep,name=events,proto3" json:"events,omitempty"`
-	// Cursor of the last event in this response; when events is empty it is the
-	// current head (or heartbeat cursor).
+	// Safe resume point: event batches use their last event; HELLO/heartbeat use
+	// the last event successfully sent to this connection, never ahead of unsent
+	// replay or queued events.
 	NextCursor string `protobuf:"bytes,2,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
 	// Present for HELLO, heartbeat, gap, and sync-required control frames.
 	Control       *StreamControl `protobuf:"bytes,3,opt,name=control,proto3" json:"control,omitempty"`
@@ -23393,16 +23394,17 @@ func (x *WatchEventsResponse) GetControl() *StreamControl {
 }
 
 type StreamControl struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	Kind               StreamControl_Kind     `protobuf:"varint,1,opt,name=kind,proto3,enum=agentcompose.v2.StreamControl_Kind" json:"kind,omitempty"`
-	Epoch              string                 `protobuf:"bytes,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	Cursor             string                 `protobuf:"bytes,3,opt,name=cursor,proto3" json:"cursor,omitempty"`
-	ReplayFloor        string                 `protobuf:"bytes,4,opt,name=replay_floor,json=replayFloor,proto3" json:"replay_floor,omitempty"`
-	HeartbeatSeconds   uint32                 `protobuf:"varint,5,opt,name=heartbeat_seconds,json=heartbeatSeconds,proto3" json:"heartbeat_seconds,omitempty"`
-	Reason             string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
-	DroppedEvents      uint64                 `protobuf:"varint,7,opt,name=dropped_events,json=droppedEvents,proto3" json:"dropped_events,omitempty"`
-	FirstDroppedCursor string                 `protobuf:"bytes,8,opt,name=first_dropped_cursor,json=firstDroppedCursor,proto3" json:"first_dropped_cursor,omitempty"`
-	LastDroppedCursor  string                 `protobuf:"bytes,9,opt,name=last_dropped_cursor,json=lastDroppedCursor,proto3" json:"last_dropped_cursor,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Kind  StreamControl_Kind     `protobuf:"varint,1,opt,name=kind,proto3,enum=agentcompose.v2.StreamControl_Kind" json:"kind,omitempty"`
+	Epoch string                 `protobuf:"bytes,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	// 当前连接已成功发送的安全恢复点；HELLO 有重放时为客户端请求 cursor。
+	Cursor             string `protobuf:"bytes,3,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	ReplayFloor        string `protobuf:"bytes,4,opt,name=replay_floor,json=replayFloor,proto3" json:"replay_floor,omitempty"`
+	HeartbeatSeconds   uint32 `protobuf:"varint,5,opt,name=heartbeat_seconds,json=heartbeatSeconds,proto3" json:"heartbeat_seconds,omitempty"`
+	Reason             string `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
+	DroppedEvents      uint64 `protobuf:"varint,7,opt,name=dropped_events,json=droppedEvents,proto3" json:"dropped_events,omitempty"`
+	FirstDroppedCursor string `protobuf:"bytes,8,opt,name=first_dropped_cursor,json=firstDroppedCursor,proto3" json:"first_dropped_cursor,omitempty"`
+	LastDroppedCursor  string `protobuf:"bytes,9,opt,name=last_dropped_cursor,json=lastDroppedCursor,proto3" json:"last_dropped_cursor,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }

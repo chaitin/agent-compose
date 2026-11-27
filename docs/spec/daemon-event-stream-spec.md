@@ -237,7 +237,7 @@ message WatchEventsRequest {
 
 message WatchEventsResponse {
   repeated StreamEvent events = 1;
-  // 本批最后一个事件的 cursor；空批时为当前 head/心跳 cursor。
+  // 安全恢复点：事件批为本批最后一个事件；HELLO/心跳为已成功发送的位置。
   string next_cursor = 2;
   StreamControl control = 3;
 }
@@ -245,7 +245,7 @@ message WatchEventsResponse {
 message StreamControl {
   enum Kind {
     KIND_UNSPECIFIED = 0;
-    KIND_HELLO = 1;          // 首帧：epoch、cursor（head）、replay_floor、heartbeat
+    KIND_HELLO = 1;          // 首帧：epoch、安全 cursor、replay_floor、heartbeat
     KIND_HEARTBEAT = 2;      // 空闲保活
     KIND_SYNC_REQUIRED = 3;  // cursor 失效，应用需要对账
     KIND_GAP = 4;            // 本订阅因慢消费/缓冲满丢弃了事件
@@ -381,6 +381,7 @@ scheduler run 的输出没有 `RunLogHub`：它通过 `scheduler.event`（`sched
 
 1. **live**：订阅建立后的实时事件。控制面事件和日志事件都走这条路径。
 2. **replay**：仅控制面事件进入 ring（默认 4096 条）。应用带 cursor 重连时，从 ring 中补发 `sequence > cursor.sequence` 且匹配过滤条件的事件。
+   HELLO 和心跳只返回当前连接已成功发送的安全恢复点，不直接返回全局 head：否则在重放或订阅队列尚有积压时断线，重连会静默跳过未收到的事件。
 3. **sync_required**：cursor 的 epoch 不匹配（daemon 重启/空闲回收），或 cursor 早于 ring floor（超出窗口）。server 发送 `SYNC_REQUIRED`，然后从当前 head 继续 live；应用调用 List/Get API 重建状态。
 
 重放与 live 的衔接要显式处理：订阅时先注册 live 队列，再从 ring 复制历史；handler 把两段按 `sequence` 合并，跳过 `sequence <= last_sent` 的重复项，保证同一订阅内单调递增。不能“先回放完再开始接收”，否则回放期间的新事件会丢。
@@ -551,7 +552,7 @@ idle --(new WatchEvents)--> active
    - enabled=false -> 功能未开启，走现有轮询
 2. WatchEvents(cursor="", project_ids=[...], event_types=["run.*","scheduler.*","sandbox.*"], include_logs=false)
 3. 收到 HELLO：
-   - 记录 epoch / cursor（当前 head）/ heartbeat
+   - 记录 epoch / cursor（安全恢复点；有重放时是本次请求 cursor）/ heartbeat
    - 开始接收 live 事件（先缓冲）
 4. 调用 ListProjects / ListRuns / ListSchedulerRuns / ListSandboxes 建立基线
 5. 把缓冲的 live 事件幂等叠加到基线上（按 event.id 去重，按 occurred_at 防回退）

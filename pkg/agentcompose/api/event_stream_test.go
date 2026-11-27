@@ -333,3 +333,117 @@ func TestWatchSeverityAndSubscribeError(t *testing.T) {
 		}
 	}
 }
+
+type recordingWatchStream struct {
+	header http.Header
+	frames []*agentcomposev2.WatchEventsResponse
+}
+
+func (s *recordingWatchStream) Send(frame *agentcomposev2.WatchEventsResponse) error {
+	s.frames = append(s.frames, frame)
+	return nil
+}
+
+func (s *recordingWatchStream) ResponseHeader() http.Header {
+	if s.header == nil {
+		s.header = make(http.Header)
+	}
+	return s.header
+}
+
+func TestSendHeartbeatUsesSafeCursorNotGlobalHead(t *testing.T) {
+	cfg := eventStreamTestConfig()
+	broker := eventstream.NewBroker(cfg)
+	defer broker.Close()
+	filter, err := eventstream.NewFilter(nil, nil, eventstream.SeverityInfo, false)
+	if err != nil {
+		t.Fatalf("filter: %v", err)
+	}
+	sub, _, err := broker.Subscribe(filter, "")
+	if err != nil {
+		t.Fatalf("activate broker: %v", err)
+	}
+	for index := 0; index < 5; index++ {
+		broker.Publish(&eventstream.Event{Type: eventstream.TypeRunStatus, ProjectID: "p1", RunStatus: &eventstream.RunStatusEvent{}})
+	}
+	epoch, head, _ := broker.Head()
+	safe := eventstream.EncodeCursor(epoch, 1)
+	if head == safe {
+		t.Fatal("test needs head to differ from the safe cursor")
+	}
+	stream := &recordingWatchStream{}
+	if err := NewEventStreamHandler(broker).sendHeartbeat(stream, safe); err != nil {
+		t.Fatalf("sendHeartbeat: %v", err)
+	}
+	if len(stream.frames) != 1 || stream.frames[0].GetNextCursor() != safe || stream.frames[0].GetControl().GetCursor() != safe {
+		t.Fatalf("heartbeat frames = %+v, want safe cursor %q (head %q)", stream.frames, safe, head)
+	}
+	sub.Close()
+}
+
+func TestWatchEventsHelloDoesNotAcknowledgeUnsentReplay(t *testing.T) {
+	cfg := eventStreamTestConfig()
+	cfg.ReplayEvents = 16
+	broker := eventstream.NewBroker(cfg)
+	defer broker.Close()
+	filter, err := eventstream.NewFilter(nil, nil, eventstream.SeverityInfo, false)
+	if err != nil {
+		t.Fatalf("filter: %v", err)
+	}
+	dummy, _, err := broker.Subscribe(filter, "")
+	if err != nil {
+		t.Fatalf("activate broker: %v", err)
+	}
+	for index := 0; index < 5; index++ {
+		broker.Publish(&eventstream.Event{Type: eventstream.TypeRunStatus, ProjectID: "p1", RunStatus: &eventstream.RunStatusEvent{}})
+	}
+	replay := make([]*eventstream.Event, 0, 5)
+	for len(replay) < 5 {
+		select {
+		case event := <-dummy.Events():
+			replay = append(replay, event)
+		case <-time.After(time.Second):
+			t.Fatal("timed out collecting replay events")
+		}
+	}
+	dummy.Close()
+	if len(replay) != 5 {
+		t.Fatalf("replay events = %d", len(replay))
+	}
+
+	client, closeServer := newEventStreamTestClient(t, NewEventStreamHandler(broker))
+	defer closeServer()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.WatchEvents(ctx, connect.NewRequest(&agentcomposev2.WatchEventsRequest{Cursor: replay[0].Cursor}))
+	if err != nil {
+		t.Fatalf("WatchEvents: %v", err)
+	}
+	if !stream.Receive() {
+		t.Fatalf("missing HELLO: %v", stream.Err())
+	}
+	if got := stream.Msg().GetNextCursor(); got != replay[0].Cursor {
+		t.Fatalf("HELLO next_cursor = %q, want last consumed %q (head %q)", got, replay[0].Cursor, replay[len(replay)-1].Cursor)
+	}
+}
+
+func TestSendEventBatchesAdvancesSafeCursorOnlyAfterSend(t *testing.T) {
+	broker := eventstream.NewBroker(eventStreamTestConfig())
+	defer broker.Close()
+	handler := NewEventStreamHandler(broker)
+	stream := &recordingWatchStream{}
+	events := []*eventstream.Event{
+		{Type: eventstream.TypeRunStatus, Cursor: "cursor-1", RunStatus: &eventstream.RunStatusEvent{}},
+		{Type: eventstream.TypeRunStatus, Cursor: "cursor-2", RunStatus: &eventstream.RunStatusEvent{}},
+	}
+	cursor := ""
+	if err := handler.sendEventBatches(stream, events, 1, &cursor); err != nil {
+		t.Fatalf("sendEventBatches: %v", err)
+	}
+	if cursor != "cursor-2" {
+		t.Fatalf("last sent cursor = %q, want cursor-2", cursor)
+	}
+	if len(stream.frames) != 2 || stream.frames[1].GetNextCursor() != "cursor-2" {
+		t.Fatalf("frames = %+v", stream.frames)
+	}
+}
