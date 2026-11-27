@@ -61,12 +61,13 @@ type CompletionManager struct {
 	logger    *slog.Logger
 	now       func() time.Time
 
-	mu      sync.Mutex
-	locks   map[string]*sync.Mutex
-	cancel  context.CancelFunc
-	done    chan struct{}
-	wake    chan struct{}
-	started bool
+	mu       sync.Mutex
+	locks    map[string]*sync.Mutex
+	cancel   context.CancelFunc
+	done     chan struct{}
+	wake     chan struct{}
+	started  bool
+	unstaged map[string]*unstagedCompletion
 }
 
 // CompletionManagerDeps groups CompletionManager's constructor dependencies.
@@ -87,6 +88,7 @@ func NewCompletionManager(deps CompletionManagerDeps) *CompletionManager {
 	return &CompletionManager{
 		store: deps.Store, sandboxes: deps.Sandboxes, lifecycle: deps.Lifecycle, removal: deps.Removal, logger: logger,
 		now: func() time.Time { return time.Now().UTC() }, locks: map[string]*sync.Mutex{}, wake: make(chan struct{}, 1),
+		unstaged: make(map[string]*unstagedCompletion),
 	}
 }
 
@@ -99,24 +101,14 @@ func (m *CompletionManager) Complete(ctx context.Context, req TransitionRequest)
 	if req.RunID == "" || !StatusIsTerminal(req.Status) {
 		return domain.ProjectRunRecord{}, fmt.Errorf("terminal project run completion is required")
 	}
-	current, err := m.store.GetProjectRun(ctx, req.RunID)
-	if err != nil {
+	if err := m.retainCompletion(req); err != nil {
 		return domain.ProjectRunRecord{}, err
 	}
-	if StatusIsTerminal(current.Status) {
-		return current, nil
-	}
-	payload, err := json.Marshal(req)
-	if err != nil {
-		return domain.ProjectRunRecord{}, fmt.Errorf("encode project run completion: %w", err)
-	}
-	action := CompletionCleanupAction(current.CleanupPolicy, strings.TrimSpace(current.SandboxID) != "", current.SandboxCreated)
-	staged, _, err := m.store.StageProjectRunCompletion(ctx, domain.ProjectRunCompletionRecord{
-		RunID: req.RunID, TargetStatus: req.Status, TransitionJSON: string(payload), CleanupAction: action,
-	}, req.TerminalEvents)
-	if err != nil {
+	if err := m.stageRetainedCompletion(ctx, req.RunID); err != nil {
 		return domain.ProjectRunRecord{}, err
 	}
+	staged := domain.ProjectRunCompletionRecord{RunID: req.RunID}
+	var err error
 	m.signal()
 	deadline := m.nowUTC().Add(completionWaitTimeout)
 	for {
@@ -168,24 +160,24 @@ func (m *CompletionManager) completionWaitTimeout(ctx context.Context, runID str
 }
 
 func (m *CompletionManager) StageInterrupted(ctx context.Context, run domain.ProjectRunRecord, message string) error {
-	req := TransitionRequest{RunID: run.RunID, Status: domain.ProjectRunStatusFailed, ExitCode: max(run.ExitCode, 1), Error: message}
-	payload, err := json.Marshal(req)
-	if err != nil {
+	req := TransitionRequest{RunID: strings.TrimSpace(run.RunID), SandboxID: run.SandboxID, Status: domain.ProjectRunStatusFailed, ExitCode: max(run.ExitCode, 1), Error: message}
+	if err := m.retainCompletion(req); err != nil {
 		return err
 	}
-	_, _, err = m.store.StageProjectRunCompletion(ctx, domain.ProjectRunCompletionRecord{
-		RunID: run.RunID, TargetStatus: req.Status, TransitionJSON: string(payload),
-		CleanupAction: CompletionCleanupAction(run.CleanupPolicy, strings.TrimSpace(run.SandboxID) != "", run.SandboxCreated),
-	}, nil)
-	m.signal()
-	return err
+	return m.stageRetainedCompletion(ctx, req.RunID)
 }
 
-// Pending reports whether runID has a staged completion still to finish: its
-// result is already decided and the manager will finalize it.
+// Pending reports whether the manager owns a completion still to finish,
+// including results retained in memory before their first successful write.
 func (m *CompletionManager) Pending(ctx context.Context, runID string) (bool, error) {
 	if m == nil || m.store == nil {
 		return false, nil
+	}
+	m.mu.Lock()
+	_, retained := m.unstaged[strings.TrimSpace(runID)]
+	m.mu.Unlock()
+	if retained {
+		return true, nil
 	}
 	_, err := m.store.GetProjectRunCompletion(ctx, runID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -195,6 +187,14 @@ func (m *CompletionManager) Pending(ctx context.Context, runID string) (bool, er
 }
 
 func (m *CompletionManager) PendingForSandbox(ctx context.Context, sandboxID string) (string, bool, error) {
+	m.mu.Lock()
+	for runID, item := range m.unstaged {
+		if item.sandboxID == strings.TrimSpace(sandboxID) && item.sandboxID != "" {
+			m.mu.Unlock()
+			return runID, true, nil
+		}
+	}
+	m.mu.Unlock()
 	return m.store.ProjectRunCompletionForSandbox(ctx, sandboxID)
 }
 
@@ -226,12 +226,12 @@ func (m *CompletionManager) Shutdown(ctx context.Context) error {
 	cancel, done := m.cancel, m.done
 	m.mu.Unlock()
 	if cancel == nil || done == nil {
-		return nil
+		return m.unstagedShutdownError()
 	}
 	cancel()
 	select {
 	case <-done:
-		return nil
+		return m.unstagedShutdownError()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -263,6 +263,7 @@ func (m *CompletionManager) run(ctx context.Context, done chan struct{}) {
 }
 
 func (m *CompletionManager) processDue(ctx context.Context) error {
+	m.stageDueCompletions(ctx)
 	items, err := m.store.ListDueProjectRunCompletions(ctx, m.nowUTC(), 100)
 	if err != nil {
 		return err
@@ -286,6 +287,9 @@ func (m *CompletionManager) process(ctx context.Context, runID string) (domain.P
 	if err != nil {
 		return domain.ProjectRunRecord{}, err
 	}
+	// Reading the stored completion confirms durable ownership even if its
+	// original commit returned an error to the caller.
+	m.forgetRetainedCompletion(runID)
 	if completion.NextAttemptAt.After(m.nowUTC()) {
 		return m.store.GetProjectRun(ctx, runID)
 	}
