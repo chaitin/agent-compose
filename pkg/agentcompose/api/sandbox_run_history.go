@@ -175,7 +175,8 @@ func sandboxRunOutput(path string) string {
 	data := make([]byte, size-start)
 	n, err := text.ReadAt(data, start)
 	if err != nil && !errors.Is(err, io.EOF) {
-		return "[run log unreadable: " + err.Error() + "]\n"
+		// A read error names the log file, a host path.
+		return "[run log unreadable]\n"
 	}
 	output := strings.ToValidUTF8(string(data[:n]), "")
 	if start > 0 {
