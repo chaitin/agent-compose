@@ -12,7 +12,6 @@ func TestIntegrationAdapterRuntimeWorkflows(t *testing.T) {
 	t.Run("agent executor stream failure", TestAgentExecutorPersistsFailedCellWhenStreamCallbackFails)
 	t.Run("agent runner", TestAgentRunnerExecuteAgentRunWritesSystemPromptAndParsesResult)
 	t.Run("agent runner mcp", TestAgentRunnerPrepareManagedMCPConfigForProviders)
-	t.Run("cell executor", TestCellExecutorExecuteCellPersistsCellAndEvent)
 	t.Run("sandbox driver", TestSandboxDriverStartSandboxVMSavesRuntimeState)
 	t.Run("sandbox stop and remove lifecycle", TestSandboxDriverStopPreservesFacadeTokensUntilRuntimeRelease)
 	t.Run("sandbox resume reuses runtime", TestSandboxDriverResumeReusesRuntimeWithoutRefreshingStartupEnv)
@@ -27,7 +26,6 @@ func TestIntegrationAdapterRuntimeWorkflows(t *testing.T) {
 	t.Run("capability sandbox resolver", TestCapabilitySandboxResolverCoverage)
 	t.Run("scheduler sticky unsupported history", TestSchedulerSandboxRunnerRejectsUnsupportedStickyResumeBeforeSideEffects)
 	t.Run("agent runner k8s guest dir sync", TestAgentRunnerSyncsWorkspaceAndHomeForGuestDirRuntime)
-	t.Run("cell executor guest exec push", TestCellExecutorPushesScriptBeforeGuestExec)
 	t.Run("scheduler command guest files", TestSchedulerCommandExecutorTransfersGuestRequestAndArtifacts)
 	t.Run("sandbox driver rejects k8s stopped runtime retention", TestSandboxDriverRejectsStoppedRuntimeRetentionForK8s)
 }

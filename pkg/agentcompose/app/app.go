@@ -102,7 +102,6 @@ func RegisterDependencies(di do.Injector) {
 	do.Provide(di, NewDashboardOverviewHub)
 	do.Provide(di, schedulers.NewSchedulerEngine)
 	do.Provide(di, NewSandboxDriver)
-	do.Provide(di, NewCellExecutor)
 	do.Provide(di, NewAgentRunner)
 	do.Provide(di, NewAgentExecutor)
 	do.Provide(di, NewSchedulerCommandExecutor)
@@ -577,15 +576,6 @@ func NewSandboxDriver(di do.Injector) (*adapters.SandboxDriver, error) {
 			Capabilities: do.MustInvoke[capmatrix.Snapshot](di),
 		},
 		adapters.WithSandboxDriverRecorder(do.MustInvoke[*telemetry.Recorder](di)),
-	), nil
-}
-
-func NewCellExecutor(di do.Injector) (*adapters.CellExecutor, error) {
-	return adapters.NewCellExecutor(
-		do.MustInvoke[*appconfig.Config](di),
-		do.MustInvoke[*sandboxstore.Store](di),
-		do.MustInvoke[adapters.RuntimeProvider](di),
-		do.MustInvoke[*sandboxes.StreamBroker](di),
 	), nil
 }
 
