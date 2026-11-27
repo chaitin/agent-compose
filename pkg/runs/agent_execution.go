@@ -22,7 +22,18 @@ func (c *Controller) projectRunAgentConfig(ctx context.Context, run domain.Proje
 	if config.Provider == "" {
 		config.Provider = domain.DefaultAgentProvider
 	}
-	return config, nil
+	return withRunAgentProvider(config, run.AgentProvider), nil
+}
+
+// withRunAgentProvider applies a run's provider override to its agent
+// definition's config. The definition's model and environment belong to its
+// own provider, so another provider runs without them.
+func withRunAgentProvider(config execution.AgentConfig, provider string) execution.AgentConfig {
+	provider = domain.NormalizeAgentKind(provider)
+	if provider == "" || provider == config.Provider {
+		return config
+	}
+	return execution.AgentConfig{Provider: provider, AgentDefinitionID: config.AgentDefinitionID}
 }
 
 func (c *Controller) projectRunAgentSystemPrompt(ctx context.Context, run domain.ProjectRunRecord) (string, error) {

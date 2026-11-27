@@ -13832,6 +13832,7 @@ type ProjectRunMutation struct {
 	agent_cell_id       *string
 	log_incomplete      *int
 	addlog_incomplete   *int
+	agent_provider      *string
 	clearedFields       map[string]struct{}
 	done                bool
 	oldValue            func(context.Context) (*ProjectRun, error)
@@ -15932,6 +15933,55 @@ func (m *ProjectRunMutation) ResetLogIncomplete() {
 	delete(m.clearedFields, projectrun.FieldLogIncomplete)
 }
 
+// SetAgentProvider sets the "agent_provider" field.
+func (m *ProjectRunMutation) SetAgentProvider(s string) {
+	m.agent_provider = &s
+}
+
+// AgentProvider returns the value of the "agent_provider" field in the mutation.
+func (m *ProjectRunMutation) AgentProvider() (r string, exists bool) {
+	v := m.agent_provider
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAgentProvider returns the old "agent_provider" field's value of the ProjectRun entity.
+// If the ProjectRun object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProjectRunMutation) OldAgentProvider(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAgentProvider is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAgentProvider requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAgentProvider: %w", err)
+	}
+	return oldValue.AgentProvider, nil
+}
+
+// ClearAgentProvider clears the value of the "agent_provider" field.
+func (m *ProjectRunMutation) ClearAgentProvider() {
+	m.agent_provider = nil
+	m.clearedFields[projectrun.FieldAgentProvider] = struct{}{}
+}
+
+// AgentProviderCleared returns if the "agent_provider" field was cleared in this mutation.
+func (m *ProjectRunMutation) AgentProviderCleared() bool {
+	_, ok := m.clearedFields[projectrun.FieldAgentProvider]
+	return ok
+}
+
+// ResetAgentProvider resets all changes to the "agent_provider" field.
+func (m *ProjectRunMutation) ResetAgentProvider() {
+	m.agent_provider = nil
+	delete(m.clearedFields, projectrun.FieldAgentProvider)
+}
+
 // Where appends a list predicates to the ProjectRunMutation builder.
 func (m *ProjectRunMutation) Where(ps ...predicate.ProjectRun) {
 	m.predicates = append(m.predicates, ps...)
@@ -15966,7 +16016,7 @@ func (m *ProjectRunMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProjectRunMutation) Fields() []string {
-	fields := make([]string, 0, 37)
+	fields := make([]string, 0, 38)
 	if m.project_id != nil {
 		fields = append(fields, projectrun.FieldProjectID)
 	}
@@ -16078,6 +16128,9 @@ func (m *ProjectRunMutation) Fields() []string {
 	if m.log_incomplete != nil {
 		fields = append(fields, projectrun.FieldLogIncomplete)
 	}
+	if m.agent_provider != nil {
+		fields = append(fields, projectrun.FieldAgentProvider)
+	}
 	return fields
 }
 
@@ -16160,6 +16213,8 @@ func (m *ProjectRunMutation) Field(name string) (ent.Value, bool) {
 		return m.AgentCellID()
 	case projectrun.FieldLogIncomplete:
 		return m.LogIncomplete()
+	case projectrun.FieldAgentProvider:
+		return m.AgentProvider()
 	}
 	return nil, false
 }
@@ -16243,6 +16298,8 @@ func (m *ProjectRunMutation) OldField(ctx context.Context, name string) (ent.Val
 		return m.OldAgentCellID(ctx)
 	case projectrun.FieldLogIncomplete:
 		return m.OldLogIncomplete(ctx)
+	case projectrun.FieldAgentProvider:
+		return m.OldAgentProvider(ctx)
 	}
 	return nil, fmt.Errorf("unknown ProjectRun field %s", name)
 }
@@ -16511,6 +16568,13 @@ func (m *ProjectRunMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetLogIncomplete(v)
 		return nil
+	case projectrun.FieldAgentProvider:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAgentProvider(v)
+		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun field %s", name)
 }
@@ -16775,6 +16839,9 @@ func (m *ProjectRunMutation) ClearedFields() []string {
 	if m.FieldCleared(projectrun.FieldLogIncomplete) {
 		fields = append(fields, projectrun.FieldLogIncomplete)
 	}
+	if m.FieldCleared(projectrun.FieldAgentProvider) {
+		fields = append(fields, projectrun.FieldAgentProvider)
+	}
 	return fields
 }
 
@@ -16887,6 +16954,9 @@ func (m *ProjectRunMutation) ClearField(name string) error {
 		return nil
 	case projectrun.FieldLogIncomplete:
 		m.ClearLogIncomplete()
+		return nil
+	case projectrun.FieldAgentProvider:
+		m.ClearAgentProvider()
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun nullable field %s", name)
@@ -17006,6 +17076,9 @@ func (m *ProjectRunMutation) ResetField(name string) error {
 		return nil
 	case projectrun.FieldLogIncomplete:
 		m.ResetLogIncomplete()
+		return nil
+	case projectrun.FieldAgentProvider:
+		m.ResetAgentProvider()
 		return nil
 	}
 	return fmt.Errorf("unknown ProjectRun field %s", name)

@@ -6,10 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/chaitin/agent-compose/pkg/events"
-	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 )
 
@@ -35,26 +33,6 @@ type HostSandboxRunner interface {
 
 type HostAgentDefinitionResolver interface {
 	ResolveSchedulerAgentDefinition(ctx context.Context, scheduler domain.Scheduler) (*domain.AgentDefinition, error)
-}
-
-type HostAgentExecutionRequest struct {
-	Provider          string
-	AgentDefinitionID string
-	Model             string
-	RunID             string
-	Prompt            string
-	Timeout           time.Duration
-	OutputSchemaJSON  string
-}
-
-// ExecuteAgent returns the cell (full transcript) plus the provider's final
-// assistant message, when the provider emitted one distinct from the
-// transcript; the message is "" when no such message exists. On a failed
-// run the message may instead be a synthesized failure summary (not
-// provider text) — callers must check cell.Success before preferring it
-// over the transcript.
-type HostAgentExecutor interface {
-	ExecuteAgent(ctx context.Context, session *domain.Sandbox, request HostAgentExecutionRequest) (domain.NotebookCell, string, error)
 }
 
 type HostCommandExecutor interface {
@@ -102,7 +80,6 @@ type RunHostDependencies struct {
 	Events                  HostEventRecorder
 	Sessions                HostSandboxRunner
 	AgentDefinitions        HostAgentDefinitionResolver
-	AgentExecutor           HostAgentExecutor
 	CommandExecutor         HostCommandExecutor
 	ProjectAgentRunner      HostProjectAgentRunner
 	LLM                     HostLLMRunner
@@ -228,104 +205,12 @@ func (h *RuntimeHost) CallSandboxRPC(ctx context.Context, method, requestJSON st
 	return responseJSON, nil
 }
 
+// Agent runs one agent turn as an Agent Run of the scheduler's project agent;
+// see ProjectAgent.
 func (h *RuntimeHost) Agent(ctx context.Context, prompt string, request domain.SchedulerAgentRequest) (domain.SchedulerAgentResult, error) {
 	request.BindingTriggerID = h.execution.TriggerID
 	request.RunID = h.execution.ID
-	if h.useProjectAgentRun(request) {
-		return h.ProjectAgent(ctx, prompt, request)
-	}
-	session, eventType, err := h.deps.Sessions.Ensure(ctx, h.scheduler, request, true)
-	if err != nil {
-		return domain.SchedulerAgentResult{}, err
-	}
-	if eventType != "" {
-		_ = h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
-			EventType:       eventType,
-			Level:           "info",
-			Message:         "scheduler sandbox ready",
-			Payload:         map[string]any{"sandboxId": session.Summary.ID},
-			LinkedSandboxID: session.Summary.ID,
-		})
-	}
-
-	agentConfig := execution.AgentConfig{Provider: domain.NormalizeAgentKind(request.Agent)}
-	var agentDefinitionID string
-	if agentConfig.Provider == "" {
-		agentDefinition, err := h.deps.AgentDefinitions.ResolveSchedulerAgentDefinition(ctx, h.scheduler)
-		if err != nil {
-			return domain.SchedulerAgentResult{}, err
-		}
-		if agentDefinition != nil {
-			agentConfig = execution.AgentConfigFromDefinition(*agentDefinition, "")
-			agentDefinitionID = strings.TrimSpace(agentDefinition.ID)
-		}
-	}
-	if agentDefinitionID == "" {
-		agentDefinitionID = strings.TrimSpace(h.scheduler.Summary.AgentID)
-	}
-	if agentConfig.Provider == "" {
-		agentConfig.Provider = domain.NormalizeAgentKind(h.scheduler.Summary.DefaultAgent)
-	}
-	if agentConfig.Provider == "" {
-		agentConfig.Provider = "codex"
-	}
-
-	cell, assistantMessage, execErr := h.deps.AgentExecutor.ExecuteAgent(ctx, session, HostAgentExecutionRequest{
-		Provider:          agentConfig.Provider,
-		AgentDefinitionID: agentDefinitionID,
-		Model:             agentConfig.Model,
-		RunID:             h.execution.ID,
-		Prompt:            prompt,
-		Timeout:           request.Timeout,
-		OutputSchemaJSON:  request.OutputSchema,
-	})
-	if execErr != nil || !cell.Success {
-		// assistantMessage may be a synthesized failure summary (see
-		// agentAssistantMessage), not provider text; trust it only on
-		// success, or a failed run's real transcript gets displaced by
-		// that placeholder.
-		assistantMessage = ""
-	}
-	finalText := firstHostNonEmpty(assistantMessage, cell.Output, cell.Stdout, cell.Stderr)
-	jsonValue, jsonErr := JSONResult(finalText, request.OutputSchema, "agent finalText")
-	if jsonErr != nil && execErr == nil {
-		execErr = jsonErr
-	}
-	result := domain.SchedulerAgentResult{
-		Text:          finalText,
-		Output:        cell.Output,
-		FinalText:     finalText,
-		JSON:          jsonValue,
-		SandboxID:     session.Summary.ID,
-		CellID:        cell.ID,
-		Agent:         firstHostNonEmpty(cell.Agent, agentConfig.Provider),
-		AgentThreadID: cell.AgentThreadID,
-		StopReason:    cell.StopReason,
-		Success:       cell.Success,
-		ExitCode:      cell.ExitCode,
-	}
-	level := "info"
-	eventName := "scheduler.agent.completed"
-	if execErr != nil {
-		level = "error"
-		eventName = "scheduler.agent.failed"
-		result.Text = firstHostNonEmpty(result.Text, execErr.Error())
-	}
-	_ = h.addLinkedSchedulerEvent(ctx, SchedulerEventInput{
-		EventType:           eventName,
-		Level:               level,
-		Message:             firstHostNonEmpty(result.Text, fmt.Sprintf("%s completed", result.Agent)),
-		Payload:             result,
-		LinkedSandboxID:     result.SandboxID,
-		LinkedCellID:        result.CellID,
-		LinkedAgentThreadID: result.AgentThreadID,
-	})
-	h.publishAgentCompleted(ctx, result, nil)
-	h.shutdownSessionAndRecordEvent(ctx, session.Summary.ID, "scheduler sandbox after agent run", "scheduler sandbox stopped after agent run")
-	if execErr != nil {
-		return result, execErr
-	}
-	return result, nil
+	return h.ProjectAgent(ctx, prompt, request)
 }
 
 func (h *RuntimeHost) Command(ctx context.Context, request domain.SchedulerCommandRequest) (domain.SchedulerCommandResult, error) {

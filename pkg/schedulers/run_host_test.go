@@ -25,14 +25,6 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	sandboxes := &hostSessionsFake{
 		session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-host", VMStatus: domain.VMStatusRunning}},
 	}
-	agentExecutor := &hostAgentExecutorFake{cell: domain.NotebookCell{
-		ID:            "cell-agent",
-		Output:        "agent text",
-		Agent:         "claude",
-		AgentThreadID: "agent-session",
-		StopReason:    "complete",
-		Success:       true,
-	}}
 	commandExecutor := &hostCommandExecutorFake{result: domain.SchedulerCommandResult{
 		Output:    "command output",
 		Success:   true,
@@ -47,7 +39,6 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 		Events:           events,
 		Sessions:         sandboxes,
 		AgentDefinitions: hostAgentDefinitionsFake{},
-		AgentExecutor:    agentExecutor,
 		CommandExecutor:  commandExecutor,
 		LLM:              llm,
 		SandboxRPC:       rpc,
@@ -63,21 +54,12 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 		},
 	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{EventID: "topic-event"})
 
-	agentResult, err := host.Agent(ctx, "summarize", domain.SchedulerAgentRequest{})
-	if err != nil {
-		t.Fatalf("Agent returned error: %v", err)
-	}
-	if agentResult.Text != "agent text" || agentExecutor.request.Provider != "claude" || len(sandboxes.shutdowns) != 1 {
-		t.Fatalf("agent result/request/shutdowns = %#v/%#v/%#v", agentResult, agentExecutor.request, sandboxes.shutdowns)
-	}
-	if len(publisher.events) != 1 || publisher.events[0].topic != "agent-compose.agent.completed" {
-		t.Fatalf("publisher events = %#v", publisher.events)
-	}
-	if !events.contains("scheduler.sandbox.created") || !events.contains("scheduler.agent.completed") || !events.contains("scheduler.sandbox.stopped") {
-		t.Fatalf("agent events = %#v", events.types())
+	// scheduler.agent needs a project agent to run as an Agent Run.
+	if _, err := host.Agent(ctx, "summarize", domain.SchedulerAgentRequest{}); err == nil || !strings.Contains(err.Error(), "project agent") {
+		t.Fatalf("Agent without a project agent err = %v", err)
 	}
 
-	_, err = host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "echo one"})
+	_, err := host.Command(ctx, domain.SchedulerCommandRequest{Mode: "shell", Command: "echo one"})
 	if err != nil {
 		t.Fatalf("Command first returned error: %v", err)
 	}
@@ -85,11 +67,11 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Command second returned error: %v", err)
 	}
-	if sandboxes.ensureCalls != 2 || sandboxes.loadCalls != 1 || commandExecutor.calls != 2 {
+	if sandboxes.ensureCalls != 1 || sandboxes.loadCalls != 1 || commandExecutor.calls != 2 {
 		t.Fatalf("command ensure/load/exec calls = %d/%d/%d", sandboxes.ensureCalls, sandboxes.loadCalls, commandExecutor.calls)
 	}
 	host.CleanupCommandSessions(ctx)
-	if len(sandboxes.shutdowns) != 2 || sandboxes.shutdowns[1] != "session-host" {
+	if len(sandboxes.shutdowns) != 1 || sandboxes.shutdowns[0] != "session-host" {
 		t.Fatalf("shutdowns after cleanup = %#v", sandboxes.shutdowns)
 	}
 	if !events.contains("scheduler.command.started") || !events.contains("scheduler.command.completed") {
@@ -122,70 +104,43 @@ func TestRuntimeHostAgentCommandLLMAndSessionRPC(t *testing.T) {
 	}
 }
 
-func TestRuntimeHostAgentPrefersAssistantMessageOverTranscript(t *testing.T) {
+func TestRuntimeHostAgentSandboxOptionsPrepareTheRunsSandbox(t *testing.T) {
 	ctx := context.Background()
-	scheduler := domain.Scheduler{
-		Summary: domain.SchedulerSummary{ID: "scheduler-final-text", Runtime: domain.SchedulerRuntimeScheduler, DefaultAgent: "codex"},
+	scheduler := domain.Scheduler{Summary: domain.SchedulerSummary{
+		ID: "scheduler-options", ProjectID: "project-1", AgentName: "reviewer", ProjectSchedulerID: "scheduler-1", SandboxPolicy: domain.SchedulerSandboxPolicySticky,
+	}}
+	run := &domain.SchedulerRunSummary{ID: "run-options", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-1"}
+	sandboxes := &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "prepared", VMStatus: domain.VMStatusRunning}}}
+	projectRunner := &hostProjectAgentRunnerFake{run: domain.ProjectRunRecord{RunID: "project-run", Status: domain.ProjectRunStatusSucceeded, SandboxID: "prepared", Output: "done"}}
+	events := &hostEventsFake{}
+	host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
+		Store: &hostStoreFake{}, Events: events, Sessions: sandboxes, ProjectAgentRunner: projectRunner, Publisher: &hostPublisherFake{},
+	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{EventID: "topic-event"})
+
+	result, err := host.Agent(ctx, "review", domain.SchedulerAgentRequest{
+		Agent: "claude-code", Timeout: 2 * time.Minute, GuestImage: "custom:latest",
+		Volumes: []domain.VolumeMountSpec{{Source: "data", Target: "/data"}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	run := &domain.SchedulerRunSummary{ID: "run-final-text", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-final-text"}
-	newHost := func(agentExecutor *hostAgentExecutorFake) *schedulers.RuntimeHost {
-		return schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
-			Store:            &hostStoreFake{},
-			Events:           &hostEventsFake{},
-			Sessions:         &hostSessionsFake{session: &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-final-text", VMStatus: domain.VMStatusRunning}}},
-			AgentDefinitions: hostAgentDefinitionsFake{},
-			AgentExecutor:    agentExecutor,
-			Publisher:        &hostPublisherFake{},
-		}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{EventID: "topic-event"})
+	request := projectRunner.request
+	if request.SandboxID != "prepared" || len(request.Volumes) != 0 || request.Provider != "claude" || request.Timeout != 2*time.Minute {
+		t.Fatalf("project agent request = %#v", request)
+	}
+	if sandboxes.ensureCalls != 1 || len(sandboxes.shutdowns) != 1 || sandboxes.shutdowns[0] != "prepared" || result.Text != "done" {
+		t.Fatalf("ensure=%d shutdowns=%#v result=%#v", sandboxes.ensureCalls, sandboxes.shutdowns, result)
+	}
+	if !events.contains("scheduler.agent.completed") {
+		t.Fatalf("events = %#v", events.types())
 	}
 
-	// A provider that emits a distinct final assistant message: Text/FinalText
-	// must carry that message, not the raw transcript in cell.Output.
-	withMessage := &hostAgentExecutorFake{
-		cell:          domain.NotebookCell{ID: "cell-1", Output: "thinking...\ncat SKILL.md\n{...}", Success: true},
-		assistantText: "here is the answer",
+	// Without sandbox options the run picks its own sandbox.
+	if _, err := host.Agent(ctx, "review", domain.SchedulerAgentRequest{Agent: "codex"}); err != nil {
+		t.Fatal(err)
 	}
-	result, err := newHost(withMessage).Agent(ctx, "prompt", domain.SchedulerAgentRequest{})
-	if err != nil {
-		t.Fatalf("Agent returned error: %v", err)
-	}
-	if result.FinalText != "here is the answer" || result.Text != "here is the answer" {
-		t.Fatalf("FinalText/Text = %q/%q, want the assistant message", result.FinalText, result.Text)
-	}
-	if result.Output != withMessage.cell.Output {
-		t.Fatalf("Output = %q, want the untouched transcript %q", result.Output, withMessage.cell.Output)
-	}
-	if result.FinalText == result.Output {
-		t.Fatalf("FinalText must not equal the transcript Output when a distinct assistant message exists")
-	}
-
-	// No distinct assistant message (e.g. transcript-fallback source): FinalText
-	// keeps falling back to the transcript, same as before this fix.
-	withoutMessage := &hostAgentExecutorFake{
-		cell: domain.NotebookCell{ID: "cell-2", Output: "plain transcript", Success: true},
-	}
-	result, err = newHost(withoutMessage).Agent(ctx, "prompt", domain.SchedulerAgentRequest{})
-	if err != nil {
-		t.Fatalf("Agent returned error: %v", err)
-	}
-	if result.FinalText != "plain transcript" || result.Output != "plain transcript" {
-		t.Fatalf("FinalText/Output = %q/%q, want both to fall back to the transcript", result.FinalText, result.Output)
-	}
-
-	// On a failed run, agentAssistantMessage synthesizes a placeholder like
-	// "<agent> failed without output" instead of returning "" — that must
-	// not displace the real transcript, which carries the actual failure
-	// diagnostics.
-	failed := &hostAgentExecutorFake{
-		cell:          domain.NotebookCell{ID: "cell-3", Output: "tool call failed: ENOENT /workspace/build.sh\nstack: ...", Success: false},
-		assistantText: "codex failed without output",
-	}
-	result, err = newHost(failed).Agent(ctx, "prompt", domain.SchedulerAgentRequest{})
-	if err != nil {
-		t.Fatalf("Agent returned error: %v", err)
-	}
-	if result.FinalText != failed.cell.Output || result.Text != failed.cell.Output {
-		t.Fatalf("FinalText/Text = %q/%q, want the real transcript %q, not the synthesized failure summary", result.FinalText, result.Text, failed.cell.Output)
+	if projectRunner.request.SandboxID != "" || projectRunner.request.Provider != "codex" || sandboxes.ensureCalls != 1 {
+		t.Fatalf("request = %#v ensure=%d", projectRunner.request, sandboxes.ensureCalls)
 	}
 }
 
@@ -319,25 +274,6 @@ func TestRuntimeHostErrorBranches(t *testing.T) {
 		Summary: domain.SchedulerSummary{ID: "scheduler-errors", Name: "Scheduler Errors", Runtime: domain.SchedulerRuntimeScheduler, DefaultAgent: "codex"},
 	}
 	run := &domain.SchedulerRunSummary{ID: "run-errors", SchedulerID: scheduler.Summary.ID, TriggerID: "trigger-errors"}
-
-	events := &hostEventsFake{}
-	host := schedulers.NewRuntimeHost(schedulers.RunHostDependencies{
-		Events: events,
-		Sessions: &hostSessionsFake{
-			session:     &domain.Sandbox{Summary: domain.SandboxSummary{ID: "session-agent", VMStatus: domain.VMStatusRunning}},
-			shutdownErr: errors.New("stop failed"),
-		},
-		AgentDefinitions: hostAgentDefinitionsFake{},
-		AgentExecutor: &hostAgentExecutorFake{
-			cell: domain.NotebookCell{ID: "cell-agent", Stderr: "agent stderr", Success: false, ExitCode: 2},
-			err:  errors.New("agent failed"),
-		},
-		Publisher: &hostPublisherFake{},
-	}, scheduler, triggerExecution(run), schedulers.TriggerEventMetadata{EventID: "topic-event"})
-	agentResult, err := host.Agent(ctx, "prompt", domain.SchedulerAgentRequest{})
-	if err == nil || agentResult.Text != "agent stderr" || !events.contains("scheduler.agent.failed") || !events.contains("scheduler.sandbox.stop_failed") {
-		t.Fatalf("agent error result=%#v err=%v events=%#v", agentResult, err, events.types())
-	}
 
 	projectEvents := &hostEventsFake{}
 	projectScheduler := domain.Scheduler{Summary: domain.SchedulerSummary{ID: "scheduler-project-errors", ProjectID: "project-1", AgentName: "reviewer"}}
@@ -844,18 +780,6 @@ func (hostAgentDefinitionsFake) ResolveSchedulerAgentDefinition(context.Context,
 	return nil, nil
 }
 
-type hostAgentExecutorFake struct {
-	request       schedulers.HostAgentExecutionRequest
-	cell          domain.NotebookCell
-	assistantText string
-	err           error
-}
-
-func (e *hostAgentExecutorFake) ExecuteAgent(_ context.Context, _ *domain.Sandbox, request schedulers.HostAgentExecutionRequest) (domain.NotebookCell, string, error) {
-	e.request = request
-	return e.cell, e.assistantText, e.err
-}
-
 type hostCommandExecutorFake struct {
 	calls     int
 	result    domain.SchedulerCommandResult
@@ -935,3 +859,4 @@ func firstNonEmptyTest(values ...string) string {
 	}
 	return ""
 }
+

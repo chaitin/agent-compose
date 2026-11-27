@@ -250,6 +250,12 @@ type RunAgentRequest struct {
 	StickyBindingConfigHash  string
 	Interactive              bool
 	Labels                   map[string]string
+	// Provider runs the agent with this CLI instead of its definition's
+	// provider. The definition's model and environment are provider
+	// specific, so they are not used with another provider.
+	Provider string
+	// Timeout bounds the agent turn instead of the daemon's agent timeout.
+	Timeout time.Duration
 }
 
 type StreamSink struct {
@@ -307,6 +313,7 @@ func (c *Controller) StartProjectRun(ctx context.Context, req RunAgentRequest) (
 		ClientRequestID: req.ClientRequestID,
 		Labels:          req.Labels,
 		RunLogRoot:      c.runLogRoot(),
+		AgentProvider:   domain.NormalizeAgentKind(req.Provider),
 	}
 	// Idempotency comes before admission: a retry must return the run the first
 	// attempt created even when its input (a staged upload, for example) can no
@@ -826,6 +833,7 @@ func (c *Controller) completeProjectRunAgent(runCtx, prepCtx context.Context, sa
 		RunID:             run.RunID,
 		Message:           req.Prompt,
 		Input:             req.Input,
+		Timeout:           req.Timeout,
 		OutputSchemaJSON:  req.OutputSchemaJSON,
 		Stream: projectRunAgentExecutionStream(sandboxed.TransitionCtx, agentExecutionStreamRequest{
 			Projector:   projector,

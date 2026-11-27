@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/chaitin/agent-compose/pkg/execution"
 	domain "github.com/chaitin/agent-compose/pkg/model"
 	"github.com/chaitin/agent-compose/pkg/schedulers"
 )
@@ -27,26 +26,6 @@ func (e SchedulerHostEvents) AddRecord(ctx context.Context, event schedulers.Sch
 		return domain.SchedulerEvent{}, fmt.Errorf("scheduler controller is unavailable")
 	}
 	return e.Controller.AddSchedulerEventRecord(ctx, event)
-}
-
-type SchedulerHostAgentExecutor struct {
-	Executor *AgentExecutor
-}
-
-func (e SchedulerHostAgentExecutor) ExecuteAgent(ctx context.Context, session *domain.Sandbox, request schedulers.HostAgentExecutionRequest) (domain.NotebookCell, string, error) {
-	if e.Executor == nil {
-		return domain.NotebookCell{}, "", fmt.Errorf("agent executor is unavailable")
-	}
-	cell, _, assistantEvent, err := e.Executor.ExecuteAgentRequest(ctx, session, execution.ExecuteAgentRequest{
-		Agent:             request.Provider,
-		AgentDefinitionID: request.AgentDefinitionID,
-		Model:             request.Model,
-		RunID:             request.RunID,
-		Message:           request.Prompt,
-		Timeout:           request.Timeout,
-		OutputSchemaJSON:  request.OutputSchemaJSON,
-	})
-	return cell, assistantEvent.Message, err
 }
 
 type SchedulerHostCommandExecutor struct {

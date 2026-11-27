@@ -56,6 +56,7 @@ func (ProjectRun) Fields() []ent.Field {
 		field.String("summary_json").Optional(),
 		field.String("agent_cell_id").Optional(),
 		field.Int("log_incomplete").Optional(),
+		field.String("agent_provider").Optional(),
 	}
 }
 

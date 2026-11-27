@@ -315,6 +315,7 @@ var (
 		{Name: "summary_json", Type: field.TypeString, Nullable: true},
 		{Name: "agent_cell_id", Type: field.TypeString, Nullable: true},
 		{Name: "log_incomplete", Type: field.TypeInt, Nullable: true},
+		{Name: "agent_provider", Type: field.TypeString, Nullable: true},
 	}
 	// ProjectRunTable holds the schema information for the "project_run" table.
 	ProjectRunTable = &schema.Table{

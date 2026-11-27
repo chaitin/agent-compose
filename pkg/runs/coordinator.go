@@ -30,6 +30,9 @@ type StartRequest struct {
 	// RunLogRoot is the daemon data root. When set, the run records its
 	// history in a run log under it rather than a legacy text transcript.
 	RunLogRoot string
+	// AgentProvider overrides the agent definition's provider; see
+	// RunAgentRequest.Provider.
+	AgentProvider string
 }
 
 type TransitionRequest struct {
@@ -193,6 +196,7 @@ func (c *Coordinator) BeginRun(ctx context.Context, req StartRequest) (domain.Pr
 		CleanupPolicy:   NormalizeCleanupPolicy(req.CleanupPolicy),
 		ResultJSON:      "{}",
 		Labels:          req.Labels,
+		AgentProvider:   req.AgentProvider,
 	}
 	var promptLogSeq uint64
 	if root := strings.TrimSpace(req.RunLogRoot); root != "" {

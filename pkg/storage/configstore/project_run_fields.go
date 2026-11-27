@@ -45,7 +45,8 @@ func applyProjectRunCreateFields(create *dao.ProjectRunCreate, run ProjectRunRec
 		SetLogFormat(run.LogFormat).
 		SetSummaryJSON(run.SummaryJSON).
 		SetAgentCellID(run.AgentCellID).
-		SetLogIncomplete(BoolToInt(run.LogIncomplete))
+		SetLogIncomplete(BoolToInt(run.LogIncomplete)).
+		SetAgentProvider(run.AgentProvider)
 	if includeLifecycle {
 		create = create.
 			SetExecutionID(run.ExecutionID).

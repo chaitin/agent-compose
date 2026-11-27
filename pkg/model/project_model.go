@@ -179,6 +179,9 @@ type ProjectRunRecord struct {
 	// AgentCellID is the legacy-named execution identity. New agent runs do not
 	// create notebook cells; historical cell IDs remain valid for recovery.
 	AgentCellID string `json:"agent_cell_id,omitempty"`
+	// AgentProvider is the agent CLI the run uses instead of its agent
+	// definition's provider; empty uses the definition.
+	AgentProvider string `json:"agent_provider,omitempty"`
 	// Detach reports that the run was started through the detached supervisor
 	// and can be re-attached after a daemon restart instead of being declared
 	// interrupted.

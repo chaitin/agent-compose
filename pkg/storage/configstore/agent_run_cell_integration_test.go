@@ -46,7 +46,7 @@ func testAgentRunCellReopen(t *testing.T, withEvents bool) {
 		Status: domain.ProjectRunStatusRunning, AgentCellID: "cell-before",
 		LogFormat: runlog.FormatJSONL, LogsPath: logsPath,
 		ExecutionID: "exec-before", DetachKind: domain.DetachKindAgent, Detach: true,
-		SummaryJSON: `{"turns":1}`,
+		SummaryJSON: `{"turns":1}`, AgentProvider: "claude",
 	}
 	if withEvents {
 		run, err = store.CreateProjectRunWithEvents(ctx, run, []domain.ProjectRunEventRecord{{ID: "prompt", RunID: run.RunID, Kind: domain.ProjectRunEventKindUserMessage, Text: "go", LogSeq: 1}})
@@ -83,7 +83,7 @@ func testAgentRunCellReopen(t *testing.T, withEvents bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recovered.AgentCellID != "cell-live" || recovered.ExecutionID != "exec-live" || recovered.LogsPath != run.LogsPath || !recovered.Detach || recovered.LogFormat != runlog.FormatJSONL || recovered.SummaryJSON != run.SummaryJSON {
+	if recovered.AgentProvider != "claude" || recovered.AgentCellID != "cell-live" || recovered.ExecutionID != "exec-live" || recovered.LogsPath != run.LogsPath || !recovered.Detach || recovered.LogFormat != runlog.FormatJSONL || recovered.SummaryJSON != run.SummaryJSON {
 		t.Fatalf("recovered run=%+v", recovered)
 	}
 	if withEvents {

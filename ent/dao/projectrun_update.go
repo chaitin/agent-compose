@@ -821,6 +821,26 @@ func (_u *ProjectRunUpdate) ClearLogIncomplete() *ProjectRunUpdate {
 	return _u
 }
 
+// SetAgentProvider sets the "agent_provider" field.
+func (_u *ProjectRunUpdate) SetAgentProvider(v string) *ProjectRunUpdate {
+	_u.mutation.SetAgentProvider(v)
+	return _u
+}
+
+// SetNillableAgentProvider sets the "agent_provider" field if the given value is not nil.
+func (_u *ProjectRunUpdate) SetNillableAgentProvider(v *string) *ProjectRunUpdate {
+	if v != nil {
+		_u.SetAgentProvider(*v)
+	}
+	return _u
+}
+
+// ClearAgentProvider clears the value of the "agent_provider" field.
+func (_u *ProjectRunUpdate) ClearAgentProvider() *ProjectRunUpdate {
+	_u.mutation.ClearAgentProvider()
+	return _u
+}
+
 // Mutation returns the ProjectRunMutation object of the builder.
 func (_u *ProjectRunUpdate) Mutation() *ProjectRunMutation {
 	return _u.mutation
@@ -1110,6 +1130,12 @@ func (_u *ProjectRunUpdate) sqlSave(ctx context.Context) (_node int, err error) 
 	}
 	if _u.mutation.LogIncompleteCleared() {
 		_spec.ClearField(projectrun.FieldLogIncomplete, field.TypeInt)
+	}
+	if value, ok := _u.mutation.AgentProvider(); ok {
+		_spec.SetField(projectrun.FieldAgentProvider, field.TypeString, value)
+	}
+	if _u.mutation.AgentProviderCleared() {
+		_spec.ClearField(projectrun.FieldAgentProvider, field.TypeString)
 	}
 	_spec.AddModifiers(_u.modifiers...)
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
@@ -1926,6 +1952,26 @@ func (_u *ProjectRunUpdateOne) ClearLogIncomplete() *ProjectRunUpdateOne {
 	return _u
 }
 
+// SetAgentProvider sets the "agent_provider" field.
+func (_u *ProjectRunUpdateOne) SetAgentProvider(v string) *ProjectRunUpdateOne {
+	_u.mutation.SetAgentProvider(v)
+	return _u
+}
+
+// SetNillableAgentProvider sets the "agent_provider" field if the given value is not nil.
+func (_u *ProjectRunUpdateOne) SetNillableAgentProvider(v *string) *ProjectRunUpdateOne {
+	if v != nil {
+		_u.SetAgentProvider(*v)
+	}
+	return _u
+}
+
+// ClearAgentProvider clears the value of the "agent_provider" field.
+func (_u *ProjectRunUpdateOne) ClearAgentProvider() *ProjectRunUpdateOne {
+	_u.mutation.ClearAgentProvider()
+	return _u
+}
+
 // Mutation returns the ProjectRunMutation object of the builder.
 func (_u *ProjectRunUpdateOne) Mutation() *ProjectRunMutation {
 	return _u.mutation
@@ -2245,6 +2291,12 @@ func (_u *ProjectRunUpdateOne) sqlSave(ctx context.Context) (_node *ProjectRun, 
 	}
 	if _u.mutation.LogIncompleteCleared() {
 		_spec.ClearField(projectrun.FieldLogIncomplete, field.TypeInt)
+	}
+	if value, ok := _u.mutation.AgentProvider(); ok {
+		_spec.SetField(projectrun.FieldAgentProvider, field.TypeString, value)
+	}
+	if _u.mutation.AgentProviderCleared() {
+		_spec.ClearField(projectrun.FieldAgentProvider, field.TypeString)
 	}
 	_spec.AddModifiers(_u.modifiers...)
 	_node = &ProjectRun{config: _u.config}

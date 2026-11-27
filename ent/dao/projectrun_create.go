@@ -508,6 +508,20 @@ func (_c *ProjectRunCreate) SetNillableLogIncomplete(v *int) *ProjectRunCreate {
 	return _c
 }
 
+// SetAgentProvider sets the "agent_provider" field.
+func (_c *ProjectRunCreate) SetAgentProvider(v string) *ProjectRunCreate {
+	_c.mutation.SetAgentProvider(v)
+	return _c
+}
+
+// SetNillableAgentProvider sets the "agent_provider" field if the given value is not nil.
+func (_c *ProjectRunCreate) SetNillableAgentProvider(v *string) *ProjectRunCreate {
+	if v != nil {
+		_c.SetAgentProvider(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *ProjectRunCreate) SetID(v string) *ProjectRunCreate {
 	_c.mutation.SetID(v)
@@ -743,6 +757,10 @@ func (_c *ProjectRunCreate) createSpec() (*ProjectRun, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.LogIncomplete(); ok {
 		_spec.SetField(projectrun.FieldLogIncomplete, field.TypeInt, value)
 		_node.LogIncomplete = value
+	}
+	if value, ok := _c.mutation.AgentProvider(); ok {
+		_spec.SetField(projectrun.FieldAgentProvider, field.TypeString, value)
+		_node.AgentProvider = value
 	}
 	return _node, _spec
 }
@@ -1501,6 +1519,24 @@ func (u *ProjectRunUpsert) AddLogIncomplete(v int) *ProjectRunUpsert {
 // ClearLogIncomplete clears the value of the "log_incomplete" field.
 func (u *ProjectRunUpsert) ClearLogIncomplete() *ProjectRunUpsert {
 	u.SetNull(projectrun.FieldLogIncomplete)
+	return u
+}
+
+// SetAgentProvider sets the "agent_provider" field.
+func (u *ProjectRunUpsert) SetAgentProvider(v string) *ProjectRunUpsert {
+	u.Set(projectrun.FieldAgentProvider, v)
+	return u
+}
+
+// UpdateAgentProvider sets the "agent_provider" field to the value that was provided on create.
+func (u *ProjectRunUpsert) UpdateAgentProvider() *ProjectRunUpsert {
+	u.SetExcluded(projectrun.FieldAgentProvider)
+	return u
+}
+
+// ClearAgentProvider clears the value of the "agent_provider" field.
+func (u *ProjectRunUpsert) ClearAgentProvider() *ProjectRunUpsert {
+	u.SetNull(projectrun.FieldAgentProvider)
 	return u
 }
 
@@ -2375,6 +2411,27 @@ func (u *ProjectRunUpsertOne) UpdateLogIncomplete() *ProjectRunUpsertOne {
 func (u *ProjectRunUpsertOne) ClearLogIncomplete() *ProjectRunUpsertOne {
 	return u.Update(func(s *ProjectRunUpsert) {
 		s.ClearLogIncomplete()
+	})
+}
+
+// SetAgentProvider sets the "agent_provider" field.
+func (u *ProjectRunUpsertOne) SetAgentProvider(v string) *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetAgentProvider(v)
+	})
+}
+
+// UpdateAgentProvider sets the "agent_provider" field to the value that was provided on create.
+func (u *ProjectRunUpsertOne) UpdateAgentProvider() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateAgentProvider()
+	})
+}
+
+// ClearAgentProvider clears the value of the "agent_provider" field.
+func (u *ProjectRunUpsertOne) ClearAgentProvider() *ProjectRunUpsertOne {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearAgentProvider()
 	})
 }
 
@@ -3415,6 +3472,27 @@ func (u *ProjectRunUpsertBulk) UpdateLogIncomplete() *ProjectRunUpsertBulk {
 func (u *ProjectRunUpsertBulk) ClearLogIncomplete() *ProjectRunUpsertBulk {
 	return u.Update(func(s *ProjectRunUpsert) {
 		s.ClearLogIncomplete()
+	})
+}
+
+// SetAgentProvider sets the "agent_provider" field.
+func (u *ProjectRunUpsertBulk) SetAgentProvider(v string) *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.SetAgentProvider(v)
+	})
+}
+
+// UpdateAgentProvider sets the "agent_provider" field to the value that was provided on create.
+func (u *ProjectRunUpsertBulk) UpdateAgentProvider() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.UpdateAgentProvider()
+	})
+}
+
+// ClearAgentProvider clears the value of the "agent_provider" field.
+func (u *ProjectRunUpsertBulk) ClearAgentProvider() *ProjectRunUpsertBulk {
+	return u.Update(func(s *ProjectRunUpsert) {
+		s.ClearAgentProvider()
 	})
 }
 

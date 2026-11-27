@@ -247,6 +247,11 @@ func LogIncomplete(v int) predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldEQ(FieldLogIncomplete, v))
 }
 
+// AgentProvider applies equality check predicate on the "agent_provider" field. It's identical to AgentProviderEQ.
+func AgentProvider(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldAgentProvider, v))
+}
+
 // ProjectIDEQ applies the EQ predicate on the "project_id" field.
 func ProjectIDEQ(v string) predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldEQ(FieldProjectID, v))
@@ -2705,6 +2710,81 @@ func LogIncompleteIsNil() predicate.ProjectRun {
 // LogIncompleteNotNil applies the NotNil predicate on the "log_incomplete" field.
 func LogIncompleteNotNil() predicate.ProjectRun {
 	return predicate.ProjectRun(sql.FieldNotNull(FieldLogIncomplete))
+}
+
+// AgentProviderEQ applies the EQ predicate on the "agent_provider" field.
+func AgentProviderEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEQ(FieldAgentProvider, v))
+}
+
+// AgentProviderNEQ applies the NEQ predicate on the "agent_provider" field.
+func AgentProviderNEQ(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNEQ(FieldAgentProvider, v))
+}
+
+// AgentProviderIn applies the In predicate on the "agent_provider" field.
+func AgentProviderIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIn(FieldAgentProvider, vs...))
+}
+
+// AgentProviderNotIn applies the NotIn predicate on the "agent_provider" field.
+func AgentProviderNotIn(vs ...string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotIn(FieldAgentProvider, vs...))
+}
+
+// AgentProviderGT applies the GT predicate on the "agent_provider" field.
+func AgentProviderGT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGT(FieldAgentProvider, v))
+}
+
+// AgentProviderGTE applies the GTE predicate on the "agent_provider" field.
+func AgentProviderGTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldGTE(FieldAgentProvider, v))
+}
+
+// AgentProviderLT applies the LT predicate on the "agent_provider" field.
+func AgentProviderLT(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLT(FieldAgentProvider, v))
+}
+
+// AgentProviderLTE applies the LTE predicate on the "agent_provider" field.
+func AgentProviderLTE(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldLTE(FieldAgentProvider, v))
+}
+
+// AgentProviderContains applies the Contains predicate on the "agent_provider" field.
+func AgentProviderContains(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContains(FieldAgentProvider, v))
+}
+
+// AgentProviderHasPrefix applies the HasPrefix predicate on the "agent_provider" field.
+func AgentProviderHasPrefix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasPrefix(FieldAgentProvider, v))
+}
+
+// AgentProviderHasSuffix applies the HasSuffix predicate on the "agent_provider" field.
+func AgentProviderHasSuffix(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldHasSuffix(FieldAgentProvider, v))
+}
+
+// AgentProviderIsNil applies the IsNil predicate on the "agent_provider" field.
+func AgentProviderIsNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldIsNull(FieldAgentProvider))
+}
+
+// AgentProviderNotNil applies the NotNil predicate on the "agent_provider" field.
+func AgentProviderNotNil() predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldNotNull(FieldAgentProvider))
+}
+
+// AgentProviderEqualFold applies the EqualFold predicate on the "agent_provider" field.
+func AgentProviderEqualFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldEqualFold(FieldAgentProvider, v))
+}
+
+// AgentProviderContainsFold applies the ContainsFold predicate on the "agent_provider" field.
+func AgentProviderContainsFold(v string) predicate.ProjectRun {
+	return predicate.ProjectRun(sql.FieldContainsFold(FieldAgentProvider, v))
 }
 
 // And groups predicates with the AND operator between them.

@@ -842,6 +842,7 @@ func projectRunFromEntity(entity *dao.ProjectRun) ProjectRunRecord {
 		LogFormat:       entity.LogFormat,
 		SummaryJSON:     entity.SummaryJSON,
 		AgentCellID:     entity.AgentCellID,
+		AgentProvider:   entity.AgentProvider,
 		LogIncomplete:   entity.LogIncomplete != 0,
 	}
 	if entity.SchedulerRunID != nil {

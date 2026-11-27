@@ -85,6 +85,8 @@ const (
 	FieldAgentCellID = "agent_cell_id"
 	// FieldLogIncomplete holds the string denoting the log_incomplete field in the database.
 	FieldLogIncomplete = "log_incomplete"
+	// FieldAgentProvider holds the string denoting the agent_provider field in the database.
+	FieldAgentProvider = "agent_provider"
 	// Table holds the table name of the projectrun in the database.
 	Table = "project_run"
 )
@@ -129,6 +131,7 @@ var Columns = []string{
 	FieldSummaryJSON,
 	FieldAgentCellID,
 	FieldLogIncomplete,
+	FieldAgentProvider,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -332,4 +335,9 @@ func ByAgentCellID(opts ...sql.OrderTermOption) OrderOption {
 // ByLogIncomplete orders the results by the log_incomplete field.
 func ByLogIncomplete(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLogIncomplete, opts...).ToFunc()
+}
+
+// ByAgentProvider orders the results by the agent_provider field.
+func ByAgentProvider(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAgentProvider, opts...).ToFunc()
 }
